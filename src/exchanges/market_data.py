@@ -71,7 +71,7 @@ def _discover_ftse_mib_tickers() -> List[str]:
     return []
 
 
-def get_tradable_assets(trading_client=None) -> List[str]:
+def get_tradable_assets() -> List[str]:
     """Return a list of tradable Italian equity symbols, filtered by country.
 
     Discovers base symbols dynamically from the FTSE MIB Wikipedia page and
@@ -136,7 +136,7 @@ def get_tradable_assets(trading_client=None) -> List[str]:
     return filtered
 
 
-def get_quotes(data_client=None, symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
+def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     """Fetch latest quotes for a list of symbols using yfinance batch download.
 
     Returns a dict mapping symbol -> {last, bid, ask, volume, change_24h, percentage, quoteVolume}.
@@ -199,7 +199,7 @@ def get_quotes(data_client=None, symbols: List[str] = None) -> Dict[str, Dict[st
 
 
 def get_multi_timeframe_bars(
-    data_client=None, symbol: str = "", timeframes: List[str] = None, limit: int = 24
+    symbol: str = "", timeframes: List[str] = None, limit: int = 24
 ) -> Dict[str, List[List[float]]]:
     if timeframes is None:
         timeframes = []
@@ -236,7 +236,7 @@ def get_multi_timeframe_bars(
 
 
 def get_bars_range(
-    data_client=None, symbol: str = "", timeframe: str = "", start_ms: int = 0, limit: int = 500
+    symbol: str = "", timeframe: str = "", start_ms: int = 0, limit: int = 500
 ) -> List[List[float]]:
     """Fetch OHLCV bars from a start timestamp (ms) up to the present using yfinance.
 

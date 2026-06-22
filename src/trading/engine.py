@@ -11,7 +11,6 @@ from typing import Dict, List, Optional, Any
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.exchanges.factory import get_trading_client, get_streaming_client, get_data_client
 from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
 from src.trading.paper_trader import PaperTrader
@@ -84,10 +83,6 @@ class AssetInfo:
 
 class TradingEngine:
     def __init__(self):
-        # Clients will be created asynchronously in _initialize_clients()
-        self.exchange = None
-        self.data_client = None
-        self.streaming_client = None
         self.trader = None
 
         self.base_currency = settings.BASE_CURRENCY
@@ -183,27 +178,6 @@ class TradingEngine:
 
     async def _initialize_clients(self):
         """Initialize clients and load persisted state (non‑blocking)."""
-        try:
-            self.exchange = await asyncio.to_thread(get_trading_client)
-            logger.info("Trading client created.")
-        except Exception as e:
-            logger.critical(f"Failed to create trading client: {e}", exc_info=True)
-            raise
-
-        try:
-            self.data_client = await asyncio.to_thread(get_data_client)
-            logger.info("Data client created.")
-        except Exception as e:
-            logger.critical(f"Failed to create data client: {e}", exc_info=True)
-            raise
-
-        try:
-            self.streaming_client = await asyncio.to_thread(get_streaming_client)
-            logger.info("Streaming client created.")
-        except Exception as e:
-            logger.critical(f"Failed to create streaming client: {e}", exc_info=True)
-            raise
-
         self.trader = PaperTrader()
         logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
         self._load_state()
@@ -222,7 +196,7 @@ class TradingEngine:
         now = time.time()
         if self._tradable_assets_cache and (now - self._tradable_assets_cache_time) < 300:
             return self._tradable_assets_cache
-        assets = await asyncio.to_thread(get_tradable_assets, self.exchange)
+        assets = await asyncio.to_thread(get_tradable_assets)
         self._tradable_assets_cache = assets
         self._tradable_assets_cache_time = now
         return assets
@@ -248,7 +222,7 @@ class TradingEngine:
             missing.append(sym.split("/")[0])
         if missing:
             try:
-                raw = await asyncio.to_thread(get_quotes, self.data_client, missing)
+                raw = await asyncio.to_thread(get_quotes, missing)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
@@ -265,7 +239,7 @@ class TradingEngine:
             missing.append(sym.split("/")[0])
         if missing:
             try:
-                raw = get_quotes(self.data_client, missing)
+                raw = get_quotes(missing)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
@@ -528,7 +502,7 @@ class TradingEngine:
                     # Limit to 500 pairs to avoid excessive API calls
                     breadth_pairs = available_pairs[:500]
                     plain_breadth = [s.split("/")[0] for s in breadth_pairs]
-                    raw_breadth = await asyncio.to_thread(get_quotes, self.data_client, plain_breadth)
+                    raw_breadth = await asyncio.to_thread(get_quotes, plain_breadth)
                     breadth_tickers = {pair: raw_breadth.get(pair.split("/")[0], {}) for pair in breadth_pairs}
                     positive_count = sum(
                         1 for sym in breadth_pairs
@@ -838,7 +812,7 @@ class TradingEngine:
                     # (limit to 200 to avoid excessive API calls)
                     sample_for_vol = available_pairs[:200]
                     plain_sample = [s.split("/")[0] for s in sample_for_vol]
-                    raw_quotes = await asyncio.to_thread(get_quotes, self.data_client, plain_sample)
+                    raw_quotes = await asyncio.to_thread(get_quotes, plain_sample)
                     tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_for_vol}
                     def _vol(sym):
                         t = tickers.get(sym, {})
@@ -953,7 +927,7 @@ class TradingEngine:
             try:
                 async with self._exchange_semaphore:
                     candles = await asyncio.to_thread(
-                        get_bars_range, self.data_client, symbol.split("/")[0], timeframe, start_ms=since, limit=500
+                        get_bars_range, symbol.split("/")[0], timeframe, start_ms=since, limit=500
                     )
             except Exception as e:
                 logger.warning(f"get_bars_range failed for {symbol} {timeframe} at {since}: {e}")
@@ -1519,7 +1493,7 @@ class TradingEngine:
                 # External sell detected
                 sold_amount = recorded_amount - actual_balance
                 try:
-                    tickers_map = await asyncio.to_thread(get_quotes, self.data_client, [symbol.split("/")[0]])
+                    tickers_map = await asyncio.to_thread(get_quotes, [symbol.split("/")[0]])
                     ticker = tickers_map.get(symbol.split("/")[0])
                     current_price = ticker['last'] if ticker else pos.get("price", 0.0)
                 except Exception:
@@ -1906,7 +1880,7 @@ class TradingEngine:
                 async with self._exchange_semaphore:
                     try:
                         data = await asyncio.to_thread(
-                            get_multi_timeframe_bars, self.data_client, sym.split("/")[0], settings.OHLCV_TIMEFRAMES, limit=50
+                            get_multi_timeframe_bars, sym.split("/")[0], settings.OHLCV_TIMEFRAMES, limit=50
                         )
                     except Exception as e:
                         logger.warning(f"OHLCV fetch failed for {sym}: {e}")
@@ -3424,7 +3398,7 @@ class TradingEngine:
         try:
             async with self._exchange_semaphore:
                 base = symbol.split("/")[0]
-                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+                quotes = await asyncio.to_thread(get_quotes, [base])
                 ticker = quotes.get(base)
             if ticker is None:
                 logger.warning(f"No ticker data for {symbol}, skipping.")
@@ -3465,7 +3439,7 @@ class TradingEngine:
                 try:
                     async with self._exchange_semaphore:
                         ohlcv_data = await asyncio.to_thread(
-                            get_multi_timeframe_bars, self.data_client, symbol.split("/")[0], settings.OHLCV_TIMEFRAMES, limit=100
+                            get_multi_timeframe_bars, symbol.split("/")[0], settings.OHLCV_TIMEFRAMES, limit=100
                         )
                 except Exception as e:
                     logger.warning(f"OHLCV fetch failed for {symbol}: {e}")
@@ -5332,7 +5306,7 @@ class TradingEngine:
             missing_risk.append(sym.split("/")[0])
         if missing_risk:
             try:
-                raw = await asyncio.to_thread(get_quotes, self.data_client, missing_risk)
+                raw = await asyncio.to_thread(get_quotes, missing_risk)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
@@ -7251,7 +7225,7 @@ class TradingEngine:
             try:
                 async with self._exchange_semaphore:
                     ohlcv = await asyncio.to_thread(
-                        get_multi_timeframe_bars, self.data_client, symbol.split("/")[0], [timeframe], limit=50
+                        get_multi_timeframe_bars, symbol.split("/")[0], [timeframe], limit=50
                     )
             except Exception:
                 return False

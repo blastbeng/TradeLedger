@@ -252,7 +252,7 @@ async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
     engine = get_engine()
     try:
         bars = await asyncio.to_thread(
-            get_multi_timeframe_bars, engine.data_client, symbol, [timeframe], limit=limit
+            get_multi_timeframe_bars, symbol, [timeframe], limit=limit
         )
         candles = bars.get(timeframe, [])
         result = []
@@ -273,7 +273,7 @@ async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
 async def ticker(symbol: str):
     try:
         quotes = await asyncio.to_thread(
-            get_quotes, None, [symbol]
+            get_quotes, [symbol]
         )
         q = quotes.get(symbol)
         if q:
@@ -303,7 +303,7 @@ async def tickers(symbols: str = ""):
     result = {}
     try:
         quotes = await asyncio.to_thread(
-            get_quotes, None, symbol_list
+            get_quotes, symbol_list
         )
         for sym in symbol_list:
             q = quotes.get(sym)
