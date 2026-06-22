@@ -343,7 +343,7 @@ class Settings(BaseSettings):
     TWITTER_BEARER_TOKEN: Optional[str] = None
     REDDIT_CLIENT_ID: Optional[str] = None
     REDDIT_CLIENT_SECRET: Optional[str] = None
-    REDDIT_USER_AGENT: str = "trading-bot/1.0"
+    REDDIT_USER_AGENT: str = "trade-ledger/1.0"
     NEWS_MAX_ARTICLES_PER_SYMBOL: int = 5
     NEWS_CACHE_TTL_SECONDS: int = 1800       # 30 minutes
     NEWS_HTTP_TIMEOUT_SECONDS: float = 30.0   # timeout for each news source HTTP request
