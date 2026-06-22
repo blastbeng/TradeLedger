@@ -1008,11 +1008,7 @@ Maximum symbols to trade: {max_symbols}
         else:
             break_even_tp_pct = 0.0
         
-        spread_decimal = 0.0
-        if spread_pct is not None:
-            spread_decimal = spread_pct / 100.0
-        
-        min_profitable_tp_pct = break_even_tp_pct + spread_decimal
+        min_profitable_tp_pct = break_even_tp_pct
         
         prompt += f"**Break-even take_profit_pct (fees + spread): {min_profitable_tp_pct:.4%}. Set your take_profit_pct strictly above this.**\n"
     # Help the LLM set min_profit_per_trade by showing the expected profit for a 1% take-profit

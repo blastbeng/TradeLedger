@@ -2144,7 +2144,7 @@ class TradingEngine:
         # --- Composite opportunity score (scalping + trend + sentiment) ---
         composite_scores: Dict[str, float] = {}
         for sym in sample_pairs:
-            scalping = symbol_scores.get(sym, 0.0)
+            scalping = 0.0
             trend = symbol_trend_scores.get(sym, 0.0)
             # Normalise sentiment compound to 0-1 (assuming range -1..1)
             base_sym = sym.split("/")[0] if "/" in sym else sym
@@ -2309,15 +2309,10 @@ class TradingEngine:
             "per_symbol_budget": per_symbol_budget,
             "max_symbols": self.effective_max_symbols,
             "current_symbols": self.current_symbols,
-            "symbol_scores": symbol_scores,
-            "symbol_spreads": symbol_spreads,
-            "symbol_depths": symbol_depths,
             "historical_ohlcv_summary": historical_ohlcv_summary,
             "correlation_matrix": correlation_matrix,
             "sentiment_trend": sentiment_trend,
             "vix": vix,
-            "top_opportunities": top_opportunities,
-            "sector_etf_data": sector_etf_data,
         }
         market_hash = compute_market_hash(market_snapshot)
         # Compute prompt complexity for temperature selection
@@ -3994,7 +3989,6 @@ class TradingEngine:
             market_snapshot = {
                 "symbol": symbol,
                 "ticker": ticker,
-                "order_book": order_book,
                 "balance": balance,
                 "open_positions": open_positions,
                 "per_symbol_budget": per_symbol_budget,
@@ -4024,15 +4018,6 @@ class TradingEngine:
                 "williams_r": williams_r,
                 "ichimoku": ichimoku,
                 "donchian_channels": donchian_channels,
-                "order_book_imbalance": order_book_imbalance,
-                "spread_pct": spread_pct,
-                "bid_wall_volume": bid_wall_volume,
-                "ask_wall_volume": ask_wall_volume,
-                "order_book_pressure": order_book_pressure,
-                "depth_imbalances": depth_imbalances,
-                "order_book_slope": order_book_slope,
-                "mid_price_bias": mid_price_bias,
-                "depth_profile": depth_profile,
                 "fee_rate": fee_rate,
                 "drawdown_pct": perf.get("equity_curve", {}).get("drawdown_pct"),
                 "raw_candles": raw_candles,
@@ -4046,10 +4031,8 @@ class TradingEngine:
                 "cycle_spent": self._cycle_spent,
                 "remaining_balance": remaining,
                 "market_regime": market_regime,
-                "recent_trades_data": recent_trades_raw,
                 "multi_tf_raw_candles": multi_tf_raw_candles,
                 "multi_tf_indicators": multi_tf_indicators,
-                "scalping_feasibility_score": scalping_score,
                 "vwap": vwap,
                 "vwap_multi_tf": vwap_multi_tf,
                 "session_info": session_info,
@@ -4057,16 +4040,10 @@ class TradingEngine:
                 "volume_trend": volume_trend_val,
                 "market_breadth": getattr(self, '_market_breadth', None),
                 "full_market_breadth": full_market_breadth,
-                "depth_trend": depth_trend,
                 "parabolic_sar": parabolic_sar,
                 "keltner_channels": keltner_channels,
                 "pivot_points": pivot_points,
-                "cvd": cvd,
-                "cvd_normalized": cvd_normalized,
-                "order_book_pressure_trend": order_book_pressure_trend,
-                "estimated_slippage_pct": estimated_slippage_pct,
                 "atr_percentile": atr_percentile,
-                "market_impact_score": market_impact_score,
                 "global_risk_multiplier": global_risk_mult,
                 "trading_paused": trading_paused,
             }
@@ -4274,7 +4251,6 @@ class TradingEngine:
                 fee_rate=fee_rate,
                 atr=atr,
                 price=current_price,
-                spread_pct=spread_pct,
                 timeframe_seconds=tf_seconds,
                 min_stop_atr_mult=min_stop_atr_mult,
                 min_hold_time_mult=min_hold_time_mult,
@@ -4322,7 +4298,6 @@ class TradingEngine:
                             fee_rate=fee_rate,
                             atr=atr,
                             price=current_price,
-                            spread_pct=spread_pct,
                             timeframe_seconds=tf_seconds,
                             min_stop_atr_mult=min_stop_atr_mult,
                             min_hold_time_mult=min_hold_time_mult,
@@ -4433,7 +4408,6 @@ class TradingEngine:
                     "backtest": getattr(validated, 'backtest_summary', None),
                     "strategy_type": signal.strategy_type,
                     "market_regime": market_regime,
-                    "scalping_score": scalping_score,
                     "model_type": getattr(validated, 'model_type', None),
                     "llm_provider": llm_provider,
                     "llm_model": llm_model,
@@ -5054,7 +5028,7 @@ class TradingEngine:
                             )
                         return  # do NOT execute now
 
-                    await self._execute_signal(symbol, validated, timeframe=assigned_tf, atr=atr, spread_pct=spread_pct, order_book=order_book)
+                    await self._execute_signal(symbol, validated, timeframe=assigned_tf, atr=atr)
         except Exception as e:
             logger.error(f"Error processing {symbol}: {e}", exc_info=True)
             if self.notifier:
