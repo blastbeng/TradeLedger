@@ -3,29 +3,19 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 
 class Settings(BaseSettings):
-    # Alpaca Markets (stock/ETF trading)
-    ALPACA_API_KEY: str = ""
-    ALPACA_SECRET_KEY: str = ""
-    ALPACA_PAPER: bool = True   # True = paper trading, False = live
-    ALPACA_DATA_FEED: str = "iex"  # "iex" (free) or "sip" (paid)
+    # Trading mode
+    TRADING_MODE: str = "paper"   # "paper" or "notify"
+
+    # Market filtering
+    TICKER_SUFFIX: str = ".MI"
+    TARGET_COUNTRY: str = "italy"
+
+    # Paper trading simulator fee percentage (e.g., 0.001 = 0.1%)
+    PAPER_TRADING_FEE_PCT: float = 0.001
 
     # Yahoo Finance fallback for Level 1 quotes (bid/ask/last)
     YAHOO_FINANCE_ENABLED: bool = True
     YAHOO_FINANCE_CACHE_SECONDS: int = 30   # cache quotes in Redis to avoid rate limits
-
-    ALPACA_BASE_URL: str = "https://paper-api.alpaca.markets"  # auto-set based on PAPER
-    ALPACA_DATA_URL: str = "https://data.alpaca.markets"       # auto-set based on DATA_FEED
-
-    # Alpaca WebSocket streaming URL
-    ALPACA_STREAM_URL: str = ""
-
-    # Override the trading API base URL (default: paper). The SDK appends /v2,
-    # so do NOT include /v2 in this value unless you are using a custom proxy
-    # that expects it.
-    ALPACA_ENDPOINT: str = "https://paper-api.alpaca.markets"
-
-    # Trading mode
-    TRADING_MODE: str = "paper"   # "paper" or "live"
 
     # Risk management check interval (seconds) – stop-loss/take-profit checks
     RISK_CHECK_INTERVAL_SECONDS: int = 15
@@ -52,8 +42,8 @@ class Settings(BaseSettings):
     @field_validator("TRADING_MODE")
     @classmethod
     def validate_trading_mode(cls, v: str) -> str:
-        if v not in ("paper", "live"):
-            raise ValueError("TRADING_MODE must be 'paper' or 'live'")
+        if v not in ("paper", "notify"):
+            raise ValueError("TRADING_MODE must be 'paper' or 'notify'")
         return v
 
     @field_validator("MAX_SYMBOLS")
@@ -169,42 +159,12 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
-    def check_credentials(self):
-        if not self.ALPACA_API_KEY or not self.ALPACA_SECRET_KEY:
-            raise ValueError(
-                "ALPACA_API_KEY and ALPACA_SECRET_KEY are required for both paper and live trading"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def set_alpaca_urls(self):
-        """Set Alpaca base and data URLs based on paper/live and data feed."""
-        if self.ALPACA_PAPER:
-            self.ALPACA_BASE_URL = "https://paper-api.alpaca.markets"
-        else:
-            self.ALPACA_BASE_URL = "https://api.alpaca.markets"
-        if self.ALPACA_DATA_FEED == "iex":
-            self.ALPACA_DATA_URL = "https://data.alpaca.markets"
-        else:
-            self.ALPACA_DATA_URL = "https://data.alpaca.markets"  # sip uses same base
-        return self
-
-    @model_validator(mode="after")
-    def set_stream_url(self):
-        if not self.ALPACA_STREAM_URL:
-            if self.ALPACA_PAPER:
-                self.ALPACA_STREAM_URL = "wss://paper-api.alpaca.markets/stream"
-            else:
-                self.ALPACA_STREAM_URL = "wss://stream.data.alpaca.markets"
-        return self
-
-    @model_validator(mode="after")
     def set_database_path(self):
         if "DATABASE_PATH" not in self.model_fields_set:
             if self.TRADING_MODE == "paper":
                 self.DATABASE_PATH = "data/paper.db"
             else:
-                self.DATABASE_PATH = "data/alpacai.db"
+                self.DATABASE_PATH = "data/notify.db"
         return self
 
     # Ollama
