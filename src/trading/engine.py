@@ -7295,24 +7295,6 @@ class TradingEngine:
                 return rsi is not None and rsi <= target_rsi
             return False
 
-        elif etype == "order_book_depth":
-            min_vol = condition["min_ask_volume"]
-            ob = self.ws_manager.get_order_book(symbol)
-            if ob is None:
-                try:
-                    async with self._exchange_semaphore:
-                        ob = await asyncio.to_thread(get_order_book, self.data_client, symbol.split("/")[0], 20)
-                except Exception:
-                    return False
-            if ob:
-                asks = ob.get("asks", [])
-                bids = ob.get("bids", [])
-                if asks and bids:
-                    mid = (asks[0][0] + bids[0][0]) / 2
-                    cum_vol = sum(a[1] for a in asks if a[0] <= mid * 1.01)
-                    return cum_vol >= min_vol
-            return False
-
         elif etype == "delay":
             # Delay conditions are handled by _execute_delayed_entry, not the
             # pending-entries system. If we somehow reach here, treat as not met

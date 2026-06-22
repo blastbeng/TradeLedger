@@ -1307,8 +1307,6 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         "  Example: {\"type\": \"limit_price\", \"price\": 1.23, \"timeout_seconds\": 300}\n"
         "- `\"rsi_threshold\"`: wait for RSI(14) to fall below `\"rsi_below\"`.\n"
         "  Example: {\"type\": \"rsi_threshold\", \"rsi_below\": 30, \"timeout_seconds\": 600}\n"
-        "- `\"order_book_depth\"`: wait until the cumulative ask volume within 1% of the mid price is at least `\"min_ask_volume\"`.\n"
-        "  Example: {\"type\": \"order_book_depth\", \"min_ask_volume\": 500, \"timeout_seconds\": 300}\n"
         "- `\"delay\"`: simply wait `\"delay_seconds\"` before executing.\n"
         "  Example: {\"type\": \"delay\", \"delay_seconds\": 60}\n"
         "- `\"indicator_combo\"`: wait until ALL listed indicator conditions are met.\n"

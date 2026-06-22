@@ -170,13 +170,11 @@ def parse_llm_response(response_text: str) -> Signal:
         entry_condition = None
         if isinstance(entry_condition_raw, dict):
             etype = entry_condition_raw.get("type")
-            valid_types = ("limit_price", "rsi_threshold", "order_book_depth", "delay", "indicator_combo")
+            valid_types = ("limit_price", "rsi_threshold", "delay", "indicator_combo")
             if etype in valid_types:
                 if etype == "limit_price" and "price" in entry_condition_raw and "timeout_seconds" in entry_condition_raw:
                     entry_condition = entry_condition_raw
                 elif etype == "rsi_threshold" and "rsi_below" in entry_condition_raw and "timeout_seconds" in entry_condition_raw:
-                    entry_condition = entry_condition_raw
-                elif etype == "order_book_depth" and "min_ask_volume" in entry_condition_raw and "timeout_seconds" in entry_condition_raw:
                     entry_condition = entry_condition_raw
                 elif etype == "delay" and "delay_seconds" in entry_condition_raw:
                     entry_condition = entry_condition_raw
