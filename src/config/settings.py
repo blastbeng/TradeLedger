@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Paper trading simulator fee percentage (e.g., 0.001 = 0.1%)
     PAPER_TRADING_FEE_PCT: float = 0.001
 
+    # Paper trading initial balance (only used in paper mode)
+    PAPER_INITIAL_BALANCE: float = 10000.0
+
     # Risk management check interval (seconds) – stop-loss/take-profit checks
     RISK_CHECK_INTERVAL_SECONDS: int = 15
 
@@ -148,6 +151,10 @@ class Settings(BaseSettings):
         if v < 7:
             raise ValueError("OHLCV_RETENTION_DAYS must be at least 7")
         return v
+
+    # Yahoo Finance fallback for missing bid/ask quotes
+    YAHOO_FINANCE_ENABLED: bool = True
+    YAHOO_FINANCE_CACHE_SECONDS: int = 60
 
 
 

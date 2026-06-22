@@ -781,7 +781,6 @@ def build_strategy_prompt(
     max_take_profit_reviews: int = 10,
     max_partial_tp_reviews: int = 10,
     max_dust_sweep_reviews: int = 10,
-    data_feed: str = "sip",
     portfolio_exposure_pct: Optional[float] = None,
     portfolio_stop_risk_pct: Optional[float] = None,
     portfolio_total_value: Optional[float] = None,

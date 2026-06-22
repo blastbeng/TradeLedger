@@ -3969,7 +3969,6 @@ class TradingEngine:
                 max_take_profit_reviews=max_tp_reviews_prompt,
                 max_partial_tp_reviews=max_partial_tp_reviews_prompt,
                 max_dust_sweep_reviews=max_dust_sweep_reviews_prompt,
-                data_feed=settings.ALPACA_DATA_FEED,
                 portfolio_exposure_pct=portfolio_exposure_pct,
                 portfolio_stop_risk_pct=portfolio_stop_risk_pct,
                 portfolio_total_value=portfolio_total_value,
