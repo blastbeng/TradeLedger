@@ -177,6 +177,7 @@ def _empty_result() -> Dict[str, Any]:
         "profit_factor": 0.0,
         "avg_hold_time_seconds": 0,
         "max_consecutive_losses": 0,
+        "sharpe_ratio": 0.0,
         "insufficient_data": True,
     }
 
@@ -220,6 +221,13 @@ def _compute_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     avg_hold = sum(t["hold_time_seconds"] for t in trades) / len(trades)
 
+    # Sharpe Ratio (per-trade, annualized approximation not needed for relative comparison)
+    pnl_pcts = [t["pnl_pct"] for t in trades]
+    mean_pnl = sum(pnl_pcts) / len(pnl_pcts)
+    variance = sum((x - mean_pnl) ** 2 for x in pnl_pcts) / len(pnl_pcts)
+    std_pnl = variance ** 0.5
+    sharpe_ratio = (mean_pnl / std_pnl) if std_pnl > 0 else 0.0
+
     return {
         "total_trades": len(trades),
         "wins": len(wins),
@@ -231,6 +239,7 @@ def _compute_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
         "profit_factor": round(profit_factor, 4) if profit_factor < 999.0 else 999.0,
         "avg_hold_time_seconds": round(avg_hold),
         "max_consecutive_losses": max_consec_losses,
+        "sharpe_ratio": round(sharpe_ratio, 4),
         "insufficient_data": False,
     }
 
@@ -247,6 +256,7 @@ def format_backtest_summary(stats: Dict[str, Any]) -> str:
         f"Total P&L: {stats['total_pnl_pct']*100:+.2f}%, "
         f"Max drawdown: {stats['max_drawdown_pct']*100:.2f}%, "
         f"Profit factor: {stats['profit_factor']:.2f}, "
+        f"Sharpe ratio: {stats.get('sharpe_ratio', 0.0):.2f}, "
         f"Avg hold: {stats['avg_hold_time_seconds']/3600:.1f}h, "
         f"Max consec. losses: {stats['max_consecutive_losses']}"
     )
