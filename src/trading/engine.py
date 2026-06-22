@@ -4342,9 +4342,6 @@ class TradingEngine:
                 }
                 await self.notifier.send_notification(msg, summary=decision_summary)
 
-            # --- LLM‑controlled trade filters ---
-            params = signal.strategy_params or {}
-
             # --- Handle max‑hold‑expired LLM decision ---
             if max_hold_expired and signal.action == "HOLD":
                 new_max_hold = params.get("max_hold_time_seconds") if params else None
@@ -4636,6 +4633,9 @@ class TradingEngine:
                 logger.info(f"LLM decided to sell dust for {symbol}")
                 await self._sweep_dust(symbol)
                 return
+
+            # --- LLM‑controlled trade filters ---
+            params = signal.strategy_params or {}
 
             # Compute stop-loss percentage for max risk cap (needed for slippage check)
             sl_pct = None
@@ -6077,6 +6077,7 @@ class TradingEngine:
                 return
 
             # Check minimum order size and adjust upward if needed
+            ticker = None
             try:
                 base = symbol.split("/")[0]
                 quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
@@ -6276,6 +6277,14 @@ class TradingEngine:
                         await self.notifier.send_notification(
                             f"⏳ BUY {order_type} order for {display_symbol} queued{price_str}",
                             summary={"symbol": symbol, "action": "QUEUE", "reason": "Order not yet filled"}
+                        )
+                    return
+                if order.get('status') == 'rejected':
+                    logger.warning(f"BUY order rejected for {symbol}")
+                    if self.notifier:
+                        await self.notifier.send_notification(
+                            f"❌ BUY order rejected for {display_symbol}",
+                            summary={"symbol": symbol, "action": "REJECT", "reason": "Order rejected by simulator"}
                         )
                     return
                 logger.info(f"BUY {symbol}: {order}")
@@ -6478,6 +6487,7 @@ class TradingEngine:
                 return
 
             # Check minimum sell size
+            ticker = None
             try:
                 base = symbol.split("/")[0]
                 quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
@@ -6659,6 +6669,14 @@ class TradingEngine:
                         await self.notifier.send_notification(
                             f"⏳ SELL {order_type_str} order for {display_symbol} queued{price_str}",
                             summary={"symbol": symbol, "action": "QUEUE", "reason": "Order not yet filled"}
+                        )
+                    return
+                if order.get('status') == 'rejected':
+                    logger.warning(f"SELL order rejected for {symbol}")
+                    if self.notifier:
+                        await self.notifier.send_notification(
+                            f"❌ SELL order rejected for {display_symbol}",
+                            summary={"symbol": symbol, "action": "REJECT", "reason": "Order rejected by simulator"}
                         )
                     return
                 logger.info(f"SELL {symbol}: {order}")
