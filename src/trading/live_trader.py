@@ -1,56 +1,54 @@
-import time
 import logging
 from typing import Dict, List, Optional, Any
-from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import (
-    MarketOrderRequest,
-    LimitOrderRequest,
-    StopOrderRequest,
-    StopLimitOrderRequest,
-    TrailingStopOrderRequest,
-    GetOrdersRequest,
-)
-from alpaca.trading.enums import OrderSide, OrderType, TimeInForce, OrderStatus
-from src.config.settings import settings
-from src.utils.retry import retry_on_rate_limit
 
 logger = logging.getLogger(__name__)
 
 
 class LiveTrader:
-    """Wraps an Alpaca TradingClient for live stock/ETF trading."""
+    """Dummy trader. Alpaca is no longer used. Will be replaced by PaperTrader in Step 4."""
 
-    def __init__(self, trading_client: TradingClient):
+    def __init__(self, trading_client=None):
         self.trading_client = trading_client
 
-    # ------------------------------------------------------------------
-    # Balance helpers
-    # ------------------------------------------------------------------
     def get_balance(self, currency: str) -> float:
-        """Get free balance for a specific currency (USD or stock symbol)."""
-        if currency.upper() == "USD":
-            account = self.trading_client.get_account()
-            return float(account.cash)
-        else:
-            # currency is a stock symbol (e.g., "AAPL")
-            try:
-                pos = self.trading_client.get_open_position(currency)
-                return float(pos.qty)
-            except Exception:
-                return 0.0
+        return 0.0
 
     def fetch_balance(self) -> Dict[str, float]:
-        """Return all free balances (USD + all open positions)."""
-        account = self.trading_client.get_account()
-        balances = {"USD": float(account.cash)}
-        try:
-            positions = self.trading_client.get_all_positions()
-            for pos in positions:
-                balances[pos.symbol] = float(pos.qty)
-        except Exception as e:
-            logger.warning(f"Could not fetch positions: {e}")
-        logger.debug("Fetched live balances: %s", balances)
-        return balances
+        return {}
+
+    def create_market_buy_order(self, *args, **kwargs) -> Dict[str, Any]:
+        raise NotImplementedError("Live trading is disabled. Use paper mode.")
+
+    def create_market_sell_order(self, *args, **kwargs) -> Dict[str, Any]:
+        raise NotImplementedError("Live trading is disabled. Use paper mode.")
+
+    def create_stop_buy_order(self, *args, **kwargs) -> Dict[str, Any]:
+        raise NotImplementedError("Live trading is disabled. Use paper mode.")
+
+    def create_stop_sell_order(self, *args, **kwargs) -> Dict[str, Any]:
+        raise NotImplementedError("Live trading is disabled. Use paper mode.")
+
+    def create_stop_limit_buy_order(self, *args, **kwargs) -> Dict[str, Any]:
+        raise NotImplementedError("Live trading is disabled. Use paper mode.")
+
+    def create_stop_limit_sell_order(self, *args, **kwargs) -> Dict[str, Any]:
+        raise NotImplementedError("Live trading is disabled. Use paper mode.")
+
+    def create_trailing_stop_buy_order(self, *args, **kwargs) -> Dict[str, Any]:
+        raise NotImplementedError("Live trading is disabled. Use paper mode.")
+
+    def create_trailing_stop_sell_order(self, *args, **kwargs) -> Dict[str, Any]:
+        raise NotImplementedError("Live trading is disabled. Use paper mode.")
+
+    def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        return []
+
+    def cancel_order(self, order_id: str) -> bool:
+        return False
+
+    def get_trade_history(self) -> List[Dict[str, Any]]:
+        return []
+
 
     # ------------------------------------------------------------------
     # Order placement
