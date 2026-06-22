@@ -256,13 +256,6 @@ Key principles:
 - **Optional parameters:**
   - `"trailing_stop_activation_pct"`: a decimal between 0 and 1.0 (e.g., 0.02 for 2%). The trailing stop will only start updating once the price has moved in your favor by at least this percentage from the entry price. If omitted, the trailing stop is active immediately.
 
-**Position Scaling (Pyramiding & Scaling Out):**
-- If you output BUY for a symbol you already hold, the engine will ADD to your existing position (scale in / pyramid). 
-- Only scale into positions that are already in profit and showing strong, continued momentum. Avoid scaling into losing positions (averaging down) unless you have very high conviction it is a temporary dip.
-- When you scale in, your average entry price changes. You MUST provide a new `stop_loss_pct` or `stop_loss_atr_multiple` that protects your accumulated profits. The engine will update the stop-loss based on your new parameters.
-- You can scale out of positions gradually by using the `partial_take_profit_levels` array to sell fractions of your position at different profit targets.
-- When reviewing a triggered partial take-profit, you will be informed of which levels have already been executed. Do not re-include executed levels in your updated `partial_take_profit_levels` array unless you explicitly want to re-trigger them (which is not recommended). Focus on adjusting the remaining unexecuted levels.
-
 **Risk Management:**
 - Adjust position size according to your confidence, risk level, account drawdown, and portfolio exposure. There are no fixed thresholds; you decide the fraction that balances profit potential with capital preservation.
 - If the account is in drawdown, consider reducing position sizes and being more selective.
@@ -282,10 +275,6 @@ You are a professional trading bot. Your primary goal is to generate consistent 
   - `"max_portfolio_risk_pct"`: an optional decimal between 0 and 1.0 (e.g., 0.06 for 6% of portfolio). If set, the bot will calculate the total potential loss of all open positions plus the potential loss of this new trade. If this total exceeds this percentage of your total portfolio value, the trade will be skipped.
   - `"min_profit_per_trade"`: an optional non-negative number (in USD, e.g., 0.5 for $0.50). If set, the bot will skip the trade if the expected gross profit (position size × take_profit_pct) is below this value. Set `min_profit_per_trade` to **0** (or a very small value like 0.01) to allow tiny profits. Do not block trades because the expected profit is small – a small profit is still profit.
   - `"min_risk_reward_ratio"`: an optional positive number (e.g., 1.5). If set, the validator will reject the trade unless take_profit_pct / stop_loss_pct >= this value.
-  - `"max_spread_pct"`: an optional positive number (e.g., 0.5 for 0.5%). If set, the bot will skip the trade if the current bid‑ask spread exceeds this value.
-  - `"min_depth_at_take_profit"`: an optional positive number (in USD, e.g., 0.5 for $0.50). If set, the bot will check the cumulative ask volume from the current mid price up to the take‑profit price. If that volume is less than this value, the trade will be skipped.
-  - `"max_slippage_pct"`: an optional positive number (e.g., 0.1 for 0.1%). If set, the bot will compute the expected average fill price for a market buy order of the intended size by walking the order book. If the average fill price exceeds the best ask by more than this percentage, the trade will be skipped.
-  - `"max_unrealized_loss_pct"`: an optional decimal between 0 and 1.0 (e.g., 0.002 for 0.2%). If set, the bot will close the position immediately if the current price falls below `entry_price * (1 - max_unrealized_loss_pct)`, regardless of the stop‑loss. Must be less than `stop_loss_pct`.
   - `"position_size_multiplier"`: an optional decimal between 0.0 and 1.0 (e.g., 0.5 for 50%). If set, the final position size for this trade will be further multiplied by this factor, after the global risk multiplier.
   - `"min_confidence"`: an optional decimal between 0.0 and 1.0 (e.g., 0.6). If set, the bot will skip the trade if your confidence is below this threshold.
 - `"portfolio_risk_adjustment_factor"`: an optional decimal between 0.1 and 1.0 (e.g., 0.5). This is your per-symbol "vote" on the overall portfolio risk for the current cycle. The engine will take the **minimum** of this factor across all symbols evaluated in the current cycle and apply it as a global multiplier to all position sizes. Use a lower value (e.g., 0.3–0.5) if you detect high volatility, unfavorable market regime shifts, or elevated risk for this symbol. Use 1.0 if conditions are normal and you see no reason to reduce overall portfolio risk. This allows you to dynamically adjust the global trading risk based on the latest per-symbol market data, rather than relying solely on the periodic stock selection phase.
@@ -317,54 +306,6 @@ Output strict JSON only. The response must start with '{' or '[' and end with '}
 
 **Entry Conditions:** You must include an `entry_condition` object for every BUY action. The strategy prompt provides full details and examples.
 
-**Execution Decision:** Use `"min_confidence"` (0.0–1.0) to filter trades. The bot will skip the trade if your confidence is below this threshold. If omitted, the trade executes regardless of confidence. If you are not confident enough to trade, output HOLD with a meaningful reason (e.g., "Insufficient conviction", "Unfavorable risk/reward").
-
-**Optional Advanced Parameters:**
-- `"trailing_take_profit"`: an optional boolean (default false). If true, the take‑profit price will trail the current price upward by a fixed percentage (`trailing_take_profit_distance_pct`). The take‑profit never moves down.
-- `"trailing_take_profit_distance_pct"`: required if `trailing_take_profit` is true. A decimal between 0.001 and 0.1 (e.g., 0.002 for 0.2%).
-- `"breakeven_activation_pct"`: an optional decimal between 0 and 1.0 (e.g., 0.005 for 0.5%). If set, once the price rises by this percentage above your entry, the stop‑loss will be moved to the exact break‑even price (covering the exit fee).
-- `"lock_profit_activation_pct"`: an optional decimal between 0 and 1.0 (e.g., 0.005 for 0.5%). If set, once the price rises by this percentage above your entry, the stop‑loss will be moved to a guaranteed profit level (see lock_profit_level_pct).
-- `"lock_profit_level_pct"`: required if lock_profit_activation_pct is set. A decimal between 0 and lock_profit_activation_pct (e.g., 0.003 for 0.3%).
-- `"partial_take_profit_pct"`: an optional decimal between 0 and 1.0 (e.g., 0.003 for 0.3%). If set, the bot will sell a fraction of the position when the price rises by this percentage above the entry.
-- `"partial_take_profit_fraction"`: required if partial_take_profit_pct is set. A decimal between 0 and 1.0 (e.g., 0.5 for 50%).
-- `"partial_take_profit_levels"`: an optional array of objects, each with:
-    - `"take_profit_pct"`: a decimal between 0 and 1.0 (e.g., 0.002 for 0.2%).
-    - `"fraction"`: a decimal between 0 and 1.0 (e.g., 0.25 for 25%). The fraction of the **original** position to sell at this level.
-    - `"min_depth"`: (optional) a positive number in base currency. If set, the bot will check that the cumulative ask volume from the current mid price up to the take‑profit price is at least this value before executing the partial sale.
-    - `"depth_timeout_seconds"`: (optional) a positive integer. If `min_depth` is set and the price reaches the take‑profit level but the ask depth is still insufficient, the bot will wait up to this many seconds for the depth to become sufficient.
-    - `"max_time_seconds"`: (optional) a positive integer. If the position has been open longer than this many seconds and this level has not yet triggered, the level is cancelled.
-  Levels must be sorted by increasing take_profit_pct. The sum of all fractions must be ≤ 1.0. Each level is triggered only once. If this array is provided, the single `partial_take_profit_pct` and `partial_take_profit_fraction` are ignored.
-- `"news_sentiment_exit_threshold"`: an optional float between -1.0 and 1.0 (e.g., -0.5). If set, the bot will close the position immediately if the aggregate news sentiment compound score drops below this threshold while the position is open.
-- `"strategy_interval_seconds"`: an optional positive integer (e.g., 60, 120, 300). If set, the bot will re‑evaluate the strategy for this stock every N seconds instead of the default interval.
-- `"limit_price"`: (optional) a specific limit price for the order. You may provide a `limit_price` for BUY orders to get a better entry price (e.g., at or near the VWAP). If you provide a `limit_price` during regular hours, the bot will place a limit order instead of a market order. If the price does not reach your limit, the order will not fill.
-- `"time_in_force"`: (optional) "day" or "gtc". Default "day". Required together with `limit_price` for extended‑hours orders.
-
-**Order Types (REQUIRED for every BUY/SELL):**
-You must specify the order type the bot should use. Available types:
-- `"market"`: Market order. Fills immediately at best available price. No extra parameters.
-- `"limit"`: Limit order. Requires `"limit_price"` (the maximum price to pay for a buy, or minimum to accept for a sell). Optionally `"time_in_force"` ("day" or "gtc").
-- `"stop"`: Stop order. Requires `"stop_price"`. For a buy, the order becomes a market buy when the price rises to or above the stop price. For a sell, it becomes a market sell when the price falls to or below the stop price. Optionally `"time_in_force"`.
-- `"stop_limit"`: Stop-Limit order. Requires `"stop_price"` and `"limit_price"`. When the stop price is reached, a limit order is placed at the limit price. Optionally `"time_in_force"`.
-- `"trailing_stop"`: Trailing Stop order. Requires `"trail_offset"` (in dollars, e.g., 0.50 for $0.50 trail). The stop price trails the market price by this offset. For a buy, the order triggers when the price rises to the trailing stop price; for a sell, when it falls to it. Optionally `"time_in_force"`.
-
-For BUY orders, you may use any type. For SELL orders, you may use market, limit, stop, stop_limit, or trailing_stop. If you use a stop or trailing_stop for a sell, the engine will place that order immediately after the buy fills, and it will act as the stop-loss. You may also place a separate take-profit limit order (by outputting a SELL with order_type "limit" and a limit_price above the entry). The engine will manage both orders (OCO – one cancels the other when filled).
-
-If you omit `order_type`, the engine will default to `"market"` for market orders, or `"limit"` if a `limit_price` is provided (backward compatible).
-
-**Exit Order Types (optional, for stop-loss and take-profit after a BUY):**
-You may specify the order type the engine should use for the stop-loss and take-profit exits. If you omit these, the engine will use its default behaviour (monitoring prices and placing market orders when triggered).
-- `"stop_loss_order_type"`: "market", "stop", "stop_limit", or "trailing_stop". Default: "stop" (a stop order at the stop-loss price).
-  - If "stop", requires `"stop_loss_stop_price"` (the trigger price). If omitted, the engine uses the computed stop-loss price.
-  - If "stop_limit", requires `"stop_loss_stop_price"` and `"stop_loss_limit_price"`.
-  - If "trailing_stop", requires `"stop_loss_trail_offset"` (in dollars).
-  - If "market", the stop-loss will be a market order (not recommended – it would sell immediately).
-- `"take_profit_order_type"`: "limit" (default) or "market".
-  - If "limit", requires `"take_profit_limit_price"` (the limit price). If omitted, the engine uses the computed take-profit price.
-  - If "market", the take-profit will be a market order when the price reaches the take-profit level (the engine will still monitor and place a market sell).
-
-When you provide these, the engine will place the stop-loss and take-profit orders immediately after the BUY fills, and they will act as OCO (one cancels the other when filled). The risk management loop will still handle trailing stop updates, partial take-profits, max hold time, etc.
-
-Required parameters must be provided for every BUY/SELL. If omitted, the trade is skipped. Optional parameters use standard behavior when omitted.
 """
 
 def build_stock_selection_prompt(
@@ -522,8 +463,6 @@ Return a JSON object with the following fields:
 - "min_llm_pause_duration_seconds": an integer between 300 and 14400 (e.g., 3600). The minimum duration in seconds that the LLM must wait before it can resume trading after pausing. This prevents rapid pause/resume cycles. Lower values = faster resume capability; higher values = more conservative cooldown.
 - "pause_max_consecutive_keep": an integer between 1 and 10 (e.g., 3). The maximum number of consecutive "keep paused" decisions the LLM can make before the engine force-resumes trading with a reduced risk multiplier. Lower values = quicker force-resume; higher values = more patience with LLM's pause decisions.
 - "pause_force_resume_risk_multiplier": a float between 0.0 and 1.0 (e.g., 0.3). The global risk multiplier applied when the engine force-resumes trading after too many consecutive "keep paused" decisions. Lower values = more conservative forced resume; higher values = more aggressive.
-- "max_partial_tp_reviews": an integer between 1 and 20 (e.g., 3). The maximum number of times the LLM can review a triggered partial take-profit before the engine force-executes the partial sell. Lower values = quicker partial profit-taking; higher values = more LLM discretion.
-- "max_dust_sweep_reviews": an integer between 1 and 20 (e.g., 3). The maximum number of times the LLM can review a triggered dust sweep before the engine force-sells the remaining dust. Lower values = quicker dust cleanup; higher values = more LLM discretion.
 - "max_portfolio_exposure_pct": a float between 0.0 and 1.0 (e.g., 0.7 for 70%). The maximum percentage of total portfolio value that can be deployed in open positions.
 - "max_portfolio_stop_risk_pct": a float between 0.0 and 1.0 (e.g., 0.05 for 5%). The maximum total stop-loss risk as a percentage of portfolio value.
 - "min_risk_reward_ratio": a positive number (e.g., 1.5). The minimum reward:risk ratio required for all trades. Trades with a lower ratio will be rejected.
@@ -627,9 +566,6 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
                 if ind.get('keltner_channels') is not None:
                     kc = ind['keltner_channels']
                     lines.append(f"    Keltner: Upper={kc['upper']:.6f} Middle={kc['middle']:.6f} Lower={kc['lower']:.6f}")
-                if ind.get('pivot_points') is not None:
-                    pp = ind['pivot_points']
-                    lines.append(f"    Pivot Points: P={pp['pivot']:.6f} R1={pp['r1']:.6f} S1={pp['s1']:.6f} R2={pp['r2']:.6f} S2={pp['s2']:.6f}")
             prompt += "\n".join(lines) + "\n"
     if market_trend:
         prompt += f"\nOverall market trend ({market_trend['symbol']}): daily change {market_trend.get('change_24h')}%, last price {market_trend.get('last')}\n"
@@ -750,17 +686,13 @@ def build_strategy_prompt(
     market_regime: Optional[str] = None,
     multi_tf_raw_candles: Optional[Dict[str, List[List]]] = None,
     multi_tf_indicators: Optional[Dict[str, Dict[str, Any]]] = None,
-    vwap: Optional[float] = None,
-    vwap_multi_tf: Optional[Dict[str, float]] = None,
     session_info: Optional[Dict[str, Any]] = None,
     sentiment_trend: Optional[float] = None,
     volume_trend: Optional[float] = None,
     ichimoku: Optional[Dict[str, Optional[float]]] = None,
     market_breadth: Optional[Dict[str, Any]] = None,
     full_market_breadth: Optional[Dict[str, Any]] = None,
-    parabolic_sar: Optional[float] = None,
     keltner_channels: Optional[Dict[str, float]] = None,
-    pivot_points: Optional[Dict[str, float]] = None,
     donchian_channels: Optional[Dict[str, float]] = None,
     atr_percentile: Optional[float] = None,
     global_risk_multiplier: Optional[float] = None,
@@ -969,10 +901,6 @@ Maximum symbols to trade: {max_symbols}
     if market_regime:
         prompt += f"\nMarket regime: {market_regime}\n"
 
-    if vwap is not None:
-        prompt += f"\nVWAP ({assigned_timeframe or 'current'}): {vwap:.6f}\n"
-    if vwap_multi_tf:
-        prompt += f"VWAP across timeframes: {json.dumps(vwap_multi_tf)}\n"
     if session_info:
         prompt += f"\nCurrent UTC hour: {session_info['utc_hour']} ({session_info['session']} session)\n"
     if minutes_to_market_close is not None:
@@ -1083,9 +1011,6 @@ Maximum symbols to trade: {max_symbols}
             trailing_dist = position_info.get('trailing_stop_distance_pct')
             trailing_act = position_info.get('trailing_stop_activation_pct')
             prompt += f"Trailing stop: enabled (distance={trailing_dist}, activation={trailing_act})\n"
-        executed_levels = position_info.get("partial_tp_levels_triggered", [])
-        if executed_levels:
-            prompt += f"Partial TP levels already executed: {executed_levels}\n"
         # Show max hold time remaining
         max_hold = position_info.get('max_hold_time_seconds')
         if max_hold is not None and max_hold > 0:
@@ -1108,8 +1033,8 @@ Maximum symbols to trade: {max_symbols}
                     )
         prompt += (
             "Use these summaries to assess short‑term momentum and trend across timeframes. "
-            "The lower timeframes (5m, 15m) are ideal for timing scalping entries and exits; "
-            "the higher timeframes (1h, 4h) show the larger trend.\n"
+            "The higher timeframes (1h, 4h) show the larger trend, while lower timeframes "
+            "provide additional context for entry and exit timing.\n"
         )
     if multi_tf_indicators:
         prompt += "\nComputed technical indicators per timeframe:\n"
@@ -1145,16 +1070,9 @@ Maximum symbols to trade: {max_symbols}
                     lines.append(f"  Donchian: Upper={dc['upper']:.4f} Middle={dc['middle']:.4f} Lower={dc['lower']:.4f}")
                 if ind.get('atr') is not None:
                     lines.append(f"  ATR(14)={ind['atr']:.6f}")
-                if ind.get('vwap') is not None:
-                    lines.append(f"  VWAP={ind['vwap']:.6f}")
-                if ind.get('parabolic_sar') is not None:
-                    lines.append(f"  Parabolic SAR={ind['parabolic_sar']:.6f}")
                 if ind.get('keltner_channels') is not None:
                     kc = ind['keltner_channels']
                     lines.append(f"  Keltner: Upper={kc['upper']:.6f} Middle={kc['middle']:.6f} Lower={kc['lower']:.6f}")
-                if ind.get('pivot_points') is not None:
-                    pp = ind['pivot_points']
-                    lines.append(f"  Pivot Points: P={pp['pivot']:.6f} R1={pp['r1']:.6f} S1={pp['s1']:.6f} R2={pp['r2']:.6f} S2={pp['s2']:.6f}")
                 prompt += "\n".join(lines) + "\n"
     elif raw_candles:
         summary = _summarize_ohlcv(raw_candles)
@@ -1251,9 +1169,6 @@ Maximum symbols to trade: {max_symbols}
             f"({full_market_breadth['positive_count']} positive).\n"
             "Broader measure of market health. If full breadth is very low (<25%) while candidate breadth is moderate, market may be more fragile than it appears.\n"
         )
-    if parabolic_sar is not None:
-        prompt += f"\nParabolic SAR: {parabolic_sar:.6f}\n"
-        prompt += "Parabolic SAR: trailing stop/reversal indicator. Price above SAR = uptrend, below = downtrend. Use as dynamic stop-loss.\n"
     if keltner_channels:
         prompt += (
             f"\nKeltner Channels (20 EMA, 2× ATR): "
@@ -1322,11 +1237,8 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         "- `action`: one of BUY, SELL, HOLD\n"
         "- `confidence`: a float between 0.0 and 1.0\n"
         "- `reasoning`: a string explaining **why** you chose this action and this confidence level. "
-        "Include the key factors (indicators, sentiment, order book, market regime, etc.) that led to your decision.\n"
-        "- `order_type`: one of \"market\", \"limit\", \"stop\", \"stop_limit\", \"trailing_stop\". Required for BUY/SELL.\n"
-        "- `stop_price`: required if order_type is \"stop\" or \"stop_limit\".\n"
-        "- `limit_price`: required if order_type is \"limit\" or \"stop_limit\".\n"
-        "- `trail_offset`: required if order_type is \"trailing_stop\" (in dollars, e.g., 0.50).\n"
+        "Include the key factors (indicators, sentiment, market regime, etc.) that led to your decision.\n"
+        "- `limit_price`: optional, a specific limit price for the order.\n"
         "- `time_in_force`: optional, \"day\" or \"gtc\". Default \"day\".\n"
         "You may include `\"portfolio_risk_adjustment_factor\"` (0.1–1.0) in the strategy parameters "
         "to vote on the overall portfolio risk for this cycle.\n"
@@ -1394,7 +1306,7 @@ Use this data to decide whether to BUY, SELL, or HOLD. If the stock has a poor w
             "(e.g., take-profit, trailing stop).\n"
             "**If you output HOLD without a new stop-loss, the engine will force-sell the position.**\n"
             "Choose the option that you believe will maximise profit or minimise loss given the current "
-            "market conditions, indicators, and order book.\n"
+            "market conditions and indicators.\n"
         )
     if take_profit_triggered:
         prompt += (
@@ -1406,7 +1318,7 @@ Use this data to decide whether to BUY, SELL, or HOLD. If the stock has a poor w
             "(via `take_profit_pct`). You may also update other parameters (e.g., stop-loss, trailing stop).\n"
             "**If you output HOLD without a new `take_profit_pct`, the engine will force-sell the position.**\n"
             "Choose the option that you believe will maximise profit given the current "
-            "market conditions, indicators, and order book.\n"
+            "market conditions and indicators.\n"
         )
     # --- Partial take-profit triggered ---
     if partial_tp_triggered:
