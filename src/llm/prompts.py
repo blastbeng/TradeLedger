@@ -1017,7 +1017,7 @@ Maximum symbols to trade: {max_symbols}
                         f"volume={summary['volume']}, candles={summary['candle_count']}\n"
                     )
         prompt += (
-            "Use these summaries to assess short‑term momentum and trend across timeframes. "
+            "Use these summaries to assess momentum and trend across timeframes. "
             "The higher timeframes (1h, 4h) show the larger trend, while lower timeframes "
             "provide additional context for entry and exit timing.\n"
         )
