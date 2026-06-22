@@ -6,7 +6,6 @@ from .factory import (
 from .market_data import (
     get_tradable_assets,
     get_quotes,
-    get_order_book,
     get_multi_timeframe_bars,
     get_bars_range,
 )
