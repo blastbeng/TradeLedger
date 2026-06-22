@@ -1088,6 +1088,11 @@ Maximum symbols to trade: {max_symbols}
             "**REQUIRED:** Perform a backtest on these candles using your proposed strategy. "
             "You MUST include a `backtest_summary` field in your JSON output with the results "
             "(e.g., \"3 wins, 2 losses, net +2.3%\"). If there is not enough data, explain why in the field.\n"
+            "**Note:** The engine will also run an independent Python backtest on this data using your "
+            "stop_loss_pct, take_profit_pct, max_hold_time_seconds, and trailing_stop parameters. "
+            "If the Python backtest shows a win rate below 25% and a profit factor below 0.5 (with at least "
+            "5 trades), your strategy will be rejected and you will be asked to revise. Make sure your "
+            "parameters are historically profitable.\n"
         )
     if drawdown_pct is not None:
         prompt += f"Current account drawdown: {drawdown_pct}%\n"

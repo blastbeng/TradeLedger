@@ -53,6 +53,7 @@ except ImportError:
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
+from src.strategies.backtester import backtest_strategy, format_backtest_summary
 from src.utils.redis_client import get_redis_client
 from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv
 
@@ -4241,6 +4242,133 @@ class TradingEngine:
                             logger.warning(f"LLM correction for {symbol} still invalid: {validated.reasoning}")
                     except Exception as e:
                         logger.error(f"LLM correction call failed for {symbol}: {e}")
+
+            # --- Python-based backtest for BUY signals ---
+            backtest_stats = None
+            if validated.action == "BUY":
+                bt_params = signal.strategy_params or {}
+                # Compute sl_pct and tp_pct (same logic as execution)
+                bt_stop_method = bt_params.get("stop_loss_method", "fixed")
+                if bt_stop_method == "atr_multiple" and atr is not None and atr > 0 and current_price > 0:
+                    bt_atr_mult = bt_params.get("stop_loss_atr_multiple", 2.0)
+                    bt_sl_pct = (bt_atr_mult * atr) / current_price
+                else:
+                    bt_sl_pct = bt_params.get("stop_loss_pct", 0.02)
+                bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
+                bt_max_hold = bt_params.get("max_hold_time_seconds")
+                bt_trailing = bt_params.get("trailing_stop", False)
+                bt_trail_dist = bt_params.get("trailing_stop_distance_pct")
+                bt_trail_act = bt_params.get("trailing_stop_activation_pct")
+
+                # Use historical_ohlcv if available, otherwise raw candles for the assigned timeframe
+                bt_candles = historical_ohlcv or raw_candles
+                if bt_candles and len(bt_candles) >= 10:
+                    backtest_stats = backtest_strategy(
+                        candles=bt_candles,
+                        stop_loss_pct=bt_sl_pct,
+                        take_profit_pct=bt_tp_pct,
+                        max_hold_time_seconds=bt_max_hold,
+                        trailing_stop=bt_trailing,
+                        trailing_stop_distance_pct=bt_trail_dist,
+                        trailing_stop_activation_pct=bt_trail_act,
+                        fee_rate=fee_rate,
+                    )
+                    bt_summary = format_backtest_summary(backtest_stats)
+                    logger.info(f"Backtest for {symbol}: {bt_summary}")
+
+                    # If backtest shows very poor performance, send correction to LLM
+                    if (
+                        not backtest_stats.get("insufficient_data")
+                        and backtest_stats.get("total_trades", 0) >= 5
+                        and backtest_stats.get("win_rate", 1.0) < 0.25
+                        and backtest_stats.get("profit_factor", 1.0) < 0.5
+                    ):
+                        logger.warning(
+                            f"Backtest rejected strategy for {symbol}: win_rate={backtest_stats['win_rate']:.1%}, "
+                            f"profit_factor={backtest_stats['profit_factor']:.2f}. Asking LLM to revise."
+                        )
+                        correction_prompt = (
+                            f"Your proposed BUY strategy for {symbol} was backtested in Python on historical data.\n"
+                            f"Results: {bt_summary}\n"
+                            f"The strategy historically loses money. Please either:\n"
+                            f"1. Adjust your stop_loss_pct, take_profit_pct, or max_hold_time_seconds to improve performance.\n"
+                            f"2. If you believe current conditions differ from the historical period, explain why in your reasoning.\n"
+                            f"3. If you cannot find profitable parameters, output HOLD.\n"
+                            f"Output a corrected JSON decision with the same format as before."
+                        )
+                        try:
+                            bt_correction_result = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    get_cached_llm_response,
+                                    compact_prompt(correction_prompt),
+                                    COMPACTED_SYSTEM_PROMPT,
+                                    30,
+                                    model_type="actuator",
+                                    temperature=effective_temp,
+                                ),
+                                timeout=settings.LLM_TIMEOUT
+                            )
+                            bt_corrected_response = bt_correction_result["response"]
+                            llm_provider = bt_correction_result["provider"]
+                            llm_model = bt_correction_result["model"]
+                            bt_corrected_signal = create_strategy_from_llm(bt_corrected_response).generate_signal({})
+                            bt_corrected_signal.model_type = strategy_model_type
+                            bt_corrected_signal.llm_provider = llm_provider
+                            bt_corrected_signal.llm_model = llm_model
+                            bt_validated = validate_signal(
+                                bt_corrected_signal,
+                                fee_rate=fee_rate,
+                                atr=atr,
+                                price=current_price,
+                                timeframe_seconds=tf_seconds,
+                                min_stop_atr_mult=min_stop_atr_mult,
+                                min_hold_time_mult=min_hold_time_mult,
+                                global_min_risk_reward_ratio=global_min_rr,
+                            )
+                            if bt_validated.action != "HOLD":
+                                # Re-run backtest on corrected strategy
+                                bt_params2 = bt_corrected_signal.strategy_params or {}
+                                bt_stop_method2 = bt_params2.get("stop_loss_method", "fixed")
+                                if bt_stop_method2 == "atr_multiple" and atr is not None and atr > 0 and current_price > 0:
+                                    bt_sl_pct2 = (bt_params2.get("stop_loss_atr_multiple", 2.0) * atr) / current_price
+                                else:
+                                    bt_sl_pct2 = bt_params2.get("stop_loss_pct", 0.02)
+                                backtest_stats2 = backtest_strategy(
+                                    candles=bt_candles,
+                                    stop_loss_pct=bt_sl_pct2,
+                                    take_profit_pct=bt_params2.get("take_profit_pct", 0.05),
+                                    max_hold_time_seconds=bt_params2.get("max_hold_time_seconds"),
+                                    trailing_stop=bt_params2.get("trailing_stop", False),
+                                    trailing_stop_distance_pct=bt_params2.get("trailing_stop_distance_pct"),
+                                    trailing_stop_activation_pct=bt_params2.get("trailing_stop_activation_pct"),
+                                    fee_rate=fee_rate,
+                                )
+                                bt_summary2 = format_backtest_summary(backtest_stats2)
+                                logger.info(f"Backtest after correction for {symbol}: {bt_summary2}")
+                                validated = bt_validated
+                                signal = bt_corrected_signal
+                                backtest_stats = backtest_stats2
+                                if self.notifier:
+                                    await self.notifier.send_notification(
+                                        f"🔄 {display_symbol}: Strategy revised after backtest. {bt_summary2}",
+                                        summary={
+                                            "symbol": symbol,
+                                            "action": "INFO",
+                                            "reason": "Strategy revised after backtest correction",
+                                            "backtest": bt_summary2,
+                                            "model_type": strategy_model_type,
+                                        }
+                                    )
+                            else:
+                                logger.info(f"LLM chose HOLD after backtest correction for {symbol}")
+                                validated = bt_validated
+                                signal = bt_corrected_signal
+                        except Exception as e:
+                            logger.error(f"Backtest correction call failed for {symbol}: {e}")
+
+                    # Attach backtest summary to the validated signal for notifications
+                    if backtest_stats and not backtest_stats.get("insufficient_data"):
+                        validated.backtest_summary = format_backtest_summary(backtest_stats)
 
             # Log and notify the decision
             logger.info(f"Decision for {symbol}: {validated.action} (confidence: {validated.confidence:.2f})")
