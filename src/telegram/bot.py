@@ -278,8 +278,9 @@ class TelegramBot:
             current_price = None
             try:
                 from src.exchanges.market_data import get_quotes
-                quotes = await asyncio.to_thread(get_quotes, [sym])
-                ticker = quotes.get(sym)
+                base_sym = sym.split("/")[0]
+                quotes = await asyncio.to_thread(get_quotes, [base_sym])
+                ticker = quotes.get(base_sym)
                 current_price = ticker.get('last') if ticker else None
             except Exception as e:
                 logger.warning(f"Could not fetch current price for {sym}: {e}")
@@ -385,8 +386,9 @@ class TelegramBot:
                 current_price = None
                 try:
                     from src.exchanges.market_data import get_quotes
-                    quotes = await asyncio.to_thread(get_quotes, [sym])
-                    ticker = quotes.get(sym)
+                    base_sym = sym.split("/")[0]
+                    quotes = await asyncio.to_thread(get_quotes, [base_sym])
+                    ticker = quotes.get(base_sym)
                     current_price = ticker.get('last') if ticker else None
                 except Exception:
                     pass
