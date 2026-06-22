@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 import yfinance as yf
 
 from src.config.settings import settings
+from src.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -18,18 +19,65 @@ TIMEFRAME_MAP = {
 }
 
 
+def _fetch_country(symbol: str) -> Optional[str]:
+    """Fetch the country property from yfinance info for a symbol."""
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        return info.get("country")
+    except Exception as e:
+        logger.debug(f"Failed to fetch country for {symbol}: {e}")
+        return None
+
+
 def get_tradable_assets(trading_client=None) -> List[str]:
-    """Return a list of tradable Italian equity symbols."""
-    # Hardcoded list of major Italian stocks (FTSE MIB constituents)
+    """Return a list of tradable Italian equity symbols, filtered by country.
+
+    Builds candidate symbols by appending the configured ticker suffix to each
+    base symbol, then verifies via yfinance that each symbol's country matches
+    the configured TARGET_COUNTRY. Results are cached in Redis for 24 hours.
+    """
+    # Comprehensive list of major Italian stocks (FTSE MIB and mid-cap constituents)
     base_symbols = [
         "ENI", "ENEL", "ISP", "UCG", "STM", "TIT", "FERRARI", "MONC", "AZM",
         "RACE", "BAMI", "MB", "TEN", "PRY", "BPE", "EXO", "INW", "NEXI",
         "REC", "SPM", "BZU", "DIA", "HER", "IPG", "LDO", "STL", "WBG",
         "A2A", "BMO", "CNF", "ERG", "GAM", "ITM", "KOS", "NHF", "PST",
-        "SAL", "SRG", "TOD", "UNI", "USC", "VLT", "ZUC"
+        "SAL", "SRG", "TOD", "UNI", "USC", "VLT", "ZUC",
     ]
     suffix = settings.TICKER_SUFFIX
-    return [f"{sym}{suffix}" for sym in base_symbols]
+    candidates = [f"{sym}{suffix}" for sym in base_symbols]
+
+    # Check Redis cache
+    redis_client = get_redis_client()
+    cache_key = f"tradable_assets:{settings.TARGET_COUNTRY}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            import json
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    # Filter candidates by country using yfinance
+    target_country = settings.TARGET_COUNTRY.lower()
+    filtered = []
+    for symbol in candidates:
+        country = _fetch_country(symbol)
+        if country is not None and country.lower() == target_country:
+            filtered.append(symbol)
+        else:
+            logger.debug(f"Symbol {symbol} skipped (country={country}, target={target_country})")
+
+    # Cache the filtered list for 24 hours
+    try:
+        import json
+        redis_client.setex(cache_key, 86400, json.dumps(filtered))
+    except Exception as e:
+        logger.warning(f"Failed to cache tradable assets: {e}")
+
+    logger.info(f"Tradable assets for {settings.TARGET_COUNTRY}: {len(filtered)} symbols")
+    return filtered
 
 
 def get_quotes(data_client=None, symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:

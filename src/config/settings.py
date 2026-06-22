@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     INITIAL_EVALUATION_DELAY_SECONDS: int = 15
 
     # Base currency
-    BASE_CURRENCY: str = "USD"
+    BASE_CURRENCY: str = "EUR"
 
     # Benchmark symbol for relative strength and market trend (e.g., SPY, QQQ)
     BENCHMARK_SYMBOL: str = "SPY"
