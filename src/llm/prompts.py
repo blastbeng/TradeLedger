@@ -501,7 +501,7 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
         prompt += (
             "\n**Note:** No OHLCV data is available for any candidate symbol. "
             "You must base your selection entirely on ticker data (price, 24h change, volume), "
-            "news sentiment, scalping scores, and other provided metrics. "
+            "news sentiment, trend quality scores, and other provided metrics. "
             "Do not pause trading solely due to missing OHLCV if other indicators suggest strong opportunities.\n"
         )
     if correlation_matrix:
