@@ -16,7 +16,6 @@ from src.exchanges.factory import get_trading_client, get_streaming_client, get_
 from src.exchanges.ws_manager import WebSocketManager
 from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range
 from src.exchanges.yahoo_finance import get_yahoo_quote
-from src.trading.live_trader import LiveTrader
 from src.trading.paper_trader import PaperTrader
 from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import (
@@ -211,12 +210,8 @@ class TradingEngine:
             raise
 
         self.ws_manager = WebSocketManager(self.streaming_client, [])
-        if settings.TRADING_MODE in ("paper", "notify"):
-            self.trader = PaperTrader()
-            logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
-        else:
-            self.trader = LiveTrader(self.exchange)
-            logger.info("LiveTrader initialized (notify mode – no auto-execution).")
+        self.trader = PaperTrader()
+        logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
         self._load_state()
         self._ensure_cost_basis()
 
