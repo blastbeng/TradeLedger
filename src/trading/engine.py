@@ -14,7 +14,7 @@ from src.config.settings import settings
 from src.exchanges.fees import get_fee_rate
 from src.exchanges.factory import get_trading_client, get_streaming_client, get_data_client
 from src.exchanges.ws_manager import WebSocketManager
-from src.exchanges.market_data import get_tradable_assets, get_quotes, get_order_book, get_multi_timeframe_bars, get_bars_range
+from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range
 from src.exchanges.yahoo_finance import get_yahoo_quote
 from src.trading.live_trader import LiveTrader
 from src.llm.cache import get_cached_llm_response, compute_market_hash
@@ -5441,7 +5441,7 @@ class TradingEngine:
                                 try:
                                     ob = self.ws_manager.get_order_book(symbol)
                                     if ob is None:
-                                        ob = await asyncio.to_thread(get_order_book, self.data_client, symbol.split("/")[0], 20)
+                                        ob = None
                                 except Exception as e:
                                     logger.warning(f"Could not fetch order book for depth check on {symbol}: {e}")
                                     ob = None
@@ -9167,25 +9167,6 @@ class TradingEngine:
                     return True
         return False
 
-    def _get_session_info(self) -> dict:
-        """Return current US market session info using DST-aware Eastern Time."""
-        now_et = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
-        weekday = now_et.weekday()
-        hour = now_et.hour + now_et.minute / 60.0
-        if weekday >= 5:
-            session = "Closed (weekend)"
-        elif hour < 4:
-            session = "Closed (overnight)"
-        elif hour < 9.5:
-            session = "Pre-market"
-        elif hour < 16:
-            session = "Regular"
-        elif hour < 20:
-            session = "After-hours"
-        else:
-            session = "Closed (overnight)"
-        return {"utc_hour": datetime.now(timezone.utc).hour, "session": session}
-
     async def _is_market_open(self) -> bool:
         """Return True if the Italian market (Borsa Italiana) is currently open."""
         clock = await self._get_clock()
@@ -9202,13 +9183,13 @@ class TradingEngine:
 
     def _get_session_info(self) -> dict:
         """Return current Italian market session info using Europe/Rome timezone."""
-        now_et = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
-        weekday = now_et.weekday()
-        hour = now_et.hour + now_et.minute / 60.0
+        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Rome"))
+        weekday = now_rome.weekday()
+        hour = now_rome.hour + now_rome.minute / 60.0
         if weekday >= 5:
             session = "Closed (weekend)"
         elif hour < 9.0:
-            session = "Pre-market"
+            session = "Closed (pre-open)"
         elif hour < 17.5:
             session = "Regular"
         else:

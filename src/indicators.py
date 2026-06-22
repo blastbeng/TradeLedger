@@ -415,3 +415,104 @@ def compute_all_indicators(
         ind['donchian_channels'] = compute_donchian_channels(highs, lows, period=donchian_period)
 
     return ind
+
+
+def compute_vwap(candles: List[List]) -> Optional[float]:
+    """Compute Volume Weighted Average Price (VWAP) from OHLCV candles."""
+    if not candles:
+        return None
+    total_volume = 0.0
+    total_typical = 0.0
+    for c in candles:
+        typical = (c[2] + c[3] + c[4]) / 3
+        volume = c[5]
+        total_typical += typical * volume
+        total_volume += volume
+    if total_volume == 0:
+        return None
+    return round(total_typical / total_volume, 8)
+
+
+def compute_parabolic_sar(
+    highs: List[float], lows: List[float],
+    af_start: float = 0.02, af_max: float = 0.2
+) -> Optional[float]:
+    """Compute Parabolic SAR for the latest bar using the standard algorithm."""
+    if len(highs) < 2:
+        return None
+    is_long = True
+    af = af_start
+    ep = highs[0]
+    sar = lows[0]
+    for i in range(1, len(highs)):
+        if is_long:
+            sar = sar + af * (ep - sar)
+            if sar > lows[i]:
+                sar = lows[i]
+            if lows[i] < sar:
+                is_long = False
+                sar = ep
+                ep = lows[i]
+                af = af_start
+            else:
+                if highs[i] > ep:
+                    ep = highs[i]
+                    af = min(af + af_start, af_max)
+        else:
+            sar = sar + af * (ep - sar)
+            if sar < highs[i]:
+                sar = highs[i]
+            if highs[i] > sar:
+                is_long = True
+                sar = ep
+                ep = highs[i]
+                af = af_start
+            else:
+                if lows[i] < ep:
+                    ep = lows[i]
+                    af = min(af + af_start, af_max)
+    return round(sar, 8)
+
+
+def compute_keltner_channels(
+    closes: List[float], highs: List[float], lows: List[float],
+    period: int = 20, atr_mult: float = 2.0
+) -> Optional[Dict[str, float]]:
+    """Compute Keltner Channels using EMA middle and ATR-based bands."""
+    if len(closes) < period:
+        return None
+    ema_values = compute_ema(closes, period)
+    if not ema_values:
+        return None
+    middle = ema_values[-1]
+    candles = [[0, 0, h, l, c, 0] for h, l, c in zip(highs, lows, closes)]
+    atr = compute_atr(candles, period)
+    if atr is None:
+        return None
+    upper = middle + atr_mult * atr
+    lower = middle - atr_mult * atr
+    return {
+        "upper": round(upper, 8),
+        "middle": round(middle, 8),
+        "lower": round(lower, 8),
+    }
+
+
+def compute_pivot_points(high: float, low: float, close: float) -> Dict[str, float]:
+    """Compute standard pivot points from previous period high/low/close."""
+    pivot = (high + low + close) / 3
+    r1 = 2 * pivot - low
+    s1 = 2 * pivot - high
+    r2 = pivot + (high - low)
+    s2 = pivot - (high - low)
+    r3 = high + 2 * (pivot - low)
+    s3 = low - 2 * (high - pivot)
+    return {
+        "pivot": round(pivot, 8),
+        "r1": round(r1, 8),
+        "r2": round(r2, 8),
+        "r3": round(r3, 8),
+        "s1": round(s1, 8),
+        "s2": round(s2, 8),
+        "s3": round(s3, 8),
+    }
