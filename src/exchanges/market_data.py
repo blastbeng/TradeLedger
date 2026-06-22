@@ -81,39 +81,37 @@ def get_tradable_assets(trading_client=None) -> List[str]:
 
 
 def get_quotes(data_client=None, symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
+    """Fetch latest quotes for a list of symbols using yfinance fast_info.
+
+    Returns a dict mapping symbol -> {last, bid, ask, volume, change_24h, percentage, quoteVolume}.
+    """
     if symbols is None:
         symbols = []
-    """Fetch latest quotes for a list of symbols using yfinance.
-
-    Returns a dict mapping symbol -> {last, bid, ask, volume, change_24h}.
-    """
     if not symbols:
         return {}
     result = {}
-    try:
-        tickers = yf.Tickers(" ".join(symbols))
-        hist = tickers.history(period="1d", interval="1d")
-        for sym in symbols:
-            if sym in hist:
-                close = hist[sym]["Close"].iloc[-1] if not hist[sym].empty else None
-                open_price = hist[sym]["Open"].iloc[-1] if not hist[sym].empty else None
-                volume = hist[sym]["Volume"].iloc[-1] if not hist[sym].empty else None
-                change_24h = ((close - open_price) / open_price * 100) if close and open_price and open_price > 0 else None
-                result[sym] = {
-                    "last": close,
-                    "bid": None,
-                    "ask": None,
-                    "volume": volume,
-                    "change_24h": change_24h,
-                    "percentage": change_24h,
-                    "quoteVolume": volume,
-                }
-            else:
-                result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
-    except Exception as e:
-        logger.warning(f"yfinance quote fetch failed: {e}")
-        for sym in symbols:
-            result.setdefault(sym, {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None})
+    for sym in symbols:
+        try:
+            ticker = yf.Ticker(sym)
+            info = ticker.fast_info
+            last = info.get("lastPrice")
+            bid = info.get("bid")
+            ask = info.get("ask")
+            volume = info.get("volume")
+            prev_close = info.get("previousClose")
+            change_24h = ((last - prev_close) / prev_close * 100) if last and prev_close and prev_close > 0 else None
+            result[sym] = {
+                "last": last,
+                "bid": bid,
+                "ask": ask,
+                "volume": volume,
+                "change_24h": change_24h,
+                "percentage": change_24h,
+                "quoteVolume": volume,
+            }
+        except Exception as e:
+            logger.debug(f"fast_info failed for {sym}: {e}")
+            result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
     return result
 
 

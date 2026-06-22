@@ -4,8 +4,8 @@ import logging
 import math
 import re
 import time
-from dataclasses import asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 from zoneinfo import ZoneInfo
 
@@ -66,6 +66,22 @@ MIN_SYMBOL_REEVALUATION_INTERVAL = 300  # seconds (5 minutes) – prevents rapid
 MIN_LLM_PAUSE_DURATION = 1800  # seconds (30 min) – LLM cannot resume before this
 MAX_STOP_LOSS_REVIEWS = 10   # force-sell after this many consecutive stop-loss reviews
 MAX_TAKE_PROFIT_REVIEWS = 10   # force-sell after this many consecutive take-profit reviews
+
+
+@dataclass
+class ClockInfo:
+    """Market clock info replacing Alpaca's clock object."""
+    is_open: bool
+    timestamp: datetime
+    next_open: datetime
+
+
+@dataclass
+class AssetInfo:
+    """Dummy asset info replacing Alpaca's asset object."""
+    name: str = ""
+    min_order_size: Optional[float] = 0.0
+    fractionable: bool = True
 
 
 class TradingEngine:
@@ -216,19 +232,17 @@ class TradingEngine:
         return assets
 
     async def _get_asset_info(self, symbol: str) -> Any:
-        """Return Alpaca asset info, cached for 1 hour to reduce API calls."""
+        """Return asset info (dummy, since Alpaca is no longer used), cached for 1 hour."""
         base = symbol.split("/")[0] if "/" in symbol else symbol
         now = time.time()
         if base in self._asset_cache and (now - self._asset_cache_time.get(base, 0)) < 3600:
             return self._asset_cache[base]
-        try:
-            asset = await asyncio.to_thread(self.exchange.get_asset, base)
-            self._asset_cache[base] = asset
-            self._asset_cache_time[base] = now
-            return asset
-        except Exception as e:
-            logger.warning(f"Failed to fetch asset info for {base}: {e}")
-            return self._asset_cache.get(base)  # return stale cache if available
+
+        # Return a dummy AssetInfo with permissive defaults
+        asset = AssetInfo(name=base, min_order_size=0.0, fractionable=True)
+        self._asset_cache[base] = asset
+        self._asset_cache_time[base] = now
+        return asset
 
     async def _get_all_position_tickers(self) -> Dict[str, Dict[str, Any]]:
         """Fetch tickers for all open positions, batching missing ones into a single API call."""
@@ -299,28 +313,51 @@ class TradingEngine:
             logger.warning(f"Failed to fetch sentiment for {base}: {e}")
             return None
 
-    async def _get_clock(self, ttl: float = 30.0) -> Optional[Any]:
-        """Fetch the current market clock from Alpaca, cached for `ttl` seconds.
+    async def _get_clock(self, ttl: float = 30.0) -> Optional[ClockInfo]:
+        """Return Italian market clock info, cached for `ttl` seconds.
 
-        All internal callers (_is_market_open, _market_clock_monitor,
-        get_pause_status) share this cache to avoid exceeding Alpaca's
-        rate limit.  The cache is refreshed at most every `ttl` seconds.
+        Computes market open/close based on Borsa Italiana hours:
+        Monday–Friday, 9:00–17:30 Europe/Rome timezone.
         """
         now = time.time()
         if self._clock_cache is not None and (now - self._clock_cache_time) < ttl:
             return self._clock_cache
 
-        try:
-            clock = await asyncio.to_thread(self.exchange.get_clock)
-            self._clock_cache = clock
-            self._clock_cache_time = now
-            return clock
-        except Exception as e:
-            logger.warning(f"Failed to fetch Alpaca clock: {e}")
-            if self._clock_cache is not None:
-                logger.warning("Using cached clock as fallback.")
-                return self._clock_cache
-            return None
+        rome_tz = ZoneInfo("Europe/Rome")
+        now_rome = datetime.now(timezone.utc).astimezone(rome_tz)
+        weekday = now_rome.weekday()
+        hour = now_rome.hour + now_rome.minute / 60.0
+        is_open = weekday < 5 and 9.0 <= hour < 17.5
+
+        # Compute next open time
+        if weekday < 5 and hour < 9.0:
+            # Today, before open
+            next_open = now_rome.replace(hour=9, minute=0, second=0, microsecond=0)
+        elif weekday < 5 and hour >= 17.5:
+            # Today, after close → next business day
+            next_open = self._next_business_day_open(now_rome)
+        elif weekday >= 5:
+            # Weekend → next business day
+            next_open = self._next_business_day_open(now_rome)
+        else:
+            # Market is currently open → next open is the next business day
+            next_open = self._next_business_day_open(now_rome)
+
+        clock = ClockInfo(is_open=is_open, timestamp=now_rome, next_open=next_open)
+        self._clock_cache = clock
+        self._clock_cache_time = now
+        return clock
+
+    @staticmethod
+    def _next_business_day_open(from_dt: datetime) -> datetime:
+        """Return the next business day's 9:00 AM Europe/Rome datetime."""
+        rome_tz = ZoneInfo("Europe/Rome")
+        day = from_dt.date()
+        while True:
+            day = day + timedelta(days=1)
+            if day.weekday() < 5:
+                break
+        return datetime(day.year, day.month, day.day, 9, 0, 0, tzinfo=rome_tz)
 
     async def stop(self):
         """Gracefully stop the engine and all background tasks."""
@@ -538,8 +575,8 @@ class TradingEngine:
 
                 if not is_open:
                     # Market closed – pause if not already paused (atomic)
-                    now_et = clock.timestamp.astimezone(ZoneInfo("America/New_York"))
-                    next_open_et = clock.next_open.astimezone(ZoneInfo("America/New_York"))
+                    now_rome = clock.timestamp.astimezone(ZoneInfo("Europe/Rome"))
+                    next_open_rome = clock.next_open.astimezone(ZoneInfo("Europe/Rome"))
                     remaining_seconds = (clock.next_open - clock.timestamp).total_seconds()
                     if remaining_seconds > 3600:
                         hours = int(remaining_seconds // 3600)
@@ -606,8 +643,8 @@ class TradingEngine:
                                 countdown_str = f"{minutes}m {seconds}s"
                             else:
                                 countdown_str = f"{int(remaining_seconds)}s"
-                            next_open_et = clock.next_open.astimezone(ZoneInfo("America/New_York")) if clock else None
-                            next_open_str = next_open_et.strftime('%H:%M %d/%m/%Y') if next_open_et else "?"
+                            next_open_rome = clock.next_open.astimezone(ZoneInfo("Europe/Rome")) if clock else None
+                            next_open_str = next_open_rome.strftime('%H:%M %d/%m/%Y') if next_open_rome else "?"
                             update_msg = (
                                 f"⏸️ Market still closed. Reopens in {countdown_str} "
                                 f"(at {next_open_str})"
@@ -893,7 +930,10 @@ class TradingEngine:
         return self._timeframe_to_ms(timeframe) // 1000
 
     async def _get_stock_name(self, symbol: str) -> str:
-        """Return the human‑readable company name for a symbol, cached in Redis."""
+        """Return the human-readable company name for a symbol, cached in Redis.
+
+        Uses yfinance to fetch the name.
+        """
         base = symbol.split("/")[0] if "/" in symbol else symbol
         cache_key = f"stock_name:{base}"
         try:
@@ -904,8 +944,10 @@ class TradingEngine:
             pass
 
         try:
-            asset = await self._get_asset_info(symbol)
-            name = asset.name if asset and asset.name else base
+            import yfinance as yf
+            ticker = yf.Ticker(base)
+            info = ticker.info
+            name = info.get("longName") or info.get("shortName") or base
         except Exception:
             name = base
 
@@ -3855,13 +3897,13 @@ class TradingEngine:
                 pass
             session_info = self._get_session_info()
 
-            # Compute minutes until market close (4:00 PM ET = 16:00 ET)
-            now_et = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
-            weekday = now_et.weekday()
+            # Compute minutes until market close (5:30 PM Rome = 17:30)
+            now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Rome"))
+            weekday = now_rome.weekday()
             if weekday < 5:  # Monday-Friday
-                et_minutes = now_et.hour * 60 + now_et.minute
-                close_minutes = 16 * 60  # 4:00 PM ET
-                minutes_to_market_close = close_minutes - et_minutes
+                rome_minutes = now_rome.hour * 60 + now_rome.minute
+                close_minutes = 17 * 60 + 30  # 5:30 PM Rome
+                minutes_to_market_close = close_minutes - rome_minutes
                 if minutes_to_market_close < 0:
                     minutes_to_market_close = 0  # market already closed
             else:
@@ -5039,7 +5081,7 @@ class TradingEngine:
 
                 alpaca_time_str = None
                 if clock is not None:
-                    alpaca_time_str = clock.timestamp.astimezone(ZoneInfo("America/New_York")).strftime('%H:%M %d/%m/%Y')
+                    alpaca_time_str = clock.timestamp.astimezone(ZoneInfo("Europe/Rome")).strftime('%H:%M %d/%m/%Y')
                     if not clock.is_open:
                         now_utc = datetime.now(timezone.utc)
                         next_open = clock.next_open
@@ -9137,7 +9179,7 @@ class TradingEngine:
         return {"utc_hour": datetime.now(timezone.utc).hour, "session": session}
 
     async def _is_market_open(self) -> bool:
-        """Return True if the US market is currently open (via Alpaca clock)."""
+        """Return True if the Italian market (Borsa Italiana) is currently open."""
         clock = await self._get_clock()
         if clock is None:
             # Fallback: if clock unavailable, assume closed to be safe
@@ -9145,15 +9187,38 @@ class TradingEngine:
         return clock.is_open
 
     def _is_regular_hours(self) -> bool:
-        """Return True if current time is within regular US market hours (9:30–16:00 ET)."""
-        now_et = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
-        weekday = now_et.weekday()
+        """Return True if current time is within Borsa Italiana hours (9:00–17:30 Rome)."""
+        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Rome"))
+        weekday = now_rome.weekday()
         if weekday >= 5:
             return False
-        hour = now_et.hour + now_et.minute / 60.0
-        if hour < 9.5 or hour >= 16.0:
+        hour = now_rome.hour + now_rome.minute / 60.0
+        if hour < 9.0 or hour >= 17.5:
             return False
         return True
+>>>>>>> REPLACE````
+
+src/trading/engine.py
+````python
+<<<<<<< SEARCH
+    def _get_session_info(self) -> dict:
+        """Return current US market session info using DST-aware Eastern Time."""
+        now_et = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
+        weekday = now_et.weekday()
+        hour = now_et.hour + now_et.minute / 60.0
+        if weekday >= 5:
+            session = "Closed (weekend)"
+        elif hour < 4:
+            session = "Closed (overnight)"
+        elif hour < 9.5:
+            session = "Pre-market"
+        elif hour < 16:
+            session = "Regular"
+        elif hour < 20:
+            session = "After-hours"
+        else:
+            session = "Closed (overnight)"
+        return {"utc_hour": datetime.now(timezone.utc).hour, "session": session}
 
     def _default_limit_price(
         self, symbol: str, action: str, ticker: Dict[str, Any],
