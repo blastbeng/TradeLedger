@@ -192,7 +192,7 @@ def compute_ichimoku(
 def compute_donchian_channels(
     highs: List[float], lows: List[float], period: int = 20
 ) -> Optional[Dict[str, float]]:
-    """Compute Donchian Channels (upper, middle, lower).
+    """Compute Donchian Channels (upper, middle, lower) using TA-Lib MAX/MIN.
 
     Upper = highest high over N periods
     Lower = lowest low over N periods
@@ -203,8 +203,15 @@ def compute_donchian_channels(
     if len(highs) < period or len(lows) < period:
         return None
 
-    upper = max(highs[-period:])
-    lower = min(lows[-period:])
+    upper_arr = talib.MAX(np.array(highs, dtype=float), timeperiod=period)
+    lower_arr = talib.MIN(np.array(lows, dtype=float), timeperiod=period)
+    
+    upper = upper_arr[-1]
+    lower = lower_arr[-1]
+    
+    if np.isnan(upper) or np.isnan(lower):
+        return None
+
     middle = (upper + lower) / 2.0
 
     return {
