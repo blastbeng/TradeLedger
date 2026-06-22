@@ -465,8 +465,8 @@ Return a JSON object with the following fields:
 
 You may optionally include "stock_revaluation_interval_seconds" (integer >= 60) to change how often the bot re-evaluates the stock list.
 
-Example: {{"stocks": [{{"symbol": "AAPL", "timeframe": "1h", "sector": "Technology", "max_tenure_hours": 48}}, {{"symbol": "MSFT", "timeframe": "15m", "sector": "Technology"}}, {{"symbol": "NVDA", "timeframe": "5m", "sector": "Technology"}}], "max_stocks": 2, "max_positions_per_sector": 2, "skip_eval_price_change_atr_mult": 0.5, "skip_eval_rsi_change": 5.0, "skip_eval_rsi_oversold": 30.0, "skip_eval_rsi_overbought": 70.0, "skip_eval_macd_hist_change": 0.0005, "regime_adx_strong": 40.0, "regime_adx_moderate": 25.0, "regime_volatility_high_pct": 80.0, "regime_volatility_low_pct": 20.0, "regime_bb_squeeze_width": 0.02, "regime_bb_expansion_width": 0.08, "min_stop_loss_atr_mult": 1.5, "min_max_hold_time_mult": 1.5, "max_stop_loss_reviews": 3, "max_take_profit_reviews": 3, "min_llm_pause_duration_seconds": 3600, "pause_max_consecutive_keep": 3, "pause_force_resume_risk_multiplier": 0.3, "max_partial_tp_reviews": 3, "max_dust_sweep_reviews": 3, 
-"reasoning": "AAPL shows strong uptrend on 1h with high volume; MSFT has bullish MACD crossover on 15m.", "stock_revaluation_interval_seconds": 300, "max_portfolio_exposure_pct": 0.8, "max_portfolio_stop_risk_pct": 0.1, "min_risk_reward_ratio": 1.5, "limit_price_max_distance_pct": 0.05, "pause_trading": false, "pause_reason": "Market conditions are favorable"}}
+Example: {{"stocks": [{{"symbol": "ENI.MI/EUR", "timeframe": "1h", "sector": "Energy", "max_tenure_hours": 48}}, {{"symbol": "ENEL.MI/EUR", "timeframe": "15m", "sector": "Utilities"}}, {{"symbol": "STM.MI/EUR", "timeframe": "5m", "sector": "Technology"}}], "max_stocks": 2, "max_positions_per_sector": 2, "skip_eval_price_change_atr_mult": 0.5, "skip_eval_rsi_change": 5.0, "skip_eval_rsi_oversold": 30.0, "skip_eval_rsi_overbought": 70.0, "skip_eval_macd_hist_change": 0.0005, "regime_adx_strong": 40.0, "regime_adx_moderate": 25.0, "regime_volatility_high_pct": 80.0, "regime_volatility_low_pct": 20.0, "regime_bb_squeeze_width": 0.02, "regime_bb_expansion_width": 0.08, "min_stop_loss_atr_mult": 1.5, "min_max_hold_time_mult": 1.5, "max_stop_loss_reviews": 3, "max_take_profit_reviews": 3, "min_llm_pause_duration_seconds": 3600, "pause_max_consecutive_keep": 3, "pause_force_resume_risk_multiplier": 0.3, "max_partial_tp_reviews": 3, "max_dust_sweep_reviews": 3, 
+"reasoning": "ENI shows strong uptrend on 1h with high volume; ENEL has bullish MACD crossover on 15m.", "stock_revaluation_interval_seconds": 300, "max_portfolio_exposure_pct": 0.8, "max_portfolio_stop_risk_pct": 0.1, "min_risk_reward_ratio": 1.5, "limit_price_max_distance_pct": 0.05, "pause_trading": false, "pause_reason": "Market conditions are favorable"}}
 
 Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_risk_pct` to at least **0.1** unless you have a very strong reason to be more conservative. Higher limits allow the bot to take more positions simultaneously and capture more opportunities. Do not unnecessarily restrict capital deployment."""
     # --- Enhanced pause/resume guidance ---
@@ -892,7 +892,7 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"\nCurrent UTC hour: {session_info['utc_hour']} ({session_info['session']} session)\n"
     if minutes_to_market_close is not None:
         if minutes_to_market_close > 0:
-            prompt += f"  Minutes until market close (4:00 PM ET): {minutes_to_market_close}\n"
+            prompt += f"  Minutes until market close (5:30 PM Rome): {minutes_to_market_close}\n"
         else:
             prompt += "  Market is currently closed.\n"
     if current_strategy_interval_seconds is not None:

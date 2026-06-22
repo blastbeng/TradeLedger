@@ -72,7 +72,7 @@ MAX_TAKE_PROFIT_REVIEWS = 10   # force-sell after this many consecutive take-pro
 
 @dataclass
 class ClockInfo:
-    """Market clock info replacing Alpaca's clock object."""
+    """Market clock info for Euronext Milan (XMIL)."""
     is_open: bool
     timestamp: datetime
     next_open: datetime
@@ -80,7 +80,7 @@ class ClockInfo:
 
 @dataclass
 class AssetInfo:
-    """Dummy asset info replacing Alpaca's asset object."""
+    """Asset info for yfinance-based trading (min order size, fractionability, etc.)."""
     name: str = ""
     min_order_size: Optional[float] = 0.0
     fractionable: bool = True
@@ -239,7 +239,7 @@ class TradingEngine:
         return assets
 
     async def _get_asset_info(self, symbol: str) -> Any:
-        """Return asset info (dummy, since Alpaca is no longer used), cached for 1 hour."""
+        """Return asset info (min order size, name, etc.), cached for 1 hour."""
         base = symbol.split("/")[0] if "/" in symbol else symbol
         now = time.time()
         if base in self._asset_cache and (now - self._asset_cache_time.get(base, 0)) < 3600:
@@ -1924,7 +1924,7 @@ class TradingEngine:
             else:
                 sentiment_trend[base_symbol] = None
 
-        # Overall market trend (use SPY as benchmark)
+        # Overall market trend (use configured benchmark, e.g., FTSEMIB.MI)
         market_trend = None
         benchmark_symbol = settings.BENCHMARK_SYMBOL
         if benchmark_symbol in tickers:
@@ -2084,7 +2084,7 @@ class TradingEngine:
             results = await asyncio.gather(*tasks)
             historical_ohlcv_summary = {sym: summary for sym, summary in results if summary}
 
-        # Use Alpaca asset info instead of ccxt-style markets dict
+        # Use asset info for minimum order size constraints
         market_limits = {}
         for symbol in sample_pairs:
             base = symbol.split('/')[0]
@@ -6225,7 +6225,7 @@ class TradingEngine:
                     ticker = quotes.get(base)
                 price = ticker['last']
                 base_amount = amount / price
-                # Fetch minimum order size from Alpaca asset info
+                # Fetch minimum order size from asset info
                 try:
                     asset = await self._get_asset_info(symbol)
                     min_amount_limit = float(asset.min_order_size) if asset.min_order_size else None
@@ -6326,7 +6326,7 @@ class TradingEngine:
                     return
 
             if limit_price is not None:
-                # Round to valid tick size (Alpaca: $0.01 for >=$1, $0.0001 for <$1)
+                # Round to valid tick size ($0.01 for >=$1, $0.0001 for <$1)
                 if limit_price >= 1.0:
                     limit_price = round(limit_price, 2)
                 else:
@@ -6629,7 +6629,7 @@ class TradingEngine:
                     quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
                     ticker = quotes.get(base)
                 price = ticker['last']
-                # Fetch minimum order size from Alpaca asset info
+                # Fetch minimum order size from asset info
                 try:
                     asset = await self._get_asset_info(symbol)
                     min_amount_limit = float(asset.min_order_size) if asset.min_order_size else None
@@ -6685,7 +6685,7 @@ class TradingEngine:
                     return
 
             if limit_price is not None:
-                # Round to valid tick size (Alpaca: $0.01 for >=$1, $0.0001 for <$1)
+                # Round to valid tick size ($0.01 for >=$1, $0.0001 for <$1)
                 if limit_price >= 1.0:
                     limit_price = round(limit_price, 2)
                 else:
@@ -8052,7 +8052,7 @@ class TradingEngine:
         base, quote = symbol.split("/")
 
         # Check minimum sell size
-        # Fetch minimum order size from Alpaca asset info
+        # Fetch minimum order size from asset info
         try:
             asset = await self._get_asset_info(symbol)
             min_amount = float(asset.min_order_size) if asset.min_order_size else None
@@ -8220,7 +8220,7 @@ class TradingEngine:
         base, quote = symbol.split("/")
 
         # Check minimum sell size
-        # Fetch minimum order size from Alpaca asset info
+        # Fetch minimum order size from asset info
         try:
             asset = await self._get_asset_info(symbol)
             min_amount = float(asset.min_order_size) if asset.min_order_size else None
@@ -8395,7 +8395,7 @@ class TradingEngine:
             logger.warning(f"Dust sweep: could not fetch price for {symbol}: {e}")
             return
 
-        # Fetch minimum order size from Alpaca asset info
+        # Fetch minimum order size from asset info
         try:
             asset = await self._get_asset_info(symbol)
             min_amount = float(asset.min_order_size) if asset.min_order_size else None
