@@ -556,38 +556,12 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
             "Only pause if NO such opportunities exist, or if the account is in significant drawdown with no high‑confidence setups.\n"
             "\nAlso consider the news sentiment data below when deciding whether to pause.\n"
         )
-    if symbol_scores:
-        prompt += "\nScalping suitability scores (0-1, higher = better for quick small profits):\n"
-        for sym in available_symbols:
-            if sym in symbol_scores:
-                prompt += f"  {sym}: {symbol_scores[sym]:.3f}\n"
     if symbol_trend_scores:
         prompt += "\nTrend quality scores (0-1, higher = cleaner trend; combines ADX strength, EMA alignment, RSI consistency, MACD direction, +DI/-DI confirmation):\n"
         for sym in available_symbols:
             if sym in symbol_trend_scores:
                 prompt += f"  {sym}: {symbol_trend_scores[sym]:.3f}\n"
         prompt += "High trend quality (>0.7) = strong, clean trend suitable for momentum/breakout strategies. Low score (<0.3) = choppy or ranging, better for mean reversion or avoid.\n"
-    # --- Top profit opportunities summary ---
-    if top_opportunities:
-        prompt += "\n**Top Profit Opportunities** (best candidates for immediate trades):\n"
-        for opp in top_opportunities:
-            sent_str = ""
-            if opp.get("sentiment") is not None:
-                sent_str = f", sentiment={opp['sentiment']:.2f}"
-            prompt += (
-                f"  {opp['symbol']}: score={opp['score']:.3f}, "
-                f"change_24h={opp['change_24h']}%{sent_str}\n"
-            )
-    if symbol_spreads or symbol_depths:
-        prompt += "\nOrder book metrics for top stocks (lower spread & higher depth = better for scalping):\n"
-        for sym in available_symbols:
-            parts = []
-            if sym in symbol_spreads:
-                parts.append(f"spread={symbol_spreads[sym]:.3f}%")
-            if sym in symbol_depths:
-                parts.append(f"depth={symbol_depths[sym]:.2f}")
-            if parts:
-                prompt += f"  {sym}: {', '.join(parts)}\n"
     if ohlcv_summary:
         prompt += f"\nMulti-timeframe OHLCV summary (price change %, high, low, volume):\n{json.dumps(ohlcv_summary, indent=2)}\n"
     else:
