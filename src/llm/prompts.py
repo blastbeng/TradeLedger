@@ -312,7 +312,6 @@ def build_stock_selection_prompt(
     performance: Optional[Dict[str, Any]] = None,
     ohlcv_data: Optional[Dict[str, Dict[str, List]]] = None,
     market_trend: Optional[Dict[str, Any]] = None,
-    news_sentiment: Optional[Dict[str, Dict[str, Any]]] = None,
     symbol_indicators: Optional[Dict[str, Dict[str, Any]]] = None,
     daily_pnl: Optional[float] = None,
     historical_ohlcv_summary: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -567,17 +566,6 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
         elif breadth_pct < 40:
             regime_label = "RISK-OFF (broad market weakness)"
     prompt += f"\n**Market Regime: {regime_label}**\n"
-    if news_sentiment:
-        prompt += "\n## News Sentiment\n"
-        prompt += "Aggregate sentiment from recent news articles (compound score -1 to +1, higher = more positive):\n"
-        for sym in available_symbols:
-            if sym in news_sentiment:
-                ns = news_sentiment[sym]
-                prompt += (
-                    f"- {sym}: compound={ns['avg_compound']}, "
-                    f"positive={ns['positive']}, negative={ns['negative']}, "
-                    f"neutral={ns['neutral']}, total_articles={ns['total_articles']}\n"
-                )
     if sentiment_trend:
         prompt += "\nSentiment trend (change in compound score since last cycle):\n"
         for base, delta in sentiment_trend.items():
@@ -585,6 +573,11 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
                 prompt += f"  {base}: {delta:+.4f}\n"
     if news_section:
         prompt += f"\n{news_section}\n"
+        prompt += (
+            "**IMPORTANT:** Do not rely on pre-computed sentiment scores. Read the news headlines and summaries above "
+            "and use your own understanding of financial context to assess the sentiment and potential impact for each stock. "
+            "Factor this assessment into your stock selection and reasoning.\n"
+        )
     if performance:
         perf_text = f"""
 Historical Performance Data:
@@ -665,7 +658,6 @@ def build_strategy_prompt(
     min_order_cost: Optional[float] = None,
     all_symbols: Optional[List[Dict[str, str]]] = None,
     past_trades: Optional[List[Dict[str, Any]]] = None,
-    aggregate_sentiment: Optional[Dict[str, Any]] = None,
     cycle_spent: Optional[float] = None,
     remaining_balance: Optional[float] = None,
     market_regime: Optional[str] = None,
@@ -1131,16 +1123,6 @@ Maximum symbols to trade: {max_symbols}
         )
 
     # --- Aggregate sentiment summary ---
-    if aggregate_sentiment:
-        prompt += (
-            f"\nAggregate news sentiment for {symbol}:\n"
-            f"  Compound score: {aggregate_sentiment['avg_compound']:.2f}  (range -1 to +1)\n"
-            f"  Positive articles: {aggregate_sentiment['positive']}\n"
-            f"  Negative articles: {aggregate_sentiment['negative']}\n"
-            f"  Neutral articles: {aggregate_sentiment['neutral']}\n"
-            f"  Total articles: {aggregate_sentiment['total_articles']}\n"
-        )
-        prompt += "Use aggregate sentiment to adjust confidence, position size, and risk. Strong positive = higher confidence/larger positions; strong negative = more cautious or skip.\n"
     if sentiment_trend is not None:
         prompt += f"\nSentiment trend (change in compound score since last cycle): {sentiment_trend:+.4f}\n"
         prompt += "Positive delta = sentiment improving, negative = deteriorating. Adjust confidence and risk parameters accordingly.\n"
@@ -1185,7 +1167,11 @@ Maximum symbols to trade: {max_symbols}
             news_section = "Recent news articles for this stock:\n" + _format_news_for_prompt(articles)
     if news_section:
         prompt += f"\n{news_section}\n"
-        prompt += "Consider the news headlines above when setting confidence, position size, and max hold time.\n"
+        prompt += (
+            "**IMPORTANT:** Do not rely on pre-computed sentiment scores. Read the news headlines and summaries above "
+            "and use your own understanding of financial context to assess the sentiment and potential impact. "
+            "Factor this assessment into your confidence, position size, and reasoning.\n"
+        )
 
     prompt += f"""
 **For the {assigned_timeframe or 'default'} timeframe, a reasonable minimum max_hold_time_seconds is {min_hold} seconds. Do not set it lower unless you have a very specific, justified reason (e.g., medium-term with a very tight stop and high confidence).**
