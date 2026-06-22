@@ -290,12 +290,6 @@ You are a professional trading bot. Your primary goal is to generate consistent 
 - Learn from historical performance: avoid stocks and strategies with poor win rates or negative average P&L.
 - Calibrate your confidence: if high-confidence trades are losing, lower confidence for similar setups; if low-confidence trades are winning, consider raising confidence.
 
-**Optional Controls:**
-- You may include `"stock_revaluation_interval_seconds"` (integer ≥60) to control how often the stock list is re-evaluated.
-- You may include `"global_risk_multiplier"` (0.0-1.0) to scale all position sizes for the next cycle. Use this to reduce exposure without pausing entirely.
-- You may optionally include an "indicator_config" object to customize indicator parameters. If omitted, defaults are used.
-- You must include a "backtest_summary" field (string) summarizing your backtest results when historical OHLCV data is provided.
-
 You will receive news sentiment data for each stock. Use it to gauge market sentiment and catalysts: prefer stocks with positive sentiment; be cautious with negative sentiment. If sentiment conflicts with technicals, give more weight to technicals but explain your reasoning.
 
 Output strict JSON only. The response must start with '{' or '[' and end with '}' or ']'. No markdown fences, no explanations, no extra text.
@@ -557,12 +551,6 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
                 if ind.get('donchian_channels') is not None:
                     dc = ind['donchian_channels']
                     lines.append(f"    Donchian: Upper={dc['upper']:.4f} Middle={dc['middle']:.4f} Lower={dc['lower']:.4f}")
-                if ind.get('atr') is not None:
-                    lines.append(f"    ATR(14)={ind['atr']:.6f}")
-                if ind.get('vwap') is not None:
-                    lines.append(f"    VWAP={ind['vwap']:.6f}")
-                if ind.get('parabolic_sar') is not None:
-                    lines.append(f"    Parabolic SAR={ind['parabolic_sar']:.6f}")
                 if ind.get('keltner_channels') is not None:
                     kc = ind['keltner_channels']
                     lines.append(f"    Keltner: Upper={kc['upper']:.6f} Middle={kc['middle']:.6f} Lower={kc['lower']:.6f}")
@@ -1177,14 +1165,6 @@ Maximum symbols to trade: {max_symbols}
             f"Lower={keltner_channels['lower']:.6f}\n"
         )
         prompt += "Keltner Channels: volatility-based envelopes. Price near upper = overbought, near lower = oversold. Squeeze precedes large moves.\n"
-    if pivot_points:
-        prompt += (
-            f"\nPivot Points (from previous {assigned_timeframe or 'period'} candle): "
-            f"Pivot={pivot_points['pivot']:.6f}, "
-            f"R1={pivot_points['r1']:.6f}, R2={pivot_points['r2']:.6f}, "
-            f"S1={pivot_points['s1']:.6f}, S2={pivot_points['s2']:.6f}\n"
-        )
-        prompt += "Pivot Points: support/resistance levels. Price above pivot = bullish, below = bearish. Use R1/R2 as take-profit targets, S1/S2 as stop-loss references.\n"
     if donchian_channels:
         prompt += (
             f"\nDonchian Channels ({assigned_timeframe or 'default'}): "
