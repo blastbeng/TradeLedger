@@ -2191,16 +2191,15 @@ class TradingEngine:
         perf = self._compute_performance_metrics()
         trade_pattern_analysis = self._compute_trade_pattern_analysis()
 
-        # --- Composite opportunity score (scalping + trend + sentiment) ---
+        # --- Composite opportunity score (trend + sentiment) ---
         composite_scores: Dict[str, float] = {}
         for sym in sample_pairs:
-            scalping = 0.0
             trend = symbol_trend_scores.get(sym, 0.0)
             # Normalise sentiment compound to 0-1 (assuming range -1..1)
             base_sym = sym.split("/")[0] if "/" in sym else sym
             sent = news_sentiment.get(base_sym, {}).get("avg_compound", 0.0) if news_sentiment else 0.0
             sentiment_score = (sent + 1.0) / 2.0  # map -1..1 to 0..1
-            composite = 0.4 * scalping + 0.4 * trend + 0.2 * sentiment_score
+            composite = 0.6 * trend + 0.4 * sentiment_score
             composite_scores[sym] = round(composite, 3)
 
         # Build a shortlist for the LLM: top N by composite score,
@@ -2692,28 +2691,6 @@ class TradingEngine:
                     await asyncio.to_thread(self.redis.setex, "trading:max_dust_sweep_reviews", 7 * 24 * 3600, str(max_dust_sweep))
                 else:
                     await asyncio.to_thread(self.redis.delete, "trading:max_dust_sweep_reviews")
-
-                scalping_weights = parsed.get("scalping_score_weights")
-                if scalping_weights is not None and isinstance(scalping_weights, dict):
-                    w_vol = float(scalping_weights.get("volume", 0.25))
-                    w_vola = float(scalping_weights.get("volatility", 0.25))
-                    w_spread = float(scalping_weights.get("spread", 0.25))
-                    w_depth = float(scalping_weights.get("depth", 0.15))
-                    w_momentum = float(scalping_weights.get("momentum", 0.10))
-                    # Normalize so they sum to 1.0
-                    total_w = w_vol + w_vola + w_spread + w_depth + w_momentum
-                    if total_w > 0:
-                        w_vol /= total_w
-                        w_vola /= total_w
-                        w_spread /= total_w
-                        w_depth /= total_w
-                        w_momentum /= total_w
-                    await asyncio.to_thread(self.redis.setex, "trading:scalping_weights", 7 * 24 * 3600, json.dumps({
-                        "volume": w_vol, "volatility": w_vola, "spread": w_spread,
-                        "depth": w_depth, "momentum": w_momentum
-                    }))
-                else:
-                    await asyncio.to_thread(self.redis.delete, "trading:scalping_weights")
 
                 # Optional: LLM can set the global symbol re-evaluation interval
                 new_interval = parsed.get("stock_revaluation_interval_seconds")
