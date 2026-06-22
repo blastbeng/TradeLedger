@@ -547,7 +547,7 @@ class TradingEngine:
             self._full_breadth_running = True
             try:
                 plain_assets = await self._get_tradable_assets()
-                available_pairs = [f"{sym}/USD" for sym in plain_assets]
+                available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
                 if available_pairs:
                     # Limit to 500 pairs to avoid excessive API calls
                     breadth_pairs = available_pairs[:500]
@@ -752,26 +752,7 @@ class TradingEngine:
 
 
     async def _fetch_vix(self) -> Optional[float]:
-        """Fetch the current CBOE Volatility Index (VIX) value, cached in Redis."""
-        cache_key = "vix:value"
-        try:
-            cached = await asyncio.to_thread(self.redis.get, cache_key)
-            if cached:
-                return float(cached)
-        except Exception:
-            pass
-
-        try:
-            quotes = await asyncio.to_thread(get_quotes, self.data_client, ["VIX"])
-            vix_quote = quotes.get("VIX", {})
-            last = vix_quote.get("last") or vix_quote.get("bid") or vix_quote.get("ask")
-            if last is not None:
-                vix_value = float(last)
-                ttl = getattr(settings, 'VIX_CACHE_TTL_SECONDS', 300)  # 5 minutes default
-                await asyncio.to_thread(self.redis.setex, cache_key, ttl, str(vix_value))
-                return vix_value
-        except Exception as e:
-            logger.warning(f"Failed to fetch VIX: {e}")
+        """VIX is not available for the Italian market via yfinance. Returns None."""
         return None
 
 
@@ -880,7 +861,7 @@ class TradingEngine:
                 symbols_to_refresh = set()
                 try:
                     plain_assets = await self._get_tradable_assets()
-                    available_pairs = [f"{sym}/USD" for sym in plain_assets]
+                    available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
                     # Fetch tickers for a subset to determine top volume symbols
                     # (limit to 200 to avoid excessive API calls)
                     sample_for_vol = available_pairs[:200]
@@ -1516,7 +1497,7 @@ class TradingEngine:
         """Detect and handle external changes: delisted symbols, externally sold positions."""
         # --- Delisted stocks ---
         plain_assets = await self._get_tradable_assets()
-        available_pairs = [f"{sym}/USD" for sym in plain_assets]
+        available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
         for entry in list(self.current_symbols):
             symbol = entry["symbol"]
             if symbol not in available_pairs:
@@ -1807,7 +1788,7 @@ class TradingEngine:
 
         old_symbols = list(self.current_symbols)
         plain_assets = await self._get_tradable_assets()
-        available_pairs = [f"{sym}/USD" for sym in plain_assets]
+        available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
         if not available_pairs:
             logger.warning("No available pairs found.")
             return
@@ -1945,13 +1926,13 @@ class TradingEngine:
 
         # Overall market trend (use SPY as benchmark)
         market_trend = None
-        spy_symbol = "SPY"
-        if spy_symbol in tickers:
-            spy_ticker = tickers[spy_symbol]
+        benchmark_symbol = settings.BENCHMARK_SYMBOL
+        if benchmark_symbol in tickers:
+            benchmark_ticker = tickers[benchmark_symbol]
             market_trend = {
-                "symbol": spy_symbol,
-                "change_24h": spy_ticker.get("percentage"),
-                "last": spy_ticker.get("last"),
+                "symbol": benchmark_symbol,
+                "change_24h": benchmark_ticker.get("percentage"),
+                "last": benchmark_ticker.get("last"),
             }
         elif sample_pairs:
             first = sample_pairs[0]
@@ -2229,7 +2210,7 @@ class TradingEngine:
 
         # Always include the configured ETFs
         for etf in settings.ALWAYS_INCLUDE_ETFS:
-            pair = f"{etf}/USD"
+            pair = f"{etf}/{self.base_currency}"
             if pair in sample_pairs and pair not in shortlist:
                 shortlist.append(pair)
 
