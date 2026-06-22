@@ -8492,7 +8492,7 @@ class TradingEngine:
         including partial fills.
 
         Instead of re-executing the signal (which would place a duplicate order
-        while the original is still open), we poll the actual Alpaca order
+        while the original is still open), we poll the actual simulator order
         status. When the order fills (fully or partially), we record the trade
         and update positions exactly as a normal fill would. We never place a
         new order here.
