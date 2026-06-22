@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import math
+import pandas_market_calendars as mcal
 import re
 import time
 from dataclasses import asdict, dataclass
@@ -314,50 +315,57 @@ class TradingEngine:
             return None
 
     async def _get_clock(self, ttl: float = 30.0) -> Optional[ClockInfo]:
-        """Return Italian market clock info, cached for `ttl` seconds.
-
-        Computes market open/close based on Borsa Italiana hours:
-        Monday–Friday, 9:00–17:30 Europe/Rome timezone.
-        """
+        """Return Euronext Milan market clock info, cached for `ttl` seconds."""
         now = time.time()
         if self._clock_cache is not None and (now - self._clock_cache_time) < ttl:
             return self._clock_cache
 
         rome_tz = ZoneInfo("Europe/Rome")
         now_rome = datetime.now(timezone.utc).astimezone(rome_tz)
-        weekday = now_rome.weekday()
-        hour = now_rome.hour + now_rome.minute / 60.0
-        is_open = weekday < 5 and 9.0 <= hour < 17.5
 
-        # Compute next open time
-        if weekday < 5 and hour < 9.0:
-            # Today, before open
-            next_open = now_rome.replace(hour=9, minute=0, second=0, microsecond=0)
-        elif weekday < 5 and hour >= 17.5:
-            # Today, after close → next business day
-            next_open = self._next_business_day_open(now_rome)
-        elif weekday >= 5:
-            # Weekend → next business day
-            next_open = self._next_business_day_open(now_rome)
-        else:
-            # Market is currently open → next open is the next business day
-            next_open = self._next_business_day_open(now_rome)
+        try:
+            cal = mcal.get_calendar('XMIL')
+            # Get schedule for today and tomorrow to find next open
+            schedule = cal.schedule(start_date=now_rome.date(), end_date=now_rome.date() + timedelta(days=4))
 
-        clock = ClockInfo(is_open=is_open, timestamp=now_rome, next_open=next_open)
-        self._clock_cache = clock
-        self._clock_cache_time = now
-        return clock
+            is_open = False
+            next_open = None
 
-    @staticmethod
-    def _next_business_day_open(from_dt: datetime) -> datetime:
-        """Return the next business day's 9:00 AM Europe/Rome datetime."""
-        rome_tz = ZoneInfo("Europe/Rome")
-        day = from_dt.date()
-        while True:
-            day = day + timedelta(days=1)
-            if day.weekday() < 5:
-                break
-        return datetime(day.year, day.month, day.day, 9, 0, 0, tzinfo=rome_tz)
+            if not schedule.empty:
+                # Convert schedule timestamps to Rome timezone
+                market_open = schedule.iloc[0]['market_open'].tz_convert(rome_tz)
+                market_close = schedule.iloc[0]['market_close'].tz_convert(rome_tz)
+
+                if market_open <= now_rome < market_close:
+                    is_open = True
+                    # Next open is the day after today
+                    if len(schedule) > 1:
+                        next_open = schedule.iloc[1]['market_open'].tz_convert(rome_tz)
+                    else:
+                        # Fallback if schedule only has today
+                        next_open = market_open + timedelta(days=1)
+                elif now_rome < market_open:
+                    # Before open today
+                    next_open = market_open
+                else:
+                    # After close today, find next available day
+                    for i in range(1, len(schedule)):
+                        next_open = schedule.iloc[i]['market_open'].tz_convert(rome_tz)
+                        if next_open > now_rome:
+                            break
+
+            if next_open is None:
+                # Fallback if schedule was empty or all in the past
+                next_open = now_rome + timedelta(days=1)
+
+            clock = ClockInfo(is_open=is_open, timestamp=now_rome, next_open=next_open)
+            self._clock_cache = clock
+            self._clock_cache_time = now
+            return clock
+        except Exception as e:
+            logger.error(f"Failed to get market clock from pandas_market_calendars: {e}")
+            # Fallback to closed state
+            return ClockInfo(is_open=False, timestamp=now_rome, next_open=now_rome + timedelta(days=1))
 
     async def stop(self):
         """Gracefully stop the engine and all background tasks."""
@@ -9187,15 +9195,10 @@ class TradingEngine:
         return clock.is_open
 
     def _is_regular_hours(self) -> bool:
-        """Return True if current time is within Borsa Italiana hours (9:00–17:30 Rome)."""
-        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Rome"))
-        weekday = now_rome.weekday()
-        if weekday >= 5:
+        """Return True if the market is currently open."""
+        if self._clock_cache is None:
             return False
-        hour = now_rome.hour + now_rome.minute / 60.0
-        if hour < 9.0 or hour >= 17.5:
-            return False
-        return True
+        return self._clock_cache.is_open
 
     def _get_session_info(self) -> dict:
         """Return current Italian market session info using Europe/Rome timezone."""
