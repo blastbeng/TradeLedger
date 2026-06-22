@@ -12,6 +12,7 @@ from src.utils.redis_client import get_redis_client, check_redis_connection
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
 from typing import Optional
+from pydantic import BaseModel
 
 async def _get_display_symbol(engine, symbol: str, timeframe: Optional[str] = None) -> str:
     """Return a formatted display string for the given symbol and timeframe."""
@@ -20,6 +21,13 @@ async def _get_display_symbol(engine, symbol: str, timeframe: Optional[str] = No
     except Exception:
         name = symbol.split("/")[0] if "/" in symbol else symbol
     return engine._format_symbol_display(symbol, name, timeframe)
+
+class ManualTradeRequest(BaseModel):
+    ticker: str
+    side: str  # "buy" or "sell"
+    quantity: float
+    money_spent: float
+    fee: float = 0.0
 
 app = FastAPI(title="Stock Trading Bot")
 
@@ -180,6 +188,29 @@ async def sell(symbol: str = None):
     else:
         asyncio.create_task(engine.sell_all_positions())
         return {"status": "selling all"}
+
+@app.post("/api/manual-trade")
+async def manual_trade(req: ManualTradeRequest):
+    engine = get_engine()
+    if settings.TRADING_MODE != "notify":
+        raise HTTPException(status_code=400, detail="Manual trades are only available in notify mode")
+    req.side = req.side.lower().strip()
+    if req.side not in ("buy", "sell"):
+        raise HTTPException(status_code=400, detail="Side must be 'buy' or 'sell'")
+    if req.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Quantity must be positive")
+    if req.money_spent <= 0:
+        raise HTTPException(status_code=400, detail="Money spent must be positive")
+    result = await engine.log_manual_trade(req.ticker, req.side, req.quantity, req.money_spent, req.fee)
+    return result
+
+@app.get("/api/manual-trades")
+async def get_manual_trades():
+    engine = get_engine()
+    manual = [t for t in engine.trade_history if t.get("note") == "manual"]
+    for t in manual:
+        t["display_symbol"] = t["symbol"]
+    return manual
 
 @app.post("/api/reload")
 async def reload():

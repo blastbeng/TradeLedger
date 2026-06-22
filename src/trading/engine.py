@@ -5251,6 +5251,85 @@ class TradingEngine:
         else:
             logger.warning(f"No open position for {symbol}")
 
+    async def log_manual_trade(self, ticker: str, side: str, quantity: float, money_spent: float, fee: float) -> dict:
+        """Log a manually executed trade in notify mode. Persists to DB and updates positions."""
+        symbol = f"{ticker}/{self.base_currency}"
+        base = ticker
+        quote = self.base_currency
+        price = money_spent / quantity if quantity > 0 else 0.0
+        cost = money_spent
+        timestamp = int(time.time() * 1000)
+
+        trade = {
+            "id": f"manual_{timestamp}",
+            "symbol": symbol,
+            "side": side,
+            "amount": quantity,
+            "price": price,
+            "cost": cost,
+            "fee": {"cost": fee, "currency": quote},
+            "timestamp": timestamp,
+            "note": "manual",
+            "status": "closed",
+            "strategy_type": "manual",
+        }
+
+        if side == "buy":
+            cost_basis = cost + fee
+            net_base = quantity
+            if symbol in self.positions:
+                old_pos = self.positions[symbol]
+                old_cost_basis = old_pos.get("cost_basis", old_pos["amount"] * old_pos["price"])
+                old_net_base = old_pos.get("net_base", old_pos["amount"])
+                new_cost_basis = old_cost_basis + cost_basis
+                new_net_base = old_net_base + net_base
+                new_price = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
+                self.positions[symbol]["amount"] = new_net_base
+                self.positions[symbol]["price"] = new_price
+                self.positions[symbol]["cost_basis"] = new_cost_basis
+                self.positions[symbol]["net_base"] = new_net_base
+            else:
+                entry_price = cost_basis / net_base if net_base > 0 else price
+                self.positions[symbol] = {
+                    "symbol": symbol,
+                    "side": "buy",
+                    "amount": net_base,
+                    "price": entry_price,
+                    "timestamp": timestamp,
+                    "stop_loss": None,
+                    "take_profit": None,
+                    "cost_basis": cost_basis,
+                    "net_base": net_base,
+                    "timeframe": None,
+                    "entry_order_type": "manual",
+                    "buy_confidence": 1.0,
+                    "buy_reasoning": "Manual trade",
+                }
+            self._balance_cache = None
+        elif side == "sell":
+            pos = self.positions.get(symbol)
+            if pos:
+                cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
+                net_quote = cost - fee
+                realized_pnl = net_quote - cost_basis
+                trade["realized_pnl"] = realized_pnl
+                trade["cost_basis"] = cost_basis
+                trade["exit_reason"] = "manual_sell"
+                if "timestamp" in pos:
+                    trade["hold_time_seconds"] = (timestamp - pos["timestamp"]) / 1000.0
+                self.positions.pop(symbol, None)
+                self._balance_cache = None
+            else:
+                trade["realized_pnl"] = 0.0
+                trade["cost_basis"] = 0.0
+                trade["exit_reason"] = "manual_sell"
+
+        self.trade_history.append(trade)
+        await asyncio.to_thread(insert_trade, trade)
+        await self._save_state()
+        logger.info(f"Manual trade logged: {side} {quantity} {symbol} @ {price:.4f}")
+        return {"status": "ok", "trade": trade}
+
     async def _check_risk_management(self):
         """Check open positions and close if stop-loss, take-profit, or trailing stop is hit."""
         # Read LLM-decided review limits from Redis once (before the per-position loop)

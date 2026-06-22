@@ -341,6 +341,40 @@
                 </div>
             </div>
 
+            <div class="card card-full" id="manual-trade-card" style="display:none;">
+                <h2>📝 Manual Trade Entry</h2>
+                <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 12px;">Log a trade you executed manually. This will update your positions and trade history.</p>
+                <form id="manual-trade-form" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; align-items:end;">
+                    <div>
+                        <label for="mt-ticker" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Ticker (e.g., ENI.MI)</label>
+                        <input type="text" id="mt-ticker" required placeholder="ENI.MI" style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.9rem;">
+                    </div>
+                    <div>
+                        <label for="mt-side" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Side</label>
+                        <select id="mt-side" style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.9rem;">
+                            <option value="buy">Buy</option>
+                            <option value="sell">Sell</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="mt-quantity" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Quantity</label>
+                        <input type="number" id="mt-quantity" step="0.0001" min="0" required style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.9rem;">
+                    </div>
+                    <div>
+                        <label for="mt-money" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Money Spent (Fiat)</label>
+                        <input type="number" id="mt-money" step="0.01" min="0" required style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.9rem;">
+                    </div>
+                    <div>
+                        <label for="mt-fee" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Commissions/Fees</label>
+                        <input type="number" id="mt-fee" step="0.01" min="0" value="0" style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.9rem;">
+                    </div>
+                    <div>
+                        <button type="submit" style="padding:10px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.9rem; white-space:nowrap;">Log Trade</button>
+                    </div>
+                </form>
+                <div id="manual-trade-result" style="margin-top:12px; font-size:0.85rem;"></div>
+            </div>
+
             <div class="card">
                 <h2>📈 Tracked Symbols</h2>
                 <div id="symbols">-</div>
@@ -1096,6 +1130,55 @@
                 const badge = document.getElementById('mode-badge');
                 if (badge) badge.textContent = '?';
             });
+
+        // --- Manual trade form (notify mode) ---
+        const manualTradeForm = document.getElementById('manual-trade-form');
+        const manualTradeResult = document.getElementById('manual-trade-result');
+        if (manualTradeForm) {
+            manualTradeForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const ticker = document.getElementById('mt-ticker').value.trim();
+                const side = document.getElementById('mt-side').value;
+                const quantity = parseFloat(document.getElementById('mt-quantity').value);
+                const moneySpent = parseFloat(document.getElementById('mt-money').value);
+                const fee = parseFloat(document.getElementById('mt-fee').value) || 0;
+                if (!ticker || quantity <= 0 || moneySpent <= 0) {
+                    manualTradeResult.innerHTML = '<span style="color:var(--red);">Please fill all fields correctly.</span>';
+                    return;
+                }
+                manualTradeResult.textContent = 'Saving...';
+                try {
+                    const resp = await fetch('/api/manual-trade', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ticker, side, quantity, money_spent: moneySpent, fee })
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.json();
+                        manualTradeResult.innerHTML = `<span style="color:var(--red);">Error: ${err.detail || 'Failed'}</span>`;
+                        return;
+                    }
+                    const data = await resp.json();
+                    manualTradeResult.innerHTML = `<span style="color:var(--green);">✅ ${side.toUpperCase()} ${quantity} ${ticker} logged successfully.</span>`;
+                    manualTradeForm.reset();
+                    // Trigger a data refresh
+                    refreshData();
+                } catch (err) {
+                    manualTradeResult.innerHTML = `<span style="color:var(--red);">Error: ${err.message}</span>`;
+                }
+            });
+        }
+
+        // Show/hide manual trade card based on trading mode
+        fetch('/api/config')
+            .then(res => res.json())
+            .then(config => {
+                const card = document.getElementById('manual-trade-card');
+                if (card && config.trading_mode === 'notify') {
+                    card.style.display = '';
+                }
+            })
+            .catch(() => {});
 
         // --- Screen Wake Lock (keep display on while visible) ---
         let wakeLock = null;
