@@ -7213,7 +7213,7 @@ class TradingEngine:
             target_price = condition["price"]
             try:
                 async with self._exchange_semaphore:
-                    tickers_map = await asyncio.to_thread(get_quotes, self.data_client, [symbol.split("/")[0]])
+                    tickers_map = await asyncio.to_thread(get_quotes, [symbol.split("/")[0]])
                     ticker = tickers_map.get(symbol.split("/")[0])
             except Exception:
                 return False
