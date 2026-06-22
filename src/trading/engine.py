@@ -13,7 +13,6 @@ from zoneinfo import ZoneInfo
 from src.config.settings import settings
 from src.exchanges.fees import get_fee_rate
 from src.exchanges.factory import get_trading_client, get_streaming_client, get_data_client
-from src.exchanges.ws_manager import WebSocketManager
 from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range
 from src.exchanges.yahoo_finance import get_yahoo_quote
 from src.trading.paper_trader import PaperTrader
@@ -1520,10 +1519,8 @@ class TradingEngine:
                 # External sell detected
                 sold_amount = recorded_amount - actual_balance
                 try:
-                    ticker = self.ws_manager.get_ticker(symbol)
-                    if ticker is None:
-                        tickers_map = await asyncio.to_thread(get_quotes, self.data_client, [symbol.split("/")[0]])
-                        ticker = tickers_map.get(symbol.split("/")[0])
+                    tickers_map = await asyncio.to_thread(get_quotes, self.data_client, [symbol.split("/")[0]])
+                    ticker = tickers_map.get(symbol.split("/")[0])
                     current_price = ticker['last'] if ticker else pos.get("price", 0.0)
                 except Exception:
                     current_price = pos.get("price", 0.0)  # fallback to entry price
