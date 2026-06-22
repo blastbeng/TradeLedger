@@ -275,17 +275,15 @@ def discover_trending_stocks(
     if not settings.NEWS_ENABLED or not settings.NEWS_SYMBOL_DISCOVERY_ENABLED:
         return []
 
-    from src.exchanges.factory import get_data_client
     from src.exchanges.market_data import get_quotes
 
-    data_client = get_data_client()
     # Use a subset of existing_pairs to avoid excessive API calls (max 200)
     sample = existing_pairs[:200]
     if not sample:
         return []
 
     try:
-        quotes = get_quotes(data_client, sample)
+        quotes = get_quotes(sample)
     except Exception as e:
         logger.warning(f"Failed to fetch quotes for stock discovery: {e}")
         return []

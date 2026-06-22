@@ -2983,7 +2983,7 @@ class TradingEngine:
             # Gather minimal market context
             benchmark_price = None
             try:
-                tickers_map = await asyncio.to_thread(get_quotes, self.data_client, [settings.BENCHMARK_SYMBOL])
+                tickers_map = await asyncio.to_thread(get_quotes, [settings.BENCHMARK_SYMBOL])
                 benchmark_ticker = tickers_map.get(settings.BENCHMARK_SYMBOL)
                 benchmark_price = benchmark_ticker.get("last") if benchmark_ticker else None
             except Exception:
@@ -5790,7 +5790,7 @@ class TradingEngine:
 
             # Fetch current price early for position sizing and stop calculations
             base = symbol.split("/")[0]
-            quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+            quotes = await asyncio.to_thread(get_quotes, [base])
             ticker = quotes.get(base)
             current_price = ticker['last'] if ticker else None
             if current_price is None or current_price <= 0:
@@ -6537,7 +6537,7 @@ class TradingEngine:
             ticker = None
             try:
                 base = symbol.split("/")[0]
-                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+                quotes = await asyncio.to_thread(get_quotes, [base])
                 ticker = quotes.get(base)
                 price = ticker['last']
                 # Fetch minimum order size from asset info
@@ -7246,7 +7246,7 @@ class TradingEngine:
             try:
                 async with self._exchange_semaphore:
                     ohlcv = await asyncio.to_thread(
-                        get_multi_timeframe_bars, self.data_client, symbol.split("/")[0], [timeframe], limit=50
+                        get_multi_timeframe_bars, symbol.split("/")[0], [timeframe], limit=50
                     )
             except Exception:
                 return False
@@ -8248,7 +8248,7 @@ class TradingEngine:
 
         try:
             base = symbol.split("/")[0]
-            quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+            quotes = await asyncio.to_thread(get_quotes, [base])
             ticker = quotes.get(base)
             price = ticker["last"]
         except Exception as e:
@@ -8430,7 +8430,7 @@ class TradingEngine:
                         # Fetch current quote
                         try:
                             base = symbol.split("/")[0]
-                            quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+                            quotes = await asyncio.to_thread(get_quotes, [base])
                             ticker = quotes.get(base)
                         except Exception:
                             pass
@@ -8523,7 +8523,7 @@ class TradingEngine:
                             # Fetch current price
                             try:
                                 base = queued["symbol"].split("/")[0]
-                                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+                                quotes = await asyncio.to_thread(get_quotes, [base])
                                 ticker = quotes.get(base)
                             except Exception:
                                 pass
@@ -9076,7 +9076,7 @@ class TradingEngine:
             missing.append(sym.split("/")[0])
         if missing:
             try:
-                raw = get_quotes(self.data_client, missing)
+                raw = get_quotes(missing)
                 for sym in symbols:
                     base = sym.split("/")[0]
                     if base in raw:

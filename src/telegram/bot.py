@@ -278,7 +278,7 @@ class TelegramBot:
             current_price = None
             try:
                 from src.exchanges.market_data import get_quotes
-                quotes = await asyncio.to_thread(get_quotes, self.engine.data_client, [sym])
+                quotes = await asyncio.to_thread(get_quotes, [sym])
                 ticker = quotes.get(sym)
                 current_price = ticker.get('last') if ticker else None
             except Exception as e:
@@ -385,7 +385,7 @@ class TelegramBot:
                 current_price = None
                 try:
                     from src.exchanges.market_data import get_quotes
-                    quotes = await asyncio.to_thread(get_quotes, self.engine.data_client, [sym])
+                    quotes = await asyncio.to_thread(get_quotes, [sym])
                     ticker = quotes.get(sym)
                     current_price = ticker.get('last') if ticker else None
                 except Exception:
