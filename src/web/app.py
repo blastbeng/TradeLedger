@@ -86,12 +86,16 @@ async def status():
         positions[sym] = pos_copy
 
     balances = await run_in_threadpool(engine.trader.fetch_balance)
+    queued_orders_payload = [
+        {k: v for k, v in q.items() if k != "signal"}
+        for q in engine.queued_orders
+    ]
     return {
         "current_symbols": current_symbols,
         "positions": positions,
         "balances": balances,
-        "paused": await asyncio.to_thread(redis.get, "trading:paused") == "1",
-        "queued_orders": engine.queued_orders,
+        "paused": paused,
+        "queued_orders": queued_orders_payload,
     }
 
 @app.get("/api/trades")
@@ -250,9 +254,10 @@ def config():
 @app.get("/api/ohlcv/{symbol:path}")
 async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
     engine = get_engine()
+    base_symbol = symbol.split("/")[0]
     try:
         bars = await asyncio.to_thread(
-            get_multi_timeframe_bars, symbol, [timeframe], limit=limit
+            get_multi_timeframe_bars, base_symbol, [timeframe], limit=limit
         )
         candles = bars.get(timeframe, [])
         result = []
@@ -271,11 +276,12 @@ async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
 
 @app.get("/api/ticker/{symbol:path}")
 async def ticker(symbol: str):
+    base_symbol = symbol.split("/")[0]
     try:
         quotes = await asyncio.to_thread(
-            get_quotes, [symbol]
+            get_quotes, [base_symbol]
         )
-        q = quotes.get(symbol)
+        q = quotes.get(base_symbol)
         if q:
             return {
                 "symbol": symbol,
@@ -299,27 +305,28 @@ async def tickers(symbols: str = ""):
     """Return quotes for a comma-separated list of symbols."""
     if not symbols:
         return {}
-    symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    full_symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    base_symbol_list = [s.split("/")[0] for s in full_symbol_list]
     result = {}
     try:
         quotes = await asyncio.to_thread(
-            get_quotes, symbol_list
+            get_quotes, base_symbol_list
         )
-        for sym in symbol_list:
-            q = quotes.get(sym)
+        for full_sym, base_sym in zip(full_symbol_list, base_symbol_list):
+            q = quotes.get(base_sym)
             if q:
-                result[sym] = {
+                result[full_sym] = {
                     "last": q.get("last"),
                     "bid": q.get("bid"),
                     "ask": q.get("ask"),
                     "change_24h": q.get("change_24h"),
                 }
             else:
-                result[sym] = {"last": None, "bid": None, "ask": None, "change_24h": None}
+                result[full_sym] = {"last": None, "bid": None, "ask": None, "change_24h": None}
     except Exception as e:
         logger.warning(f"REST tickers fetch failed: {e}")
-        for sym in symbol_list:
-            result[sym] = {"last": None, "bid": None, "ask": None, "change_24h": None}
+        for full_sym in full_symbol_list:
+            result[full_sym] = {"last": None, "bid": None, "ask": None, "change_24h": None}
     return result
 
 @app.websocket("/ws")
@@ -352,13 +359,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         pos_copy["display_symbol"] = await _get_display_symbol(engine, sym, pos.get("timeframe"))
                         positions[sym] = pos_copy
 
-                    # Build trades with display_symbol
-                    trades = []
-                    for t in engine.trade_history[-50:]:
-                        t_copy = dict(t)
-                        t_copy["display_symbol"] = await _get_display_symbol(engine, t["symbol"], t.get("timeframe"))
-                        trades.append(t_copy)
-
                     perf = await run_in_threadpool(engine.get_performance_summary)
                     for row in perf.get("rows", []):
                         row["display_symbol"] = await _get_display_symbol(engine, row["symbol"], row.get("timeframe"))
@@ -369,16 +369,22 @@ async def websocket_endpoint(websocket: WebSocket):
                     balances = await run_in_threadpool(engine.trader.fetch_balance)
                     profit_summary = await run_in_threadpool(engine.get_profit_summary)
                     pause_info = await engine.get_pause_status()
+
+                    # Strip large/unserializable fields from queued orders before sending
+                    queued_orders_payload = [
+                        {k: v for k, v in q.items() if k != "signal"}
+                        for q in engine.queued_orders
+                    ]
+
                     payload = {
                         "current_symbols": current_symbols,
                         "positions": positions,
                         "balances": balances,
-                        "trades": trades,
                         "profit": profit_summary,
                         "performance": perf,
                         "paused": await asyncio.to_thread(redis.get, "trading:paused") == "1",
                         "pause_info": pause_info,
-                        "queued_orders": engine.queued_orders,
+                        "queued_orders": queued_orders_payload,
                     }
                     _ws_payload_cache = payload
                     _ws_payload_cache_time = now
