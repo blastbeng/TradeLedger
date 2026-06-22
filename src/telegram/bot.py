@@ -302,19 +302,19 @@ class TelegramBot:
             if tf:
                 line += f"   ⏱️ {tf}\n"
             line += f"   🕒 {ts}\n"
-            line += f"   Amount: {amt:.6f}  Entry: ${price:.2f}"
+            line += f"   Amount: {amt:.6f}  Entry: {price:.2f}"
             if current_price is not None:
-                line += f"  Current: ${current_price:.2f}"
+                line += f"  Current: {current_price:.2f}"
             line += "\n"
             line += f"   Fee: {fee_str}\n"
             # Add position value in base currency
             value = amt * (current_price if current_price is not None else price)
-            line += f"   Value: ${value:,.2f} {self.engine.base_currency}\n"
+            line += f"   Value: {value:,.2f} {self.engine.base_currency}\n"
             # SL/TP
             if sl is not None:
-                line += f"   🛑 Stop: ${sl:.2f}"
+                line += f"   🛑 Stop: {sl:.2f}"
             if tp is not None:
-                line += f"  🎯 Target: ${tp:.2f}"
+                line += f"  🎯 Target: {tp:.2f}"
             if sl is not None or tp is not None:
                 line += "\n"
 
@@ -412,9 +412,9 @@ class TelegramBot:
                 line += f"   🕒 Queued: {ts}\n"
                 line += f"   Amount: {original_amount:.6f}"
                 if limit_price is not None:
-                    line += f"  Limit: ${limit_price:.2f}"
+                    line += f"  Limit: {limit_price:.2f}"
                 if current_price is not None:
-                    line += f"  Current: ${current_price:.2f}"
+                    line += f"  Current: {current_price:.2f}"
                     if limit_price is not None and current_price > 0:
                         diff_pct = (current_price - limit_price) / limit_price * 100
                         line += f"  ({diff_pct:+.2f}%)"
@@ -588,10 +588,10 @@ class TelegramBot:
         try:
             symbols = self.engine.current_symbols
             if not symbols:
-                await update.message.reply_text("No symbols currently tracked.")
+                await update.message.reply_text("No symbols currently tracked.", reply_markup=self.keyboard)
                 return
 
-            await update.message.reply_text("Generating news summaries...")
+            await update.message.reply_text("Generating news summaries...", reply_markup=self.keyboard)
             messages = []
             for entry in symbols:
                 symbol = entry["symbol"]
@@ -633,7 +633,7 @@ class TelegramBot:
         try:
             symbols = self.engine.current_symbols
             if not symbols:
-                await update.message.reply_text("No symbols currently tracked.")
+                await update.message.reply_text("No symbols currently tracked.", reply_markup=self.keyboard)
                 return
 
             msg = "<b>📰 News Article Counts</b>\n\n"
@@ -663,13 +663,6 @@ class TelegramBot:
 
         if not open_trades:
             await update.message.reply_text("📈 No open trades to sell.", reply_markup=self.keyboard)
-            return
-
-        if not await self.engine._is_market_open():
-            await update.message.reply_text(
-                "⏸️ Cannot sell: market is currently closed.",
-                reply_markup=self.keyboard
-            )
             return
 
         if context.args:
