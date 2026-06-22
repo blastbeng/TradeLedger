@@ -3057,12 +3057,11 @@ class TradingEngine:
                 pass
 
             # Gather minimal market context
-            vix = await self._fetch_vix()
-            spy_price = None
+            benchmark_price = None
             try:
-                tickers_map = await asyncio.to_thread(get_quotes, self.data_client, ["SPY"])
-                spy_ticker = tickers_map.get("SPY")
-                spy_price = spy_ticker.get("last") if spy_ticker else None
+                tickers_map = await asyncio.to_thread(get_quotes, self.data_client, [settings.BENCHMARK_SYMBOL])
+                benchmark_ticker = tickers_map.get(settings.BENCHMARK_SYMBOL)
+                benchmark_price = benchmark_ticker.get("last") if benchmark_ticker else None
             except Exception:
                 pass
 
@@ -3103,10 +3102,8 @@ class TradingEngine:
             prompt_parts.append(f"Account P&L: daily={daily_pnl:.4f}, total={total_pnl:.4f}, drawdown={drawdown_pct:.2f}%")
             if consecutive_losses > 0:
                 prompt_parts.append(f"Consecutive losing trades: {consecutive_losses}")
-            if vix is not None:
-                prompt_parts.append(f"VIX: {vix:.2f}")
-            if spy_price is not None:
-                prompt_parts.append(f"SPY price: {spy_price}")
+            if benchmark_price is not None:
+                prompt_parts.append(f"Benchmark ({settings.BENCHMARK_SYMBOL}) price: {benchmark_price}")
             if market_breadth:
                 prompt_parts.append(f"Market breadth (top stocks): {market_breadth['positive_pct']}% positive")
             if full_market_breadth:

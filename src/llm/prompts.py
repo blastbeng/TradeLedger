@@ -429,7 +429,7 @@ Available symbols with market data and minimum trade cost (in {base_currency}):
 
 Select between 0 and {max_symbols} stocks to trade. If market conditions are extremely unfavorable (e.g., high losses, poor momentum, negative sentiment), you may select 0 stocks to pause trading until the next evaluation. You decide the exact number based on how many high‑quality opportunities you see. If market conditions are poor, you may choose fewer stocks (even 0 or 1) to concentrate capital on the best setup. If many strong setups exist, you may select up to {max_symbols}. You MUST only select stocks where the per-stock budget ({per_symbol_budget:.2f} {base_currency}) is greater than or equal to the stock's min_trade_cost. Skip any stock that does not meet this requirement. Prefer stocks with high volume and positive momentum. You may keep some current stocks if they are still promising and meet the budget requirement, or replace them. **Prefer to keep stocks that have been tracked for a while** – they have more historical data and the bot has already invested in learning their behaviour. Only drop a stock if it shows clear deterioration (e.g., negative momentum on all timeframes, poor win rate, or strongly negative sentiment). For stocks already being tracked, re-evaluate their assigned timeframe. If the market regime has changed (e.g., a stock that was trending on 1h is now choppy and better suited to 15m), update the timeframe. If you change the timeframe for a stock with an open position, the bot will switch to managing the position using the new timeframe.
 
-**Important:** Unless the market is in a clear crisis (e.g., VIX > 40, breadth < 20%, account in deep drawdown), you MUST select at least 1–2 stocks with **small position sizes** (position_size_fraction ≤ 0.15) and **tight stops**. Doing nothing guarantees zero profit; a cautious small trade at least gives a chance. Only select 0 stocks if conditions are truly hostile.
+**Important:** Unless the market is in a clear crisis (e.g., breadth < 20%, account in deep drawdown), you MUST select at least 1–2 stocks with **small position sizes** (position_size_fraction ≤ 0.15) and **tight stops**. Doing nothing guarantees zero profit; a cautious small trade at least gives a chance. Only select 0 stocks if conditions are truly hostile.
 
 Each symbol can only appear once in your selection. Choose the single best timeframe for each stock based on the multi-timeframe OHLCV data.
 
@@ -559,16 +559,15 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
         prompt += f"\nOverall market trend ({market_trend['symbol']}): daily change {market_trend.get('change_24h')}%, last price {market_trend.get('last')}\n"
     if session_info:
         prompt += f"\nCurrent UTC hour: {session_info['utc_hour']} ({session_info['session']} session)\n"
-    if vix is not None:
-        prompt += f"\nCBOE Volatility Index (VIX): {vix:.2f}\n"
-    # --- Market regime summary ---
+    # VIX is not available for the Italian market — omitted.
+    # --- Market regime summary (based on breadth only, VIX not available) ---
     regime_label = "neutral"
-    if market_breadth and vix is not None:
+    if market_breadth:
         breadth_pct = market_breadth.get("positive_pct", 50)
-        if breadth_pct > 60 and vix < 20:
-            regime_label = "RISK-ON (broad market strength, low fear)"
-        elif breadth_pct < 40 or vix > 30:
-            regime_label = "RISK-OFF (broad market weakness, elevated fear)"
+        if breadth_pct > 60:
+            regime_label = "RISK-ON (broad market strength)"
+        elif breadth_pct < 40:
+            regime_label = "RISK-OFF (broad market weakness)"
     prompt += f"\n**Market Regime: {regime_label}**\n"
     if news_sentiment:
         prompt += "\n## News Sentiment\n"
