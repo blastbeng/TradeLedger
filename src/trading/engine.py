@@ -211,9 +211,9 @@ class TradingEngine:
             raise
 
         self.ws_manager = WebSocketManager(self.streaming_client, [])
-        if settings.TRADING_MODE == "paper":
+        if settings.TRADING_MODE in ("paper", "notify"):
             self.trader = PaperTrader()
-            logger.info("PaperTrader initialized for paper trading mode.")
+            logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
         else:
             self.trader = LiveTrader(self.exchange)
             logger.info("LiveTrader initialized (notify mode – no auto-execution).")
@@ -5284,6 +5284,11 @@ class TradingEngine:
                     "buy_reasoning": "Manual trade",
                 }
             self._balance_cache = None
+
+            # Update virtual cash balance
+            self.trader._balances[quote] = self.trader._balances.get(quote, 0.0) - cost_basis
+            self.trader._balances[base] = self.trader._balances.get(base, 0.0) + net_base
+            await asyncio.to_thread(self.trader._save_balances)
         elif side == "sell":
             pos = self.positions.get(symbol)
             if pos:
@@ -5297,10 +5302,20 @@ class TradingEngine:
                     trade["hold_time_seconds"] = (timestamp - pos["timestamp"]) / 1000.0
                 self.positions.pop(symbol, None)
                 self._balance_cache = None
+
+                # Update virtual cash balance
+                self.trader._balances[base] = self.trader._balances.get(base, 0.0) - quantity
+                self.trader._balances[quote] = self.trader._balances.get(quote, 0.0) + net_quote
+                await asyncio.to_thread(self.trader._save_balances)
             else:
                 trade["realized_pnl"] = 0.0
                 trade["cost_basis"] = 0.0
                 trade["exit_reason"] = "manual_sell"
+
+                # Update virtual cash balance even if position wasn't tracked
+                self.trader._balances[base] = self.trader._balances.get(base, 0.0) - quantity
+                self.trader._balances[quote] = self.trader._balances.get(quote, 0.0) + (cost - fee)
+                await asyncio.to_thread(self.trader._save_balances)
 
         self.trade_history.append(trade)
         await asyncio.to_thread(insert_trade, trade)
