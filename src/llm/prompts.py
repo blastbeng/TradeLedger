@@ -711,6 +711,7 @@ def build_strategy_prompt(
     trade_pattern_analysis: Optional[Dict[str, Any]] = None,
     symbol_event: Optional[Dict[str, Any]] = None,
     queued_orders: Optional[List[Dict[str, Any]]] = None,
+    fundamentals: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Build a prompt to generate a trading strategy for a specific stock/ETF."""
     current_price = ticker.get("last") if ticker else None
@@ -1192,6 +1193,37 @@ Maximum symbols to trade: {max_symbols}
 You are trading spot only (no shorting). Only output SELL if you currently hold the stock.
 
 """
+    # --- Fundamental Data ---
+    if fundamentals:
+        prompt += "\n**Fundamental Data (Medium/Long-Term Context):**\n"
+        if fundamentals.get("sector"):
+            prompt += f"  Sector: {fundamentals['sector']}\n"
+        if fundamentals.get("industry"):
+            prompt += f"  Industry: {fundamentals['industry']}\n"
+        if fundamentals.get("market_cap") is not None:
+            mc = fundamentals["market_cap"]
+            if mc >= 1e12:
+                mc_str = f"{mc/1e12:.2f}T"
+            elif mc >= 1e9:
+                mc_str = f"{mc/1e9:.2f}B"
+            elif mc >= 1e6:
+                mc_str = f"{mc/1e6:.2f}M"
+            else:
+                mc_str = str(mc)
+            prompt += f"  Market Cap: {mc_str}\n"
+        if fundamentals.get("pe_ratio") is not None:
+            prompt += f"  P/E Ratio (trailing): {fundamentals['pe_ratio']:.2f}\n"
+        if fundamentals.get("forward_pe") is not None:
+            prompt += f"  Forward P/E: {fundamentals['forward_pe']:.2f}\n"
+        if fundamentals.get("dividend_yield") is not None:
+            prompt += f"  Dividend Yield: {fundamentals['dividend_yield']*100:.2f}%\n"
+        if fundamentals.get("price_to_book") is not None:
+            prompt += f"  Price/Book: {fundamentals['price_to_book']:.2f}\n"
+        if fundamentals.get("profit_margins") is not None:
+            prompt += f"  Profit Margins: {fundamentals['profit_margins']*100:.2f}%\n"
+        if fundamentals.get("return_on_equity") is not None:
+            prompt += f"  Return on Equity: {fundamentals['return_on_equity']*100:.2f}%\n"
+        prompt += "Use this fundamental data to assess valuation and long-term viability. For medium/long-term trades, prefer stocks with reasonable P/E ratios, strong profit margins, and solid return on equity. Avoid stocks that appear significantly overvalued unless there is a strong growth catalyst.\n"
     prompt += (
         "\n**Entry Condition (REQUIRED for every BUY):**\n"
         "You MUST include an `entry_condition` object in your JSON output for every BUY action. "

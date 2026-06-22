@@ -79,3 +79,29 @@ def get_yahoo_quote(symbol: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"Yahoo Finance quote failed for {base}: {e}")
         return None
+
+
+def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
+    """Fetch key fundamentals (P/E, Market Cap, Sector, etc.) from Yahoo Finance."""
+    if not settings.YAHOO_FINANCE_ENABLED:
+        return None
+
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+
+    try:
+        ticker = yf.Ticker(base)
+        info = ticker.info
+        return {
+            "pe_ratio": info.get("trailingPE"),
+            "forward_pe": info.get("forwardPE"),
+            "market_cap": info.get("marketCap"),
+            "dividend_yield": info.get("dividendYield"),
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
+            "price_to_book": info.get("priceToBook"),
+            "profit_margins": info.get("profitMargins"),
+            "return_on_equity": info.get("returnOnEquity"),
+        }
+    except Exception as e:
+        logger.warning(f"Yahoo Finance fundamentals failed for {base}: {e}")
+        return None

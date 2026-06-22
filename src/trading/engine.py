@@ -14,7 +14,7 @@ from src.config.settings import settings
 from src.exchanges.fees import get_fee_rate
 from src.exchanges.factory import get_trading_client, get_streaming_client, get_data_client
 from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range
-from src.exchanges.yahoo_finance import get_yahoo_quote
+from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
 from src.trading.paper_trader import PaperTrader
 from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import (
@@ -3919,6 +3919,7 @@ class TradingEngine:
                 trade_pattern_analysis=trade_pattern_analysis,
                 symbol_event=symbol_event,
                 queued_orders=self.queued_orders,
+                fundamentals=fundamentals,
             )
             logger.info(f"LLM prompt for {symbol}: {len(prompt)} chars")
             # Build a market snapshot dict for caching (per-symbol)
