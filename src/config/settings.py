@@ -21,6 +21,16 @@ class Settings(BaseSettings):
     # Paper trading initial balance (only used in paper mode)
     PAPER_INITIAL_BALANCE: float = 10000.0
 
+    # Maximum risk per trade as a percentage of total portfolio value (e.g., 0.01 = 1%)
+    RISK_PER_TRADE_PCT: float = 0.01
+
+    @field_validator("RISK_PER_TRADE_PCT")
+    @classmethod
+    def validate_risk_per_trade_pct(cls, v: float) -> float:
+        if not (0.0 < v <= 0.1):
+            raise ValueError("RISK_PER_TRADE_PCT must be between 0.0 and 0.1")
+        return v
+
     # Risk management check interval (seconds) – stop-loss/take-profit checks
     RISK_CHECK_INTERVAL_SECONDS: int = 30
 

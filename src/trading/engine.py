@@ -5895,6 +5895,15 @@ class TradingEngine:
             params = signal.strategy_params or {}
             fill_timeout = params.get("order_fill_timeout_seconds", settings.ORDER_FILL_TIMEOUT_SECONDS)
 
+            # Fetch current price early for position sizing and stop calculations
+            base = symbol.split("/")[0]
+            quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+            ticker = quotes.get(base)
+            current_price = ticker['last'] if ticker else None
+            if current_price is None or current_price <= 0:
+                logger.warning(f"Cannot execute BUY for {symbol}: no valid current price.")
+                return
+
             # Use LLM-provided risk parameters directly (no hardcoded minimums)
             fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
             tp_pct = params["take_profit_pct"]
@@ -5905,10 +5914,6 @@ class TradingEngine:
             stop_method = params.get("stop_loss_method", "fixed")
             if stop_method == "atr_multiple" and atr is not None and atr > 0:
                 atr_mult = params["stop_loss_atr_multiple"]
-                base = symbol.split("/")[0]
-                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
-                ticker = quotes.get(base)
-                current_price = ticker['last']
                 sl_pct = (atr_mult * atr) / current_price
                 logger.info(f"ATR-based stop: ATR={atr}, multiplier={atr_mult}, stop_loss_pct={sl_pct:.4%}")
             else:
@@ -5929,6 +5934,38 @@ class TradingEngine:
 
             # Desired amount based on fraction of total available quote balance
             desired_amount = quote_balance * position_fraction
+
+            # --- ATR-Based Position Sizing (Hard Override) ---
+            risk_per_share = None
+            if stop_method == "atr_multiple" and atr is not None and atr > 0:
+                atr_mult = params["stop_loss_atr_multiple"]
+                risk_per_share = atr_mult * atr
+            elif sl_pct is not None and current_price > 0:
+                risk_per_share = sl_pct * current_price
+
+            if risk_per_share is not None and risk_per_share > 0:
+                # Calculate portfolio value (cash + open positions)
+                total_portfolio_value = quote_balance
+                pos_tickers = await self._get_all_position_tickers()
+                for sym, pos in self.positions.items():
+                    try:
+                        t = pos_tickers.get(sym)
+                        if t and t.get('last'):
+                            total_portfolio_value += pos['amount'] * t['last']
+                    except Exception:
+                        pass
+
+                max_risk_amount = total_portfolio_value * settings.RISK_PER_TRADE_PCT
+                max_quantity = max_risk_amount / risk_per_share
+                atr_based_amount = max_quantity * current_price
+
+                if atr_based_amount < desired_amount:
+                    logger.info(
+                        f"ATR-based position sizing override for {symbol}: "
+                        f"reducing amount from {desired_amount:.2f} to {atr_based_amount:.2f} "
+                        f"to limit risk to {settings.RISK_PER_TRADE_PCT*100:.1f}% of portfolio."
+                    )
+                    desired_amount = atr_based_amount
 
             # Fetch all position tickers once for risk calculations
             pos_tickers = await self._get_all_position_tickers()
@@ -6211,12 +6248,8 @@ class TradingEngine:
                 return
 
             # Check minimum order size and adjust upward if needed
-            ticker = None
             try:
-                base = symbol.split("/")[0]
-                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
-                ticker = quotes.get(base)
-                price = ticker['last']
+                price = current_price
                 base_amount = amount / price
                 # Fetch minimum order size from asset info
                 try:
