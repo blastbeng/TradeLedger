@@ -115,71 +115,6 @@ def validate_signal(
             tsa = params["trailing_stop_activation_pct"]
             if not isinstance(tsa, (int, float)) or not (0 <= tsa <= 1.0):
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid trailing_stop_activation_pct")
-        if "trailing_take_profit" in params:
-            ttp = params["trailing_take_profit"]
-            if not isinstance(ttp, bool):
-                return Signal(action="HOLD", confidence=0.0, reasoning="trailing_take_profit must be boolean")
-            if ttp:
-                ttp_dist = params.get("trailing_take_profit_distance_pct")
-                if ttp_dist is None or not isinstance(ttp_dist, (int, float)) or not (0 < ttp_dist < 1.0):
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid or missing trailing_take_profit_distance_pct")
-        if "breakeven_activation_pct" in params:
-            bap = params["breakeven_activation_pct"]
-            if not isinstance(bap, (int, float)) or not (0 < bap <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid breakeven_activation_pct")
-        if "lock_profit_activation_pct" in params:
-            lpa = params["lock_profit_activation_pct"]
-            if not isinstance(lpa, (int, float)) or not (0 < lpa <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid lock_profit_activation_pct")
-            if "lock_profit_level_pct" not in params:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Missing lock_profit_level_pct")
-            lpl = params["lock_profit_level_pct"]
-            if not isinstance(lpl, (int, float)) or not (0 < lpl < lpa):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid lock_profit_level_pct (must be < activation)")
-        if "partial_take_profit_pct" in params:
-            ptp = params["partial_take_profit_pct"]
-            if not isinstance(ptp, (int, float)) or not (0 < ptp <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_pct")
-            if "partial_take_profit_fraction" not in params:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Missing partial_take_profit_fraction")
-            ptf = params["partial_take_profit_fraction"]
-            if not isinstance(ptf, (int, float)) or not (0 < ptf <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_fraction")
-            # Partial TP must be less than main TP
-            if ptp >= tp:
-                return Signal(action="HOLD", confidence=0.0, reasoning="partial_take_profit_pct must be less than take_profit_pct")
-        # --- Multiple partial take-profit levels ---
-        if "partial_take_profit_levels" in params:
-            levels = params["partial_take_profit_levels"]
-            if not isinstance(levels, list) or len(levels) == 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="partial_take_profit_levels must be a non-empty array")
-            total_fraction = 0.0
-            prev_pct = 0.0
-            for i, level in enumerate(levels):
-                if not isinstance(level, dict):
-                    return Signal(action="HOLD", confidence=0.0, reasoning=f"Invalid partial_take_profit_levels[{i}]")
-                lvl_pct = level.get("take_profit_pct")
-                lvl_frac = level.get("fraction")
-                if not isinstance(lvl_pct, (int, float)) or not (0 < lvl_pct <= 1.0):
-                    return Signal(action="HOLD", confidence=0.0, reasoning=f"Invalid take_profit_pct in level {i}")
-                if not isinstance(lvl_frac, (int, float)) or not (0 < lvl_frac <= 1.0):
-                    return Signal(action="HOLD", confidence=0.0, reasoning=f"Invalid fraction in level {i}")
-                min_depth = level.get("min_depth")
-                if min_depth is not None:
-                    if not isinstance(min_depth, (int, float)) or min_depth <= 0:
-                        return Signal(action="HOLD", confidence=0.0, reasoning=f"Invalid min_depth in level {i}")
-                max_time = level.get("max_time_seconds")
-                if max_time is not None:
-                    if not isinstance(max_time, (int, float)) or max_time <= 0:
-                        return Signal(action="HOLD", confidence=0.0, reasoning=f"Invalid max_time_seconds in level {i}")
-                if lvl_pct <= prev_pct:
-                    return Signal(action="HOLD", confidence=0.0, reasoning=f"Levels must be in increasing take_profit_pct order")
-                if lvl_pct >= tp:
-                    return Signal(action="HOLD", confidence=0.0, reasoning=f"Level {i} take_profit_pct must be less than main take_profit_pct")
-                total_fraction += lvl_frac
-                prev_pct = lvl_pct
-            if total_fraction > 1.0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Sum of partial take-profit fractions exceeds 1.0")
         if "max_risk_per_trade_pct" in params:
             mrp = params["max_risk_per_trade_pct"]
             if not isinstance(mrp, (int, float)) or not (0 < mrp <= 1.0):
@@ -202,24 +137,6 @@ def validate_signal(
                         confidence=0.0,
                         reasoning=f"Risk/reward ratio {tp/sl:.2f} is below minimum {mrr:.2f}"
                     )
-        if "max_spread_pct" in params:
-            msp = params["max_spread_pct"]
-            if not isinstance(msp, (int, float)) or msp <= 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_spread_pct")
-        if "min_depth_at_take_profit" in params:
-            mdatp = params["min_depth_at_take_profit"]
-            if not isinstance(mdatp, (int, float)) or mdatp <= 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid min_depth_at_take_profit")
-        if "max_slippage_pct" in params:
-            msp = params["max_slippage_pct"]
-            if not isinstance(msp, (int, float)) or msp <= 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_slippage_pct")
-        if "max_unrealized_loss_pct" in params:
-            mul = params["max_unrealized_loss_pct"]
-            if not isinstance(mul, (int, float)) or not (0 < mul < 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_unrealized_loss_pct")
-            if sl is not None and mul >= sl:
-                return Signal(action="HOLD", confidence=0.0, reasoning="max_unrealized_loss_pct must be less than stop_loss_pct")
         if "min_confidence" in params:
             mc = params["min_confidence"]
             if not isinstance(mc, (int, float)) or not (0.0 <= mc <= 1.0):
@@ -232,51 +149,6 @@ def validate_signal(
             si = params["strategy_interval_seconds"]
             if not isinstance(si, (int, float)) or si <= 0:
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid strategy_interval_seconds")
-
-        # --- Native order type validation ---
-        order_type = params.get("order_type")
-        if order_type is not None:
-            if order_type not in ("market", "limit", "stop", "stop_limit", "trailing_stop"):
-                return Signal(action="HOLD", confidence=0.0, reasoning=f"Invalid order_type: {order_type}")
-            if order_type in ("stop", "stop_limit"):
-                sp = params.get("stop_price")
-                if sp is None or not isinstance(sp, (int, float)) or sp <= 0:
-                    return Signal(action="HOLD", confidence=0.0, reasoning=f"Missing or invalid stop_price for order_type={order_type}")
-            if order_type in ("limit", "stop_limit"):
-                lp = params.get("limit_price")
-                if lp is None or not isinstance(lp, (int, float)) or lp <= 0:
-                    return Signal(action="HOLD", confidence=0.0, reasoning=f"Missing or invalid limit_price for order_type={order_type}")
-            if order_type == "trailing_stop":
-                to = params.get("trail_offset")
-                if to is None or not isinstance(to, (int, float)) or to <= 0:
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Missing or invalid trail_offset for order_type=trailing_stop")
-
-        # --- Exit order type validation ---
-        stop_loss_ot = params.get("stop_loss_order_type")
-        if stop_loss_ot is not None:
-            if stop_loss_ot not in ("market", "stop", "stop_limit", "trailing_stop"):
-                return Signal(action="HOLD", confidence=0.0, reasoning=f"Invalid stop_loss_order_type: {stop_loss_ot}")
-            if stop_loss_ot in ("stop", "stop_limit"):
-                sp = params.get("stop_loss_stop_price")
-                if sp is None or not isinstance(sp, (int, float)) or sp <= 0:
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Missing or invalid stop_loss_stop_price for stop_loss_order_type")
-            if stop_loss_ot == "stop_limit":
-                lp = params.get("stop_loss_limit_price")
-                if lp is None or not isinstance(lp, (int, float)) or lp <= 0:
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Missing or invalid stop_loss_limit_price for stop_loss_order_type=stop_limit")
-            if stop_loss_ot == "trailing_stop":
-                to = params.get("stop_loss_trail_offset")
-                if to is None or not isinstance(to, (int, float)) or to <= 0:
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Missing or invalid stop_loss_trail_offset for stop_loss_order_type=trailing_stop")
-
-        take_profit_ot = params.get("take_profit_order_type")
-        if take_profit_ot is not None:
-            if take_profit_ot not in ("limit", "market"):
-                return Signal(action="HOLD", confidence=0.0, reasoning=f"Invalid take_profit_order_type: {take_profit_ot}")
-            if take_profit_ot == "limit":
-                lp = params.get("take_profit_limit_price")
-                if lp is None or not isinstance(lp, (int, float)) or lp <= 0:
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Missing or invalid take_profit_limit_price for take_profit_order_type=limit")
 
         # Logical consistency checks (no hardcoded values)
         if sl is not None and tp <= sl:

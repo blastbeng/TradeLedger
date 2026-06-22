@@ -34,17 +34,6 @@ class Signal:
     model_type: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
-    # --- Native Alpaca order type support ---
-    order_type: Optional[str] = None          # "market", "limit", "stop", "stop_limit", "trailing_stop"
-    stop_price: Optional[float] = None        # for stop/stop_limit orders
-    trail_offset: Optional[float] = None      # for trailing_stop orders (in dollars)
-    # --- Exit order types (for stop-loss and take-profit placed after BUY fills) ---
-    stop_loss_order_type: Optional[str] = None       # "market", "stop", "stop_limit", "trailing_stop"
-    stop_loss_stop_price: Optional[float] = None     # required if stop_loss_order_type is stop/stop_limit
-    stop_loss_limit_price: Optional[float] = None    # required if stop_loss_order_type is stop_limit
-    stop_loss_trail_offset: Optional[float] = None   # required if stop_loss_order_type is trailing_stop
-    take_profit_order_type: Optional[str] = None     # "limit" (default) or "market"
-    take_profit_limit_price: Optional[float] = None  # required if take_profit_order_type is "limit"
 
 
 class Strategy:
