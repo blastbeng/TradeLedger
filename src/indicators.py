@@ -230,26 +230,6 @@ def compute_williams_r(
     return wr
 
 
-def compute_vwap(candles: List[List]) -> Optional[float]:
-    """Compute Volume Weighted Average Price from OHLCV candles.
-
-    Uses typical price = (high + low + close) / 3.
-    Returns None if no volume data.
-    """
-    if not candles:
-        return None
-    total_volume = 0.0
-    total_value = 0.0
-    for c in candles:
-        high, low, close, volume = c[2], c[3], c[4], c[5]
-        typical_price = (high + low + close) / 3.0
-        total_value += typical_price * volume
-        total_volume += volume
-    if total_volume == 0:
-        return None
-    return total_value / total_volume
-
-
 def compute_ichimoku(
     highs: List[float], lows: List[float], closes: List[float],
     tenkan_period: int = 9, kijun_period: int = 26, senkou_b_period: int = 52,
@@ -295,129 +275,6 @@ def compute_ichimoku(
         "chikou_span": round(chikou_span, 8),
         "cloud_top": round(cloud_top, 8),
         "cloud_bottom": round(cloud_bottom, 8),
-    }
-
-
-def compute_parabolic_sar(
-    highs: List[float], lows: List[float],
-    acceleration: float = 0.02, max_acceleration: float = 0.2
-) -> Optional[float]:
-    """Compute Parabolic SAR (latest value).
-
-    Uses the standard Wilder's method. Returns the current SAR value,
-    or None if insufficient data.
-    """
-    if len(highs) < 2:
-        return None
-
-    # Initialise
-    sar = lows[0]  # start with first low (assume uptrend)
-    ep = highs[0]  # extreme point
-    af = acceleration
-    trend = 1  # 1 = uptrend, -1 = downtrend
-
-    for i in range(1, len(highs)):
-        prev_sar = sar
-        prev_ep = ep
-        prev_af = af
-        prev_trend = trend
-
-        # Update SAR
-        sar = prev_sar + prev_af * (prev_ep - prev_sar)
-
-        # Ensure SAR is below the low of the prior two bars in uptrend
-        if trend == 1:
-            if i >= 2:
-                sar = min(sar, lows[i-1], lows[i-2])
-            else:
-                sar = min(sar, lows[i-1])
-        else:
-            if i >= 2:
-                sar = max(sar, highs[i-1], highs[i-2])
-            else:
-                sar = max(sar, highs[i-1])
-
-        # Check for reversal
-        if trend == 1:
-            if lows[i] < sar:
-                trend = -1
-                sar = ep  # new SAR is the previous extreme point
-                ep = lows[i]
-                af = acceleration
-            else:
-                if highs[i] > ep:
-                    ep = highs[i]
-                    af = min(af + acceleration, max_acceleration)
-        else:
-            if highs[i] > sar:
-                trend = 1
-                sar = ep
-                ep = highs[i]
-                af = acceleration
-            else:
-                if lows[i] < ep:
-                    ep = lows[i]
-                    af = min(af + acceleration, max_acceleration)
-
-    return round(sar, 8)
-
-
-def compute_keltner_channels(
-    closes: List[float], highs: List[float], lows: List[float],
-    ema_period: int = 20, atr_mult: float = 2.0, atr_period: int = 10
-) -> Optional[Dict[str, float]]:
-    """Compute Keltner Channels (upper, middle, lower).
-
-    Middle line = EMA of closes.
-    Upper/Lower = middle ± atr_mult * ATR.
-    Returns dict with 'upper', 'middle', 'lower', or None if insufficient data.
-    """
-    if len(closes) < max(ema_period, atr_period + 1):
-        return None
-
-    # Middle line: EMA of closes
-    ema_vals = compute_ema(closes, ema_period)
-    if not ema_vals:
-        return None
-    middle = ema_vals[-1]
-
-    # ATR from the provided highs, lows, closes
-    tr_values = []
-    for i in range(1, len(closes)):
-        tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
-        tr_values.append(tr)
-    if len(tr_values) < atr_period:
-        return None
-    atr = sum(tr_values[:atr_period]) / atr_period
-    for i in range(atr_period, len(tr_values)):
-        atr = (atr * (atr_period - 1) + tr_values[i]) / atr_period
-
-    upper = middle + atr_mult * atr
-    lower = middle - atr_mult * atr
-
-    return {
-        "upper": round(upper, 8),
-        "middle": round(middle, 8),
-        "lower": round(lower, 8),
-    }
-
-
-def compute_pivot_points(high: float, low: float, close: float) -> Dict[str, float]:
-    """Compute classic Pivot Points from the previous period's high, low, close.
-
-    Returns dict with 'pivot', 'r1', 'r2', 's1', 's2'.
-    """
-    pivot = (high + low + close) / 3.0
-    r1 = 2.0 * pivot - low
-    s1 = 2.0 * pivot - high
-    r2 = pivot + (high - low)
-    s2 = pivot - (high - low)
-    return {
-        "pivot": round(pivot, 8),
-        "r1": round(r1, 8),
-        "r2": round(r2, 8),
-        "s1": round(s1, 8),
-        "s2": round(s2, 8),
     }
 
 
@@ -556,23 +413,5 @@ def compute_all_indicators(
         ind['williams_r'] = compute_williams_r(highs, lows, closes, period=willr_period)
         ind['ichimoku'] = compute_ichimoku(highs, lows, closes, tenkan_period=ichimoku_tenkan, kijun_period=ichimoku_kijun, senkou_b_period=ichimoku_senkou_b)
         ind['donchian_channels'] = compute_donchian_channels(highs, lows, period=donchian_period)
-
-        # VWAP
-        ind['vwap'] = compute_vwap(candles)
-
-        # Parabolic SAR
-        ind['parabolic_sar'] = compute_parabolic_sar(highs, lows)
-
-        # Keltner Channels
-        ind['keltner_channels'] = compute_keltner_channels(closes, highs, lows)
-
-        # Pivot Points (from the previous completed candle)
-        if len(candles) >= 2:
-            prev_high = candles[-2][2]
-            prev_low = candles[-2][3]
-            prev_close = candles[-2][4]
-            ind['pivot_points'] = compute_pivot_points(prev_high, prev_low, prev_close)
-        else:
-            ind['pivot_points'] = None
 
     return ind
