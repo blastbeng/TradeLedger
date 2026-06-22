@@ -1,77 +1,36 @@
-import math
 from typing import List, Dict, Optional, Tuple, Any
+import numpy as np
+import talib
 
 
 def compute_atr(candles: List[List], period: int = 14) -> Optional[float]:
-    """Compute Average True Range from OHLCV candles using Wilder's smoothing.
-
-    Returns None if insufficient data.
-    """
+    """Compute Average True Range from OHLCV candles using Wilder's smoothing."""
     if len(candles) < period + 1:
         return None
-    tr_values = []
-    for i in range(1, len(candles)):
-        high = candles[i][2]
-        low = candles[i][3]
-        prev_close = candles[i - 1][4]
-        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
-        tr_values.append(tr)
-    if len(tr_values) < period:
-        return None
-    # Wilder's smoothing: seed with SMA of first `period` values
-    atr = sum(tr_values[:period]) / period
-    for i in range(period, len(tr_values)):
-        atr = (atr * (period - 1) + tr_values[i]) / period
-    return atr
+    highs = np.array([c[2] for c in candles], dtype=float)
+    lows = np.array([c[3] for c in candles], dtype=float)
+    closes = np.array([c[4] for c in candles], dtype=float)
+    result = talib.ATR(highs, lows, closes, timeperiod=period)
+    val = result[-1]
+    return val if not np.isnan(val) else None
 
 
 def compute_rsi(closes: List[float], period: int = 14) -> Optional[float]:
     """Compute RSI from closing prices."""
     if len(closes) < period + 1:
         return None
-    gains = 0.0
-    losses = 0.0
-    for i in range(1, period + 1):
-        diff = closes[i] - closes[i - 1]
-        if diff > 0:
-            gains += diff
-        else:
-            losses -= diff
-    avg_gain = gains / period
-    avg_loss = losses / period
-    if avg_loss == 0:
-        rsi = 100.0
-    else:
-        rs = avg_gain / avg_loss
-        rsi = 100.0 - (100.0 / (1.0 + rs))
-    # Use smoothed averages for the remaining data
-    for i in range(period + 1, len(closes)):
-        diff = closes[i] - closes[i - 1]
-        gain = max(diff, 0)
-        loss = -min(diff, 0)
-        avg_gain = (avg_gain * (period - 1) + gain) / period
-        avg_loss = (avg_loss * (period - 1) + loss) / period
-        if avg_loss == 0:
-            rsi = 100.0
-        else:
-            rs = avg_gain / avg_loss
-            rsi = 100.0 - (100.0 / (1.0 + rs))
-    return rsi
+    result = talib.RSI(np.array(closes, dtype=float), timeperiod=period)
+    val = result[-1]
+    return val if not np.isnan(val) else None
 
 
 def compute_ema(data: List[float], period: int) -> List[float]:
     """Compute Exponential Moving Average."""
     if len(data) < period:
         return []
-    ema_values = []
-    # SMA for the first value
-    sma = sum(data[:period]) / period
-    ema_values.append(sma)
-    multiplier = 2.0 / (period + 1)
-    for i in range(period, len(data)):
-        ema = (data[i] - ema_values[-1]) * multiplier + ema_values[-1]
-        ema_values.append(ema)
-    return ema_values
+    result = talib.EMA(np.array(data, dtype=float), timeperiod=period)
+    # talib returns NaNs for the initial period, strip them to match original behavior
+    return result[~np.isnan(result)].tolist()
 
 
 def compute_stochastic(
@@ -83,28 +42,20 @@ def compute_stochastic(
     if len(closes) < min_len:
         return None, None
 
-    # Fast %K for the most recent bar
-    recent_high = max(highs[-period:])
-    recent_low = min(lows[-period:])
-    if recent_high == recent_low:
-        fast_k = 50.0
-    else:
-        fast_k = ((closes[-1] - recent_low) / (recent_high - recent_low)) * 100
-
-    # Collect the last smooth_k %K values for %D
-    k_values = []
-    for i in range(-smooth_k, 0):
-        start = i - period + 1
-        end = i + 1 if i + 1 != 0 else None
-        h = max(highs[start:end])
-        l = min(lows[start:end])
-        if h == l:
-            k_values.append(50.0)
-        else:
-            k_values.append(((closes[i] - l) / (h - l)) * 100)
-
-    slow_d = sum(k_values) / smooth_k
-    return fast_k, slow_d
+    fast_k, fast_d = talib.STOCH(
+        np.array(highs, dtype=float), 
+        np.array(lows, dtype=float), 
+        np.array(closes, dtype=float),
+        fastk_period=period,
+        slowk_period=smooth_k,
+        slowk_matype=0,
+        slowd_period=smooth_k,
+        slowd_matype=0
+    )
+    k_val = fast_k[-1]
+    d_val = fast_d[-1]
+    return (k_val if not np.isnan(k_val) else None, 
+            d_val if not np.isnan(d_val) else None)
 
 
 def compute_adx(
@@ -113,68 +64,31 @@ def compute_adx(
     """Compute ADX, +DI, -DI using Wilder's smoothing."""
     if len(closes) < period + 1:
         return None, None, None
-    tr = []
-    plus_dm = []
-    minus_dm = []
-    for i in range(1, len(closes)):
-        high = highs[i]
-        low = lows[i]
-        prev_high = highs[i-1]
-        prev_low = lows[i-1]
-        prev_close = closes[i-1]
-        tr.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
-        up_move = high - prev_high
-        down_move = prev_low - low
-        if up_move > down_move and up_move > 0:
-            plus_dm.append(up_move)
-        else:
-            plus_dm.append(0.0)
-        if down_move > up_move and down_move > 0:
-            minus_dm.append(down_move)
-        else:
-            minus_dm.append(0.0)
-    if len(tr) < period:
-        return None, None, None
-    atr = sum(tr[:period]) / period
-    smoothed_plus_dm = sum(plus_dm[:period]) / period
-    smoothed_minus_dm = sum(minus_dm[:period]) / period
-    dx_values = []
-    for i in range(period, len(tr)):
-        atr = (atr * (period - 1) + tr[i]) / period
-        smoothed_plus_dm = (smoothed_plus_dm * (period - 1) + plus_dm[i]) / period
-        smoothed_minus_dm = (smoothed_minus_dm * (period - 1) + minus_dm[i]) / period
-        if atr == 0:
-            dx = 0.0
-        else:
-            plus_di = (smoothed_plus_dm / atr) * 100
-            minus_di = (smoothed_minus_dm / atr) * 100
-            dx = abs(plus_di - minus_di) / (plus_di + minus_di) * 100 if (plus_di + minus_di) > 0 else 0.0
-        dx_values.append(dx)
-    if not dx_values:
-        return None, None, None
-    adx = sum(dx_values[:period]) / period if len(dx_values) >= period else dx_values[-1]
-    for i in range(period, len(dx_values)):
-        adx = (adx * (period - 1) + dx_values[i]) / period
-    if atr == 0:
-        plus_di = 0.0
-        minus_di = 0.0
-    else:
-        plus_di = (smoothed_plus_dm / atr) * 100
-        minus_di = (smoothed_minus_dm / atr) * 100
-    return adx, plus_di, minus_di
+    
+    h = np.array(highs, dtype=float)
+    l = np.array(lows, dtype=float)
+    c = np.array(closes, dtype=float)
+    
+    adx = talib.ADX(h, l, c, timeperiod=period)
+    plus_di = talib.PLUS_DI(h, l, c, timeperiod=period)
+    minus_di = talib.MINUS_DI(h, l, c, timeperiod=period)
+    
+    adx_val = adx[-1]
+    plus_val = plus_di[-1]
+    minus_val = minus_di[-1]
+    
+    return (adx_val if not np.isnan(adx_val) else None,
+            plus_val if not np.isnan(plus_val) else None,
+            minus_val if not np.isnan(minus_val) else None)
 
 
 def compute_obv(closes: List[float], volumes: List[float]) -> Optional[float]:
     """Compute On-Balance Volume (latest value)."""
     if len(closes) < 2 or len(volumes) < 2:
         return None
-    obv = 0.0
-    for i in range(1, len(closes)):
-        if closes[i] > closes[i-1]:
-            obv += volumes[i]
-        elif closes[i] < closes[i-1]:
-            obv -= volumes[i]
-    return obv
+    result = talib.OBV(np.array(closes, dtype=float), np.array(volumes, dtype=float))
+    val = result[-1]
+    return val if not np.isnan(val) else None
 
 
 def compute_mfi(
@@ -184,20 +98,15 @@ def compute_mfi(
     """Compute Money Flow Index."""
     if len(closes) < period + 1:
         return None
-    typical_prices = [(h + l + c) / 3 for h, l, c in zip(highs, lows, closes)]
-    raw_money_flow = [tp * vol for tp, vol in zip(typical_prices, volumes)]
-    recent_tp = typical_prices[-period-1:]
-    recent_rmf = raw_money_flow[-period-1:]
-    pos = 0.0
-    neg = 0.0
-    for i in range(1, len(recent_tp)):
-        if recent_tp[i] > recent_tp[i-1]:
-            pos += recent_rmf[i]
-        else:
-            neg += recent_rmf[i]
-    if neg == 0:
-        return 100.0
-    return 100 - (100 / (1 + pos / neg))
+    result = talib.MFI(
+        np.array(highs, dtype=float), 
+        np.array(lows, dtype=float), 
+        np.array(closes, dtype=float), 
+        np.array(volumes, dtype=float), 
+        timeperiod=period
+    )
+    val = result[-1]
+    return val if not np.isnan(val) else None
 
 
 def compute_cci(
@@ -206,14 +115,14 @@ def compute_cci(
     """Compute Commodity Channel Index."""
     if len(closes) < period:
         return None
-    typical_prices = [(h + l + c) / 3 for h, l, c in zip(highs, lows, closes)]
-    recent_tp = typical_prices[-period:]
-    sma = sum(recent_tp) / period
-    mean_deviation = sum(abs(tp - sma) for tp in recent_tp) / period
-    if mean_deviation == 0:
-        return 0.0
-    cci = (recent_tp[-1] - sma) / (0.015 * mean_deviation)
-    return cci
+    result = talib.CCI(
+        np.array(highs, dtype=float), 
+        np.array(lows, dtype=float), 
+        np.array(closes, dtype=float), 
+        timeperiod=period
+    )
+    val = result[-1]
+    return val if not np.isnan(val) else None
 
 
 def compute_williams_r(
@@ -222,12 +131,14 @@ def compute_williams_r(
     """Compute Williams %R."""
     if len(closes) < period:
         return None
-    highest_high = max(highs[-period:])
-    lowest_low = min(lows[-period:])
-    if highest_high == lowest_low:
-        return -50.0
-    wr = ((highest_high - closes[-1]) / (highest_high - lowest_low)) * -100
-    return wr
+    result = talib.WILLR(
+        np.array(highs, dtype=float), 
+        np.array(lows, dtype=float), 
+        np.array(closes, dtype=float), 
+        timeperiod=period
+    )
+    val = result[-1]
+    return val if not np.isnan(val) else None
 
 
 def compute_ichimoku(
@@ -309,21 +220,21 @@ def compute_macd(
     """Compute MACD line, signal line, and histogram."""
     if len(closes) < slow + signal:
         return None, None, None
-    ema_fast = compute_ema(closes, fast)
-    ema_slow = compute_ema(closes, slow)
-    if not ema_fast or not ema_slow:
-        return None, None, None
-    # Align lengths: MACD line = fast EMA - slow EMA (use the shorter length)
-    min_len = min(len(ema_fast), len(ema_slow))
-    macd_line = [ema_fast[i] - ema_slow[i] for i in range(min_len)]
-    signal_line = compute_ema(macd_line, signal)
-    if not signal_line:
-        return None, None, None
-    # Return the latest values
-    macd_val = macd_line[-1]
-    signal_val = signal_line[-1]
-    hist = macd_val - signal_val
-    return macd_val, signal_val, hist
+    
+    macd, macdsignal, macdhist = talib.MACD(
+        np.array(closes, dtype=float), 
+        fastperiod=fast, 
+        slowperiod=slow, 
+        signalperiod=signal
+    )
+    
+    m_val = macd[-1]
+    s_val = macdsignal[-1]
+    h_val = macdhist[-1]
+    
+    return (m_val if not np.isnan(m_val) else None,
+            s_val if not np.isnan(s_val) else None,
+            h_val if not np.isnan(h_val) else None)
 
 
 def compute_bollinger_bands(
@@ -332,13 +243,22 @@ def compute_bollinger_bands(
     """Compute Bollinger Bands (upper, middle, lower)."""
     if len(closes) < period:
         return None, None, None
-    recent = closes[-period:]
-    middle = sum(recent) / period
-    variance = sum((x - middle) ** 2 for x in recent) / period
-    std = math.sqrt(variance)
-    upper = middle + std_dev * std
-    lower = middle - std_dev * std
-    return upper, middle, lower
+    
+    upper, middle, lower = talib.BBANDS(
+        np.array(closes, dtype=float), 
+        timeperiod=period, 
+        nbdevup=std_dev, 
+        nbdevdn=std_dev, 
+        matype=0
+    )
+    
+    u_val = upper[-1]
+    m_val = middle[-1]
+    l_val = lower[-1]
+    
+    return (u_val if not np.isnan(u_val) else None,
+            m_val if not np.isnan(m_val) else None,
+            l_val if not np.isnan(l_val) else None)
 
 
 def compute_all_indicators(
@@ -424,38 +344,14 @@ def compute_parabolic_sar(
     """Compute Parabolic SAR for the latest bar using the standard algorithm."""
     if len(highs) < 2:
         return None
-    is_long = True
-    af = af_start
-    ep = highs[0]
-    sar = lows[0]
-    for i in range(1, len(highs)):
-        if is_long:
-            sar = sar + af * (ep - sar)
-            if sar > lows[i]:
-                sar = lows[i]
-            if lows[i] < sar:
-                is_long = False
-                sar = ep
-                ep = lows[i]
-                af = af_start
-            else:
-                if highs[i] > ep:
-                    ep = highs[i]
-                    af = min(af + af_start, af_max)
-        else:
-            sar = sar + af * (ep - sar)
-            if sar < highs[i]:
-                sar = highs[i]
-            if highs[i] > sar:
-                is_long = True
-                sar = ep
-                ep = highs[i]
-                af = af_start
-            else:
-                if lows[i] < ep:
-                    ep = lows[i]
-                    af = min(af + af_start, af_max)
-    return round(sar, 8)
+    result = talib.SAR(
+        np.array(highs, dtype=float), 
+        np.array(lows, dtype=float), 
+        acceleration=af_start, 
+        maximum=af_max
+    )
+    val = result[-1]
+    return val if not np.isnan(val) else None
 
 
 def compute_keltner_channels(

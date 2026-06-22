@@ -2,10 +2,24 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies: curl for health check
+# Install system dependencies: curl for health check, and build tools for TA-Lib
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    build-essential \
+    wget \
+    autoconf \
+    libtool \
+    git \
     && rm -rf /var/lib/apt/lists/*
+
+# Compile TA-Lib C library from source
+RUN git clone https://github.com/TA-Lib/ta-lib.git /tmp/ta-lib \
+    && cd /tmp/ta-lib \
+    && autoreconf -i \
+    && ./configure --prefix=/usr \
+    && make -j$(nproc) \
+    && make install \
+    && rm -rf /tmp/ta-lib
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
