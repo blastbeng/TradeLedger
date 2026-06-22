@@ -273,38 +273,21 @@ async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
 
 @app.get("/api/ticker/{symbol:path}")
 async def ticker(symbol: str):
-    engine = get_engine()
-    # 1) Try the WebSocket cache first
-    ticker_data = engine.ws_manager.get_ticker(symbol)
-    if ticker_data is not None:
-        return {
-            "symbol": symbol,
-            "last": ticker_data.get("last"),
-            "bid": ticker_data.get("bid"),
-            "ask": ticker_data.get("ask"),
-            "change_24h": ticker_data.get("percentage"),
-        }
-
-    # 2) Fallback to REST only if WebSocket is unhealthy
-    if not engine.ws_manager.healthy:
-        logger.warning(f"WebSocket unhealthy, falling back to REST for {symbol}")
-        try:
-            quotes = await asyncio.to_thread(
-                get_quotes, engine.data_client, [symbol]
-            )
-            q = quotes.get(symbol)
-            if q:
-                return {
-                    "symbol": symbol,
-                    "last": q.get("last"),
-                    "bid": q.get("bid"),
-                    "ask": q.get("ask"),
-                    "change_24h": q.get("change_24h"),
-                }
-        except Exception as e:
-            logger.warning(f"REST ticker fetch failed for {symbol}: {e}")
-
-    # 3) WebSocket healthy but no ticker yet (symbol just subscribed)
+    try:
+        quotes = await asyncio.to_thread(
+            get_quotes, None, [symbol]
+        )
+        q = quotes.get(symbol)
+        if q:
+            return {
+                "symbol": symbol,
+                "last": q.get("last"),
+                "bid": q.get("bid"),
+                "ask": q.get("ask"),
+                "change_24h": q.get("change_24h"),
+            }
+    except Exception as e:
+        logger.warning(f"REST ticker fetch failed for {symbol}: {e}")
     return {
         "symbol": symbol,
         "last": None,
@@ -315,55 +298,30 @@ async def ticker(symbol: str):
 
 @app.get("/api/tickers")
 async def tickers(symbols: str = ""):
-    """Return cached tickers for a comma-separated list of symbols."""
-    engine = get_engine()
+    """Return quotes for a comma-separated list of symbols."""
     if not symbols:
         return {}
     symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
     result = {}
-
-    # 1) Try WebSocket cache first
-    for sym in symbol_list:
-        t = engine.ws_manager.get_ticker(sym)
-        if t:
-            result[sym] = {
-                "last": t.get("last"),
-                "bid": t.get("bid"),
-                "ask": t.get("ask"),
-                "change_24h": t.get("percentage"),
-            }
-        else:
-            result[sym] = None  # mark as missing
-
-    # 2) Fallback to REST only if WebSocket unhealthy AND we have missing symbols
-    if not engine.ws_manager.healthy:
-        missing = [sym for sym in symbol_list if result.get(sym) is None]
-        if missing:
-            try:
-                quotes = await asyncio.to_thread(
-                    get_quotes, engine.data_client, missing
-                )
-                for sym in missing:
-                    q = quotes.get(sym)
-                    if q:
-                        result[sym] = {
-                            "last": q.get("last"),
-                            "bid": q.get("bid"),
-                            "ask": q.get("ask"),
-                            "change_24h": q.get("change_24h"),
-                        }
-                    else:
-                        result[sym] = {"last": None, "bid": None, "ask": None, "change_24h": None}
-            except Exception as e:
-                logger.warning(f"REST tickers fallback failed: {e}")
-                for sym in missing:
-                    result[sym] = {"last": None, "bid": None, "ask": None, "change_24h": None}
-
-    # 3) Fill any remaining None placeholders with null dicts
-    for sym in symbol_list:
-        if result.get(sym) is None:
+    try:
+        quotes = await asyncio.to_thread(
+            get_quotes, None, symbol_list
+        )
+        for sym in symbol_list:
+            q = quotes.get(sym)
+            if q:
+                result[sym] = {
+                    "last": q.get("last"),
+                    "bid": q.get("bid"),
+                    "ask": q.get("ask"),
+                    "change_24h": q.get("change_24h"),
+                }
+            else:
+                result[sym] = {"last": None, "bid": None, "ask": None, "change_24h": None}
+    except Exception as e:
+        logger.warning(f"REST tickers fetch failed: {e}")
+        for sym in symbol_list:
             result[sym] = {"last": None, "bid": None, "ask": None, "change_24h": None}
-
     return result
 
 @app.websocket("/ws")
