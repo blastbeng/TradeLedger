@@ -123,7 +123,7 @@ class Settings(BaseSettings):
         return v
 
     # OHLCV timeframes for multi-timeframe analysis
-    OHLCV_TIMEFRAMES: list[str] = ["5m", "15m", "1h", "4h"]
+    OHLCV_TIMEFRAMES: list[str] = ["1h", "4h", "1d"]
 
     # Market data download interval (seconds)
     MARKET_DATA_REFRESH_SECONDS: int = 300

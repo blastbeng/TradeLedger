@@ -1,7 +1,7 @@
 from .base import Signal
 from typing import Dict, Any, Optional
 
-VALID_STRATEGY_TYPES = {"scalping", "momentum", "mean_reversion", "breakout"}
+VALID_STRATEGY_TYPES = {"momentum", "mean_reversion", "breakout", "swing", "position"}
 
 
 def validate_signal(
