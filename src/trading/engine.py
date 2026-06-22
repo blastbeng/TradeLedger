@@ -3656,17 +3656,6 @@ class TradingEngine:
                     kc_lows = [c[3] for c in candles]
                     keltner_channels = compute_keltner_channels(kc_closes, kc_highs, kc_lows)
 
-            # Compute Pivot Points from the previous completed candle of the assigned timeframe
-            pivot_points = None
-            if assigned_tf in multi_tf_raw_candles:
-                candles = multi_tf_raw_candles[assigned_tf]
-                if len(candles) >= 2:
-                    prev_candle = candles[-2]  # second-to-last candle is the last completed one
-                    prev_high = prev_candle[2]
-                    prev_low = prev_candle[3]
-                    prev_close = prev_candle[4]
-                    pivot_points = compute_pivot_points(prev_high, prev_low, prev_close)
-
             # Compute ATR for each timeframe (volatility term structure)
             atr_multi_tf: Dict[str, float] = {}
             for tf in settings.OHLCV_TIMEFRAMES:
