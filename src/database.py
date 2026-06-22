@@ -243,6 +243,33 @@ def load_paper_balances() -> Dict[str, float]:
     return {}
 
 
+@retry_on_db_lock()
+def save_paper_orders(orders: List[Dict[str, Any]]):
+    """Persist the paper simulator's open orders as a JSON list."""
+    conn = get_connection()
+    conn.execute(
+        "INSERT OR REPLACE INTO trading_state (key, value) VALUES (?, ?)",
+        ("paper_orders", json.dumps(orders))
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_paper_orders() -> List[Dict[str, Any]]:
+    """Load the paper simulator's persisted orders. Returns empty list if not found."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT value FROM trading_state WHERE key = 'paper_orders'"
+    ).fetchone()
+    conn.close()
+    if row:
+        try:
+            return json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return []
+
+
 # ---------- Telegram state helpers ----------
 
 def get_telegram_chat_id() -> Optional[int]:

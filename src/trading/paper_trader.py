@@ -4,7 +4,7 @@ import uuid
 from typing import Dict, List, Optional, Any
 
 from src.config.settings import settings
-from src.database import load_paper_balances, save_paper_balances
+from src.database import load_paper_balances, save_paper_balances, load_paper_orders, save_paper_orders
 from src.exchanges.market_data import get_quotes
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class PaperTrader:
     # ------------------------------------------------------------------
 
     def _load_balances(self):
-        """Load balances from SQLite, or initialize with default."""
+        """Load balances and open orders from SQLite, or initialize with defaults."""
         self._balances = load_paper_balances()
         if not self._balances:
             self._balances = {self.base_currency: settings.PAPER_INITIAL_BALANCE}
@@ -71,9 +71,65 @@ class PaperTrader:
         if self.base_currency not in self._balances:
             self._balances[self.base_currency] = 0.0
 
+        # Load persisted open orders
+        persisted_orders = load_paper_orders()
+        for od in persisted_orders:
+            if od.get("status") == "open":
+                order = self._dict_to_order(od)
+                self._orders[order.id] = order
+        if self._orders:
+            logger.info(f"Loaded {len(self._orders)} persisted open paper orders.")
+
     def _save_balances(self):
         """Persist balances to SQLite."""
         save_paper_balances(self._balances)
+
+    def _save_orders(self):
+        """Persist open orders to SQLite."""
+        orders_list = []
+        for order in self._orders.values():
+            orders_list.append({
+                "id": order.id,
+                "symbol": order.symbol,
+                "side": order.side,
+                "order_type": order.order_type,
+                "amount": order.amount,
+                "price": order.price,
+                "limit_price": order.limit_price,
+                "stop_price": order.stop_price,
+                "trail_offset": order.trail_offset,
+                "time_in_force": order.time_in_force,
+                "status": order.status,
+                "filled_qty": order.filled_qty,
+                "filled_avg_price": order.filled_avg_price,
+                "timestamp": order.timestamp,
+                "_highest_price": order._highest_price,
+                "_lowest_price": order._lowest_price,
+            })
+        save_paper_orders(orders_list)
+
+    @staticmethod
+    def _dict_to_order(d: dict) -> PaperOrder:
+        """Reconstruct a PaperOrder from a persisted dict."""
+        order = PaperOrder(
+            order_id=d["id"],
+            symbol=d["symbol"],
+            side=d["side"],
+            order_type=d["order_type"],
+            amount=d["amount"],
+            price=d.get("price"),
+            limit_price=d.get("limit_price"),
+            stop_price=d.get("stop_price"),
+            trail_offset=d.get("trail_offset"),
+            time_in_force=d.get("time_in_force", "gtc"),
+            status=d.get("status", "open"),
+            filled_qty=d.get("filled_qty", 0.0),
+            filled_avg_price=d.get("filled_avg_price", 0.0),
+            timestamp=d.get("timestamp"),
+        )
+        order._highest_price = d.get("_highest_price")
+        order._lowest_price = d.get("_lowest_price")
+        return order
 
     def fetch_balance(self) -> Dict[str, float]:
         return dict(self._balances)
@@ -165,6 +221,7 @@ class PaperTrader:
         order.filled_avg_price = fill_price
         order.status = "filled"
         self._save_balances()
+        self._save_orders()
         logger.info(
             f"Paper order filled: {order.side} {order.symbol} "
             f"qty={order.filled_qty:.6f} @ {fill_price:.4f}"
@@ -206,6 +263,7 @@ class PaperTrader:
                     time_in_force=time_in_force, status="open",
                 )
                 self._orders[order_id] = order
+                self._save_orders()
                 return self._make_order_dict(order)
             fill_price = limit_price
         else:
@@ -280,6 +338,7 @@ class PaperTrader:
                     time_in_force=time_in_force, status="open",
                 )
                 self._orders[order_id] = order
+                self._save_orders()
                 return self._make_order_dict(order)
             fill_price = limit_price
         else:
@@ -336,6 +395,7 @@ class PaperTrader:
             status="open",
         )
         self._orders[order_id] = order
+        self._save_orders()
         return self._make_order_dict(order)
 
     def create_stop_sell_order(
@@ -349,6 +409,7 @@ class PaperTrader:
             status="open",
         )
         self._orders[order_id] = order
+        self._save_orders()
         return self._make_order_dict(order)
 
     def create_stop_limit_buy_order(
@@ -362,6 +423,7 @@ class PaperTrader:
             time_in_force=time_in_force, status="open",
         )
         self._orders[order_id] = order
+        self._save_orders()
         return self._make_order_dict(order)
 
     def create_stop_limit_sell_order(
@@ -375,6 +437,7 @@ class PaperTrader:
             time_in_force=time_in_force, status="open",
         )
         self._orders[order_id] = order
+        self._save_orders()
         return self._make_order_dict(order)
 
     def create_trailing_stop_buy_order(
@@ -388,6 +451,7 @@ class PaperTrader:
             status="open",
         )
         self._orders[order_id] = order
+        self._save_orders()
         return self._make_order_dict(order)
 
     def create_trailing_stop_sell_order(
@@ -401,6 +465,7 @@ class PaperTrader:
             status="open",
         )
         self._orders[order_id] = order
+        self._save_orders()
         return self._make_order_dict(order)
 
     # ------------------------------------------------------------------
@@ -468,6 +533,9 @@ class PaperTrader:
                 if price >= order.limit_price:
                     self._fill_order(order, order.limit_price, base, quote)
 
+        if order.status == "filled":
+            self._save_orders()
+
         return order
 
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -489,6 +557,7 @@ class PaperTrader:
         if order is None or order.status != "open":
             return False
         order.status = "canceled"
+        self._save_orders()
         return True
 
     def get_trade_history(self) -> List[Dict[str, Any]]:
