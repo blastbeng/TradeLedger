@@ -32,7 +32,9 @@ def get_tradable_assets(trading_client=None) -> List[str]:
     return [f"{sym}{suffix}" for sym in base_symbols]
 
 
-def get_quotes(data_client=None, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+def get_quotes(data_client=None, symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
+    if symbols is None:
+        symbols = []
     """Fetch latest quotes for a list of symbols using yfinance.
 
     Returns a dict mapping symbol -> {last, bid, ask, volume, change_24h}.
@@ -68,8 +70,10 @@ def get_quotes(data_client=None, symbols: List[str]) -> Dict[str, Dict[str, Any]
 
 
 def get_multi_timeframe_bars(
-    data_client=None, symbol: str, timeframes: List[str], limit: int = 24
+    data_client=None, symbol: str = "", timeframes: List[str] = None, limit: int = 24
 ) -> Dict[str, List[List[float]]]:
+    if timeframes is None:
+        timeframes = []
     """Fetch OHLCV bars for a symbol across multiple timeframes using yfinance.
 
     Returns a dict mapping timeframe -> list of candles [timestamp_ms, open, high, low, close, volume].
@@ -103,7 +107,7 @@ def get_multi_timeframe_bars(
 
 
 def get_bars_range(
-    data_client=None, symbol: str, timeframe: str, start_ms: int, limit: int = 500
+    data_client=None, symbol: str = "", timeframe: str = "", start_ms: int = 0, limit: int = 500
 ) -> List[List[float]]:
     """Fetch OHLCV bars from a start timestamp (ms) up to the present using yfinance.
 
