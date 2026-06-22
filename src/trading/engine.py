@@ -89,7 +89,6 @@ class TradingEngine:
         self.exchange = None
         self.data_client = None
         self.streaming_client = None
-        self.ws_manager = None
         self.trader = None
 
         self.base_currency = settings.BASE_CURRENCY
@@ -146,7 +145,6 @@ class TradingEngine:
         self._news_fast_running = False
         self._market_data_running = False
         self._full_breadth_running = False
-        self._last_unhealthy_log = 0.0
 
         # Market-closed periodic notification tracking
         self._last_market_closed_notify_time: float = 0.0
@@ -207,7 +205,6 @@ class TradingEngine:
             logger.critical(f"Failed to create streaming client: {e}", exc_info=True)
             raise
 
-        self.ws_manager = WebSocketManager(self.streaming_client, [])
         self.trader = PaperTrader()
         logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
         self._load_state()
@@ -270,11 +267,7 @@ class TradingEngine:
         tickers: Dict[str, Dict[str, Any]] = {}
         missing: List[str] = []
         for sym in self.positions:
-            t = self.ws_manager.get_ticker(sym)
-            if t is not None:
-                tickers[sym] = t
-            else:
-                missing.append(sym.split("/")[0])
+            missing.append(sym.split("/")[0])
         if missing:
             try:
                 raw = get_quotes(self.data_client, missing)
@@ -370,8 +363,6 @@ class TradingEngine:
         """Gracefully stop the engine and all background tasks."""
         logger.info("Stopping trading engine...")
         self._running = False
-        if self.ws_manager:
-            await self.ws_manager.stop()
         logger.info("Trading engine stopped.")
 
     async def _periodic_reconcile(self):
@@ -413,9 +404,6 @@ class TradingEngine:
                 else:
                     logger.info("Starting symbol re-evaluation...")
                     await self._reevaluate_symbols()
-                    # Update WebSocket subscriptions to match current stocks
-                    current_symbols = [entry["symbol"] for entry in self.current_symbols]
-                    await self.ws_manager.update_subscriptions(current_symbols)
                     logger.info("Symbol re-evaluation complete.")
             except Exception as e:
                 logger.error(f"Stock re-evaluation error: {e}", exc_info=True)
@@ -797,11 +785,7 @@ class TradingEngine:
         await asyncio.sleep(5)  # initial delay
         while self._running:
             try:
-                if self.ws_manager.healthy:
-                    update = await self.ws_manager.wait_for_update(timeout=5.0)
-                else:
-                    # WebSocket down – fall back to polling at configured interval
-                    await asyncio.sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
+                await asyncio.sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
                 await self._check_risk_management()
                 await self._save_state()
             except Exception as e:
@@ -1688,18 +1672,6 @@ class TradingEngine:
         logger.info("Trading engine initializing...")
         await self._initialize_clients()
         logger.info("Trading engine started.")
-        try:
-            asyncio.create_task(self.ws_manager.start())
-            logger.info("WebSocket manager started successfully.")
-        except Exception as e:
-            logger.error(
-                f"WebSocket manager failed to start: {e}. "
-                f"Engine will use REST polling for market data.",
-                exc_info=True
-            )
-            # ws_manager is in an unstarted state; the main loop will detect
-            # unhealthy and automatically fall back to REST.
-
         # Start background tasks
         self._background_tasks: list = []
         self._background_tasks.append(asyncio.create_task(self._refresh_news_cache()))
@@ -1718,15 +1690,7 @@ class TradingEngine:
 
         while self._running:
             try:
-                # Wait for a ticker update (or timeout after 1s to allow checking health)
-                if self.ws_manager.healthy:
-                    update = await self.ws_manager.wait_for_update(timeout=1.0)
-                else:
-                    now = time.time()
-                    if now - self._last_unhealthy_log > 3600:
-                        logger.info("Using REST polling for market data (no WebSocket available).")
-                        self._last_unhealthy_log = now
-                    await asyncio.sleep(1.0)
+                await asyncio.sleep(1.0)
 
                 # Process any symbol whose evaluation interval has elapsed
                 now = time.time()
@@ -3465,12 +3429,10 @@ class TradingEngine:
             pass
 
         try:
-            ticker = self.ws_manager.get_ticker(symbol)
-            if ticker is None:
-                async with self._exchange_semaphore:
-                    base = symbol.split("/")[0]
-                    quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
-                    ticker = quotes.get(base)
+            async with self._exchange_semaphore:
+                base = symbol.split("/")[0]
+                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+                ticker = quotes.get(base)
             if ticker is None:
                 logger.warning(f"No ticker data for {symbol}, skipping.")
                 return
@@ -5317,11 +5279,7 @@ class TradingEngine:
         risk_tickers: Dict[str, Dict[str, Any]] = {}
         missing_risk: List[str] = []
         for sym in self.positions:
-            t = self.ws_manager.get_ticker(sym)
-            if t is not None:
-                risk_tickers[sym] = t
-            else:
-                missing_risk.append(sym.split("/")[0])
+            missing_risk.append(sym.split("/")[0])
         if missing_risk:
             try:
                 raw = await asyncio.to_thread(get_quotes, self.data_client, missing_risk)
@@ -5820,11 +5778,9 @@ class TradingEngine:
             stop_method = params.get("stop_loss_method", "fixed")
             if stop_method == "atr_multiple" and atr is not None and atr > 0:
                 atr_mult = params["stop_loss_atr_multiple"]
-                ticker = self.ws_manager.get_ticker(symbol)
-                if ticker is None:
-                    base = symbol.split("/")[0]
-                    quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
-                    ticker = quotes.get(base)
+                base = symbol.split("/")[0]
+                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+                ticker = quotes.get(base)
                 current_price = ticker['last']
                 sl_pct = (atr_mult * atr) / current_price
                 logger.info(f"ATR-based stop: ATR={atr}, multiplier={atr_mult}, stop_loss_pct={sl_pct:.4%}")
@@ -6129,11 +6085,9 @@ class TradingEngine:
 
             # Check minimum order size and adjust upward if needed
             try:
-                ticker = self.ws_manager.get_ticker(symbol)
-                if ticker is None:
-                    base = symbol.split("/")[0]
-                    quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
-                    ticker = quotes.get(base)
+                base = symbol.split("/")[0]
+                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+                ticker = quotes.get(base)
                 price = ticker['last']
                 base_amount = amount / price
                 # Fetch minimum order size from asset info
@@ -6532,11 +6486,9 @@ class TradingEngine:
 
             # Check minimum sell size
             try:
-                ticker = self.ws_manager.get_ticker(symbol)
-                if ticker is None:
-                    base = symbol.split("/")[0]
-                    quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
-                    ticker = quotes.get(base)
+                base = symbol.split("/")[0]
+                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+                ticker = quotes.get(base)
                 price = ticker['last']
                 # Fetch minimum order size from asset info
                 try:
@@ -7211,14 +7163,12 @@ class TradingEngine:
         etype = condition.get("type")
         if etype == "limit_price":
             target_price = condition["price"]
-            ticker = self.ws_manager.get_ticker(symbol)
-            if ticker is None:
-                try:
-                    async with self._exchange_semaphore:
-                        tickers_map = await asyncio.to_thread(get_quotes, self.data_client, [symbol.split("/")[0]])
-                        ticker = tickers_map.get(symbol.split("/")[0])
-                except Exception:
-                    return False
+            try:
+                async with self._exchange_semaphore:
+                    tickers_map = await asyncio.to_thread(get_quotes, self.data_client, [symbol.split("/")[0]])
+                    ticker = tickers_map.get(symbol.split("/")[0])
+            except Exception:
+                return False
             current_price = ticker.get("last", 0) if ticker else 0
             return current_price > 0 and current_price <= target_price
 
@@ -8268,11 +8218,9 @@ class TradingEngine:
         display_symbol = self._format_symbol_display(symbol, stock_name, tf)
 
         try:
-            ticker = self.ws_manager.get_ticker(symbol)
-            if ticker is None:
-                base = symbol.split("/")[0]
-                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
-                ticker = quotes.get(base)
+            base = symbol.split("/")[0]
+            quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+            ticker = quotes.get(base)
             price = ticker["last"]
         except Exception as e:
             logger.warning(f"Dust sweep: could not fetch price for {symbol}: {e}")
@@ -8457,14 +8405,12 @@ class TradingEngine:
                         limit_price = queued.get('limit_price')
 
                         # Fetch current quote
-                        ticker = self.ws_manager.get_ticker(symbol)
-                        if ticker is None:
-                            try:
-                                base = symbol.split("/")[0]
-                                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
-                                ticker = quotes.get(base)
-                            except Exception:
-                                pass
+                        try:
+                            base = symbol.split("/")[0]
+                            quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+                            ticker = quotes.get(base)
+                        except Exception:
+                            pass
                         if ticker is None:
                             continue  # can't determine marketability, skip
 
@@ -8552,14 +8498,12 @@ class TradingEngine:
                         stop_price = queued.get("stop_price")
                         if stop_price is not None:
                             # Fetch current price
-                            ticker = self.ws_manager.get_ticker(queued["symbol"])
-                            if ticker is None:
-                                try:
-                                    base = queued["symbol"].split("/")[0]
-                                    quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
-                                    ticker = quotes.get(base)
-                                except Exception:
-                                    pass
+                            try:
+                                base = queued["symbol"].split("/")[0]
+                                quotes = await asyncio.to_thread(get_quotes, self.data_client, [base])
+                                ticker = quotes.get(base)
+                            except Exception:
+                                pass
                             if ticker and ticker.get("last") is not None:
                                 current_price = ticker["last"]
                                 if current_price <= stop_price:
@@ -9122,11 +9066,7 @@ class TradingEngine:
         tickers: Dict[str, Dict[str, Any]] = {}
         missing: List[str] = []
         for sym in symbols:
-            t = self.ws_manager.get_ticker(sym)
-            if t is not None:
-                tickers[sym] = t
-            else:
-                missing.append(sym.split("/")[0])
+            missing.append(sym.split("/")[0])
         if missing:
             try:
                 raw = get_quotes(self.data_client, missing)
