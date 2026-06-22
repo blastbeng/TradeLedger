@@ -1730,8 +1730,8 @@ class TradingEngine:
                     update = await self.ws_manager.wait_for_update(timeout=1.0)
                 else:
                     now = time.time()
-                    if now - self._last_unhealthy_log > 60:
-                        logger.warning("WebSocket manager unhealthy – falling back to REST polling.")
+                    if now - self._last_unhealthy_log > 3600:
+                        logger.info("Using REST polling for market data (no WebSocket available).")
                         self._last_unhealthy_log = now
                     await asyncio.sleep(1.0)
 
@@ -8834,7 +8834,7 @@ class TradingEngine:
                     # else: still open / partially_filled / accepted – keep waiting
             except Exception as e:
                 logger.error(f"Error processing queued orders: {e}", exc_info=True)
-            await asyncio.sleep(5)
+            await asyncio.sleep(30)  # check every 30 seconds (medium/long-term)
 
     async def _handle_queued_buy_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any]):
         """Process a queued BUY limit order that has filled on Alpaca."""

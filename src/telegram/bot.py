@@ -233,9 +233,9 @@ class TelegramBot:
                 msg += f"<b>⏸️ Reason:</b> {pause_reason}\n"
             if countdown:
                 msg += f"<b>⏱️ Resumes in:</b> {countdown}\n"
-            alpaca_time = pause_status.get("alpaca_time_str", "")
-            if alpaca_time:
-                msg += f"<b>🕒 Alpaca Time:</b> {alpaca_time}\n"
+            market_time = pause_status.get("alpaca_time_str", "")
+            if market_time:
+                msg += f"<b>🕒 Market Time:</b> {market_time}\n"
 
         queued_count = len(self.engine.queued_orders)
         if queued_count > 0:
@@ -573,8 +573,6 @@ class TelegramBot:
             return
 
         msg = "<b>🌐 Market Status</b>\n\n"
-        if data.get("vix") is not None:
-            msg += f"<b>📉 VIX:</b> {data['vix']:.2f}\n"
         if data.get("market_breadth"):
             mb = data["market_breadth"]
             msg += f"<b>📊 Market Breadth (candidates):</b> {mb['positive_pct']}% positive ({mb['positive_count']}/{mb['total_count']})\n"
@@ -582,7 +580,7 @@ class TelegramBot:
             fmb = data["full_market_breadth"]
             msg += f"<b>🌐 Full Market Breadth:</b> {fmb['positive_pct']}% positive ({fmb['positive_count']}/{fmb['total_count']})\n"
         if data.get("spy_price") is not None:
-            msg += f"<b>📈 SPY Price:</b> {data['spy_price']:.2f}\n"
+            msg += f"<b>📈 Benchmark Price:</b> {data['spy_price']:.2f}\n"
         await update.message.reply_text(msg, parse_mode='HTML', reply_markup=self.keyboard)
 
     async def cmd_news(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

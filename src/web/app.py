@@ -40,7 +40,7 @@ app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
 _engine = None
 
 # WebSocket payload cache – shared across all connected clients to avoid
-# redundant Alpaca API calls and SQLite queries when multiple tabs are open.
+# redundant API calls and SQLite queries when multiple tabs are open.
 _ws_payload_cache: Optional[dict] = None
 _ws_payload_cache_time: float = 0.0
 _WS_PAYLOAD_TTL: float = 2.0  # seconds — matches the send interval

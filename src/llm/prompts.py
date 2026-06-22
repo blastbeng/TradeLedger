@@ -718,7 +718,7 @@ def build_strategy_prompt(
     """Build a prompt to generate a trading strategy for a specific stock/ETF."""
     current_price = ticker.get("last") if ticker else None
     if assigned_timeframe and assigned_timeframe not in TIMEFRAME_MAP:
-        logger.warning(f"Assigned timeframe {assigned_timeframe} is not supported by Alpaca. Falling back to default.")
+        logger.warning(f"Assigned timeframe {assigned_timeframe} is not supported by yfinance. Falling back to default.")
         assigned_timeframe = "1h" if "1h" in TIMEFRAME_MAP else list(TIMEFRAME_MAP.keys())[0]
     tf_seconds = _timeframe_to_seconds(assigned_timeframe) if assigned_timeframe else 3600
     min_hold = 2 * tf_seconds
