@@ -815,6 +815,52 @@ def _fetch_rss(symbol: str) -> List[Dict[str, str]]:
     return articles
 
 
+def discover_tickers_from_news() -> List[str]:
+    """Scan configured RSS feeds for potential stock tickers.
+
+    Looks for words ending with the configured TICKER_SUFFIX (e.g., ``.MI``)
+    in feed entry titles and summaries. Returns a list of unique base symbols
+    (suffix stripped). Handles exceptions gracefully and returns an empty list
+    on failure.
+    """
+    import re
+
+    suffix = settings.TICKER_SUFFIX
+    if not suffix:
+        return []
+
+    # Escape the suffix for regex (e.g., ".MI" -> "\.MI")
+    pattern = re.compile(rf"\b([A-Z0-9]+{re.escape(suffix)})\b")
+    discovered: set = set()
+
+    for feed_url in settings.RSS_FEEDS:
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (compatible; TradingBot/1.0; +https://github.com/your-repo)"
+            }
+            resp = httpx.get(
+                feed_url,
+                headers=headers,
+                timeout=15.0,
+                follow_redirects=True,
+            )
+            resp.raise_for_status()
+            feed = feedparser.parse(resp.text)
+            for entry in feed.entries:
+                title = entry.get("title", "") or ""
+                summary = entry.get("summary", "") or entry.get("description", "") or ""
+                text = f"{title} {summary}"
+                for match in pattern.findall(text):
+                    # Strip the suffix to get the base symbol
+                    base = match[: -len(suffix)]
+                    if base:
+                        discovered.add(base)
+        except Exception as e:
+            logger.debug(f"Ticker discovery from RSS feed {feed_url} failed: {e}")
+
+    return list(discovered)
+
+
 def test_rss_feeds():
     """Check each configured RSS feed and log whether it is reachable."""
     logger.debug(f"Testing {len(settings.RSS_FEEDS)} RSS feeds...")

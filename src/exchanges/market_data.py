@@ -1,7 +1,9 @@
 import logging
+import re
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
+import pandas as pd
 import yfinance as yf
 
 from src.config.settings import settings
@@ -30,21 +32,75 @@ def _fetch_country(symbol: str) -> Optional[str]:
         return None
 
 
+def _discover_ftse_mib_tickers() -> List[str]:
+    """Scrape the FTSE MIB constituent list from Wikipedia.
+
+    Returns a list of base symbols (suffix stripped). Returns an empty list
+    if scraping fails.
+    """
+    try:
+        tables = pd.read_html("https://en.wikipedia.org/wiki/FTSE_MIB")
+    except Exception as e:
+        logger.warning(f"Failed to scrape FTSE MIB table from Wikipedia: {e}")
+        return []
+
+    for table in tables:
+        # Look for a column named "Ticker" or "Symbol" (case-insensitive)
+        ticker_col = None
+        for col in table.columns:
+            col_str = str(col).lower()
+            if "ticker" in col_str or "symbol" in col_str:
+                ticker_col = col
+                break
+        if ticker_col is not None:
+            tickers = table[ticker_col].dropna().astype(str).tolist()
+            # Clean tickers: remove any existing suffix (split by '.' and take first part)
+            base_symbols = []
+            for t in tickers:
+                t = t.strip().upper()
+                # Remove any exchange suffix (e.g., ".MI", ".L")
+                base = t.split(".")[0] if "." in t else t
+                # Keep only alphanumeric base symbols
+                if re.match(r"^[A-Z0-9]+$", base):
+                    base_symbols.append(base)
+            if base_symbols:
+                logger.info(f"Discovered {len(base_symbols)} FTSE MIB tickers from Wikipedia")
+                return base_symbols
+
+    logger.warning("No ticker column found in Wikipedia FTSE MIB tables")
+    return []
+
+
 def get_tradable_assets(trading_client=None) -> List[str]:
     """Return a list of tradable Italian equity symbols, filtered by country.
 
-    Builds candidate symbols by appending the configured ticker suffix to each
-    base symbol, then verifies via yfinance that each symbol's country matches
-    the configured TARGET_COUNTRY. Results are cached in Redis for 24 hours.
+    Discovers base symbols dynamically from the FTSE MIB Wikipedia page and
+    from news RSS feeds, then appends the configured ticker suffix and
+    verifies via yfinance that each symbol's country matches the configured
+    TARGET_COUNTRY. Results are cached in Redis for 24 hours.
     """
-    # Comprehensive list of major Italian stocks (FTSE MIB and mid-cap constituents)
-    base_symbols = [
-        "AMP", "AZM", "BAMI", "BPE", "BVS", "BZU", "CAMP", "DIA", "ENEL", "ENI",
-        "ERG", "EXO", "FCT", "G", "HER", "INW", "IPG", "ISP", "ITM", "KOS",
-        "LDO", "MB", "MONC", "NEXI", "PCF", "PRY", "PST", "RACE", "REC", "SAL",
-        "SPM", "SRG", "STL", "STM", "TEN", "TIT", "TOD", "TRN", "UCG", "UNI",
-        "USC", "WBG", "ZUC",
-    ]
+    # Discover tickers from Wikipedia (FTSE MIB constituents)
+    base_symbols = _discover_ftse_mib_tickers()
+
+    # Discover additional tickers from news RSS feeds
+    try:
+        from src.news.fetcher import discover_tickers_from_news
+        news_tickers = discover_tickers_from_news()
+        if news_tickers:
+            logger.info(f"Discovered {len(news_tickers)} tickers from news feeds")
+            # Merge, ensuring uniqueness
+            existing = set(base_symbols)
+            for t in news_tickers:
+                if t not in existing:
+                    base_symbols.append(t)
+                    existing.add(t)
+    except Exception as e:
+        logger.warning(f"News ticker discovery failed: {e}")
+
+    if not base_symbols:
+        logger.warning("No tickers discovered from Wikipedia or news feeds.")
+        return []
+
     suffix = settings.TICKER_SUFFIX
     candidates = [f"{sym}{suffix}" for sym in base_symbols]
 
