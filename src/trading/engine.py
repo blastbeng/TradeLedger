@@ -1834,21 +1834,6 @@ class TradingEngine:
             return
         sample_pairs = valid_sample_pairs
 
-        # --- Sector ETF quotes for market context ---
-        sector_etf_data: Dict[str, Dict[str, Any]] = {}
-        if settings.SECTOR_ETFS:
-            try:
-                sector_quotes = await asyncio.to_thread(get_quotes, self.data_client, settings.SECTOR_ETFS)
-                for etf in settings.SECTOR_ETFS:
-                    q = sector_quotes.get(etf, {})
-                    if q:
-                        sector_etf_data[etf] = {
-                            "last": q.get("last"),
-                            "change_pct": q.get("percentage"),
-                        }
-            except Exception as e:
-                logger.warning(f"Failed to fetch sector ETF quotes: {e}")
-
         # --- Yahoo Finance fallback for missing bid/ask in stock selection ---
         if settings.YAHOO_FINANCE_ENABLED:
             missing_bid_ask = [
@@ -1874,93 +1859,6 @@ class TradingEngine:
             return t.get('quoteVolume', 0) or 0
         sample_pairs = sorted(sample_pairs, key=_volume, reverse=True)[:settings.SYMBOL_SELECTION_TOP_VOLUME_LIMIT]
 
-        # --- Fetch order books for these top stocks to compute real spread/depth for scalping score ---
-        symbol_spreads: Dict[str, float] = {}
-        symbol_depths: Dict[str, float] = {}
-        if settings.ALPACA_DATA_FEED != "iex":
-            top_n_for_ob = min(50, len(sample_pairs))
-            top_by_vol = sample_pairs[:top_n_for_ob]  # already sorted by volume
-            for sym in top_by_vol:
-                try:
-                    ob = await asyncio.to_thread(get_order_book, self.data_client, sym.split("/")[0], 5)
-                    bids = ob.get('bids', [])
-                    asks = ob.get('asks', [])
-                    if bids and asks:
-                        best_bid = bids[0][0]
-                        best_ask = asks[0][0]
-                        mid = (best_bid + best_ask) / 2
-                        if mid > 0:
-                            spread_pct = ((best_ask - best_bid) / mid) * 100
-                            symbol_spreads[sym] = round(spread_pct, 4)
-                        # Depth: total volume within 1% of mid price
-                        bid_vol = sum(b[1] for b in bids if b[0] >= mid * 0.99)
-                        ask_vol = sum(a[1] for a in asks if a[0] <= mid * 1.01)
-                        total_depth = bid_vol + ask_vol
-                        symbol_depths[sym] = round(total_depth, 2)
-                except Exception as e:
-                    logger.info(f"Order book fetch failed for {sym} during stock selection: {e}")
-        else:
-            # IEX: compute spread from the latest quote (ticker bid/ask)
-            for sym in sample_pairs:
-                t = tickers.get(sym, {})
-                bid = t.get('bid')
-                ask = t.get('ask')
-                if bid is not None and ask is not None and bid > 0 and ask > 0:
-                    mid = (bid + ask) / 2
-                    spread_pct = ((ask - bid) / mid) * 100
-                    symbol_spreads[sym] = round(spread_pct, 4)
-                # depth cannot be computed from quote; leave symbol_depths empty
-
-        # --- Compute scalping suitability scores for candidate stocks ---
-        symbol_scores: Dict[str, float] = {}
-        for sym in sample_pairs:
-            try:
-                t = tickers.get(sym, {})
-                last = t.get('last', 0) or 0
-                volume = t.get('quoteVolume', 0) or 0
-                change_24h = abs(t.get('percentage', 0) or 0)  # absolute % change
-
-                # Normalize volume (log scale to avoid one giant dominating)
-                vol_score = min(1.0, math.log10(volume + 1) / 10.0) if volume > 0 else 0.0
-
-                # Volatility proxy: use 24h change % (capped at 20%)
-                vola_score = min(1.0, change_24h / 20.0)
-
-                # Spread score: lower spread is better (1.0 for 0% spread, 0.0 for >=1% spread)
-                sp = symbol_spreads.get(sym)
-                if sp is not None:
-                    spread_score = max(0.0, 1.0 - sp / 1.0)  # 1% spread -> score 0
-                else:
-                    spread_score = 0.5  # unknown
-
-                # Depth score: log scale, cap at 1.0
-                depth = symbol_depths.get(sym, 0)
-                depth_score = min(1.0, math.log10(depth + 1) / 6.0) if depth > 0 else 0.0
-
-                momentum_score = 1.0 if (t.get('percentage', 0) or 0) > 0 else 0.5
-
-                # Composite score (weights from LLM-decided values, fallback to defaults)
-                w_vol = 0.25
-                w_vola = 0.25
-                w_spread = 0.25
-                w_depth = 0.15
-                w_momentum = 0.10
-                try:
-                    raw = await asyncio.to_thread(self.redis.get, "trading:scalping_weights")
-                    if raw:
-                        w = json.loads(raw)
-                        w_vol = float(w.get("volume", 0.25))
-                        w_vola = float(w.get("volatility", 0.25))
-                        w_spread = float(w.get("spread", 0.25))
-                        w_depth = float(w.get("depth", 0.15))
-                        w_momentum = float(w.get("momentum", 0.10))
-                except Exception:
-                    pass
-                score = (w_vol * vol_score + w_vola * vola_score + w_spread * spread_score + w_depth * depth_score + w_momentum * momentum_score)
-                symbol_scores[sym] = round(score, 3)
-            except Exception:
-                symbol_scores[sym] = 0.0
-
         # Fetch news sentiment for all candidate stocks
         news_sentiment = {}
         if settings.NEWS_ENABLED:
@@ -1971,25 +1869,6 @@ class TradingEngine:
                         news_sentiment[sym.split("/")[0] if "/" in sym else sym] = agg
                 except Exception as e:
                     logger.info(f"Could not fetch news sentiment for {sym}: {e}")
-
-        # --- Build top opportunities list for the prompt ---
-        top_opportunities = []
-        # Combine score, 24h change, and sentiment for the best candidates
-        scored_symbols = sorted(sample_pairs, key=lambda s: symbol_scores.get(s, 0), reverse=True)
-        for sym in scored_symbols[:5]:  # top 5
-            t = tickers.get(sym, {})
-            change_24h = t.get('percentage')
-            score = symbol_scores.get(sym, 0)
-            base_symbol = sym.split("/")[0] if "/" in sym else sym
-            sentiment_val = None
-            if base_symbol in news_sentiment:
-                sentiment_val = news_sentiment[base_symbol].get("avg_compound")
-            top_opportunities.append({
-                "symbol": sym,
-                "score": score,
-                "change_24h": change_24h,
-                "sentiment": sentiment_val,
-            })
 
         # Sentiment trend (delta from previous cycle)
         sentiment_trend: Dict[str, Optional[float]] = {}
@@ -2394,9 +2273,6 @@ class TradingEngine:
             news_sentiment=news_sentiment,
             symbol_indicators=symbol_indicators,
             daily_pnl=perf["equity_curve"].get("daily_pnl"),
-            symbol_scores=symbol_scores,
-            symbol_spreads=symbol_spreads,
-            symbol_depths=symbol_depths,
             historical_ohlcv_summary=historical_ohlcv_summary,
             correlation_matrix=correlation_matrix,
             session_info=session_info,
@@ -2406,9 +2282,6 @@ class TradingEngine:
             symbol_tenure=symbol_tenure,
             symbol_max_tenure=symbol_max_tenure,
             vix=vix,
-            top_opportunities=top_opportunities,
-            data_feed=settings.ALPACA_DATA_FEED,
-            sector_etf_data=sector_etf_data,
             trade_pattern_analysis=trade_pattern_analysis,
             symbol_events=symbol_events,
             symbol_trend_scores=symbol_trend_scores,

@@ -382,21 +382,15 @@ def build_stock_selection_prompt(
     news_sentiment: Optional[Dict[str, Dict[str, Any]]] = None,
     symbol_indicators: Optional[Dict[str, Dict[str, Any]]] = None,
     daily_pnl: Optional[float] = None,
-    symbol_scores: Optional[Dict[str, float]] = None,
-    symbol_spreads: Optional[Dict[str, float]] = None,
-    symbol_depths: Optional[Dict[str, float]] = None,
     historical_ohlcv_summary: Optional[Dict[str, Dict[str, Any]]] = None,
     correlation_matrix: Optional[Dict[str, Dict[str, float]]] = None,
     session_info: Optional[Dict[str, Any]] = None,
     sentiment_trend: Optional[Dict[str, Optional[float]]] = None,
-    top_opportunities: Optional[List[Dict[str, Any]]] = None,
     trading_paused: Optional[bool] = None,
     open_positions: Optional[Dict[str, Dict[str, Any]]] = None,
     symbol_tenure: Optional[Dict[str, float]] = None,
     symbol_max_tenure: Optional[Dict[str, Optional[float]]] = None,
     vix: Optional[float] = None,
-    data_feed: str = "sip",
-    sector_etf_data: Optional[Dict[str, Dict[str, Any]]] = None,
     trade_pattern_analysis: Optional[Dict[str, Any]] = None,
     symbol_events: Optional[Dict[str, Dict[str, Any]]] = None,
     symbol_trend_scores: Optional[Dict[str, float]] = None,
@@ -530,7 +524,6 @@ Return a JSON object with the following fields:
 - "pause_force_resume_risk_multiplier": a float between 0.0 and 1.0 (e.g., 0.3). The global risk multiplier applied when the engine force-resumes trading after too many consecutive "keep paused" decisions. Lower values = more conservative forced resume; higher values = more aggressive.
 - "max_partial_tp_reviews": an integer between 1 and 20 (e.g., 3). The maximum number of times the LLM can review a triggered partial take-profit before the engine force-executes the partial sell. Lower values = quicker partial profit-taking; higher values = more LLM discretion.
 - "max_dust_sweep_reviews": an integer between 1 and 20 (e.g., 3). The maximum number of times the LLM can review a triggered dust sweep before the engine force-sells the remaining dust. Lower values = quicker dust cleanup; higher values = more LLM discretion.
-- "scalping_score_weights": an object with five float fields (each between 0.0 and 1.0, they should sum to 1.0): "volume" (weight for 24h volume score), "volatility" (weight for 24h price change volatility score), "spread" (weight for bid-ask spread tightness score), "depth" (weight for order book depth score), "momentum" (weight for 24h momentum direction score). These weights control how the scalping suitability score is computed for stock selection. Higher spread/depth weights favor liquid, tight-spread stocks; higher volume/volatility weights favor active movers.
 - "max_portfolio_exposure_pct": a float between 0.0 and 1.0 (e.g., 0.7 for 70%). The maximum percentage of total portfolio value that can be deployed in open positions.
 - "max_portfolio_stop_risk_pct": a float between 0.0 and 1.0 (e.g., 0.05 for 5%). The maximum total stop-loss risk as a percentage of portfolio value.
 - "min_risk_reward_ratio": a positive number (e.g., 1.5). The minimum reward:risk ratio required for all trades. Trades with a lower ratio will be rejected.
@@ -558,8 +551,8 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
             "\n**Trading is currently ACTIVE.**\n"
             "You may pause trading by setting `\"pause_trading\": true` if conditions warrant.\n"
             "However, do NOT pause solely because of a bad market index (e.g., high fear, low breadth). "
-            "First, check the **Top Profit Opportunities** section below. If there are stocks with high scalping scores (>0.7), "
-            "strong positive sentiment, and clear technical signals, you may still trade them profitably even in a down market.\n"
+            "First, check the news sentiment and technical indicators. If there are stocks with "
+            "strong positive sentiment and clear technical signals, you may still trade them profitably even in a down market.\n"
             "Only pause if NO such opportunities exist, or if the account is in significant drawdown with no high‑confidence setups.\n"
             "\nAlso consider the news sentiment data below when deciding whether to pause.\n"
         )
@@ -668,19 +661,6 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
         prompt += f"\nOverall market trend ({market_trend['symbol']}): daily change {market_trend.get('change_24h')}%, last price {market_trend.get('last')}\n"
     if session_info:
         prompt += f"\nCurrent UTC hour: {session_info['utc_hour']} ({session_info['session']} session)\n"
-    # --- Data feed note ---
-    if data_feed == "iex":
-        prompt += (
-            "\n**Data feed: IEX (free).** The IEX feed does not provide real‑time order book data. "
-            "Order book metrics (spread, depth, walls) may be empty or stale. "
-            "Do NOT rely on order book data for stock selection or trade decisions. "
-            "Base your analysis on OHLCV, indicators, news sentiment, and other available data.\n"
-        )
-    else:
-        prompt += (
-            "\n**Data feed: SIP (real‑time).** Order book data is live and reliable. "
-            "You may use order book metrics normally.\n"
-        )
     if vix is not None:
         prompt += f"\nCBOE Volatility Index (VIX): {vix:.2f}\n"
     # --- Market regime summary ---
@@ -692,14 +672,6 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
         elif breadth_pct < 40 or vix > 30:
             regime_label = "RISK-OFF (broad market weakness, elevated fear)"
     prompt += f"\n**Market Regime: {regime_label}**\n"
-    if sector_etf_data:
-        prompt += "\n## Sector ETF Performance\n"
-        prompt += "Current price and daily change for key sector ETFs:\n"
-        for etf, data in sector_etf_data.items():
-            last = data.get("last")
-            change = data.get("change_pct")
-            if last is not None:
-                prompt += f"  {etf}: last={last:.2f}, change={change}%\n"
     if news_sentiment:
         prompt += "\n## News Sentiment\n"
         prompt += "Aggregate sentiment from recent news articles (compound score -1 to +1, higher = more positive):\n"
