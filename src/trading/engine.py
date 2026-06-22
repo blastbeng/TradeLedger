@@ -7723,10 +7723,16 @@ class TradingEngine:
                     logger.error(f"Failed to place trailing-stop order for {symbol}: {e}")
 
         # --- Take-profit order ---
+        # If trailing_take_profit is enabled, do not place a native limit order
+        # because the take-profit price will move and the native order would not.
+        # The risk management loop will handle the trailing take-profit instead.
+        params = signal.strategy_params or {}
+        trailing_tp = params.get("trailing_take_profit", False)
+
         tp_ot = signal.take_profit_order_type
         tp_price = exit_prices.get("take_profit_price")
         tp_order_id = None
-        if tp_ot == "limit" and tp_price is not None:
+        if tp_ot == "limit" and tp_price is not None and not trailing_tp:
             try:
                 order = await asyncio.to_thread(
                     self.trader.create_market_sell_order,
