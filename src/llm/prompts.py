@@ -705,7 +705,6 @@ Per-strategy performance: {json.dumps(performance.get('strategy_performance', {}
 def build_strategy_prompt(
     symbol: str,
     ticker: Dict[str, Any],
-    order_book: Dict[str, Any],
     balance: Dict[str, float],
     open_positions: List[Dict[str, Any]],
     per_symbol_budget: float,
@@ -734,17 +733,8 @@ def build_strategy_prompt(
     mfi: Optional[float] = None,
     cci: Optional[float] = None,
     williams_r: Optional[float] = None,
-    order_book_imbalance: Optional[float] = None,
     unrealized_pnl: Optional[float] = None,
     position_info: Optional[Dict[str, Any]] = None,
-    spread_pct: Optional[float] = None,
-    bid_wall_volume: Optional[float] = None,
-    ask_wall_volume: Optional[float] = None,
-    order_book_pressure: Optional[float] = None,
-    depth_imbalances: Optional[Dict[str, float]] = None,
-    order_book_slope: Optional[float] = None,
-    mid_price_bias: Optional[float] = None,
-    depth_profile: Optional[Dict[str, Dict[str, float]]] = None,
     fee_rate: Optional[float] = None,
     drawdown_pct: Optional[float] = None,
     raw_candles: Optional[List[List]] = None,
@@ -758,10 +748,8 @@ def build_strategy_prompt(
     cycle_spent: Optional[float] = None,
     remaining_balance: Optional[float] = None,
     market_regime: Optional[str] = None,
-    recent_trades_data: Optional[List[Dict[str, Any]]] = None,
     multi_tf_raw_candles: Optional[Dict[str, List[List]]] = None,
     multi_tf_indicators: Optional[Dict[str, Dict[str, Any]]] = None,
-    scalping_feasibility_score: Optional[float] = None,
     vwap: Optional[float] = None,
     vwap_multi_tf: Optional[Dict[str, float]] = None,
     session_info: Optional[Dict[str, Any]] = None,
@@ -770,17 +758,11 @@ def build_strategy_prompt(
     ichimoku: Optional[Dict[str, Optional[float]]] = None,
     market_breadth: Optional[Dict[str, Any]] = None,
     full_market_breadth: Optional[Dict[str, Any]] = None,
-    depth_trend: Optional[float] = None,
     parabolic_sar: Optional[float] = None,
     keltner_channels: Optional[Dict[str, float]] = None,
     pivot_points: Optional[Dict[str, float]] = None,
     donchian_channels: Optional[Dict[str, float]] = None,
-    cvd: Optional[float] = None,
-    cvd_normalized: Optional[float] = None,
-    order_book_pressure_trend: Optional[float] = None,
-    estimated_slippage_pct: Optional[float] = None,
     atr_percentile: Optional[float] = None,
-    market_impact_score: Optional[float] = None,
     global_risk_multiplier: Optional[float] = None,
     trading_paused: bool = False,
     max_hold_expired: bool = False,
@@ -823,7 +805,6 @@ def build_strategy_prompt(
     min_hold = 2 * tf_seconds
     prompt = f"""Symbol: {symbol}
 Current ticker: {json.dumps(ticker)}
-Order book (top 5 levels): {json.dumps(order_book)}
 Current balances: {json.dumps(balance)}
 """
     # --- Portfolio context: total base balance and all tracked symbols ---
@@ -1014,84 +995,6 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"ATR percentile (relative to last 100 observations): {atr_percentile:.1f}%\n"
     if atr_multi_tf:
         prompt += f"ATR across timeframes: {json.dumps(atr_multi_tf)}\n"
-    if order_book_imbalance is not None:
-        prompt += f"Order book imbalance (bid_vol / ask_vol): {order_book_imbalance:.2f} ( >1 = buying pressure)\n"
-    if spread_pct is not None:
-        prompt += f"Spread: {spread_pct:.4f}%\n"
-    if bid_wall_volume is not None:
-        prompt += f"Bid wall volume (within 1% of best bid): {bid_wall_volume:.4f}\n"
-    if ask_wall_volume is not None:
-        prompt += f"Ask wall volume (within 1% of best ask): {ask_wall_volume:.4f}\n"
-    if order_book_pressure is not None:
-        prompt += f"Order book pressure (0 = strong sell, 1 = strong buy): {order_book_pressure:.2f}\n"
-    if order_book_pressure_trend is not None:
-        direction = "increasing" if order_book_pressure_trend > 0 else "decreasing" if order_book_pressure_trend < 0 else "unchanged"
-        prompt += f"Order book pressure trend: {order_book_pressure_trend:+.4f} ({direction} since last cycle)\n"
-        prompt += "Rising trend = building buy-side conviction; falling = growing sell-side pressure or potential spoofing. Use to distinguish genuine order flow from transient walls.\n"
-    if depth_imbalances:
-        prompt += f"Order book depth imbalances (bid_vol/total_vol at distance from mid): {json.dumps(depth_imbalances)}\n"
-    if order_book_slope is not None:
-        prompt += f"Order book slope (volume change per 0.5% price move): {order_book_slope:.2f}\n"
-    if mid_price_bias is not None:
-        prompt += f"Mid-price bias (-1 = near bid, +1 = near ask): {mid_price_bias:.2f}\n"
-    if depth_profile:
-        prompt += "\nOrder book depth profile (cumulative volume at distance from mid):\n"
-        for dist, vols in depth_profile.items():
-            prompt += f"  {dist}: bid={vols['bid_volume']:.4f}, ask={vols['ask_volume']:.4f}\n"
-    # --- Warn if order book is empty (common with IEX feed) ---
-    if not order_book.get('bids') and not order_book.get('asks'):
-        if data_feed == "iex":
-            bid = ticker.get('bid') if ticker else None
-            ask = ticker.get('ask') if ticker else None
-            last = ticker.get('last') if ticker else None
-            prompt += (
-                "\n**Data feed: IEX (free).** The IEX feed does not provide a real‑time order book. "
-                "The order book is empty. "
-                "Instead, use the **Latest Quote** below for bid/ask information:\n"
-            )
-            if bid is not None and ask is not None:
-                prompt += f"  Latest Quote: bid={bid}, ask={ask}, last={last}\n"
-                if bid > 0 and ask > 0:
-                    mid = (bid + ask) / 2
-                    spread_pct = ((ask - bid) / mid) * 100
-                    prompt += f"  Spread (from quote): {spread_pct:.4f}%\n"
-            prompt += (
-                "Do NOT rely on order book depth, walls, or imbalance metrics – they are unavailable. "
-                "Base your analysis on OHLCV, indicators, the latest quote, and other available data.\n"
-            )
-        else:
-            prompt += (
-                "\n**Note:** The order book is empty. This may indicate very low liquidity "
-                "or a data issue. Proceed with caution and rely more on OHLCV and indicators.\n"
-            )
-    if recent_trades_data:
-        # Summarise last 20 trades: count buys vs sells, average size, price range
-        buys = [t for t in recent_trades_data if t.get('side') == 'buy']
-        sells = [t for t in recent_trades_data if t.get('side') == 'sell']
-        avg_buy_size = sum(t['amount'] for t in buys) / len(buys) if buys else 0
-        avg_sell_size = sum(t['amount'] for t in sells) / len(sells) if sells else 0
-        prices = [t['price'] for t in recent_trades_data]
-        price_range = (min(prices), max(prices)) if prices else (0, 0)
-        prompt += (
-            f"\nRecent trade activity (last {len(recent_trades_data)} trades):\n"
-            f"  Buys: {len(buys)}, avg size: {avg_buy_size:.4f}\n"
-            f"  Sells: {len(sells)}, avg size: {avg_sell_size:.4f}\n"
-            f"  Price range: {price_range[0]:.4f} - {price_range[1]:.4f}\n"
-        )
-    if cvd is not None:
-        prompt += f"\nCumulative Volume Delta (CVD) from recent trades: {cvd:.6f}"
-        if cvd_normalized is not None:
-            prompt += f" (normalized: {cvd_normalized:+.4f})"
-        prompt += "\n"
-        prompt += "CVD is net buying volume (buy - sell). Positive = buying pressure, negative = selling pressure. Use alongside order book pressure to confirm directional conviction. Divergences warn of weakening momentum.\n"
-    if scalping_feasibility_score is not None:
-        prompt += f"\nScalping feasibility score: {scalping_feasibility_score:.3f} (0-1, higher = better for very small take‑profits)\n"
-        if market_impact_score is not None:
-            prompt += f"  Market impact component: {market_impact_score:.3f} (0-1, higher = lower price impact per unit of volume)\n"
-        prompt += "Score combines spread, depth, trade frequency, volatility, and market impact. Score > 0.7 = highly suitable for scalping tiny percentages. Market impact component measures price movement per unit of volume.\n"
-    elif market_impact_score is not None:
-        prompt += f"\nMarket impact score: {market_impact_score:.3f} (0-1, higher = lower price impact per unit of volume)\n"
-        prompt += "Measures price movement per unit of volume. High score = minimal price impact, low score = small orders can move price.\n"
     if fee_rate is not None:
         prompt += f"Taker fee rate for this symbol: {fee_rate*100:.2f}%\n"
         # Calculate exact break-even take-profit percentage
@@ -1120,8 +1023,6 @@ Maximum symbols to trade: {max_symbols}
         f"would yield ~{example_profit:.4f} {quote_currency} gross profit. "
         "Set min_profit_per_trade accordingly, and ensure it is not larger than your expected profit.\n"
     )
-    if estimated_slippage_pct is not None:
-        prompt += f"\nEstimated slippage for a per-symbol budget market buy: {estimated_slippage_pct:.4f}%. Engine caps slippage at {settings.MAX_SLIPPAGE_CAP_PCT}%.\n"
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)
@@ -1355,9 +1256,6 @@ Maximum symbols to trade: {max_symbols}
             f"({full_market_breadth['positive_count']} positive).\n"
             "Broader measure of market health. If full breadth is very low (<25%) while candidate breadth is moderate, market may be more fragile than it appears.\n"
         )
-    if depth_trend is not None:
-        prompt += f"\nOrder book depth trend (change in total depth within 1% of mid since last cycle): {depth_trend:+.4f}\n"
-        prompt += "Positive = growing liquidity/conviction, negative = thinning liquidity. Increasing depth supports larger positions; decreasing depth warrants caution.\n"
     if parabolic_sar is not None:
         prompt += f"\nParabolic SAR: {parabolic_sar:.6f}\n"
         prompt += "Parabolic SAR: trailing stop/reversal indicator. Price above SAR = uptrend, below = downtrend. Use as dynamic stop-loss.\n"

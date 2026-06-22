@@ -3491,29 +3491,6 @@ class TradingEngine:
                         # Do NOT overwrite 'last' from Alpaca; it's more real-time
                         logger.info(f"Yahoo Finance quote merged for {symbol}: bid={ticker.get('bid')}, ask={ticker.get('ask')}")
 
-            if settings.ALPACA_DATA_FEED == "iex":
-                # IEX does not provide a reliable order book; use an empty one.
-                order_book = {"bids": [], "asks": []}
-            else:
-                order_book = self.ws_manager.get_order_book(symbol)
-                if order_book is None:
-                    async with self._exchange_semaphore:
-                        order_book = await asyncio.to_thread(get_order_book, self.data_client, symbol.split("/")[0], 20)
-                if order_book is None:
-                    order_book = {"bids": [], "asks": []}
-            # Fetch recent trades for micro-momentum and liquidity assessment
-            recent_trades_raw = self.ws_manager.get_trades(symbol)
-
-            # Compute Cumulative Volume Delta (CVD) from recent trades
-            cvd = None
-            cvd_normalized = None
-            if recent_trades_raw:
-                buy_vol = sum(t.get('amount', 0) for t in recent_trades_raw if t.get('side') == 'buy')
-                sell_vol = sum(t.get('amount', 0) for t in recent_trades_raw if t.get('side') == 'sell')
-                total_vol = buy_vol + sell_vol
-                cvd = round(buy_vol - sell_vol, 6)
-                cvd_normalized = round(cvd / total_vol, 4) if total_vol > 0 else None
-
             balance = await self._get_cached_balance()
             base_balance = balance.get(self.base_currency, 0.0)
             if base_balance <= 0 or self.effective_max_symbols == 0:
@@ -3777,198 +3754,6 @@ class TradingEngine:
             except Exception as e:
                 logger.warning(f"Failed to fetch historical OHLCV for {symbol} {assigned_tf}: {e}")
 
-            # Order book imbalance (bid volume / ask volume, top 5 levels)
-            bids_vol = sum(bid[1] for bid in order_book.get('bids', [])[:5])
-            asks_vol = sum(ask[1] for ask in order_book.get('asks', [])[:5])
-            order_book_imbalance = bids_vol / asks_vol if asks_vol > 0 else None
-
-            # --- Enhanced order book metrics ---
-            spread_pct = None
-            bid_wall_volume = None
-            ask_wall_volume = None
-            order_book_pressure = None
-            order_book_pressure_trend = None
-            depth_imbalances = None
-            order_book_slope = None
-            mid_price_bias = None
-            mid = None
-            depth_trend = None
-
-            bids = order_book.get('bids', [])
-            asks = order_book.get('asks', [])
-            if bids and asks:
-                best_bid = bids[0][0]
-                best_ask = asks[0][0]
-                mid = (best_bid + best_ask) / 2
-                if mid > 0:
-                    spread_pct = ((best_ask - best_bid) / mid) * 100
-
-                # Wall volumes: cumulative volume within 1% of best price
-                bid_threshold = best_bid * 0.99
-                ask_threshold = best_ask * 1.01
-                bid_wall_volume = sum(bid[1] for bid in bids if bid[0] >= bid_threshold)
-                ask_wall_volume = sum(ask[1] for ask in asks if ask[0] <= ask_threshold)
-
-                # Order book depth trend
-                if bid_wall_volume is not None and ask_wall_volume is not None:
-                    current_depth = bid_wall_volume + ask_wall_volume
-                    depth_key = f"depth:prev:{symbol}"
-                    prev_raw = await asyncio.to_thread(self.redis.get, depth_key)
-                    if prev_raw is not None:
-                        prev_depth = float(prev_raw)
-                        depth_trend = round(current_depth - prev_depth, 4)
-                    await asyncio.to_thread(self.redis.setex, depth_key, 3600, str(current_depth))
-
-                # Order book pressure: bid_wall / (bid_wall + ask_wall)
-                total_wall = bid_wall_volume + ask_wall_volume
-                if total_wall > 0:
-                    order_book_pressure = bid_wall_volume / total_wall
-
-                # Order book pressure trend (change since last cycle)
-                if order_book_pressure is not None:
-                    pressure_key = f"ob_pressure:prev:{symbol}"
-                    prev_pressure_raw = await asyncio.to_thread(self.redis.get, pressure_key)
-                    if prev_pressure_raw is not None:
-                        prev_pressure = float(prev_pressure_raw)
-                        order_book_pressure_trend = round(order_book_pressure - prev_pressure, 4)
-                    await asyncio.to_thread(self.redis.setex, pressure_key, 3600, str(order_book_pressure))
-
-                # --- Deeper order‑book metrics ---
-                depth_imbalances = {}
-                order_book_slope = None
-                mid_price_bias = None
-
-                # Depth imbalance at 0.5%, 1%, 2% from mid
-                for pct in [0.005, 0.01, 0.02]:
-                    bid_cutoff = mid * (1 - pct)
-                    ask_cutoff = mid * (1 + pct)
-                    bid_vol = sum(b[1] for b in bids if b[0] >= bid_cutoff)
-                    ask_vol = sum(a[1] for a in asks if a[0] <= ask_cutoff)
-                    total = bid_vol + ask_vol
-                    imbalance = bid_vol / total if total > 0 else 0.5
-                    depth_imbalances[f"{pct*100:.1f}%"] = round(imbalance, 3)
-
-                # Order‑book slope: change in cumulative volume between 0.5% and 1% levels
-                vol_05 = sum(b[1] for b in bids if b[0] >= mid * 0.995) + sum(a[1] for a in asks if a[0] <= mid * 1.005)
-                vol_1 = sum(b[1] for b in bids if b[0] >= mid * 0.99) + sum(a[1] for a in asks if a[0] <= mid * 1.01)
-                order_book_slope = (vol_1 - vol_05) / 0.005  # volume per 0.5% price move
-
-                # Mid‑price bias: -1 (near bid) to +1 (near ask)
-                if best_ask != best_bid:
-                    mid_price_bias = (mid - best_bid) / (best_ask - best_bid) - 0.5  # range -0.5 to +0.5
-                    mid_price_bias *= 2  # scale to -1..1
-
-            # --- Order book depth profile for scalping ---
-            depth_profile = {}
-            if bids and asks and mid > 0:
-                for pct in [0.001, 0.002, 0.005, 0.01, 0.02]:
-                    bid_cutoff = mid * (1 - pct)
-                    ask_cutoff = mid * (1 + pct)
-                    bid_vol = sum(b[1] for b in bids if b[0] >= bid_cutoff)
-                    ask_vol = sum(a[1] for a in asks if a[0] <= ask_cutoff)
-                    depth_profile[f"{pct*100:.1f}%"] = {
-                        "bid_volume": round(bid_vol, 4),
-                        "ask_volume": round(ask_vol, 4),
-                    }
-
-            # --- Market impact estimate (price movement per unit of volume) ---
-            market_impact_score = None
-            if depth_profile and mid is not None and mid > 0:
-                ask_vol_01 = depth_profile.get("0.1%", {}).get("ask_volume", 0)
-                if ask_vol_01 > 0:
-                    price_move_per_unit = (mid * 0.001) / ask_vol_01
-                    impact_pct = (price_move_per_unit / mid) * 100 if mid > 0 else 0
-                    if impact_pct <= 0.001:
-                        market_impact_score = 1.0
-                    elif impact_pct >= 0.1:
-                        market_impact_score = 0.0
-                    else:
-                        market_impact_score = round(max(0.0, min(1.0, 1.0 - (impact_pct - 0.001) / 0.099)), 3)
-
-            # --- Scalping feasibility score ---
-            scalping_score = None
-            if spread_pct is not None and depth_profile and recent_trades_raw:
-                # 1. Spread score: 1.0 if spread <= 0.05%, 0.0 if spread >= 0.5%
-                spread_score = max(0.0, min(1.0, 1.0 - (spread_pct - 0.05) / 0.45)) if spread_pct > 0.05 else 1.0
-
-                # 2. Depth score: use ask volume at 0.1% distance (if available)
-                depth_01 = depth_profile.get("0.1%", {}).get("ask_volume", 0)
-                depth_score = min(1.0, depth_01 / 1.0) if depth_01 else 0.0
-
-                # 3. Trade frequency: trades per minute from recent_trades_raw
-                if len(recent_trades_raw) >= 2:
-                    timestamps = [t['timestamp'] for t in recent_trades_raw if 'timestamp' in t]
-                    if len(timestamps) >= 2:
-                        time_span_seconds = (max(timestamps) - min(timestamps)) / 1000.0
-                        if time_span_seconds > 0:
-                            trades_per_minute = len(timestamps) / (time_span_seconds / 60.0)
-                        else:
-                            trades_per_minute = 0
-                    else:
-                        trades_per_minute = 0
-                else:
-                    trades_per_minute = 0
-                freq_score = min(1.0, trades_per_minute / 10.0)
-
-                # 4. Volatility score: ATR% – moderate is best (0.5%–2%)
-                if atr is not None and current_price > 0:
-                    atr_pct = (atr / current_price) * 100
-                    if atr_pct < 0.3:
-                        vol_score = 0.2
-                    elif atr_pct > 5.0:
-                        vol_score = 0.3
-                    else:
-                        vol_score = max(0.0, 1.0 - abs(atr_pct - 1.5) / 3.5)
-                else:
-                    vol_score = 0.5
-
-                # Composite score (with optional market impact component)
-                # Per-symbol scalping uses different components (freq, impact) than
-                # stock-selection weights (volume, volatility, spread, depth, momentum),
-                # so we distribute evenly: 5-way if market_impact is available, 4-way otherwise.
-                if market_impact_score is not None:
-                    sw_spread = 0.20
-                    sw_depth = 0.20
-                    sw_freq = 0.20
-                    sw_vol = 0.20
-                    sw_impact = 0.20
-                else:
-                    sw_spread = 0.25
-                    sw_depth = 0.25
-                    sw_freq = 0.25
-                    sw_vol = 0.25
-
-                if market_impact_score is not None:
-                    scalping_score = round(sw_spread * spread_score + sw_depth * depth_score + sw_freq * freq_score + sw_vol * vol_score + sw_impact * market_impact_score, 3)
-                else:
-                    scalping_score = round(sw_spread * spread_score + sw_depth * depth_score + sw_freq * freq_score + sw_vol * vol_score, 3)
-
-            # Pre-computed slippage estimate for per-symbol budget order size
-            estimated_slippage_pct = None
-            if asks and per_symbol_budget > 0:
-                desired_quote = per_symbol_budget
-                remaining_slip = desired_quote
-                total_cost_slip = 0.0
-                total_base_slip = 0.0
-                for ask in asks:
-                    price_level = ask[0]
-                    volume = ask[1]
-                    cost_at_level = price_level * volume
-                    if cost_at_level >= remaining_slip:
-                        base_filled = remaining_slip / price_level
-                        total_cost_slip += remaining_slip
-                        total_base_slip += base_filled
-                        remaining_slip = 0
-                        break
-                    else:
-                        total_cost_slip += cost_at_level
-                        total_base_slip += volume
-                        remaining_slip -= cost_at_level
-                if total_base_slip > 0 and asks[0][0] > 0:
-                    avg_fill_price = total_cost_slip / total_base_slip
-                    best_ask_price = asks[0][0]
-                    estimated_slippage_pct = round((avg_fill_price - best_ask_price) / best_ask_price * 100, 4)
-
             # Fee rate for this symbol
             fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
 
@@ -4113,7 +3898,6 @@ class TradingEngine:
             prompt = build_strategy_prompt(
                 symbol=symbol,
                 ticker=ticker,
-                order_book=order_book,
                 balance=balance,
                 open_positions=open_positions,
                 per_symbol_budget=per_symbol_budget,
@@ -4142,17 +3926,8 @@ class TradingEngine:
                 mfi=mfi,
                 cci=cci,
                 williams_r=williams_r,
-                order_book_imbalance=order_book_imbalance,
                 unrealized_pnl=unrealized_pnl,
                 position_info=position_info,
-                spread_pct=spread_pct,
-                bid_wall_volume=bid_wall_volume,
-                ask_wall_volume=ask_wall_volume,
-                order_book_pressure=order_book_pressure,
-                depth_imbalances=depth_imbalances,
-                order_book_slope=order_book_slope,
-                mid_price_bias=mid_price_bias,
-                depth_profile=depth_profile,
                 fee_rate=fee_rate,
                 drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
                 raw_candles=raw_candles,
@@ -4166,10 +3941,8 @@ class TradingEngine:
                 cycle_spent=self._cycle_spent,
                 remaining_balance=remaining,
                 market_regime=market_regime,
-                recent_trades_data=recent_trades_raw,
                 multi_tf_raw_candles=multi_tf_raw_candles,
                 multi_tf_indicators=multi_tf_indicators,
-                scalping_feasibility_score=scalping_score,
                 vwap=vwap,
                 vwap_multi_tf=vwap_multi_tf,
                 session_info=session_info,
@@ -4178,17 +3951,11 @@ class TradingEngine:
                 ichimoku=ichimoku,
                 market_breadth=getattr(self, '_market_breadth', None),
                 full_market_breadth=full_market_breadth,
-                depth_trend=depth_trend,
                 parabolic_sar=parabolic_sar,
                 keltner_channels=keltner_channels,
                 pivot_points=pivot_points,
                 donchian_channels=donchian_channels,
-                cvd=cvd,
-                cvd_normalized=cvd_normalized,
-                order_book_pressure_trend=order_book_pressure_trend,
-                estimated_slippage_pct=estimated_slippage_pct,
                 atr_percentile=atr_percentile,
-                market_impact_score=market_impact_score,
                 global_risk_multiplier=global_risk_mult,
                 trading_paused=trading_paused,
                 max_hold_expired=max_hold_expired,
