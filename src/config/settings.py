@@ -68,7 +68,7 @@ class Settings(BaseSettings):
 
     # ETFs that are always included in the candidate pool (if tradable),
     # regardless of volume or composite score.
-    ALWAYS_INCLUDE_ETFS: list[str] = ["SPY", "QQQ", "IWM", "DIA", "XLF", "XLK", "XLE", "XLV", "XLI", "XLP", "XLY", "XLB", "XLRE", "XLU", "XLC", "SMH", "XBI", "XRT", "XHB", "XME", "XOP", "XSD", "XSW", "XTL", "XAR", "XHE", "XHS", "XIT", "XNTK", "XPH", "XRO", "XSW", "XTL", "XWEB"]
+    ALWAYS_INCLUDE_ETFS: list[str] = []
 
     # Minimum composite score for a symbol to be used in the volume‑based fallback.
     # Symbols below this score are skipped even if they have high volume.
