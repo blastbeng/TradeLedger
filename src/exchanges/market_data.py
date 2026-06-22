@@ -39,11 +39,11 @@ def get_tradable_assets(trading_client=None) -> List[str]:
     """
     # Comprehensive list of major Italian stocks (FTSE MIB and mid-cap constituents)
     base_symbols = [
-        "ENI", "ENEL", "ISP", "UCG", "STM", "TIT", "FERRARI", "MONC", "AZM",
-        "RACE", "BAMI", "MB", "TEN", "PRY", "BPE", "EXO", "INW", "NEXI",
-        "REC", "SPM", "BZU", "DIA", "HER", "IPG", "LDO", "STL", "WBG",
-        "A2A", "BMO", "CNF", "ERG", "GAM", "ITM", "KOS", "NHF", "PST",
-        "SAL", "SRG", "TOD", "UNI", "USC", "VLT", "ZUC",
+        "AMP", "AZM", "BAMI", "BPE", "BVS", "BZU", "CAMP", "DIA", "ENEL", "ENI",
+        "ERG", "EXO", "FCT", "G", "HER", "INW", "IPG", "ISP", "ITM", "KOS",
+        "LDO", "MB", "MONC", "NEXI", "PCF", "PRY", "PST", "RACE", "REC", "SAL",
+        "SPM", "SRG", "STL", "STM", "TEN", "TIT", "TOD", "TRN", "UCG", "UNI",
+        "USC", "WBG", "ZUC",
     ]
     suffix = settings.TICKER_SUFFIX
     candidates = [f"{sym}{suffix}" for sym in base_symbols]
