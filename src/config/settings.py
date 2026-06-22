@@ -273,16 +273,6 @@ class Settings(BaseSettings):
             raise ValueError("LLM_TIMEOUT must be positive")
         return v
 
-    # Maximum slippage allowed when capping buy order size (0.0 = no cap)
-    MAX_SLIPPAGE_CAP_PCT: float = 0.1
-
-    @field_validator("MAX_SLIPPAGE_CAP_PCT")
-    @classmethod
-    def validate_max_slippage_cap_pct(cls, v: float) -> float:
-        if v < 0.0:
-            raise ValueError("MAX_SLIPPAGE_CAP_PCT must be >= 0")
-        return v
-
     # Enforce the LLM's minimum profit per trade check.
     # Set to False to allow trades with very small expected profit.
     ENFORCE_MIN_PROFIT_PER_TRADE: bool = False
