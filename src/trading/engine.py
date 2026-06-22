@@ -5355,16 +5355,7 @@ class TradingEngine:
                             pos["stop_loss"] = breakeven_price
                             logger.info(f"Breakeven stop activated for {symbol}: new stop {breakeven_price:.4f}")
 
-                # --- Lock profit (scalping) ---
-                lock_activation = pos.get("lock_profit_activation_pct")
-                lock_level = pos.get("lock_profit_level_pct")
-                if lock_activation is not None and lock_level is not None and lock_activation > 0:
-                    entry_price = pos["price"]
-                    if current_price >= entry_price * (1 + lock_activation):
-                        new_stop = entry_price * (1 + lock_level)
-                        if new_stop > pos["stop_loss"]:
-                            pos["stop_loss"] = new_stop
-                            logger.info(f"Lock-profit activated for {symbol}: new stop {new_stop:.4f} (guaranteed +{lock_level:.2%})")
+                # --- Lock profit feature removed (was scalping-specific) ---
 
                 # --- Update native stop order if stop price changed ---
                 if (pos.get("stop_loss_order_id")
@@ -5414,63 +5405,8 @@ class TradingEngine:
                         if current_price >= entry_price * (1 + lvl_pct):
                             # --- Depth check with optional timeout ---
                             min_depth = level.get("min_depth")
-                            if min_depth is not None and min_depth > 0:
-                                try:
-                                    ob = self.ws_manager.get_order_book(symbol)
-                                    if ob is None:
-                                        ob = None
-                                except Exception as e:
-                                    logger.warning(f"Could not fetch order book for depth check on {symbol}: {e}")
-                                    ob = None
-                                if ob:
-                                    asks = ob.get('asks', [])
-                                    tp_price = entry_price * (1 + lvl_pct)
-                                    cum_vol = 0.0
-                                    for ask in asks:
-                                        if ask[0] <= tp_price:
-                                            cum_vol += ask[1]
-                                        else:
-                                            break
-                                    if cum_vol < min_depth:
-                                        depth_timeout = level.get("depth_timeout_seconds")
-                                        if depth_timeout is not None and depth_timeout > 0:
-                                            now_ts = time.time()
-                                            wait_start = pos.setdefault("partial_tp_depth_wait_start", {}).get(i)
-                                            if wait_start is None:
-                                                pos["partial_tp_depth_wait_start"][i] = now_ts
-                                                logger.info(
-                                                    f"Partial TP level {i} for {symbol}: depth {cum_vol:.4f} < {min_depth:.4f}, "
-                                                    f"waiting up to {depth_timeout}s"
-                                                )
-                                                continue
-                                            else:
-                                                elapsed = now_ts - wait_start
-                                                if elapsed < depth_timeout:
-                                                    logger.info(
-                                                        f"Partial TP level {i} for {symbol}: still waiting for depth "
-                                                        f"({elapsed:.1f}s / {depth_timeout}s)"
-                                                    )
-                                                    continue
-                                                else:
-                                                    logger.info(
-                                                        f"Partial TP level {i} for {symbol}: depth timeout expired "
-                                                        f"({depth_timeout}s). Cancelling level."
-                                                    )
-                                                    triggered.append(i)
-                                                    pos["partial_tp_levels_triggered"] = triggered
-                                                    if "partial_tp_depth_wait_start" in pos:
-                                                        pos["partial_tp_depth_wait_start"].pop(i, None)
-                                                    continue
-                                        else:
-                                            logger.info(
-                                                f"Partial TP level {i} for {symbol}: depth {cum_vol:.4f} < {min_depth:.4f} "
-                                                f"and no depth_timeout_seconds set. Cancelling level."
-                                            )
-                                            triggered.append(i)
-                                            pos["partial_tp_levels_triggered"] = triggered
-                                            continue
-                                else:
-                                    continue
+                            # Order book depth checks are not supported with yfinance.
+                            # Skip depth-based gating and proceed directly to trigger logic.
                             # Clear any depth wait state for this level
                             if "partial_tp_depth_wait_start" in pos:
                                 pos["partial_tp_depth_wait_start"].pop(i, None)
