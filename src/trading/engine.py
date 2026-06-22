@@ -3596,25 +3596,8 @@ class TradingEngine:
                         williams_r = ind.get('williams_r')
                         ichimoku = ind.get('ichimoku')
                         donchian_channels = ind.get('donchian_channels')
-
-            # Compute Parabolic SAR for the assigned timeframe
-            parabolic_sar = None
-            if assigned_tf in multi_tf_raw_candles:
-                candles = multi_tf_raw_candles[assigned_tf]
-                if len(candles) >= 2:
-                    sar_highs = [c[2] for c in candles]
-                    sar_lows = [c[3] for c in candles]
-                    parabolic_sar = compute_parabolic_sar(sar_highs, sar_lows)
-
-            # Compute Keltner Channels for the assigned timeframe
-            keltner_channels = None
-            if assigned_tf in multi_tf_raw_candles:
-                candles = multi_tf_raw_candles[assigned_tf]
-                if len(candles) >= 21:
-                    kc_closes = [c[4] for c in candles]
-                    kc_highs = [c[2] for c in candles]
-                    kc_lows = [c[3] for c in candles]
-                    keltner_channels = compute_keltner_channels(kc_closes, kc_highs, kc_lows)
+                        parabolic_sar = ind.get('parabolic_sar')
+                        keltner_channels = ind.get('keltner_channels')
 
             # Compute ATR for each timeframe (volatility term structure)
             atr_multi_tf: Dict[str, float] = {}

@@ -340,6 +340,8 @@ def compute_all_indicators(
         ind['williams_r'] = compute_williams_r(highs, lows, closes, period=willr_period)
         ind['ichimoku'] = compute_ichimoku(highs, lows, closes, tenkan_period=ichimoku_tenkan, kijun_period=ichimoku_kijun, senkou_b_period=ichimoku_senkou_b)
         ind['donchian_channels'] = compute_donchian_channels(highs, lows, period=donchian_period)
+        ind['parabolic_sar'] = compute_parabolic_sar(highs, lows)
+        ind['keltner_channels'] = compute_keltner_channels(closes, highs, lows, period=bb_period)
 
     return ind
 

@@ -552,6 +552,8 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
                 if ind.get('donchian_channels') is not None:
                     dc = ind['donchian_channels']
                     lines.append(f"    Donchian: Upper={dc['upper']:.4f} Middle={dc['middle']:.4f} Lower={dc['lower']:.4f}")
+                if ind.get('parabolic_sar') is not None:
+                    lines.append(f"    SAR={ind['parabolic_sar']:.6f}")
                 if ind.get('keltner_channels') is not None:
                     kc = ind['keltner_channels']
                     lines.append(f"    Keltner: Upper={kc['upper']:.6f} Middle={kc['middle']:.6f} Lower={kc['lower']:.6f}")
@@ -1035,6 +1037,8 @@ Maximum symbols to trade: {max_symbols}
                     lines.append(f"  Donchian: Upper={dc['upper']:.4f} Middle={dc['middle']:.4f} Lower={dc['lower']:.4f}")
                 if ind.get('atr') is not None:
                     lines.append(f"  ATR(14)={ind['atr']:.6f}")
+                if ind.get('parabolic_sar') is not None:
+                    lines.append(f"  SAR={ind['parabolic_sar']:.6f}")
                 if ind.get('keltner_channels') is not None:
                     kc = ind['keltner_channels']
                     lines.append(f"  Keltner: Upper={kc['upper']:.6f} Middle={kc['middle']:.6f} Lower={kc['lower']:.6f}")
@@ -1129,14 +1133,6 @@ Maximum symbols to trade: {max_symbols}
             f"({full_market_breadth['positive_count']} positive).\n"
             "Broader measure of market health. If full breadth is very low (<25%) while candidate breadth is moderate, market may be more fragile than it appears.\n"
         )
-    if keltner_channels:
-        prompt += (
-            f"\nKeltner Channels (20 EMA, 2× ATR): "
-            f"Upper={keltner_channels['upper']:.6f}, "
-            f"Middle={keltner_channels['middle']:.6f}, "
-            f"Lower={keltner_channels['lower']:.6f}\n"
-        )
-        prompt += "Keltner Channels: volatility-based envelopes. Price near upper = overbought, near lower = oversold. Squeeze precedes large moves.\n"
     if donchian_channels:
         prompt += (
             f"\nDonchian Channels ({assigned_timeframe or 'default'}): "
