@@ -3446,6 +3446,11 @@ class TradingEngine:
                         # Do NOT overwrite 'last' from yfinance; it's more real-time
                         logger.info(f"Yahoo Finance quote merged for {symbol}: bid={ticker.get('bid')}, ask={ticker.get('ask')}")
 
+            # --- Fetch fundamental data for medium/long-term context ---
+            fundamentals = None
+            if settings.YAHOO_FINANCE_ENABLED:
+                fundamentals = await asyncio.to_thread(get_yahoo_fundamentals, symbol)
+
             balance = await self._get_cached_balance()
             base_balance = balance.get(self.base_currency, 0.0)
             if base_balance <= 0 or self.effective_max_symbols == 0:
