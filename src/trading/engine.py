@@ -7036,13 +7036,9 @@ class TradingEngine:
         ichimoku = ind.get("ichimoku")
         current_close = closes[-1] if closes else None
 
-        # Volume EMA for spike detection
-        volume_ema = prev.get("volume_ema")
-        if volume_ema is None:
-            volume_ema = sum(volumes[-20:]) / min(20, len(volumes)) if volumes else 0.0
-        else:
-            alpha = 0.2
-            volume_ema = alpha * volumes[-1] + (1 - alpha) * volume_ema if volumes else volume_ema
+        # Volume EMA for spike detection (using talib via compute_ema)
+        volume_ema_list = compute_ema(volumes, 20)
+        volume_ema = volume_ema_list[-1] if volume_ema_list else 0.0
 
         # Store current state for next cycle
         new_state = {
