@@ -2,7 +2,6 @@ import asyncio
 import time
 import logging
 from functools import wraps
-from alpaca.common.exceptions import APIError
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ def retry_on_rate_limit(max_retries=3, base_delay=1.0):
             for attempt in range(max_retries + 1):
                 try:
                     return await func(*args, **kwargs)
-                except APIError as e:
+                except Exception as e:
                     if getattr(e, 'status_code', None) != 429:
                         raise
                     last_exception = e
@@ -40,7 +39,7 @@ def retry_on_rate_limit(max_retries=3, base_delay=1.0):
             for attempt in range(max_retries + 1):
                 try:
                     return func(*args, **kwargs)
-                except APIError as e:
+                except Exception as e:
                     if getattr(e, 'status_code', None) != 429:
                         raise
                     last_exception = e

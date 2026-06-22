@@ -1,237 +1,45 @@
 import asyncio
 import logging
 from typing import Dict, List, Optional, Any
-from alpaca.data.live import StockDataStream
-from alpaca.data.models import Quote, Trade
 
 logger = logging.getLogger(__name__)
 
 
 class WebSocketManager:
-    """Manages real‑time market data via Alpaca's StockDataStream."""
+    """Dummy WebSocket manager. Alpaca is no longer used; engine uses REST polling."""
 
-    def __init__(self, stream: StockDataStream, symbols: List[str]):
-        self.stream = stream
-        self.symbols = set(self._plain(s) for s in symbols)
+    def __init__(self, stream=None, symbols: List[str] = None):
+        self.symbols = set(self._plain(s) for s in (symbols or []))
         self.tickers: Dict[str, Dict[str, Any]] = {}
-        self._ticker_queue = asyncio.Queue()
-        self.order_books: Dict[str, Dict[str, Any]] = {}
-        self.trades: Dict[str, List[Dict[str, Any]]] = {}
         self._running = False
-        self._tasks: List[asyncio.Task] = []
-        self._reconnect_lock = asyncio.Lock()
-        self._stream_failures = 0
-        self.MAX_STREAM_FAILURES = 3
 
     @staticmethod
     def _plain(symbol: str) -> str:
-        """Strip '/USD' suffix from a pair symbol, returning the plain symbol."""
         return symbol.split("/")[0] if "/" in symbol else symbol
 
-    # ------------------------------------------------------------------
-    # Public API (same signatures as before)
-    # ------------------------------------------------------------------
     async def start(self):
-        """Start the WebSocket stream and subscribe to initial symbols."""
-        logger.info("WebSocket manager starting...")
         self._running = True
-        if self.stream is None:
-            logger.error("Stream client is None – cannot start WebSocket manager.")
-            self._running = False
-            return
-        if self.symbols:
-            try:
-                self.stream.subscribe_quotes(self._on_quote, *self.symbols)
-                self.stream.subscribe_trades(self._on_trade, *self.symbols)
-            except Exception as e:
-                logger.error(f"Failed to subscribe initial symbols: {e}")
-                # Continue anyway; _run_stream will attempt connection
-        self._tasks.append(asyncio.create_task(self._run_stream()))
-        logger.info("WebSocket manager started (stream task created).")
+        logger.info("WebSocket manager started (dummy mode, using REST polling).")
 
     async def stop(self):
-        """Stop the stream and cancel all tasks."""
         self._running = False
-        for task in self._tasks:
-            task.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
-        try:
-            await self.stream.close()
-        except Exception:
-            pass
 
     async def update_subscriptions(self, symbols: List[str]):
-        """Change the set of watched symbols."""
-        new_symbols = set(self._plain(s) for s in symbols)
-        if new_symbols == self.symbols:
-            return
-        removed = self.symbols - new_symbols
-        added = new_symbols - self.symbols
-        if removed:
-            self.stream.unsubscribe_quotes(*removed)
-            self.stream.unsubscribe_trades(*removed)
-        if added:
-            self.stream.subscribe_quotes(self._on_quote, *added)
-            self.stream.subscribe_trades(self._on_trade, *added)
-        self.symbols = new_symbols
-        for sym in removed:
-            self.tickers.pop(sym, None)
-            self.order_books.pop(sym, None)
-            self.trades.pop(sym, None)
+        self.symbols = set(self._plain(s) for s in symbols)
 
     def get_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:
-        return self.tickers.get(self._plain(symbol))
+        return None
 
     def get_order_book(self, symbol: str) -> Optional[Dict[str, Any]]:
-        return self.order_books.get(self._plain(symbol))
+        return None
 
     def get_trades(self, symbol: str) -> List[Dict[str, Any]]:
-        return self.trades.get(self._plain(symbol), [])
+        return []
 
     async def wait_for_update(self, timeout: float = 5.0) -> Optional[tuple]:
-        try:
-            return await asyncio.wait_for(self._ticker_queue.get(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return None
+        await asyncio.sleep(timeout)
+        return None
 
     @property
     def healthy(self) -> bool:
-        if not self._running:
-            return False
-        return any(not task.done() for task in self._tasks)
-
-    # ------------------------------------------------------------------
-    # Internal stream handling
-    # ------------------------------------------------------------------
-    async def _run_stream(self):
-        """Run the stream's event loop and reconnect on failure, giving up after N consecutive failures."""
-        self._stream_failures = 0
-        while self._running:
-            try:
-                logger.info("Connecting to Alpaca WebSocket stream...")
-                await self.stream._run_forever()
-                # Connection succeeded – reset failure counter for future reconnects
-                self._stream_failures = 0
-            except AttributeError as e:
-                self._stream_failures += 1
-                err_msg = str(e)
-                if "NoneType" in err_msg or "is_running" in err_msg:
-                    logger.error(
-                        f"Stream connection failed with AttributeError: {e}. "
-                        f"This usually means the WebSocket connection was rejected – "
-                        f"possibly because another app or script is already using the same Alpaca API key. "
-                        f"Ensure no other instance is running. "
-                        f"(failure {self._stream_failures}/{self.MAX_STREAM_FAILURES})"
-                    )
-                else:
-                    logger.error(
-                        f"Stream connection failed with AttributeError: {e}. "
-                        f"This usually means the stream object is not properly initialised. "
-                        f"Check ALPACA_STREAM_URL and ALPACA_DATA_FEED settings. "
-                        f"(failure {self._stream_failures}/{self.MAX_STREAM_FAILURES})"
-                    )
-                if self._running and self._stream_failures < self.MAX_STREAM_FAILURES:
-                    await self._reconnect()
-                    await asyncio.sleep(5)
-                else:
-                    logger.warning(
-                        "Max stream failures reached. Giving up on WebSocket; engine will use REST polling."
-                    )
-                    try:
-                        await self.stream.close()
-                    except Exception:
-                        pass
-                    self._running = False
-                    break
-            except Exception as e:
-                self._stream_failures += 1
-                logger.error(f"Stream disconnected: {e} (failure {self._stream_failures}/{self.MAX_STREAM_FAILURES})")
-                if self._running and self._stream_failures < self.MAX_STREAM_FAILURES:
-                    await self._reconnect()
-                    await asyncio.sleep(5)
-                else:
-                    logger.warning(
-                        "Max stream failures reached. Giving up on WebSocket; engine will use REST polling."
-                    )
-                    try:
-                        await self.stream.close()
-                    except Exception:
-                        pass
-                    self._running = False
-                    break
-            else:
-                # stream.run() returned cleanly (e.g., after stop())
-                break
-
-    async def _reconnect(self):
-        """Close the current stream, create a new one, and re‑subscribe."""
-        async with self._reconnect_lock:
-            logger.warning("WebSocket reconnecting...")
-            try:
-                await self.stream.close()
-            except Exception:
-                pass
-            from src.exchanges.factory import get_streaming_client
-            self.stream = get_streaming_client()
-            if self.stream is None:
-                logger.error("Failed to create a new stream client – reconnection aborted.")
-                return
-            if self.symbols:
-                try:
-                    self.stream.subscribe_quotes(self._on_quote, *self.symbols)
-                    self.stream.subscribe_trades(self._on_trade, *self.symbols)
-                except Exception as e:
-                    logger.warning(f"Failed to re-subscribe during reconnect: {e}")
-            await asyncio.sleep(0.5)  # brief pause to let the new stream settle
-            logger.info("Reconnection complete.")
-
-    async def _on_quote(self, quote: Quote):
-        """Handle an incoming quote update."""
-        symbol = quote.symbol
-        ticker = {
-            'symbol': symbol,
-            'bid': quote.bid_price,
-            'ask': quote.ask_price,
-            'last': (quote.bid_price + quote.ask_price) / 2 if quote.bid_price and quote.ask_price else quote.ask_price,
-            'percentage': None,      # not available from streaming quote
-            'quoteVolume': None,     # not available from streaming quote
-            'timestamp': int(quote.timestamp.timestamp() * 1000) if quote.timestamp else None,
-        }
-        self.tickers[symbol] = ticker
-        self.order_books[symbol] = {
-            'bids': [[quote.bid_price, quote.bid_size]],
-            'asks': [[quote.ask_price, quote.ask_size]],
-        }
-        await self._ticker_queue.put((symbol, ticker))
-
-    async def _on_trade(self, trade: Trade):
-        """Handle an incoming trade update."""
-        symbol = trade.symbol
-        trade_dict = {
-            'id': trade.id,
-            'symbol': symbol,
-            'price': trade.price,
-            'amount': trade.size,
-            'side': 'buy' if trade.taker_side == 'buy' else 'sell',
-            'timestamp': int(trade.timestamp.timestamp() * 1000) if trade.timestamp else None,
-        }
-        if symbol not in self.trades:
-            self.trades[symbol] = []
-        self.trades[symbol].append(trade_dict)
-        if len(self.trades[symbol]) > 50:
-            self.trades[symbol] = self.trades[symbol][-50:]
-
-        # Update the 'last' price in the ticker from the actual trade price
-        if symbol in self.tickers:
-            self.tickers[symbol]['last'] = trade.price
-        else:
-            self.tickers[symbol] = {
-                'symbol': symbol,
-                'last': trade.price,
-                'bid': None,
-                'ask': None,
-                'percentage': None,
-                'quoteVolume': None,
-                'timestamp': int(trade.timestamp.timestamp() * 1000) if trade.timestamp else None,
-            }
-        await self._ticker_queue.put((symbol, self.tickers[symbol]))
+        return False
