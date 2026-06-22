@@ -575,7 +575,7 @@ class TradingEngine:
             await asyncio.sleep(300)  # every 5 minutes
 
     async def _market_clock_monitor(self):
-        """Periodically check Alpaca clock and pause/resume trading based on market open/close."""
+        """Periodically check market clock and pause/resume trading based on market open/close."""
         await asyncio.sleep(5)  # initial delay
         while self._running:
             try:
@@ -1886,7 +1886,7 @@ class TradingEngine:
                         t['bid'] = yahoo.get('bid')
                     if t.get('ask') is None:
                         t['ask'] = yahoo.get('ask')
-                    # Keep Alpaca's 'last' if present
+                    # Keep yfinance's 'last' if present
                     if t.get('last') is None:
                         t['last'] = yahoo.get('last')
 
@@ -3494,7 +3494,7 @@ class TradingEngine:
                             ticker['bid'] = yahoo.get('bid')
                         if ask is None:
                             ticker['ask'] = yahoo.get('ask')
-                        # Do NOT overwrite 'last' from Alpaca; it's more real-time
+                        # Do NOT overwrite 'last' from yfinance; it's more real-time
                         logger.info(f"Yahoo Finance quote merged for {symbol}: bid={ticker.get('bid')}, ask={ticker.get('ask')}")
 
             balance = await self._get_cached_balance()
@@ -5446,7 +5446,7 @@ class TradingEngine:
                             # Update the stored baseline
                             pos["_native_stop_price"] = pos["stop_loss"]
 
-                # --- Partial take-profit (scalping) ---
+                # --- Partial take-profit ---
                 partial_levels = pos.get("partial_take_profit_levels")
                 if partial_levels:
                     # Multiple levels
@@ -8488,7 +8488,7 @@ class TradingEngine:
             logger.error(f"Dust sweep failed for {symbol}: {e}")
 
     async def _process_queued_orders(self):
-        """Periodically check queued limit orders on Alpaca and process fills,
+        """Periodically check queued limit orders in the simulator and process fills,
         including partial fills.
 
         Instead of re-executing the signal (which would place a duplicate order
@@ -8834,7 +8834,7 @@ class TradingEngine:
             await asyncio.sleep(30)  # check every 30 seconds (medium/long-term)
 
     async def _handle_queued_buy_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any]):
-        """Process a queued BUY limit order that has filled on Alpaca."""
+        """Process a queued BUY limit order that has filled in the simulator."""
         symbol = trade_dict['symbol']
         base, quote = symbol.split("/")
         fee = trade_dict.get('fee', {})
@@ -8991,7 +8991,7 @@ class TradingEngine:
                 logger.error(f"Failed to place exit orders after queued buy fill for {symbol}: {e}")
 
     async def _handle_queued_sell_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any], partial: bool = False):
-        """Process a queued SELL limit order that has filled on Alpaca.
+        """Process a queued SELL limit order that has filled in the simulator.
 
         When *partial* is True, only a portion of the order has filled; the
         position is prorated and updated rather than removed.

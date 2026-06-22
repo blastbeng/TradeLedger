@@ -343,7 +343,7 @@ class Settings(BaseSettings):
     DATA_DIR: str = "data"
 
     # Database
-    DATABASE_PATH: str = "data/alpacai.db"
+    DATABASE_PATH: str = "data/trading_bot.db"
 
     # News
     NEWS_ENABLED: bool = False
