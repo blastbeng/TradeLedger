@@ -1,240 +1,130 @@
-import concurrent.futures
 import logging
-import time
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import (
-    StockLatestQuoteRequest,
-    StockLatestBarRequest,
-    StockBarsRequest,
-    StockLatestTradeRequest,
-)
-from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import GetAssetsRequest
-from alpaca.trading.enums import AssetClass, AssetStatus
+
+import yfinance as yf
+
+from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# Map our timeframe strings to Alpaca TimeFrame objects
+# Map our timeframe strings to yfinance interval strings
 TIMEFRAME_MAP = {
-    "1m": TimeFrame(1, TimeFrameUnit.Minute),
-    "5m": TimeFrame(5, TimeFrameUnit.Minute),
-    "15m": TimeFrame(15, TimeFrameUnit.Minute),
-    "1h": TimeFrame(1, TimeFrameUnit.Hour),
-    "4h": TimeFrame(4, TimeFrameUnit.Hour),
-    "1d": TimeFrame(1, TimeFrameUnit.Day),
+    "5m": "5m",
+    "15m": "15m",
+    "1h": "60m",
+    "4h": "60m",  # yfinance doesn't have 4h, using 60m as fallback
+    "1d": "1d",
 }
 
 
-def get_tradable_assets(trading_client: TradingClient) -> List[str]:
-    """Return a list of tradable US equity symbols (stocks & ETFs)."""
-    request = GetAssetsRequest(
-        asset_class=AssetClass.US_EQUITY,
-        status=AssetStatus.ACTIVE,
-    )
-    assets = trading_client.get_all_assets(request)
-    symbols = [asset.symbol for asset in assets if asset.tradable]
-    logger.info(f"Fetched {len(symbols)} tradable assets from Alpaca")
-    return symbols
+def get_tradable_assets(trading_client=None) -> List[str]:
+    """Return a list of tradable Italian equity symbols."""
+    # Hardcoded list of major Italian stocks (FTSE MIB constituents)
+    base_symbols = [
+        "ENI", "ENEL", "ISP", "UCG", "STM", "TIT", "FERRARI", "MONC", "AZM",
+        "RACE", "BAMI", "MB", "TEN", "PRY", "BPE", "EXO", "INW", "NEXI",
+        "REC", "SPM", "BZU", "DIA", "HER", "IPG", "LDO", "STL", "WBG",
+        "A2A", "BMO", "CNF", "ERG", "GAM", "ITM", "KOS", "NHF", "PST",
+        "SAL", "SRG", "TOD", "UNI", "USC", "VLT", "ZUC"
+    ]
+    suffix = settings.TICKER_SUFFIX
+    return [f"{sym}{suffix}" for sym in base_symbols]
 
 
-def get_quotes(
-    data_client: StockHistoricalDataClient,
-    symbols: List[str],
-) -> Dict[str, Dict[str, Any]]:
-    """Fetch latest quotes for a list of symbols.
+def get_quotes(data_client=None, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Fetch latest quotes for a list of symbols using yfinance.
 
     Returns a dict mapping symbol -> {last, bid, ask, volume, change_24h}.
     """
     if not symbols:
         return {}
-
-    def fetch_quotes():
-        request = StockLatestQuoteRequest(symbol_or_symbols=symbols)
-        return data_client.get_stock_latest_quote(request)
-
-    def fetch_bars():
-        bars_request = StockLatestBarRequest(symbol_or_symbols=symbols)
-        return data_client.get_stock_latest_bar(bars_request)
-
-    def fetch_trades():
-        trade_request = StockLatestTradeRequest(symbol_or_symbols=symbols)
-        return data_client.get_stock_latest_trade(trade_request)
-
-    quotes = {}
-    bars = {}
-    trades = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        quotes_future = executor.submit(fetch_quotes)
-        bars_future = executor.submit(fetch_bars)
-        trades_future = executor.submit(fetch_trades)
-        
-        try:
-            quotes = quotes_future.result()
-        except Exception as e:
-            logger.warning(f"Could not fetch quotes: {e}")
-            
-        try:
-            bars = bars_future.result()
-        except Exception as e:
-            logger.warning(f"Could not fetch daily bars for volume/change: {e}")
-
-        try:
-            trades = trades_future.result()
-        except Exception as e:
-            logger.warning(f"Could not fetch latest trades: {e}")
-
     result = {}
-    for sym in symbols:
-        q = quotes.get(sym)
-        if q:
-            # Determine the best available "last" price:
-            # 1. Latest trade price (most accurate)
-            # 2. Mid-price from quote ((bid + ask) / 2)
-            # 3. Ask price (fallback)
-            t = trades.get(sym)
-            if t and t.price is not None and t.price > 0:
-                last_price = t.price
-            elif q.bid_price is not None and q.ask_price is not None and q.bid_price > 0 and q.ask_price > 0:
-                last_price = (q.bid_price + q.ask_price) / 2
-            else:
-                last_price = q.ask_price
-            result[sym] = {
-                "last": last_price,
-                "bid": q.bid_price,
-                "ask": q.ask_price,
-                "volume": None,
-                "change_24h": None,
-            }
-        else:
-            # Initialize from bars if quote failed
-            b = bars.get(sym)
-            if b:
+    try:
+        tickers = yf.Tickers(" ".join(symbols))
+        hist = tickers.history(period="1d", interval="1d")
+        for sym in symbols:
+            if sym in hist:
+                close = hist[sym]["Close"].iloc[-1] if not hist[sym].empty else None
+                open_price = hist[sym]["Open"].iloc[-1] if not hist[sym].empty else None
+                volume = hist[sym]["Volume"].iloc[-1] if not hist[sym].empty else None
+                change_24h = ((close - open_price) / open_price * 100) if close and open_price and open_price > 0 else None
                 result[sym] = {
-                    "last": b.close,
-                    "bid": b.close,
-                    "ask": b.close,
-                    "volume": b.volume,
-                    "change_24h": ((b.close - b.open) / b.open) * 100 if b.open and b.open > 0 else None,
+                    "last": close,
+                    "bid": None,
+                    "ask": None,
+                    "volume": volume,
+                    "change_24h": change_24h,
+                    "percentage": change_24h,
+                    "quoteVolume": volume,
                 }
-
-    # Enrich with daily bar for volume and change
-    for sym in symbols:
-        b = bars.get(sym)
-        if b:
-            if sym in result:
-                result[sym]["volume"] = b.volume
-                if b.open and b.open > 0:
-                    result[sym]["change_24h"] = ((b.close - b.open) / b.open) * 100
-                # Only use bar close as 'last' if quote didn't provide it
-                if result[sym].get("last") is None:
-                    result[sym]["last"] = b.close
-                result[sym]["percentage"] = result[sym]["change_24h"]
-                result[sym]["quoteVolume"] = result[sym]["volume"]
+            else:
+                result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
+    except Exception as e:
+        logger.warning(f"yfinance quote fetch failed: {e}")
+        for sym in symbols:
+            result.setdefault(sym, {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None})
     return result
 
 
-def get_order_book(
-    data_client: StockHistoricalDataClient,
-    symbol: str,
-    limit: int = 20,
-) -> Dict[str, Any]:
-    """Return a simulated order book with best bid/ask from the latest quote."""
-    request = StockLatestQuoteRequest(symbol_or_symbols=[symbol])
-    quotes = data_client.get_stock_latest_quote(request)
-    q = quotes.get(symbol)
-    if not q:
-        return {"bids": [], "asks": []}
-    return {
-        "bids": [[q.bid_price, q.bid_size]],
-        "asks": [[q.ask_price, q.ask_size]],
-    }
-
-
 def get_multi_timeframe_bars(
-    data_client: StockHistoricalDataClient,
-    symbol: str,
-    timeframes: List[str],
-    limit: int = 24,
+    data_client=None, symbol: str, timeframes: List[str], limit: int = 24
 ) -> Dict[str, List[List[float]]]:
-    """Fetch OHLCV bars for a symbol across multiple timeframes.
+    """Fetch OHLCV bars for a symbol across multiple timeframes using yfinance.
 
     Returns a dict mapping timeframe -> list of candles [timestamp_ms, open, high, low, close, volume].
     """
     if not timeframes:
         return {}
     result = {}
-
-    def fetch_tf(tf: str) -> tuple:
-        alpaca_tf = TIMEFRAME_MAP.get(tf)
-        if not alpaca_tf:
+    for tf in timeframes:
+        interval = TIMEFRAME_MAP.get(tf)
+        if not interval:
             logger.warning(f"Unsupported timeframe: {tf}")
-            return tf, []
+            continue
         try:
-            request = StockBarsRequest(
-                symbol_or_symbols=[symbol],
-                timeframe=alpaca_tf,
-                limit=limit,
-            )
-            bars = data_client.get_stock_bars(request)
-            try:
-                symbol_bars = bars[symbol]
-            except KeyError:
-                symbol_bars = []
-            candles = [
-                [int(bar.timestamp.timestamp() * 1000), bar.open, bar.high, bar.low, bar.close, bar.volume]
-                for bar in symbol_bars
-            ]
-            return tf, candles
+            ticker = yf.Ticker(symbol)
+            # yfinance intraday data is limited to 60 days
+            period = "60d" if interval in ("5m", "15m", "60m") else "1y"
+            hist = ticker.history(period=period, interval=interval)
+            if not hist.empty:
+                candles = []
+                for idx, row in hist.iterrows():
+                    ts = int(idx.timestamp() * 1000)
+                    candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
+                # Take the last `limit` candles
+                result[tf] = candles[-limit:]
+            else:
+                result[tf] = []
         except Exception as e:
             logger.warning(f"Failed to fetch bars for {symbol} {tf}: {e}")
-            return tf, []
-
-    max_workers = min(len(timeframes), 5)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(fetch_tf, tf) for tf in timeframes]
-        for future in concurrent.futures.as_completed(futures):
-            tf, candles = future.result()
-            result[tf] = candles
-
+            result[tf] = []
     return result
 
 
 def get_bars_range(
-    data_client: StockHistoricalDataClient,
-    symbol: str,
-    timeframe: str,
-    start_ms: int,
-    limit: int = 500,
+    data_client=None, symbol: str, timeframe: str, start_ms: int, limit: int = 500
 ) -> List[List[float]]:
-    """Fetch OHLCV bars from a start timestamp (ms) up to the present.
+    """Fetch OHLCV bars from a start timestamp (ms) up to the present using yfinance.
 
     Returns a list of candles [timestamp_ms, open, high, low, close, volume].
     """
-    alpaca_tf = TIMEFRAME_MAP.get(timeframe)
-    if not alpaca_tf:
+    interval = TIMEFRAME_MAP.get(timeframe)
+    if not interval:
         logger.warning(f"Unsupported timeframe: {timeframe}")
         return []
     start_dt = datetime.fromtimestamp(start_ms / 1000.0, tz=timezone.utc)
-    request = StockBarsRequest(
-        symbol_or_symbols=[symbol],
-        timeframe=alpaca_tf,
-        start=start_dt,
-        limit=limit,
-    )
+    end_dt = datetime.now(timezone.utc)
     try:
-        bars = data_client.get_stock_bars(request)
-        try:
-            symbol_bars = bars[symbol]
-        except KeyError:
-            symbol_bars = []
-        candles = [
-            [int(bar.timestamp.timestamp() * 1000), bar.open, bar.high, bar.low, bar.close, bar.volume]
-            for bar in symbol_bars
-        ]
-        return candles
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(start=start_dt, end=end_dt, interval=interval)
+        if not hist.empty:
+            candles = []
+            for idx, row in hist.iterrows():
+                ts = int(idx.timestamp() * 1000)
+                candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
+            return candles[-limit:]
+        return []
     except Exception as e:
         logger.warning(f"Failed to fetch bars range for {symbol} {timeframe}: {e}")
         return []
