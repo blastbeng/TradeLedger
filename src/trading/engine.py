@@ -17,6 +17,7 @@ from src.exchanges.ws_manager import WebSocketManager
 from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range
 from src.exchanges.yahoo_finance import get_yahoo_quote
 from src.trading.live_trader import LiveTrader
+from src.trading.paper_trader import PaperTrader
 from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import (
     SYSTEM_PROMPT,
@@ -210,7 +211,12 @@ class TradingEngine:
             raise
 
         self.ws_manager = WebSocketManager(self.streaming_client, [])
-        self.trader = LiveTrader(self.exchange)
+        if settings.TRADING_MODE == "paper":
+            self.trader = PaperTrader()
+            logger.info("PaperTrader initialized for paper trading mode.")
+        else:
+            self.trader = LiveTrader(self.exchange)
+            logger.info("LiveTrader initialized (notify mode – no auto-execution).")
         self._load_state()
         self._ensure_cost_basis()
 
@@ -8560,15 +8566,13 @@ class TradingEngine:
                                     )
                             continue  # order handled, move to next queued item
 
-                    try:
-                        alpaca_order = await asyncio.to_thread(
-                            self.trader.trading_client.get_order_by_id, order_id
-                        )
-                    except Exception as e:
-                        logger.warning(f"Could not fetch order {order_id} for {queued['symbol']}: {e}")
+                    paper_order = await asyncio.to_thread(self.trader.get_order, order_id)
+                    if paper_order is None:
+                        logger.warning(f"Order {order_id} not found for {queued['symbol']}, removing from queue.")
+                        self.queued_orders.remove(queued)
                         continue
 
-                    status = getattr(alpaca_order.status, 'value', str(alpaca_order.status))
+                    status = paper_order.status
                     if isinstance(status, str):
                         status = status.lower()
 
@@ -8629,8 +8633,8 @@ class TradingEngine:
                                         )
 
                     # Determine how much has been filled since the last check
-                    filled_qty = float(alpaca_order.filled_qty) if alpaca_order.filled_qty else 0.0
-                    filled_avg_price = float(alpaca_order.filled_avg_price) if alpaca_order.filled_avg_price else 0.0
+                    filled_qty = float(paper_order.filled_qty) if paper_order.filled_qty else 0.0
+                    filled_avg_price = float(paper_order.filled_avg_price) if paper_order.filled_avg_price else 0.0
                     last_filled_qty = queued.get('filled_qty', 0.0)
                     delta_qty = filled_qty - last_filled_qty
 
@@ -8639,7 +8643,7 @@ class TradingEngine:
                         delta_cost = delta_qty * filled_avg_price
                         # Build a trade dict for this delta
                         trade_dict = {
-                            'id': str(alpaca_order.id),
+                            'id': str(paper_order.id),
                             'symbol': queued['symbol'],
                             'side': queued['side'],
                             'amount': delta_qty,
