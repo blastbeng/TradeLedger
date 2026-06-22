@@ -291,18 +291,6 @@ class Settings(BaseSettings):
             raise ValueError("ORDER_FILL_TIMEOUT_SECONDS must be positive")
         return v
 
-    # Maximum time (seconds) to wait for a non‑marketable limit order to become
-    # marketable.  After this delay the engine cancels the limit order and
-    # re‑submits it as a market order to guarantee a fill.
-    LIMIT_ORDER_MARKET_FALLBACK_SECONDS: float = 30.0
-
-    @field_validator("LIMIT_ORDER_MARKET_FALLBACK_SECONDS")
-    @classmethod
-    def validate_limit_order_market_fallback(cls, v: float) -> float:
-        if v <= 0:
-            raise ValueError("LIMIT_ORDER_MARKET_FALLBACK_SECONDS must be positive")
-        return v
-
     # Maximum allowed distance of a limit price from the current best bid/ask,
     # expressed as a fraction (e.g., 0.05 = 5%). Orders with a limit price
     # further away than this are rejected to avoid indefinite queuing.

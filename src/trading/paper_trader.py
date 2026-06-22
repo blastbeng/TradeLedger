@@ -530,10 +530,14 @@ class PaperTrader:
         elif order.order_type == "limit":
             if order.side == "buy" and order.limit_price is not None:
                 if price <= order.limit_price:
-                    self._fill_order(order, order.limit_price, base, quote)
+                    # Fill at the best available price (current price if lower than limit)
+                    fill_price = min(price, order.limit_price)
+                    self._fill_order(order, fill_price, base, quote)
             elif order.side == "sell" and order.limit_price is not None:
                 if price >= order.limit_price:
-                    self._fill_order(order, order.limit_price, base, quote)
+                    # Fill at the best available price (current price if higher than limit)
+                    fill_price = max(price, order.limit_price)
+                    self._fill_order(order, fill_price, base, quote)
 
         if order.status == "filled":
             self._save_orders()
