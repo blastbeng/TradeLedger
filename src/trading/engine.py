@@ -3541,6 +3541,8 @@ class TradingEngine:
             williams_r = None
             ichimoku = None
             donchian_channels = None
+            parabolic_sar = None
+            keltner_channels = None
 
             for tf in settings.OHLCV_TIMEFRAMES:
                 if tf in ohlcv_data and ohlcv_data[tf]:
