@@ -267,7 +267,8 @@ class PaperTrader:
                 self._orders[order_id] = order
                 self._save_orders()
                 return self._make_order_dict(order)
-            fill_price = limit_price
+            # Fill at the best available price (current price if lower than limit)
+            fill_price = min(price, limit_price)
         else:
             fill_price = price
 
@@ -342,7 +343,8 @@ class PaperTrader:
                 self._orders[order_id] = order
                 self._save_orders()
                 return self._make_order_dict(order)
-            fill_price = limit_price
+            # Fill at the best available price (current price if higher than limit)
+            fill_price = max(price, limit_price)
         else:
             fill_price = price
 
