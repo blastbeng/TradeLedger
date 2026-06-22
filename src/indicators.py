@@ -417,22 +417,6 @@ def compute_all_indicators(
     return ind
 
 
-def compute_vwap(candles: List[List]) -> Optional[float]:
-    """Compute Volume Weighted Average Price (VWAP) from OHLCV candles."""
-    if not candles:
-        return None
-    total_volume = 0.0
-    total_typical = 0.0
-    for c in candles:
-        typical = (c[2] + c[3] + c[4]) / 3
-        volume = c[5]
-        total_typical += typical * volume
-        total_volume += volume
-    if total_volume == 0:
-        return None
-    return round(total_typical / total_volume, 8)
-
-
 def compute_parabolic_sar(
     highs: List[float], lows: List[float],
     af_start: float = 0.02, af_max: float = 0.2
@@ -495,24 +479,4 @@ def compute_keltner_channels(
         "upper": round(upper, 8),
         "middle": round(middle, 8),
         "lower": round(lower, 8),
-    }
-
-
-def compute_pivot_points(high: float, low: float, close: float) -> Dict[str, float]:
-    """Compute standard pivot points from previous period high/low/close."""
-    pivot = (high + low + close) / 3
-    r1 = 2 * pivot - low
-    s1 = 2 * pivot - high
-    r2 = pivot + (high - low)
-    s2 = pivot - (high - low)
-    r3 = high + 2 * (pivot - low)
-    s3 = low - 2 * (high - pivot)
-    return {
-        "pivot": round(pivot, 8),
-        "r1": round(r1, 8),
-        "r2": round(r2, 8),
-        "r3": round(r3, 8),
-        "s1": round(s1, 8),
-        "s2": round(s2, 8),
-        "s3": round(s3, 8),
     }

@@ -40,11 +40,9 @@ from src.indicators import (
     compute_mfi,
     compute_cci,
     compute_williams_r,
-    compute_vwap,
     compute_ichimoku,
     compute_parabolic_sar,
     compute_keltner_channels,
-    compute_pivot_points,
     compute_donchian_channels,
     compute_all_indicators,
 )
@@ -3669,15 +3667,6 @@ class TradingEngine:
                     prev_close = prev_candle[4]
                     pivot_points = compute_pivot_points(prev_high, prev_low, prev_close)
 
-            # Compute VWAP for each timeframe
-            vwap_multi_tf: Dict[str, float] = {}
-            for tf in settings.OHLCV_TIMEFRAMES:
-                if tf in multi_tf_raw_candles:
-                    tf_vwap = compute_vwap(multi_tf_raw_candles[tf])
-                    if tf_vwap is not None:
-                        vwap_multi_tf[tf] = tf_vwap
-            vwap = vwap_multi_tf.get(assigned_tf) if assigned_tf else None
-
             # Compute ATR for each timeframe (volatility term structure)
             atr_multi_tf: Dict[str, float] = {}
             for tf in settings.OHLCV_TIMEFRAMES:
@@ -3944,8 +3933,6 @@ class TradingEngine:
                 market_regime=market_regime,
                 multi_tf_raw_candles=multi_tf_raw_candles,
                 multi_tf_indicators=multi_tf_indicators,
-                vwap=vwap,
-                vwap_multi_tf=vwap_multi_tf,
                 session_info=session_info,
                 sentiment_trend=sentiment_trend_val,
                 volume_trend=volume_trend_val,
@@ -3954,7 +3941,6 @@ class TradingEngine:
                 full_market_breadth=full_market_breadth,
                 parabolic_sar=parabolic_sar,
                 keltner_channels=keltner_channels,
-                pivot_points=pivot_points,
                 donchian_channels=donchian_channels,
                 atr_percentile=atr_percentile,
                 global_risk_multiplier=global_risk_mult,
@@ -4038,8 +4024,6 @@ class TradingEngine:
                 "market_regime": market_regime,
                 "multi_tf_raw_candles": multi_tf_raw_candles,
                 "multi_tf_indicators": multi_tf_indicators,
-                "vwap": vwap,
-                "vwap_multi_tf": vwap_multi_tf,
                 "session_info": session_info,
                 "sentiment_trend": sentiment_trend_val,
                 "volume_trend": volume_trend_val,
@@ -4047,7 +4031,6 @@ class TradingEngine:
                 "full_market_breadth": full_market_breadth,
                 "parabolic_sar": parabolic_sar,
                 "keltner_channels": keltner_channels,
-                "pivot_points": pivot_points,
                 "atr_percentile": atr_percentile,
                 "global_risk_multiplier": global_risk_mult,
                 "trading_paused": trading_paused,
@@ -4369,14 +4352,10 @@ class TradingEngine:
                     ind_parts.append(f"Cloud={ichimoku['cloud_bottom']:.2f}-{ichimoku['cloud_top']:.2f}")
                 if donchian_channels is not None:
                     ind_parts.append(f"Donch={donchian_channels['lower']:.2f}/{donchian_channels['middle']:.2f}/{donchian_channels['upper']:.2f}")
-                if vwap is not None:
-                    ind_parts.append(f"VWAP={vwap:.4f}")
                 if parabolic_sar is not None:
                     ind_parts.append(f"SAR={parabolic_sar:.4f}")
                 if keltner_channels is not None:
                     ind_parts.append(f"Kelt={keltner_channels['lower']:.4f}/{keltner_channels['middle']:.4f}/{keltner_channels['upper']:.4f}")
-                if pivot_points is not None:
-                    ind_parts.append(f"Pivot={pivot_points['pivot']:.4f} R1={pivot_points['r1']:.4f} S1={pivot_points['s1']:.4f}")
                 indicator_str = " | ".join(ind_parts) if ind_parts else "No indicators (insufficient OHLCV data)"
                 sentiment_str = await self._get_sentiment_str(symbol)
                 reasoning_str = f" – {validated.reasoning}" if validated.reasoning else ""
@@ -5480,14 +5459,6 @@ class TradingEngine:
                                 pos["partial_tp_levels_triggered"] = triggered
                                 continue
                         if current_price >= entry_price * (1 + lvl_pct):
-                            # --- Depth check with optional timeout ---
-                            min_depth = level.get("min_depth")
-                            # Order book depth checks are not supported with yfinance.
-                            # Skip depth-based gating and proceed directly to trigger logic.
-                            # Clear any depth wait state for this level
-                            if "partial_tp_depth_wait_start" in pos:
-                                pos["partial_tp_depth_wait_start"].pop(i, None)
-
                             # --- Instead of executing immediately, set a trigger flag for LLM review ---
                             # Check if we are already waiting for LLM on this level
                             triggered_levels = pos.setdefault("_partial_tp_triggered_levels", [])
@@ -5517,10 +5488,6 @@ class TradingEngine:
                                     summary={"symbol": symbol, "action": "HOLD", "reason": f"Partial TP level {i} triggered – awaiting LLM"}
                                 )
                             break  # only handle one new trigger per cycle; others will be picked up after LLM responds
-                        else:
-                            # Price dropped below TP level – reset depth wait timer
-                            if "partial_tp_depth_wait_start" in pos:
-                                pos["partial_tp_depth_wait_start"].pop(i, None)
                 else:
                     # Single partial TP – trigger LLM review instead of immediate execution
                     partial_tp_pct = pos.get("partial_take_profit_pct")
@@ -7046,7 +7013,6 @@ class TradingEngine:
         bb_middle = ind.get("bb_middle")
         ema_9 = ind.get("ema_9")
         ema_21 = ind.get("ema_21")
-        vwap = ind.get("vwap")
         parabolic_sar = ind.get("parabolic_sar")
         ichimoku = ind.get("ichimoku")
         current_close = closes[-1] if closes else None
@@ -7074,7 +7040,6 @@ class TradingEngine:
             "bb_middle": bb_middle,
             "ema_9": ema_9,
             "ema_21": ema_21,
-            "vwap": vwap,
             "parabolic_sar": parabolic_sar,
             "ichimoku_cloud_top": ichimoku["cloud_top"] if ichimoku else None,
             "ichimoku_cloud_bottom": ichimoku["cloud_bottom"] if ichimoku else None,
@@ -7166,13 +7131,7 @@ class TradingEngine:
                 and prev_ema_9 <= prev_ema_21 and ema_9 > ema_21):
             return True
 
-        # 10. Price crossing above VWAP
         prev_close = prev.get("close")
-        prev_vwap = prev.get("vwap")
-        if (prev_close is not None and prev_vwap is not None
-                and current_close is not None and vwap is not None
-                and prev_close <= prev_vwap and current_close > vwap):
-            return True
 
         # 11. Parabolic SAR flip (from above price to below price → uptrend)
         prev_sar = prev.get("parabolic_sar")
@@ -7195,10 +7154,6 @@ class TradingEngine:
 
         # 13. MACD histogram positive (bullish momentum) – no previous state needed
         if macd_hist is not None and macd_hist > 0:
-            return True
-
-        # 14. Price above VWAP (bullish) – no previous state needed
-        if current_close is not None and vwap is not None and current_close > vwap:
             return True
 
         return False
