@@ -137,37 +137,64 @@ def get_tradable_assets(trading_client=None) -> List[str]:
 
 
 def get_quotes(data_client=None, symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
-    """Fetch latest quotes for a list of symbols using yfinance fast_info.
+    """Fetch latest quotes for a list of symbols using yfinance batch download.
 
     Returns a dict mapping symbol -> {last, bid, ask, volume, change_24h, percentage, quoteVolume}.
+    Uses yf.download for efficient batch fetching.
     """
     if symbols is None:
         symbols = []
     if not symbols:
         return {}
+
     result = {}
+    # Initialize result with None for all symbols
     for sym in symbols:
-        try:
-            ticker = yf.Ticker(sym)
-            info = ticker.fast_info
-            last = info.get("lastPrice")
-            bid = info.get("bid")
-            ask = info.get("ask")
-            volume = info.get("volume")
-            prev_close = info.get("previousClose")
-            change_24h = ((last - prev_close) / prev_close * 100) if last and prev_close and prev_close > 0 else None
-            result[sym] = {
-                "last": last,
-                "bid": bid,
-                "ask": ask,
-                "volume": volume,
-                "change_24h": change_24h,
-                "percentage": change_24h,
-                "quoteVolume": volume,
-            }
-        except Exception as e:
-            logger.debug(f"fast_info failed for {sym}: {e}")
-            result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
+        result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
+
+    try:
+        # Fetch intraday data for latest price and volume
+        intraday = yf.download(symbols, period="1d", interval="5m", progress=False, group_by='column')
+        if not intraday.empty:
+            last_row = intraday.iloc[-1]
+            for sym in symbols:
+                try:
+                    if len(symbols) > 1:
+                        last = last_row[("Close", sym)]
+                        volume = last_row[("Volume", sym)]
+                    else:
+                        last = last_row["Close"]
+                        volume = last_row["Volume"]
+                    if not pd.isna(last):
+                        result[sym]["last"] = float(last)
+                    if not pd.isna(volume):
+                        result[sym]["volume"] = float(volume)
+                        result[sym]["quoteVolume"] = float(volume)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"Batch intraday download failed: {e}")
+
+    try:
+        # Fetch daily data for previous close to calculate change_24h
+        daily = yf.download(symbols, period="2d", interval="1d", progress=False, group_by='column')
+        if not daily.empty:
+            for sym in symbols:
+                try:
+                    if len(symbols) > 1:
+                        prev_close = daily[("Close", sym)].iloc[-2]
+                    else:
+                        prev_close = daily["Close"].iloc[-2]
+                    if not pd.isna(prev_close) and result[sym]["last"]:
+                        last = result[sym]["last"]
+                        change_24h = ((last - prev_close) / prev_close * 100) if prev_close > 0 else None
+                        result[sym]["change_24h"] = change_24h
+                        result[sym]["percentage"] = change_24h
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"Batch daily download failed: {e}")
+
     return result
 
 
