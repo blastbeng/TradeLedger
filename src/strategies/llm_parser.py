@@ -76,22 +76,38 @@ def parse_llm_response(response_text: str) -> Signal:
         if isinstance(strategy_params, dict):
             params.update(strategy_params)
         
-        stop_loss = params.get("stop_loss_pct")
-        take_profit = params.get("take_profit_pct")
-        position_size = params.get("position_size_fraction")
+        def _safe_float(val):
+            if val is None:
+                return None
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return None
+
+        def _safe_int(val):
+            if val is None:
+                return None
+            try:
+                return int(float(val))
+            except (ValueError, TypeError):
+                return None
+
+        stop_loss = _safe_float(params.get("stop_loss_pct"))
+        take_profit = _safe_float(params.get("take_profit_pct"))
+        position_size = _safe_float(params.get("position_size_fraction"))
         if position_size is not None:
-            position_size = max(0.0, min(1.0, float(position_size)))
+            position_size = max(0.0, min(1.0, position_size))
         trailing_stop = bool(params.get("trailing_stop", False))
         
-        max_hold_time_seconds = params.get("max_hold_time_seconds")
+        max_hold_time_seconds = _safe_int(params.get("max_hold_time_seconds"))
         # Keep max_hold_minutes for backwards compatibility with the engine
         max_hold_minutes = int(max_hold_time_seconds // 60) if max_hold_time_seconds is not None else None
         
         stop_loss_method = params.get("stop_loss_method")
-        stop_loss_atr_multiple = params.get("stop_loss_atr_multiple")
-        trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
-        trailing_stop_activation_pct = params.get("trailing_stop_activation_pct")
-        cooldown_after_loss_seconds = params.get("cooldown_after_loss_seconds", 0)
+        stop_loss_atr_multiple = _safe_float(params.get("stop_loss_atr_multiple"))
+        trailing_stop_distance_pct = _safe_float(params.get("trailing_stop_distance_pct"))
+        trailing_stop_activation_pct = _safe_float(params.get("trailing_stop_activation_pct"))
+        cooldown_after_loss_seconds = _safe_int(params.get("cooldown_after_loss_seconds", 0)) or 0
 
         portfolio_risk_adjustment_factor = params.get("portfolio_risk_adjustment_factor")
         if portfolio_risk_adjustment_factor is not None:
