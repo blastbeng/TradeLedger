@@ -11,7 +11,6 @@ from typing import Dict, List, Optional, Any
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.exchanges.fees import get_fee_rate
 from src.exchanges.factory import get_trading_client, get_streaming_client, get_data_client
 from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
@@ -3693,9 +3692,6 @@ class TradingEngine:
             except Exception as e:
                 logger.warning(f"Failed to fetch historical OHLCV for {symbol} {assigned_tf}: {e}")
 
-            # Fee rate for this symbol
-            fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
-
             # Unrealized P&L for current position (if any)
             unrealized_pnl = None
             position_info = None
@@ -3867,7 +3863,6 @@ class TradingEngine:
                 williams_r=williams_r,
                 unrealized_pnl=unrealized_pnl,
                 position_info=position_info,
-                fee_rate=fee_rate,
                 drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
                 raw_candles=raw_candles,
                 recent_trades=recent_trades_summary,
@@ -4185,7 +4180,6 @@ class TradingEngine:
 
             validated = validate_signal(
                 signal,
-                fee_rate=fee_rate,
                 atr=atr,
                 price=current_price,
                 timeframe_seconds=tf_seconds,
@@ -4232,7 +4226,6 @@ class TradingEngine:
                         corrected_signal = create_strategy_from_llm(corrected_response).generate_signal({})
                         validated = validate_signal(
                             corrected_signal,
-                            fee_rate=fee_rate,
                             atr=atr,
                             price=current_price,
                             timeframe_seconds=tf_seconds,
@@ -5232,6 +5225,12 @@ class TradingEngine:
         cost = money_spent
         timestamp = int(time.time() * 1000)
 
+        # If fee is not provided (0.0), calculate it using the Intesa Sanpaolo Investo logic
+        if fee == 0.0:
+            from src.exchanges.fees import calculate_transaction_costs
+            costs = calculate_transaction_costs(side.upper(), price, quantity)
+            fee = costs["total_costs"]
+
         trade = {
             "id": f"manual_{timestamp}",
             "symbol": symbol,
@@ -5418,11 +5417,7 @@ class TradingEngine:
                     entry_price = pos["price"]
                     if current_price >= entry_price * (1 + breakeven_activation):
                         # Compute exact break-even price that covers exit fee
-                        fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
-                        if fee_rate < 1.0:
-                            breakeven_price = entry_price / (1.0 - fee_rate)
-                        else:
-                            breakeven_price = entry_price  # fallback
+                        breakeven_price = entry_price
                         if breakeven_price > pos["stop_loss"]:
                             pos["stop_loss"] = breakeven_price
                             logger.info(f"Breakeven stop activated for {symbol}: new stop {breakeven_price:.4f}")
@@ -5847,7 +5842,6 @@ class TradingEngine:
                 return
 
             # Use LLM-provided risk parameters directly (no hardcoded minimums)
-            fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
             tp_pct = params["take_profit_pct"]
             trailing_stop = params["trailing_stop"]
             trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
@@ -6404,12 +6398,6 @@ class TradingEngine:
                 fee_cost = float(fee.get('cost', 0.0) or 0.0)
                 fee_currency = fee.get('currency', '')
 
-                # Fallback: compute fee from fee_rate if missing or zero
-                if fee_cost == 0.0:
-                    fee_cost = order['cost'] * fee_rate
-                    fee_currency = quote  # assume fee is charged in quote currency
-                    order['fee'] = {'cost': fee_cost, 'currency': fee_currency}
-
                 cost_basis = order['cost'] + (fee_cost if fee_currency == quote else 0.0)
                 net_base = order['amount'] - (fee_cost if fee_currency == base else 0.0)
 
@@ -6560,8 +6548,6 @@ class TradingEngine:
                 await self._cancel_exit_orders(symbol)
             params = signal.strategy_params or {}
             fill_timeout = params.get("order_fill_timeout_seconds", settings.ORDER_FILL_TIMEOUT_SECONDS)
-            # Fetch fee rate for this symbol
-            fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
             # Determine the amount of base currency to sell
             pos = self.positions.get(symbol)
             if pos:
@@ -6789,12 +6775,6 @@ class TradingEngine:
                 fee = order.get('fee', {})
                 fee_cost = float(fee.get('cost', 0.0) or 0.0)
                 fee_currency = fee.get('currency', '')
-
-                # Fallback: compute fee from fee_rate if missing or zero
-                if fee_cost == 0.0:
-                    fee_cost = order['cost'] * fee_rate
-                    fee_currency = quote  # assume fee is charged in quote currency
-                    order['fee'] = {'cost': fee_cost, 'currency': fee_currency}
 
                 net_quote = order['cost'] - (fee_cost if fee_currency == quote else 0.0)
                 if pos:
@@ -8019,8 +7999,6 @@ class TradingEngine:
             logger.info(f"Partial TP (single) for {symbol} skipped: market closed.")
             return
 
-        fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
-
         need_limit = not self._is_regular_hours()
         limit_price = None
         time_in_force = "day"
@@ -8048,11 +8026,6 @@ class TradingEngine:
             fee = order.get("fee", {})
             fee_cost = float(fee.get("cost", 0.0) or 0.0)
             fee_currency = fee.get("currency", "")
-            if fee_cost == 0.0:
-                fee_cost = order["cost"] * fee_rate
-                fee_currency = quote
-                order["fee"] = {"cost": fee_cost, "currency": fee_currency}
-
             # Prorated cost basis for the sold portion
             cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
             net_base = pos.get("net_base", pos["amount"])
@@ -8187,8 +8160,6 @@ class TradingEngine:
             logger.info(f"Partial TP level {level_index} for {symbol} skipped: market closed.")
             return
 
-        fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
-
         need_limit = not self._is_regular_hours()
         limit_price = None
         time_in_force = "day"
@@ -8216,11 +8187,6 @@ class TradingEngine:
             fee = order.get("fee", {})
             fee_cost = float(fee.get("cost", 0.0) or 0.0)
             fee_currency = fee.get("currency", "")
-            if fee_cost == 0.0:
-                fee_cost = order["cost"] * fee_rate
-                fee_currency = quote
-                order["fee"] = {"cost": fee_cost, "currency": fee_currency}
-
             # Prorated cost basis for the sold portion
             cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
             net_base = pos.get("net_base", pos["amount"])
@@ -8382,15 +8348,9 @@ class TradingEngine:
             logger.info(f"Dust sweep: sold {balance} {base} from {symbol} – order {order.get('id')}")
 
             # Record the dust sale in trade history for consistency
-            fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
             fee = order.get('fee', {})
             fee_cost = float(fee.get('cost', 0.0) or 0.0)
             fee_currency = fee.get('currency', '')
-            if fee_cost == 0.0:
-                fee_cost = order['cost'] * fee_rate
-                fee_currency = symbol.split('/')[1]
-                order['fee'] = {'cost': fee_cost, 'currency': fee_currency}
-
             pos = self.positions.get(symbol)
             if pos:
                 cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
@@ -8778,12 +8738,6 @@ class TradingEngine:
         fee = trade_dict.get('fee', {})
         fee_cost = float(fee.get('cost', 0.0) or 0.0)
         fee_currency = fee.get('currency', '')
-        fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
-        if fee_cost == 0.0:
-            fee_cost = trade_dict['cost'] * fee_rate
-            fee_currency = quote
-            trade_dict['fee'] = {'cost': fee_cost, 'currency': fee_currency}
-
         cost_basis = trade_dict['cost'] + (fee_cost if fee_currency == quote else 0.0)
         net_base = trade_dict['amount'] - (fee_cost if fee_currency == base else 0.0)
 
@@ -8936,12 +8890,6 @@ class TradingEngine:
         fee = trade_dict.get('fee', {})
         fee_cost = float(fee.get('cost', 0.0) or 0.0)
         fee_currency = fee.get('currency', '')
-        fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
-        if fee_cost == 0.0:
-            fee_cost = trade_dict['cost'] * fee_rate
-            fee_currency = quote
-            trade_dict['fee'] = {'cost': fee_cost, 'currency': fee_currency}
-
         net_quote = trade_dict['cost'] - (fee_cost if fee_currency == quote else 0.0)
         exit_reason = queued.get('exit_reason', 'limit_order')
         trade_dict['exit_reason'] = exit_reason

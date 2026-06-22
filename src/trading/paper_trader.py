@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Any
 from src.config.settings import settings
 from src.database import load_paper_balances, save_paper_balances, load_paper_orders, save_paper_orders
 from src.exchanges.market_data import get_quotes
+from src.exchanges.fees import calculate_transaction_costs
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,6 @@ class PaperTrader:
     """Custom paper trading simulator with configurable fees."""
 
     def __init__(self, trading_client=None):
-        self.fee_pct = settings.PAPER_TRADING_FEE_PCT
         self.base_currency = settings.BASE_CURRENCY
         self._balances: Dict[str, float] = {}
         self._orders: Dict[str, PaperOrder] = {}
@@ -182,9 +182,10 @@ class PaperTrader:
         if order.side == "buy":
             # amount is in quote currency
             base_amount = order.amount / fill_price
-            cost = base_amount * fill_price
-            fee_cost = cost * self.fee_pct
-            total_cost = cost + fee_cost
+            costs = calculate_transaction_costs("BUY", fill_price, base_amount)
+            total_cost = costs["net_value"]
+            fee_cost = costs["total_costs"]
+            fee_currency = quote
 
             quote_balance = self._balances.get(quote, 0.0)
             if total_cost > quote_balance:
@@ -210,9 +211,10 @@ class PaperTrader:
                 )
                 return
 
-            cost = base_amount * fill_price
-            fee_cost = cost * self.fee_pct
-            net_quote = cost - fee_cost
+            costs = calculate_transaction_costs("SELL", fill_price, base_amount)
+            net_quote = costs["net_value"]
+            fee_cost = costs["total_costs"]
+            fee_currency = quote
 
             self._balances[base] = base_balance - base_amount
             self._balances[quote] = self._balances.get(quote, 0.0) + net_quote
@@ -270,10 +272,10 @@ class PaperTrader:
             fill_price = price
 
         base_amount = amount / fill_price
-        cost = base_amount * fill_price
-        fee_cost = cost * self.fee_pct
+        costs = calculate_transaction_costs("BUY", fill_price, base_amount)
+        total_cost = costs["net_value"]
+        fee_cost = costs["total_costs"]
         fee_currency = quote
-        total_cost = cost + fee_cost
 
         quote_balance = self._balances.get(quote, 0.0)
         if total_cost > quote_balance:
@@ -301,7 +303,7 @@ class PaperTrader:
 
         return {
             "id": order_id, "status": "filled", "symbol": symbol, "side": "buy",
-            "amount": base_amount, "price": fill_price, "cost": cost,
+            "amount": base_amount, "price": fill_price, "cost": costs["gross_value"],
             "fee": {"cost": fee_cost, "currency": fee_currency},
             "timestamp": order.timestamp,
         }
@@ -356,10 +358,10 @@ class PaperTrader:
                 "timestamp": int(time.time() * 1000),
             }
 
-        cost = amount * fill_price
-        fee_cost = cost * self.fee_pct
+        costs = calculate_transaction_costs("SELL", fill_price, amount)
+        net_quote = costs["net_value"]
+        fee_cost = costs["total_costs"]
         fee_currency = quote
-        net_quote = cost - fee_cost
 
         self._balances[base] = base_balance - amount
         self._balances[quote] = self._balances.get(quote, 0.0) + net_quote
@@ -375,7 +377,7 @@ class PaperTrader:
 
         return {
             "id": order_id, "status": "filled", "symbol": symbol, "side": "sell",
-            "amount": amount, "price": fill_price, "cost": cost,
+            "amount": amount, "price": fill_price, "cost": costs["gross_value"],
             "fee": {"cost": fee_cost, "currency": fee_currency},
             "timestamp": order.timestamp,
         }

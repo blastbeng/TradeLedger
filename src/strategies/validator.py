@@ -7,7 +7,6 @@ VALID_STRATEGY_TYPES = {"momentum", "mean_reversion", "breakout", "swing", "posi
 def validate_signal(
     signal: Signal,
     market_data: Optional[Dict[str, Any]] = None,
-    fee_rate: Optional[float] = None,
     atr: Optional[float] = None,
     price: Optional[float] = None,
     spread_pct: Optional[float] = None,

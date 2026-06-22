@@ -15,9 +15,6 @@ class Settings(BaseSettings):
     def validate_target_country(cls, v: str) -> str:
         return v.lower()
 
-    # Paper trading simulator fee percentage (e.g., 0.001 = 0.1%)
-    PAPER_TRADING_FEE_PCT: float = 0.001
-
     # Paper trading initial balance (only used in paper mode)
     PAPER_INITIAL_BALANCE: float = 10000.0
 

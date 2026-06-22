@@ -649,7 +649,6 @@ def build_strategy_prompt(
     williams_r: Optional[float] = None,
     unrealized_pnl: Optional[float] = None,
     position_info: Optional[Dict[str, Any]] = None,
-    fee_rate: Optional[float] = None,
     drawdown_pct: Optional[float] = None,
     raw_candles: Optional[List[List]] = None,
     recent_trades: Optional[List[Dict[str, Any]]] = None,
@@ -900,22 +899,6 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"ATR percentile (relative to last 100 observations): {atr_percentile:.1f}%\n"
     if atr_multi_tf:
         prompt += f"ATR across timeframes: {json.dumps(atr_multi_tf)}\n"
-    if fee_rate is not None:
-        prompt += f"Taker fee rate for this symbol: {fee_rate*100:.2f}%\n"
-        # Calculate exact break-even take-profit percentage
-        # Round trip: buy at P, sell at P*(1+TP). Fees: P*fee + P*(1+TP)*fee
-        # Break even: P*(1+TP) - P*(1+TP)*fee - P - P*fee = 0
-        # 1 + TP - fee - TP*fee - 1 - fee = 0
-        # TP(1 - fee) = 2*fee
-        # TP = 2*fee / (1 - fee)
-        if fee_rate < 1.0:
-            break_even_tp_pct = (2 * fee_rate) / (1 - fee_rate)
-        else:
-            break_even_tp_pct = 0.0
-        
-        min_profitable_tp_pct = break_even_tp_pct
-        
-        prompt += f"**Break-even take_profit_pct (fees + spread): {min_profitable_tp_pct:.4%}. Set your take_profit_pct strictly above this.**\n"
     # Help the LLM set min_profit_per_trade by showing the expected profit for a 1% take-profit
     example_tp = 0.01
     example_profit = per_symbol_budget * example_tp
