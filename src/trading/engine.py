@@ -9196,28 +9196,20 @@ class TradingEngine:
         if hour < 9.0 or hour >= 17.5:
             return False
         return True
->>>>>>> REPLACE````
 
-src/trading/engine.py
-````python
-<<<<<<< SEARCH
     def _get_session_info(self) -> dict:
-        """Return current US market session info using DST-aware Eastern Time."""
+        """Return current Italian market session info using Europe/Rome timezone."""
         now_et = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
         weekday = now_et.weekday()
         hour = now_et.hour + now_et.minute / 60.0
         if weekday >= 5:
             session = "Closed (weekend)"
-        elif hour < 4:
-            session = "Closed (overnight)"
-        elif hour < 9.5:
+        elif hour < 9.0:
             session = "Pre-market"
-        elif hour < 16:
+        elif hour < 17.5:
             session = "Regular"
-        elif hour < 20:
-            session = "After-hours"
         else:
-            session = "Closed (overnight)"
+            session = "Closed (after hours)"
         return {"utc_hour": datetime.now(timezone.utc).hour, "session": session}
 
     def _default_limit_price(
