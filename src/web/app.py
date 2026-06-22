@@ -192,8 +192,6 @@ async def sell(symbol: str = None):
 @app.post("/api/manual-trade")
 async def manual_trade(req: ManualTradeRequest):
     engine = get_engine()
-    if settings.TRADING_MODE != "notify":
-        raise HTTPException(status_code=400, detail="Manual trades are only available in notify mode")
     req.side = req.side.lower().strip()
     if req.side not in ("buy", "sell"):
         raise HTTPException(status_code=400, detail="Side must be 'buy' or 'sell'")

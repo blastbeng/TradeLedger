@@ -341,7 +341,7 @@
                 </div>
             </div>
 
-            <div class="card card-full" id="manual-trade-card" style="display:none;">
+            <div class="card card-full" id="manual-trade-card">
                 <h2>📝 Manual Trade Entry</h2>
                 <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 12px;">Log a trade you executed manually. This will update your positions and trade history.</p>
                 <form id="manual-trade-form" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; align-items:end;">
@@ -1168,17 +1168,6 @@
                 }
             });
         }
-
-        // Show/hide manual trade card based on trading mode
-        fetch('/api/config')
-            .then(res => res.json())
-            .then(config => {
-                const card = document.getElementById('manual-trade-card');
-                if (card && config.trading_mode === 'notify') {
-                    card.style.display = '';
-                }
-            })
-            .catch(() => {});
 
         // --- Screen Wake Lock (keep display on while visible) ---
         let wakeLock = null;
