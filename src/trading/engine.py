@@ -8887,6 +8887,30 @@ class TradingEngine:
                 self.positions[symbol]["cost_basis"] = remaining_cost_basis
                 self.positions[symbol]["net_base"] = remaining_net_base
                 self.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
+
+                # Replace exit orders for the remaining amount
+                from src.strategies.base import Signal
+                dummy_params = {
+                    "trailing_take_profit": self.positions[symbol].get("trailing_take_profit", False),
+                    "partial_take_profit_levels": self.positions[symbol].get("partial_take_profit_levels"),
+                    "partial_take_profit_pct": self.positions[symbol].get("partial_take_profit_pct"),
+                }
+                dummy_signal = Signal(
+                    action="BUY",
+                    confidence=1.0,
+                    reasoning="Replacing exit orders after partial sell fill",
+                    stop_loss_order_type=self.positions[symbol].get("stop_loss_order_type"),
+                    stop_loss_stop_price=self.positions[symbol].get("stop_loss"),
+                    stop_loss_limit_price=self.positions[symbol].get("stop_loss"),
+                    take_profit_order_type=self.positions[symbol].get("take_profit_order_type"),
+                    take_profit_limit_price=self.positions[symbol].get("take_profit"),
+                    strategy_params=dummy_params,
+                )
+                exit_prices = {
+                    "stop_loss_price": self.positions[symbol].get("stop_loss"),
+                    "take_profit_price": self.positions[symbol].get("take_profit"),
+                }
+                await self._place_exit_orders(symbol, dummy_signal, exit_prices, self.positions[symbol].get("timeframe"))
         else:
             # Full fill (non-partial) – original logic
             # Cancel any remaining exit orders before removing the position
