@@ -10,12 +10,13 @@ class Settings(BaseSettings):
     TICKER_SUFFIX: str = ".MI"
     TARGET_COUNTRY: str = "italy"
 
+    @field_validator("TARGET_COUNTRY")
+    @classmethod
+    def validate_target_country(cls, v: str) -> str:
+        return v.lower()
+
     # Paper trading simulator fee percentage (e.g., 0.001 = 0.1%)
     PAPER_TRADING_FEE_PCT: float = 0.001
-
-    # Yahoo Finance fallback for Level 1 quotes (bid/ask/last)
-    YAHOO_FINANCE_ENABLED: bool = True
-    YAHOO_FINANCE_CACHE_SECONDS: int = 30   # cache quotes in Redis to avoid rate limits
 
     # Risk management check interval (seconds) – stop-loss/take-profit checks
     RISK_CHECK_INTERVAL_SECONDS: int = 15
