@@ -8369,8 +8369,12 @@ class TradingEngine:
                         continue
 
                     # --- Timeout check: cancel stale queued limit orders ---
+                    # Exit orders (stop-loss, take-profit, trailing-stop) are exempt
+                    # from the timeout because they must remain active until triggered
+                    # or explicitly cancelled when the position is closed.
                     queued_at = queued.get('queued_at', 0)
-                    if time.time() - queued_at > settings.QUEUED_ORDER_TIMEOUT_SECONDS:
+                    if (not queued.get("is_exit_order")
+                            and time.time() - queued_at > settings.QUEUED_ORDER_TIMEOUT_SECONDS):
                         logger.warning(
                             f"Queued order {order_id} for {queued['symbol']} timed out "
                             f"after {settings.QUEUED_ORDER_TIMEOUT_SECONDS}s. Cancelling."
