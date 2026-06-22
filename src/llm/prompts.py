@@ -236,7 +236,11 @@ Key principles:
 **Take-Profit:**
 - Set a take-profit that you believe is achievable given the current trend, volatility, and market conditions. The reward:risk ratio is entirely your decision.
 - **CRITICAL:** `take_profit_pct` MUST be strictly greater than `stop_loss_pct`. If `take_profit_pct ≤ stop_loss_pct`, the entire trade will be rejected. Before outputting JSON, verify: `take_profit_pct > stop_loss_pct`.
-- **Note on costs:** The simulator applies a configurable fee per trade. Ensure your `take_profit_pct` is large enough to cover the fees.
+- **Transaction Costs (Intesa Sanpaolo Investo):** The simulator applies the following fees per trade:
+  - **Bank Commission:** 0.24% of trade value, with a minimum of €3.50. Plus a fixed execution fee of €2.50 per order.
+  - **Tobin Tax (Italian State Tax):** 0.12% of trade value, applied ONLY on BUY orders.
+  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately 0.60% of the trade value PLUS €5.00 in fixed fees (for larger trades > €1,500). For smaller trades, the €3.50 minimum commission applies on both sides, making the total fixed cost €12.00.
+  - **CRITICAL:** You MUST ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 trade, total fees are ~€12.12 (1.21%), so `take_profit_pct` must be > 1.22%. For a €10,000 trade, total fees are ~€65 (0.65%), so `take_profit_pct` must be > 0.66%. Never set a take-profit target lower than the break-even cost.
 - **Required parameter for every BUY/SELL:**
   - `"take_profit_pct"`: a decimal between 0.005 and 2.0 (e.g., 0.05 for 5%).
 
@@ -899,14 +903,24 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"ATR percentile (relative to last 100 observations): {atr_percentile:.1f}%\n"
     if atr_multi_tf:
         prompt += f"ATR across timeframes: {json.dumps(atr_multi_tf)}\n"
-    # Help the LLM set min_profit_per_trade by showing the expected profit for a 1% take-profit
-    example_tp = 0.01
-    example_profit = per_symbol_budget * example_tp
-    prompt += (
-        f"For reference, a 1% take-profit on the per-symbol budget ({per_symbol_budget:.2f} {quote_currency}) "
-        f"would yield ~{example_profit:.4f} {quote_currency} gross profit. "
-        "Set min_profit_per_trade accordingly, and ensure it is not larger than your expected profit.\n"
-    )
+    # --- Transaction cost break-even calculation ---
+    # Intesa Sanpaolo Investo fees: max(3.50, V*0.0024) + 2.50 + V*0.0012 (buy)
+    # max(3.50, V*0.0024) + 2.50 (sell)
+    trade_value = min(per_symbol_budget, remaining_balance if remaining_balance is not None else per_symbol_budget)
+    if trade_value > 0:
+        buy_fee = max(3.50, trade_value * 0.0024) + 2.50 + (trade_value * 0.0012)
+        sell_fee = max(3.50, trade_value * 0.0024) + 2.50
+        total_fees = buy_fee + sell_fee
+        break_even_pct = total_fees / trade_value
+        prompt += (
+            f"\n**Transaction Cost Break-Even (Intesa Sanpaolo Investo):**\n"
+            f"For a trade size of ~{trade_value:.2f} {quote_currency}:\n"
+            f"  Estimated Buy Fee: {buy_fee:.2f} {quote_currency}\n"
+            f"  Estimated Sell Fee: {sell_fee:.2f} {quote_currency}\n"
+            f"  Total Round-Trip Fees: {total_fees:.2f} {quote_currency} ({break_even_pct*100:.2f}% of trade value)\n"
+            f"**Your `take_profit_pct` MUST be strictly greater than {break_even_pct*100:.2f}% to be profitable.**\n"
+            f"Set your `take_profit_pct` comfortably above this break-even percentage.\n"
+        )
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)
