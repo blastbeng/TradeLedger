@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     wget \
     autoconf \
+    automake \
     libtool \
     git \
     && rm -rf /var/lib/apt/lists/*
