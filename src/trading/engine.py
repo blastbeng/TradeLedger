@@ -7777,8 +7777,6 @@ class TradingEngine:
                         "signal": asdict(signal),
                         "timeframe": timeframe,
                         "atr": None,
-                        "spread_pct": None,
-                        "order_book": None,
                         "exit_reason": "stop_loss",
                         "order_id": sl_order_id,
                         "queued_at": time.time(),
