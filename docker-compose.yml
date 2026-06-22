@@ -1,7 +1,7 @@
 services:
   redis:
     image: redis:7-alpine
-    container_name: alpacai-redis
+    container_name: trading-bot-redis
     restart: no
     ports:
       - "63795:6379"
@@ -19,7 +19,7 @@ services:
 
   bot:
     build: .
-    container_name: alpacai
+    container_name: trading-bot
     pull_policy: build
     restart: no
     ports:

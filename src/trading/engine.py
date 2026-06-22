@@ -167,11 +167,11 @@ class TradingEngine:
         self._tradable_assets_cache: List[str] = []
         self._tradable_assets_cache_time: float = 0.0
 
-        # Cache for Alpaca asset info (min_order_size, name, etc.) – refreshed every 1 hour
+        # Cache for asset info (min_order_size, name, etc.) – refreshed every 1 hour
         self._asset_cache: Dict[str, Any] = {}
         self._asset_cache_time: Dict[str, float] = {}
 
-        # Balance cache – avoids redundant Alpaca API calls within an evaluation cycle
+        # Balance cache – avoids redundant API calls within an evaluation cycle
         self._balance_cache: Optional[Dict[str, float]] = None
         self._balance_cache_time: float = 0.0
         self._sentiment_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, sentiment_dict)
@@ -183,12 +183,12 @@ class TradingEngine:
         # Per‑symbol state for crossover detection (stores last known indicator values)
         self._entry_signal_state: Dict[str, Dict[str, Any]] = {}
 
-        # Alpaca clock cache
+        # Market clock cache
         self._clock_cache: Optional[Any] = None
         self._clock_cache_time: float = 0.0
 
     async def _initialize_clients(self):
-        """Create Alpaca clients and load persisted state (non‑blocking)."""
+        """Initialize clients and load persisted state (non‑blocking)."""
         try:
             self.exchange = await asyncio.to_thread(get_trading_client)
             logger.info("Trading client created.")
@@ -5043,14 +5043,14 @@ class TradingEngine:
         countdown_str = None
 
         if is_paused:
-            alpaca_time_str = None
+            market_time_str = None
             if source == "market_closed":
-                # Fetch the current clock to compute a live countdown and current Alpaca time
+                # Fetch the current clock to compute a live countdown and current market time
                 clock = await self._get_clock()
 
-                alpaca_time_str = None
+                market_time_str = None
                 if clock is not None:
-                    alpaca_time_str = clock.timestamp.astimezone(ZoneInfo("Europe/Rome")).strftime('%H:%M %d/%m/%Y')
+                    market_time_str = clock.timestamp.astimezone(ZoneInfo("Europe/Rome")).strftime('%H:%M %d/%m/%Y')
                     if not clock.is_open:
                         now_utc = datetime.now(timezone.utc)
                         next_open = clock.next_open
@@ -5122,7 +5122,7 @@ class TradingEngine:
             "remaining_seconds": remaining_seconds,
             "countdown_str": countdown_str,
             "source": source,
-            "alpaca_time_str": alpaca_time_str if is_paused and source == "market_closed" else None,
+            "market_time_str": market_time_str if is_paused and source == "market_closed" else None,
         }
 
     def get_risk_metrics(self) -> Dict[str, Any]:
@@ -8734,7 +8734,7 @@ class TradingEngine:
                             'amount': delta_qty,
                             'price': filled_avg_price,
                             'cost': delta_cost,
-                            'fee': {'cost': 0.0, 'currency': 'USD'},
+                            'fee': {'cost': 0.0, 'currency': queued['symbol'].split("/")[1] if "/" in queued['symbol'] else self.base_currency},
                             'status': 'closed',
                             'timestamp': int(time.time() * 1000),
                         }

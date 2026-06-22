@@ -233,7 +233,7 @@ class TelegramBot:
                 msg += f"<b>⏸️ Reason:</b> {pause_reason}\n"
             if countdown:
                 msg += f"<b>⏱️ Resumes in:</b> {countdown}\n"
-            market_time = pause_status.get("alpaca_time_str", "")
+            market_time = pause_status.get("market_time_str", "")
             if market_time:
                 msg += f"<b>🕒 Market Time:</b> {market_time}\n"
 
