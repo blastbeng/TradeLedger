@@ -826,8 +826,8 @@ class TradingEngine:
                 if self.ws_manager.healthy:
                     update = await self.ws_manager.wait_for_update(timeout=5.0)
                 else:
-                    # WebSocket down – fall back to polling
-                    await asyncio.sleep(5)
+                    # WebSocket down – fall back to polling at configured interval
+                    await asyncio.sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
                 await self._check_risk_management()
                 await self._save_state()
             except Exception as e:
@@ -5332,6 +5332,10 @@ class TradingEngine:
 
     async def _check_risk_management(self):
         """Check open positions and close if stop-loss, take-profit, or trailing stop is hit."""
+        # --- Notify mode: no automated risk management ---
+        if settings.TRADING_MODE == "notify":
+            return
+
         # Read LLM-decided review limits from Redis once (before the per-position loop)
         max_sl_reviews = MAX_STOP_LOSS_REVIEWS
         max_tp_reviews = MAX_TAKE_PROFIT_REVIEWS
@@ -5807,6 +5811,26 @@ class TradingEngine:
         stock_name = await self._get_stock_name(symbol)
         tf = timeframe or (self.positions.get(symbol, {}).get("timeframe") if symbol in self.positions else None)
         display_symbol = self._format_symbol_display(symbol, stock_name, tf)
+
+        # --- Notify mode: do not execute any orders, only send notifications ---
+        if settings.TRADING_MODE == "notify":
+            logger.info(f"Notify mode: skipping order execution for {signal.action} {symbol}.")
+            if self.notifier and signal.action in ("BUY", "SELL"):
+                emoji = "🟢" if signal.action == "BUY" else "🔴"
+                msg = f"{emoji} SIGNAL {display_symbol}: {signal.action} (confidence: {signal.confidence:.2f})"
+                if signal.reasoning:
+                    msg += f" – {signal.reasoning[:200]}"
+                await self.notifier.send_notification(
+                    msg,
+                    summary={
+                        "symbol": symbol,
+                        "action": signal.action,
+                        "confidence": signal.confidence,
+                        "reason": (signal.reasoning or "")[:200],
+                        "strategy_type": signal.strategy_type,
+                    }
+                )
+            return
 
         # Prevent executing new signals if an order is already queued for this symbol
         # (unless it's a manual override)
@@ -7053,7 +7077,7 @@ class TradingEngine:
                         self._last_strategy_eval.pop(symbol, None)
             except Exception as e:
                 logger.error(f"Entry signal monitor error: {e}", exc_info=True)
-            await asyncio.sleep(5)  # check every 5 seconds
+            await asyncio.sleep(60)  # check every 60 seconds (medium/long-term)
 
     async def _detect_entry_signal(self, symbol: str, timeframe: str) -> bool:
         """Return True if a favourable entry condition is detected for the symbol.
@@ -7307,7 +7331,7 @@ class TradingEngine:
                             )
             except Exception as e:
                 logger.error(f"Error checking pending entries: {e}", exc_info=True)
-            await asyncio.sleep(5)  # check every 5 seconds
+            await asyncio.sleep(60)  # check every 60 seconds (medium/long-term)
 
     async def _check_entry_condition_once(
         self, symbol: str, condition: Dict[str, Any], timeframe: str
@@ -8496,6 +8520,10 @@ class TradingEngine:
         new order here.
         """
         await asyncio.sleep(10)
+        # --- Notify mode: no queued order processing ---
+        if settings.TRADING_MODE == "notify":
+            logger.info("Notify mode: skipping queued order processing.")
+            return
         while self._running:
             try:
                 for queued in list(self.queued_orders):
@@ -9126,6 +9154,9 @@ class TradingEngine:
         """Periodically cancel any open orders that are older than 10 minutes,
         but never cancel orders that are still being tracked as queued."""
         await asyncio.sleep(120)  # initial delay
+        # --- Notify mode: no orphaned order cleanup ---
+        if settings.TRADING_MODE == "notify":
+            return
         while self._running:
             try:
                 open_orders = await asyncio.to_thread(self.trader.get_open_orders)

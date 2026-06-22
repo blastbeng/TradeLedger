@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     PAPER_INITIAL_BALANCE: float = 10000.0
 
     # Risk management check interval (seconds) – stop-loss/take-profit checks
-    RISK_CHECK_INTERVAL_SECONDS: int = 15
+    RISK_CHECK_INTERVAL_SECONDS: int = 30
 
     # Initial delay before first symbol evaluation (seconds)
     # Allows WebSocket and Telegram bot to initialize before first LLM call

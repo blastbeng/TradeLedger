@@ -43,6 +43,10 @@ class LiveTrader:
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         return []
 
+    def get_order(self, order_id: str):
+        """Return None – no real orders exist in notify mode."""
+        return None
+
     def cancel_order(self, order_id: str) -> bool:
         return False
 
