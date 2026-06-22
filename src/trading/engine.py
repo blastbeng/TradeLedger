@@ -246,11 +246,7 @@ class TradingEngine:
         tickers: Dict[str, Dict[str, Any]] = {}
         missing: List[str] = []
         for sym in self.positions:
-            t = self.ws_manager.get_ticker(sym)
-            if t is not None:
-                tickers[sym] = t
-            else:
-                missing.append(sym.split("/")[0])
+            missing.append(sym.split("/")[0])
         if missing:
             try:
                 raw = await asyncio.to_thread(get_quotes, self.data_client, missing)
