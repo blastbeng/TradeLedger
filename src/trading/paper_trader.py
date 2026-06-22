@@ -144,7 +144,7 @@ class PaperTrader:
     def _get_current_price(self, symbol: str) -> Optional[float]:
         base = symbol.split("/")[0] if "/" in symbol else symbol
         try:
-            quotes = get_quotes(None, [base])
+            quotes = get_quotes([base])
             q = quotes.get(base, {})
             return q.get("last")
         except Exception as e:

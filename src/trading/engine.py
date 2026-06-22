@@ -1777,7 +1777,7 @@ class TradingEngine:
         ]
 
         plain_sample = [s.split("/")[0] for s in sample_pairs]
-        raw_quotes = await asyncio.to_thread(get_quotes, self.data_client, plain_sample)
+        raw_quotes = await asyncio.to_thread(get_quotes, plain_sample)
         tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_pairs}
 
         # Filter out symbols with no valid last price
