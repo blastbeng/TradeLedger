@@ -1525,8 +1525,9 @@ class TradingEngine:
                 except Exception:
                     current_price = pos.get("price", 0.0)  # fallback to entry price
                 cost = sold_amount * current_price
-                fee_rate = get_fee_rate(self.exchange, symbol, self.redis)
-                fee_cost = cost * fee_rate
+                from src.exchanges.fees import calculate_transaction_costs
+                costs = calculate_transaction_costs("SELL", current_price, sold_amount)
+                fee_cost = costs["total_costs"]
                 trade = {
                     "symbol": symbol,
                     "side": "sell",
@@ -3953,7 +3954,6 @@ class TradingEngine:
                 "williams_r": williams_r,
                 "ichimoku": ichimoku,
                 "donchian_channels": donchian_channels,
-                "fee_rate": fee_rate,
                 "drawdown_pct": perf.get("equity_curve", {}).get("drawdown_pct"),
                 "raw_candles": raw_candles,
                 "recent_trades": recent_trades_summary,
@@ -4268,7 +4268,6 @@ class TradingEngine:
                         trailing_stop=bt_trailing,
                         trailing_stop_distance_pct=bt_trail_dist,
                         trailing_stop_activation_pct=bt_trail_act,
-                        fee_rate=fee_rate,
                     )
                     bt_summary = format_backtest_summary(backtest_stats)
                     logger.info(f"Backtest for {symbol}: {bt_summary}")
