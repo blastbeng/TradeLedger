@@ -675,6 +675,15 @@
 
                 // Immediately fetch prices for the current set
                 fetchPositionPrices();
+            } else {
+                // No positions data – clear everything
+                for (const sym of Object.keys(positionsMap)) {
+                    positionsMap[sym].row.remove();
+                    delete positionsMap[sym];
+                }
+                const tfoot = document.querySelector('#positions-table tfoot');
+                if (tfoot) tfoot.innerHTML = '';
+            }
 
             // Queued Orders
             const queuedBody = document.querySelector('#queued-orders-table tbody');
@@ -698,15 +707,6 @@
                 cell.textContent = '📭 No queued orders';
                 cell.style.textAlign = 'center';
                 cell.style.color = 'var(--text-secondary)';
-            }
-            } else {
-                // No positions data – clear everything
-                for (const sym of Object.keys(positionsMap)) {
-                    positionsMap[sym].row.remove();
-                    delete positionsMap[sym];
-                }
-                const tfoot = document.querySelector('#positions-table tfoot');
-                if (tfoot) tfoot.innerHTML = '';
             }
 
             // Balances
