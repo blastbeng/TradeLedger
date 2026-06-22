@@ -8042,6 +8042,30 @@ class TradingEngine:
                 if is_dust:
                     logger.info(f"Remaining {remaining_amount:.6f} {base} is dust after partial TP for {symbol}, sweeping.")
                     await self._sweep_dust(symbol)
+                else:
+                    # Replace exit orders for the remaining amount
+                    from src.strategies.base import Signal
+                    dummy_params = {
+                        "trailing_take_profit": self.positions[symbol].get("trailing_take_profit", False),
+                        "partial_take_profit_levels": self.positions[symbol].get("partial_take_profit_levels"),
+                        "partial_take_profit_pct": self.positions[symbol].get("partial_take_profit_pct"),
+                    }
+                    dummy_signal = Signal(
+                        action="BUY",
+                        confidence=1.0,
+                        reasoning="Replacing exit orders after partial TP",
+                        stop_loss_order_type=self.positions[symbol].get("stop_loss_order_type"),
+                        stop_loss_stop_price=self.positions[symbol].get("stop_loss"),
+                        stop_loss_limit_price=self.positions[symbol].get("stop_loss"),
+                        take_profit_order_type=self.positions[symbol].get("take_profit_order_type"),
+                        take_profit_limit_price=self.positions[symbol].get("take_profit"),
+                        strategy_params=dummy_params,
+                    )
+                    exit_prices = {
+                        "stop_loss_price": self.positions[symbol].get("stop_loss"),
+                        "take_profit_price": self.positions[symbol].get("take_profit"),
+                    }
+                    await self._place_exit_orders(symbol, dummy_signal, exit_prices, self.positions[symbol].get("timeframe"))
 
             self.trade_history.append(order)
             await asyncio.to_thread(insert_trade, order)
@@ -8216,6 +8240,30 @@ class TradingEngine:
                 if is_dust:
                     logger.info(f"Remaining {remaining_amount:.6f} {base} is dust after partial TP for {symbol}, sweeping.")
                     await self._sweep_dust(symbol)
+                else:
+                    # Replace exit orders for the remaining amount
+                    from src.strategies.base import Signal
+                    dummy_params = {
+                        "trailing_take_profit": self.positions[symbol].get("trailing_take_profit", False),
+                        "partial_take_profit_levels": self.positions[symbol].get("partial_take_profit_levels"),
+                        "partial_take_profit_pct": self.positions[symbol].get("partial_take_profit_pct"),
+                    }
+                    dummy_signal = Signal(
+                        action="BUY",
+                        confidence=1.0,
+                        reasoning="Replacing exit orders after partial TP",
+                        stop_loss_order_type=self.positions[symbol].get("stop_loss_order_type"),
+                        stop_loss_stop_price=self.positions[symbol].get("stop_loss"),
+                        stop_loss_limit_price=self.positions[symbol].get("stop_loss"),
+                        take_profit_order_type=self.positions[symbol].get("take_profit_order_type"),
+                        take_profit_limit_price=self.positions[symbol].get("take_profit"),
+                        strategy_params=dummy_params,
+                    )
+                    exit_prices = {
+                        "stop_loss_price": self.positions[symbol].get("stop_loss"),
+                        "take_profit_price": self.positions[symbol].get("take_profit"),
+                    }
+                    await self._place_exit_orders(symbol, dummy_signal, exit_prices, self.positions[symbol].get("timeframe"))
 
             self.trade_history.append(order)
             await asyncio.to_thread(insert_trade, order)
@@ -8549,6 +8597,21 @@ class TradingEngine:
                                     q for q in self.queued_orders
                                     if q.get("order_id") != oco_pair_id
                                 ]
+                            
+                            # If the fill was partial, cancel the remaining part of this exit order
+                            # to avoid leaving a dangling order that is no longer linked to the position.
+                            # The risk management loop will handle the remaining position.
+                            if filled_qty < queued.get('original_amount', queued['amount']):
+                                try:
+                                    await asyncio.to_thread(self.trader.cancel_order, order_id)
+                                    logger.info(f"Cancelled remaining part of partially filled exit order {order_id} for {queued['symbol']}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to cancel remaining part of exit order {order_id}: {e}")
+                                self.queued_orders = [
+                                    q for q in self.queued_orders
+                                    if q.get("order_id") != order_id
+                                ]
+
                             pos = self.positions.get(queued["symbol"])
                             if pos:
                                 pos.pop("stop_loss_order_id", None)
