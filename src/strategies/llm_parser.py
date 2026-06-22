@@ -109,6 +109,25 @@ def parse_llm_response(response_text: str) -> Signal:
         trailing_stop_activation_pct = _safe_float(params.get("trailing_stop_activation_pct"))
         cooldown_after_loss_seconds = _safe_int(params.get("cooldown_after_loss_seconds", 0)) or 0
 
+        # Write the safely casted values back into params so that the validator
+        # and engine receive correct numeric types instead of raw strings.
+        if stop_loss is not None:
+            params["stop_loss_pct"] = stop_loss
+        if take_profit is not None:
+            params["take_profit_pct"] = take_profit
+        if position_size is not None:
+            params["position_size_fraction"] = position_size
+        params["trailing_stop"] = trailing_stop
+        if max_hold_time_seconds is not None:
+            params["max_hold_time_seconds"] = max_hold_time_seconds
+        if stop_loss_atr_multiple is not None:
+            params["stop_loss_atr_multiple"] = stop_loss_atr_multiple
+        if trailing_stop_distance_pct is not None:
+            params["trailing_stop_distance_pct"] = trailing_stop_distance_pct
+        if trailing_stop_activation_pct is not None:
+            params["trailing_stop_activation_pct"] = trailing_stop_activation_pct
+        params["cooldown_after_loss_seconds"] = cooldown_after_loss_seconds
+
         portfolio_risk_adjustment_factor = params.get("portfolio_risk_adjustment_factor")
         if portfolio_risk_adjustment_factor is not None:
             try:
