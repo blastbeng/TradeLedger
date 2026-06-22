@@ -196,6 +196,8 @@ async def sell(symbol: str = None):
 @app.post("/api/manual-trade")
 async def manual_trade(req: ManualTradeRequest):
     engine = get_engine()
+    if not await engine._is_market_open():
+        raise HTTPException(status_code=400, detail="Cannot log manual trade: market is currently closed")
     req.side = req.side.lower().strip()
     if req.side not in ("buy", "sell"):
         raise HTTPException(status_code=400, detail="Side must be 'buy' or 'sell'")

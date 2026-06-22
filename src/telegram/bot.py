@@ -654,6 +654,13 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         """Sell all open positions, or a specific one by trade ID (e.g., /sell 2)."""
+        if not await self.engine._is_market_open():
+            await update.message.reply_text(
+                "⏸️ Cannot sell: market is currently closed.",
+                reply_markup=self.keyboard
+            )
+            return
+
         try:
             open_trades = await asyncio.to_thread(self.engine.get_open_trades)
         except Exception as e:
