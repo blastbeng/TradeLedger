@@ -6327,8 +6327,6 @@ class TradingEngine:
                     self.positions[symbol]["trailing_take_profit"] = params.get("trailing_take_profit", False)
                     self.positions[symbol]["trailing_take_profit_distance_pct"] = params.get("trailing_take_profit_distance_pct")
                     self.positions[symbol]["breakeven_activation_pct"] = params.get("breakeven_activation_pct")
-                    self.positions[symbol]["lock_profit_activation_pct"] = params.get("lock_profit_activation_pct")
-                    self.positions[symbol]["lock_profit_level_pct"] = params.get("lock_profit_level_pct")
                     # Multiple partial take-profit levels
                     partial_levels = params.get("partial_take_profit_levels")
                     if partial_levels:
@@ -6375,8 +6373,6 @@ class TradingEngine:
                         "trailing_take_profit": params.get("trailing_take_profit", False),
                         "trailing_take_profit_distance_pct": params.get("trailing_take_profit_distance_pct"),
                         "breakeven_activation_pct": params.get("breakeven_activation_pct"),
-                        "lock_profit_activation_pct": params.get("lock_profit_activation_pct"),
-                        "lock_profit_level_pct": params.get("lock_profit_level_pct"),
                         "partial_take_profit_levels": params.get("partial_take_profit_levels"),
                         "partial_tp_levels_triggered": [],
                         "partial_tp_depth_wait_start": {},
@@ -7449,11 +7445,6 @@ class TradingEngine:
         # --- Breakeven / lock-profit ---
         if "breakeven_activation_pct" in params:
             pos["breakeven_activation_pct"] = params["breakeven_activation_pct"]
-        if "lock_profit_activation_pct" in params:
-            pos["lock_profit_activation_pct"] = params["lock_profit_activation_pct"]
-        if "lock_profit_level_pct" in params:
-            pos["lock_profit_level_pct"] = params["lock_profit_level_pct"]
-
         # --- Time-based exits ---
         if "max_hold_time_seconds" in params:
             pos["max_hold_time_seconds"] = params["max_hold_time_seconds"]
@@ -8718,8 +8709,6 @@ class TradingEngine:
             self.positions[symbol]["trailing_take_profit"] = params.get("trailing_take_profit", False)
             self.positions[symbol]["trailing_take_profit_distance_pct"] = params.get("trailing_take_profit_distance_pct")
             self.positions[symbol]["breakeven_activation_pct"] = params.get("breakeven_activation_pct")
-            self.positions[symbol]["lock_profit_activation_pct"] = params.get("lock_profit_activation_pct")
-            self.positions[symbol]["lock_profit_level_pct"] = params.get("lock_profit_level_pct")
             partial_levels = params.get("partial_take_profit_levels")
             if partial_levels:
                 self.positions[symbol]["partial_take_profit_levels"] = partial_levels
@@ -8761,8 +8750,6 @@ class TradingEngine:
                 "trailing_take_profit": params.get("trailing_take_profit", False),
                 "trailing_take_profit_distance_pct": params.get("trailing_take_profit_distance_pct"),
                 "breakeven_activation_pct": params.get("breakeven_activation_pct"),
-                "lock_profit_activation_pct": params.get("lock_profit_activation_pct"),
-                "lock_profit_level_pct": params.get("lock_profit_level_pct"),
                 "partial_take_profit_levels": params.get("partial_take_profit_levels"),
                 "partial_tp_levels_triggered": [],
                 "partial_tp_depth_wait_start": {},

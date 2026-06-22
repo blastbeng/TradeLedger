@@ -100,8 +100,6 @@ def parse_llm_response(response_text: str) -> Signal:
         trailing_stop = bool(params.get("trailing_stop", False))
         
         max_hold_time_seconds = _safe_int(params.get("max_hold_time_seconds"))
-        # Keep max_hold_minutes for backwards compatibility with the engine
-        max_hold_minutes = int(max_hold_time_seconds // 60) if max_hold_time_seconds is not None else None
         
         stop_loss_method = params.get("stop_loss_method")
         stop_loss_atr_multiple = _safe_float(params.get("stop_loss_atr_multiple"))
@@ -153,6 +151,21 @@ def parse_llm_response(response_text: str) -> Signal:
                 elif etype == "indicator_combo" and isinstance(entry_condition_raw.get("conditions"), list) and len(entry_condition_raw["conditions"]) > 0 and "timeout_seconds" in entry_condition_raw:
                     entry_condition = entry_condition_raw
 
+        # --- order execution parameters ---
+        order_type = data.get("order_type")
+        stop_price = _safe_float(data.get("stop_price"))
+        # limit_price is already in params, but we also expose it on the Signal
+        limit_price = _safe_float(params.get("limit_price"))
+        trail_offset = _safe_float(data.get("trail_offset"))
+        
+        stop_loss_order_type = data.get("stop_loss_order_type")
+        stop_loss_stop_price = _safe_float(data.get("stop_loss_stop_price"))
+        stop_loss_limit_price = _safe_float(data.get("stop_loss_limit_price"))
+        stop_loss_trail_offset = _safe_float(data.get("stop_loss_trail_offset"))
+        
+        take_profit_order_type = data.get("take_profit_order_type")
+        take_profit_limit_price = _safe_float(data.get("take_profit_limit_price"))
+
         return Signal(
             action=action,
             confidence=confidence,
@@ -166,7 +179,6 @@ def parse_llm_response(response_text: str) -> Signal:
             take_profit=take_profit,
             position_size=position_size,
             trailing_stop=trailing_stop,
-            max_hold_minutes=max_hold_minutes,
             reason=reason,
             entry_condition=entry_condition,
             stop_loss_method=stop_loss_method,
@@ -176,6 +188,16 @@ def parse_llm_response(response_text: str) -> Signal:
             max_hold_time_seconds=max_hold_time_seconds,
             cooldown_after_loss_seconds=cooldown_after_loss_seconds,
             portfolio_risk_adjustment_factor=portfolio_risk_adjustment_factor,
+            order_type=order_type,
+            stop_price=stop_price,
+            limit_price=limit_price,
+            trail_offset=trail_offset,
+            stop_loss_order_type=stop_loss_order_type,
+            stop_loss_stop_price=stop_loss_stop_price,
+            stop_loss_limit_price=stop_loss_limit_price,
+            stop_loss_trail_offset=stop_loss_trail_offset,
+            take_profit_order_type=take_profit_order_type,
+            take_profit_limit_price=take_profit_limit_price,
         )
     except (json.JSONDecodeError, ValueError, TypeError) as e:
         raise ValueError(f"Failed to parse LLM response as valid JSON: {e}") from e

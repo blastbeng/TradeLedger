@@ -17,7 +17,6 @@ class Signal:
     take_profit: Optional[float] = None      # percentage above entry (e.g., 0.10 for 10%)
     position_size: Optional[float] = None    # fraction of per-symbol budget (0.0 - 1.0)
     trailing_stop: Optional[bool] = False    # whether to use a trailing stop
-    max_hold_minutes: Optional[int] = None   # maximum time to hold the position
     stop_loss_method: Optional[str] = None
     stop_loss_atr_multiple: Optional[float] = None
     trailing_stop_distance_pct: Optional[float] = None
@@ -34,6 +33,17 @@ class Signal:
     model_type: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    # --- Order execution parameters ---
+    order_type: Optional[str] = None
+    stop_price: Optional[float] = None
+    limit_price: Optional[float] = None
+    trail_offset: Optional[float] = None
+    stop_loss_order_type: Optional[str] = None
+    stop_loss_stop_price: Optional[float] = None
+    stop_loss_limit_price: Optional[float] = None
+    stop_loss_trail_offset: Optional[float] = None
+    take_profit_order_type: Optional[str] = None
+    take_profit_limit_price: Optional[float] = None
 
 
 class Strategy:
