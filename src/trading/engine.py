@@ -4395,6 +4395,7 @@ class TradingEngine:
                         backtest_summary=bt_summary,
                         base_currency=self.base_currency,
                         trading_paused=trading_paused,
+                        step1_prompt=prompt,
                     )
                     # Append position info if exists
                     if symbol in self.positions:

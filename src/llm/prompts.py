@@ -1440,6 +1440,7 @@ def build_final_decision_prompt(
     backtest_summary: str,
     base_currency: str,
     trading_paused: bool = False,
+    step1_prompt: str = "",
 ) -> str:
     """Build a prompt to ask the LLM for its final decision after reviewing backtest results."""
     current_price = ticker.get("last") if ticker else None
@@ -1449,6 +1450,9 @@ def build_final_decision_prompt(
 Symbol: {symbol}
 Current price: {current_price}
 Base currency: {base_currency}
+
+**Full Market Context (identical to Step 1 — re-evaluate with backtest results in mind):**
+{step1_prompt}
 
 **Your Step 1 Preliminary Decision:**
 - Preliminary Action: {preliminary_decision.get("action", "HOLD")}
