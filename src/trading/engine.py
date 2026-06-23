@@ -635,7 +635,7 @@ class TradingEngine:
                             )
                         self._market_opening_soon_notified = True
                 else:
-                    # Market open – always resume trading immediately
+                    # Market open – always resume trading and trigger re-evaluation
                     paused = await asyncio.to_thread(self.redis.get, "trading:paused")
                     if paused:
                         # Delete all pause-related keys unconditionally
@@ -651,13 +651,15 @@ class TradingEngine:
                         for key in pause_keys:
                             await asyncio.to_thread(self.redis.delete, key)
                         logger.info("Market opened, resuming trading (any pause cleared).")
-                        self._reeval_trigger.set()
                         if self.notifier:
                             await self.notifier.send_notification(
                                 "▶️ Market opened, trading resumed.",
                                 summary={"action": "RESUME", "reason": "Market opened"}
                             )
-
+                    else:
+                        logger.info("Market opened, trading already active.")
+                    # Always trigger immediate symbol re-evaluation to restart the 60-minute cycle
+                    self._reeval_trigger.set()
                     # Reset the "opening soon" notification flag
                     self._market_opening_soon_notified = False
                     # Reset the periodic countdown timer so the first update
