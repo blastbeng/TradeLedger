@@ -1874,6 +1874,12 @@ class TradingEngine:
         else:
             sample_pairs = available_pairs[:settings.SYMBOL_SELECTION_MAX_SYMBOLS]
 
+        # Ensure BTPs are always included in the candidate pool so they flow
+        # through volume sorting, OHLCV fetch, indicator computation, etc.
+        for btp in btp_pairs:
+            if btp not in sample_pairs:
+                sample_pairs.append(btp)
+
         # Remove fully excluded symbols from the candidate pool
         sample_pairs = [
             sym for sym in sample_pairs
