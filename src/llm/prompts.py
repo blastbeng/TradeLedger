@@ -1483,7 +1483,7 @@ If the backtest confirms your strategy is viable, output your final action (BUY,
 """
     prompt += (
         f"\n**Backtest Period:** The backtest was run using {preliminary_decision.get('strategy_params', {}).get('backtest_period_days', 'all available')} "
-        f"days of historical data on the {preliminary_decision.get('strategy_params', {}).get('timeframe', 'assigned')} timeframe.\n"
+        f"days of historical data on the {preliminary_decision.get('timeframe', 'assigned')} timeframe.\n"
     )
     prompt += (
         "**Output ONLY the raw JSON object as specified.**\n"

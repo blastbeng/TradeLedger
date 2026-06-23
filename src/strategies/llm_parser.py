@@ -177,6 +177,7 @@ def parse_llm_response(response_text: str) -> Signal:
         backtest_period_days = _safe_int(params.get("backtest_period_days"))
         if backtest_period_days is not None:
             backtest_period_days = max(30, min(backtest_period_days, settings.OHLCV_RETENTION_DAYS))
+            params["backtest_period_days"] = backtest_period_days
 
         return Signal(
             action=action,

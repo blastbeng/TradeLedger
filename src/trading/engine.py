@@ -4518,6 +4518,7 @@ class TradingEngine:
                             "confidence": preliminary_signal.confidence,
                             "reasoning": preliminary_signal.reasoning,
                             "strategy_params": preliminary_signal.strategy_params,
+                            "timeframe": assigned_tf,
                         },
                         backtest_stats=backtest_stats,
                         backtest_summary=bt_summary,
