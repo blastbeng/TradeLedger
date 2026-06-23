@@ -17,7 +17,6 @@ TIMEFRAME_MAP = {
     "5m": "5m",
     "15m": "15m",
     "1h": "60m",
-    "4h": "60m",  # yfinance doesn't have 4h, using 60m as fallback
     "1d": "1d",
 }
 
