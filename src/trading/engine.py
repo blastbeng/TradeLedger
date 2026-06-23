@@ -1742,6 +1742,7 @@ class TradingEngine:
             "change_24h": b["change_pct"],
             "percentage": b["change_pct"],
             "quoteVolume": 0,
+            "name": b["name"],
         } for b in btp_bonds}
 
         available_pairs = stock_pairs + btp_pairs
@@ -3373,6 +3374,9 @@ class TradingEngine:
         stock_name = await self._get_stock_name(symbol)
         display_symbol = self._format_symbol_display(symbol, stock_name, assigned_tf)
 
+        base_symbol = symbol.split("/")[0]
+        is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
+
         # If the market is closed, do not generate any signals (save LLM costs).
         if not await self._is_market_open():
             logger.info(f"Skipping {display_symbol}: market closed.")
@@ -3483,7 +3487,7 @@ class TradingEngine:
             current_price = ticker['last']
 
             # --- Yahoo Finance fallback for missing bid/ask (IEX or any feed) ---
-            if ticker is not None:
+            if ticker is not None and not is_btp:
                 bid = ticker.get('bid')
                 ask = ticker.get('ask')
                 if bid is None or ask is None:
@@ -3498,7 +3502,7 @@ class TradingEngine:
 
             # --- Fetch fundamental data for medium/long-term context ---
             fundamentals = None
-            if settings.YAHOO_FINANCE_ENABLED:
+            if settings.YAHOO_FINANCE_ENABLED and not is_btp:
                 fundamentals = await asyncio.to_thread(get_yahoo_fundamentals, symbol)
 
             balance = await self._get_cached_balance()
@@ -3555,8 +3559,6 @@ class TradingEngine:
             # Skip to save costs and noise.
             # BTP bonds (ISIN format) are exempt: yfinance does not provide OHLCV for them,
             # but they can still be evaluated by the LLM using the current price alone.
-            base_symbol = symbol.split("/")[0]
-            is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
             no_ohlcv = (
                 not ohlcv_data
                 or all(len(candles) == 0 for candles in ohlcv_data.values())
