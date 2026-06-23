@@ -1885,12 +1885,11 @@ class TradingEngine:
         if settings.YAHOO_FINANCE_ENABLED:
             missing_bid_ask = [
                 sym for sym in sample_pairs
-                if not re.match(r'^IT[A-Z0-9]{10}$', sym.split("/")[0])
-                and (tickers.get(sym, {}).get('bid') is None or tickers.get(sym, {}).get('ask') is None)
+                if tickers.get(sym, {}).get('bid') is None or tickers.get(sym, {}).get('ask') is None
             ]
             # Limit to 20 symbols per cycle to stay under Yahoo's rate limits
             for sym in missing_bid_ask[:20]:
-                yahoo = await asyncio.to_thread(get_yahoo_quote, sym)
+                yahoo = await asyncio.to_thread(get_yahoo_quote, sym.split("/")[0])
                 if yahoo:
                     t = tickers.setdefault(sym, {})
                     if t.get('bid') is None:
