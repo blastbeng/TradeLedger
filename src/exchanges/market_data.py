@@ -21,19 +21,6 @@ TIMEFRAME_MAP = {
     "1d": "1d",
 }
 
-# Fallback list of FTSE MIB constituents in case Wikipedia scraping fails
-FTSE_MIB_FALLBACK_TICKERS = [
-    "ENI", "ENEL", "ISP", "UCG", "STLAM", "G", "RACE", "ASSM", "BNP", "TIT",
-    "LDO", "BAMI", "MONC", "AZM", "STG", "EXO", "PRY", "REC", "BZU", "FBK",
-    "A2A", "HER", "TEN", "INW", "NEXI", "AMP", "PST", "BPSO", "IG", "SPM",
-    "CNX", "DAN", "RWAY", "BRE", "UNI", "MGP", "PLT", "BIO", "ALSO", "Ei",
-    "IP", "WDA", "ARL", "SRG", "BGN", "MOL", "CEM", "DLG", "TIP", "CLF",
-    "KRN", "BCC", "FCT", "ALB", "BEC", "CIR", "DOW", "Ei", "FERR", "GAM",
-    "IOL", "LUX", "MARR", "NOS", "OVS", "PAN", "QDM", "RCS", "SAY", "TRV",
-    "VBT", "WAM", "ZV"
-]
-
-
 def _fetch_country(symbol: str) -> Optional[str]:
     """Fetch the country property from yfinance info for a symbol."""
     try:
@@ -48,7 +35,7 @@ def _fetch_country(symbol: str) -> Optional[str]:
 def _discover_ftse_mib_tickers() -> List[str]:
     """Scrape the FTSE MIB constituent list from Wikipedia.
 
-    Returns a list of base symbols (suffix stripped). Returns a fallback list
+    Returns a list of base symbols (suffix stripped). Returns an empty list
     if scraping fails.
     """
     try:
@@ -63,8 +50,8 @@ def _discover_ftse_mib_tickers() -> List[str]:
         response.raise_for_status()
         tables = pd.read_html(response.text)
     except Exception as e:
-        logger.warning(f"Failed to scrape FTSE MIB table from Wikipedia: {e}. Using fallback list.")
-        return FTSE_MIB_FALLBACK_TICKERS
+        logger.warning(f"Failed to scrape FTSE MIB table from Wikipedia: {e}")
+        return []
 
     for table in tables:
         # Look for a column named "Ticker" or "Symbol" (case-insensitive)
@@ -89,8 +76,8 @@ def _discover_ftse_mib_tickers() -> List[str]:
                 logger.info(f"Discovered {len(base_symbols)} FTSE MIB tickers from Wikipedia")
                 return base_symbols
 
-    logger.warning("No ticker column found in Wikipedia FTSE MIB tables. Using fallback list.")
-    return FTSE_MIB_FALLBACK_TICKERS
+    logger.warning("No ticker column found in Wikipedia FTSE MIB tables.")
+    return []
 
 
 def get_tradable_assets() -> List[str]:
