@@ -7933,7 +7933,7 @@ class TradingEngine:
         # For medium/long-term, only use the expensive "mind" model when
         # complexity is genuinely high (at least 2 factors). Routine
         # evaluations use "actuator" to conserve tokens.
-        return "mind" if complexity >= 2 else "actuator"
+        return "mind" if complexity >= 5 else "actuator"
 
     def _compute_prompt_complexity(
         self,
