@@ -318,7 +318,7 @@
 
     <div class="container">
         <div class="dashboard">
-            <div class="card card-full" id="manual-trade-card">
+            <div class="card" id="manual-trade-card">
                 <h2>📝 Manual Trade Entry</h2>
                 <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 12px;">Log a trade you executed manually. This will update your positions and trade history.</p>
                 <form id="manual-trade-form" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; align-items:end;">
@@ -350,6 +350,11 @@
                     </div>
                 </form>
                 <div id="manual-trade-result" style="margin-top:12px; font-size:0.85rem;"></div>
+            </div>
+
+            <div class="card">
+                <h2>📨 Messages</h2>
+                <div id="messages" style="max-height: 400px; overflow-y: auto; font-size: 0.9rem;"></div>
             </div>
 
             <div class="card">
@@ -440,13 +445,6 @@
                         <option value="60000">60s</option>
                     </select>
                 </div>
-            </div>
-        </div>
-    </div>
-
-            <div class="card card-full">
-                <h2>📨 Messages</h2>
-                <div id="messages" style="max-height: 400px; overflow-y: auto; font-size: 0.9rem;"></div>
             </div>
         </div>
     </div>
