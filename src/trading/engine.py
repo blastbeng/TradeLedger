@@ -634,24 +634,22 @@ class TradingEngine:
                             )
                         self._market_opening_soon_notified = True
                 else:
-                    # Market open – resume if paused due to market_closed (atomic)
-                    lua_resume = """
-                        if redis.call("GET", "trading:pause_source") == "market_closed" then
-                            redis.call("DEL", "trading:paused")
-                            redis.call("DEL", "trading:pause_source")
-                            redis.call("DEL", "trading:pause_start")
-                            redis.call("DEL", "trading:pause_duration")
-                            redis.call("DEL", "trading:pause_reason")
-                            redis.call("DEL", "trading:llm_pause_time")
-                            redis.call("DEL", "trading:market_next_open")
-                            return 1
-                        else
-                            return 0
-                        end
-                    """
-                    was_resumed = await asyncio.to_thread(self.redis.eval, lua_resume, 0)
-                    if was_resumed == 1:
-                        logger.info("Market opened, resuming trading.")
+                    # Market open – always resume trading immediately
+                    paused = await asyncio.to_thread(self.redis.get, "trading:paused")
+                    if paused:
+                        # Delete all pause-related keys unconditionally
+                        pause_keys = [
+                            "trading:paused",
+                            "trading:pause_source",
+                            "trading:pause_start",
+                            "trading:pause_duration",
+                            "trading:pause_reason",
+                            "trading:llm_pause_time",
+                            "trading:market_next_open",
+                        ]
+                        for key in pause_keys:
+                            await asyncio.to_thread(self.redis.delete, key)
+                        logger.info("Market opened, resuming trading (any pause cleared).")
                         self._reeval_trigger.set()
                         if self.notifier:
                             await self.notifier.send_notification(
