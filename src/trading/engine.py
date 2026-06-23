@@ -3002,9 +3002,9 @@ class TradingEngine:
         elif self.notifier:
             stock_reasoning = parsed.get("reasoning", "") if isinstance(parsed, dict) else ""
             if stock_reasoning:
-                msg = f"🔄 Stocks updated: {', '.join(symbol_labels)}\n💡 {stock_reasoning}"
+                msg = f"🔄 Tickers Updated: {', '.join(symbol_labels)}\n💡 {stock_reasoning}"
             else:
-                msg = f"🔄 Stocks updated: {', '.join(symbol_labels)}"
+                msg = f"🔄 Tickers Updated: {', '.join(symbol_labels)}"
             if pause_msg:
                 msg = pause_msg + "\n" + msg
             await self.notifier.send_notification(
