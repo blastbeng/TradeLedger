@@ -170,9 +170,14 @@ def backtest_strategy(
 
             # --- Max unrealized loss (soft stop) ---
             if max_unrealized_loss_pct is not None and max_unrealized_loss_pct > 0:
-                unrealized = (candle_low - entry_price) / entry_price
-                if unrealized <= -max_unrealized_loss_pct:
-                    exit_price = entry_price * (1 - max_unrealized_loss_pct)
+                unrealized_low = (candle_low - entry_price) / entry_price
+                if unrealized_low <= -max_unrealized_loss_pct:
+                    target_exit = entry_price * (1 - max_unrealized_loss_pct)
+                    # If the candle opens below the soft stop, the fill happens at the open price
+                    if candle[1] <= target_exit:
+                        exit_price = candle[1]
+                    else:
+                        exit_price = target_exit
                     exit_ts = candle_ts
                     exit_reason = "max_unrealized_loss"
                     exit_index = j
@@ -189,13 +194,15 @@ def backtest_strategy(
                         continue
                     tp_target = entry_price * (1 + lvl_pct)
                     if candle_high >= tp_target:
-                        partial_gross = (tp_target - entry_price) / entry_price * lvl_frac
+                        # If the candle opens above the target, the fill happens at the open price (gap up)
+                        actual_tp_fill = candle[1] if candle[1] >= tp_target else tp_target
+                        partial_gross = (actual_tp_fill - entry_price) / entry_price * lvl_frac
                         if fee_model == "intesa" and trade_value and trade_value > 0:
                             partial_entry_fee_pct = (
                                 _compute_intesa_fees(trade_value, "buy", is_btp)
                                 / trade_value * lvl_frac
                             )
-                            partial_exit_value = trade_value * lvl_frac * (tp_target / entry_price)
+                            partial_exit_value = trade_value * lvl_frac * (actual_tp_fill / entry_price)
                             partial_exit_fee_pct = (
                                 _compute_intesa_fees(partial_exit_value, "sell", is_btp)
                                 / trade_value
@@ -203,13 +210,13 @@ def backtest_strategy(
                             partial_net = partial_gross - partial_entry_fee_pct - partial_exit_fee_pct
                         else:
                             partial_net = partial_gross - (
-                                entry_price * fee_rate + tp_target * fee_rate
+                                entry_price * fee_rate + actual_tp_fill * fee_rate
                             ) / entry_price * lvl_frac
                         remaining_fraction *= (1 - lvl_frac)
                         partial_tp_executed.add(lvl_idx)
                         partial_trades.append({
                             "entry_price": entry_price,
-                            "exit_price": tp_target,
+                            "exit_price": actual_tp_fill,
                             "exit_reason": f"partial_tp_{lvl_idx}",
                             "pnl_pct": partial_net,
                             "hold_time_seconds": (candle_ts - entry_ts) / 1000.0,
@@ -225,7 +232,11 @@ def backtest_strategy(
 
             # Check stop-loss (conservative: assume stop hits first if both hit in same candle)
             if candle_low <= current_stop:
-                exit_price = current_stop
+                # If the candle opens below the stop, the fill happens at the open price (gap down)
+                if candle[1] <= current_stop:
+                    exit_price = candle[1]
+                else:
+                    exit_price = current_stop
                 exit_ts = candle_ts
                 exit_reason = "stop_loss"
                 exit_index = j
@@ -233,7 +244,11 @@ def backtest_strategy(
 
             # Check take-profit
             if candle_high >= take_profit_price:
-                exit_price = take_profit_price
+                # If the candle opens above the target, the fill happens at the open price (gap up)
+                if candle[1] >= take_profit_price:
+                    exit_price = candle[1]
+                else:
+                    exit_price = take_profit_price
                 exit_ts = candle_ts
                 exit_reason = "take_profit"
                 exit_index = j
