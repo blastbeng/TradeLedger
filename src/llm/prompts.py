@@ -682,6 +682,7 @@ def build_strategy_prompt(
     full_market_breadth: Optional[Dict[str, Any]] = None,
     keltner_channels: Optional[Dict[str, float]] = None,
     donchian_channels: Optional[Dict[str, float]] = None,
+    parabolic_sar: Optional[float] = None,
     atr_percentile: Optional[float] = None,
     global_risk_multiplier: Optional[float] = None,
     trading_paused: bool = False,
@@ -1149,6 +1150,10 @@ Maximum symbols to trade: {max_symbols}
             f"Lower={donchian_channels['lower']:.6f}\n"
         )
         prompt += "Donchian Channels: highest high/lowest low over lookback period. Breakout above upper = new high (bullish), below lower = new low (bearish). Narrow channel = low volatility (squeeze).\n"
+
+    if parabolic_sar is not None:
+        prompt += f"\nParabolic SAR ({assigned_timeframe or 'default'}): {parabolic_sar:.6f}\n"
+        prompt += "Parabolic SAR: dots above price = downtrend, below price = uptrend. Use for trailing stop or trend confirmation.\n"
 
     if vwap is not None:
         prompt += f"\nVWAP (14-period, {assigned_timeframe or 'default'}): {vwap:.6f}\n"
