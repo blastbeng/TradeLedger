@@ -1950,6 +1950,20 @@ class TradingEngine:
                 except Exception as e:
                     logger.info(f"Could not fetch news sentiment for {sym}: {e}")
 
+            # Fetch news for BTPs specifically (they have no volume, so background refresh won't cover them)
+            if settings.BANCA_D_ITALIA_BTP_NEWS_ENABLED:
+                for sym in btp_pairs:
+                    if sym in sample_pairs:
+                        try:
+                            await self._fetch_and_store_news_for_symbol(sym)
+                            # Re-read sentiment after fetching
+                            base = sym.split("/")[0]
+                            agg = await self._get_cached_sentiment(sym)
+                            if agg:
+                                news_sentiment[base] = agg
+                        except Exception as e:
+                            logger.debug(f"BTP news fetch failed for {sym}: {e}")
+
         # Sentiment trend (delta from previous cycle)
         sentiment_trend: Dict[str, Optional[float]] = {}
         for sym in sample_pairs:
@@ -1990,6 +2004,11 @@ class TradingEngine:
 
         # Use the already volume‑sorted sample_pairs for OHLCV fetch (limit to 20 to avoid rate limits)
         sorted_by_vol = sample_pairs[:50]
+        # Always include BTPs in the OHLCV fetch so the LLM has technical data for them
+        btp_in_sample = [s for s in sample_pairs if s in btp_pairs]
+        for btp in btp_in_sample:
+            if btp not in sorted_by_vol:
+                sorted_by_vol.append(btp)
 
         # Fetch multi-timeframe OHLCV for these stocks
         ohlcv_data = {}
