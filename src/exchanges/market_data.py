@@ -40,7 +40,7 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
     }
     for url in urls:
         try:
-            response = requests.get(url, headers=headers, timeout=10)
+            response = requests.get(url, headers=headers, timeout=15)
             response.raise_for_status()
             tables = pd.read_html(response.text)
         except Exception as e:
@@ -55,14 +55,15 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
             ticker_col = None
             for col in table.columns:
                 col_str = str(col).lower()
-                if any(kw in col_str for kw in ("ticker", "symbol", "code", "isin", "ticker symbol", "simbolo")):
+                if any(kw in col_str for kw in ("ticker", "symbol", "code", "isin", "simbolo", "codice")):
                     ticker_col = col
                     break
             if ticker_col is None:
                 # Last resort: look for a column whose values look like tickers
                 for col in table.columns:
-                    sample = table[col].dropna().astype(str).head(5).tolist()
-                    if all(re.match(r'^[A-Z0-9\.]+$', s) for s in sample):
+                    sample = table[col].dropna().astype(str).head(10).tolist()
+                    # Match typical ticker patterns like ENI, ENI.MI, etc. (avoid ISINs)
+                    if all(re.match(r'^[A-Z]{1,6}(\.[A-Z]{2})?$', s) for s in sample):
                         ticker_col = col
                         break
             if ticker_col is not None:
@@ -245,7 +246,17 @@ def _discover_euronext_milan_json() -> List[str]:
         logger.warning(f"Euronext JSON API failed: {e}")
         return []
 
-    # The JSON structure is a list of objects; each has "isin", "name", "symbol", "market", etc.
+    # Handle cases where the list is nested inside a dictionary
+    if isinstance(data, dict):
+        # Look for common keys that contain the list of instruments
+        for key in ("data", "items", "results", "instruments"):
+            if key in data and isinstance(data[key], list):
+                data = data[key]
+                break
+        else:
+            logger.warning("Euronext JSON response is a dict but no list found.")
+            return []
+
     if not isinstance(data, list):
         logger.warning("Euronext JSON response is not a list.")
         return []
