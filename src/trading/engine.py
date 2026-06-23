@@ -129,6 +129,7 @@ class TradingEngine:
         self._risk_lock = asyncio.Lock()
         self._symbol_reeval_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
+        self._force_reeval: bool = False
         self._running = True
         self._last_state_save = 0
         self._last_eval_snapshot: Dict[str, Dict[str, float]] = {}  # symbol -> indicator snapshot
@@ -192,8 +193,10 @@ class TradingEngine:
         """Attach a notification service (e.g., TelegramBot)."""
         self.notifier = notifier
 
-    def trigger_symbol_reevaluation(self):
+    def trigger_symbol_reevaluation(self, force: bool = False):
         """Signal the periodic reevaluate loop to run immediately."""
+        if force:
+            self._force_reeval = True
         self._reeval_trigger.set()
 
     async def _get_tradable_assets(self) -> List[str]:
@@ -371,13 +374,15 @@ class TradingEngine:
             try:
                 # Check if trading is paused
                 paused = await asyncio.to_thread(self.redis.get, "trading:paused")
-                if paused:
+                if paused and not self._force_reeval:
                     # Only run the pause/resume decision, skip stock selection
                     logger.info("Trading is paused, running pause/resume decision.")
                     await self._check_pause_resume_decision()
                 else:
                     logger.info("Starting symbol re-evaluation...")
-                    await self._reevaluate_symbols()
+                    is_forced = self._force_reeval
+                    self._force_reeval = False
+                    await self._reevaluate_symbols(force=is_forced)
                     logger.info("Symbol re-evaluation complete.")
             except Exception as e:
                 logger.error(f"Stock re-evaluation error: {e}", exc_info=True)
@@ -1762,12 +1767,12 @@ class TradingEngine:
                 logger.error(f"Engine loop error: {e}", exc_info=True)
                 await asyncio.sleep(5)
 
-    async def _reevaluate_symbols(self):
+    async def _reevaluate_symbols(self, force: bool = False):
         """Use LLM to select which symbols to trade."""
         async with self._symbol_reeval_lock:
-            return await self._reevaluate_symbols_impl()
+            return await self._reevaluate_symbols_impl(force=force)
 
-    async def _reevaluate_symbols_impl(self):
+    async def _reevaluate_symbols_impl(self, force: bool = False):
         # Reset per-cycle spending tracker so new buys are not blocked by prior cycle spending
         self._cycle_spent = 0.0
 
@@ -1775,7 +1780,7 @@ class TradingEngine:
         last_key = "trading:last_symbol_eval"
         last_eval = await asyncio.to_thread(self.redis.get, last_key)
         now = time.time()
-        if last_eval and (now - float(last_eval)) < self._symbol_reevaluation_interval and self.current_symbols:
+        if last_eval and (now - float(last_eval)) < self._symbol_reevaluation_interval and self.current_symbols and not force:
             logger.info("Skipping symbol re-evaluation: last eval was recent and symbols are already loaded.")
             return
 
@@ -3032,7 +3037,7 @@ class TradingEngine:
         # If trading is paused, keep ONLY symbols with open positions.
         # The LLM may have just set pause_trading = true, so re-read Redis.
         paused_now = await asyncio.to_thread(self.redis.get, "trading:paused")
-        if paused_now and paused_now == "1":
+        if paused_now and paused_now == "1" and not force:
             open_symbols = set(self.positions.keys())
             before_count = len(self.current_symbols)
             self.current_symbols = [c for c in self.current_symbols if c["symbol"] in open_symbols]

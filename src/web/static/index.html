@@ -340,7 +340,7 @@
             </div>
 
             <div class="card col-3">
-                <h2>📈 Tracked Tickers</h2>
+                <h2>📈 Tracked Tickers <button id="btn-force-reeval" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Force Re-eval</button></h2>
                 <div id="symbols">-</div>
             </div>
 
@@ -1154,6 +1154,12 @@
             const originalText = btn.textContent;
             btn.textContent = '✅ Refreshed';
             setTimeout(() => { btn.textContent = originalText; }, 1500);
+        });
+        document.getElementById('btn-force-reeval').addEventListener('click', () => {
+            fetch('/api/force-reeval', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => alert(data.status || 'Forced re-evaluation triggered.'))
+                .catch(err => alert('Error: ' + err.message));
         });
         document.getElementById('btn-refresh-news').addEventListener('click', () => {
             const newsDiv = document.getElementById('news');

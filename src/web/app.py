@@ -234,6 +234,12 @@ async def reload():
     await run_in_threadpool(settings.reload)
     return {"status": "reloaded"}
 
+@app.post("/api/force-reeval")
+async def force_reeval():
+    engine = get_engine()
+    engine.trigger_symbol_reevaluation(force=True)
+    return {"status": "Forced re-evaluation triggered"}
+
 @app.post("/api/restart")
 def restart():
     """
