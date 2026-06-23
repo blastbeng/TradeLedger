@@ -4724,6 +4724,8 @@ class TradingEngine:
                 }
                 await self.notifier.send_notification(msg, summary=decision_summary)
 
+            params = signal.strategy_params or {}
+
             # --- Handle max‑hold‑expired LLM decision ---
             if max_hold_expired and signal.action == "HOLD":
                 new_max_hold = params.get("max_hold_time_seconds") if params else None
@@ -5017,7 +5019,6 @@ class TradingEngine:
                 return
 
             # --- LLM‑controlled trade filters ---
-            params = signal.strategy_params or {}
 
             # Compute stop-loss percentage for max risk cap (needed for slippage check)
             sl_pct = None
