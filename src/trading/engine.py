@@ -3137,16 +3137,21 @@ class TradingEngine:
                 pause_msg = f"⏱️ LLM set pause duration: {duration_str}"
 
         if force:
-            if trading_paused_bool:
-                if isinstance(pause_trading, bool) and not pause_trading:
-                    status_str = "resumed"
-                    emoji = "▶️"
-                else:
-                    status_str = "paused"
-                    emoji = "⏸️"
+            market_open = await self._is_market_open()
+            if not market_open:
+                status_str = "paused"
+                emoji = "⏸️"
             else:
-                status_str = "active"
-                emoji = "▶️"
+                if trading_paused_bool:
+                    if isinstance(pause_trading, bool) and not pause_trading:
+                        status_str = "resumed"
+                        emoji = "▶️"
+                    else:
+                        status_str = "paused"
+                        emoji = "⏸️"
+                else:
+                    status_str = "active"
+                    emoji = "▶️"
             pause_msg = f"{emoji} Reevaluation has been manually forced – Bot is currently {status_str}"
             if pause_reason:
                 pause_msg += f" – {pause_reason}"
