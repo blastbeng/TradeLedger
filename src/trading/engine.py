@@ -8752,6 +8752,8 @@ class TradingEngine:
         signal_dict = queued.get('signal', {}) or {}
         params = signal_dict.get('strategy_params', {}) or {}
         sl_pct = params.get("stop_loss_pct")
+        timeframe = queued.get('timeframe')
+        atr = queued.get('atr')
         # Determine take-profit percentage based on method
         if "take_profit_atr_multiple" in params and atr is not None and atr > 0:
             tp_atr_mult = params["take_profit_atr_multiple"]
@@ -8767,8 +8769,6 @@ class TradingEngine:
             tp_pct = params.get("take_profit_pct")
         trailing_stop = params.get("trailing_stop", False)
         trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
-        timeframe = queued.get('timeframe')
-        atr = queued.get('atr')
         indicator_config = signal_dict.get('indicator_config')
 
         if symbol in self.positions:
