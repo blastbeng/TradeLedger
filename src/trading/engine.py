@@ -1885,7 +1885,8 @@ class TradingEngine:
         if settings.YAHOO_FINANCE_ENABLED:
             missing_bid_ask = [
                 sym for sym in sample_pairs
-                if tickers.get(sym, {}).get('bid') is None or tickers.get(sym, {}).get('ask') is None
+                if not re.match(r'^IT[A-Z0-9]{10}$', sym.split("/")[0])
+                and (tickers.get(sym, {}).get('bid') is None or tickers.get(sym, {}).get('ask') is None)
             ]
             # Limit to 20 symbols per cycle to stay under Yahoo's rate limits
             for sym in missing_bid_ask[:20]:
@@ -3605,7 +3606,7 @@ class TradingEngine:
                 bid = ticker.get('bid')
                 ask = ticker.get('ask')
                 if bid is None or ask is None:
-                    yahoo = await asyncio.to_thread(get_yahoo_quote, symbol)
+                    yahoo = await asyncio.to_thread(get_yahoo_quote, symbol.split("/")[0])
                     if yahoo:
                         if bid is None:
                             ticker['bid'] = yahoo.get('bid')
@@ -3617,7 +3618,7 @@ class TradingEngine:
             # --- Fetch fundamental data for medium/long-term context ---
             fundamentals = None
             if settings.YAHOO_FINANCE_ENABLED and not is_btp:
-                fundamentals = await asyncio.to_thread(get_yahoo_fundamentals, symbol)
+                fundamentals = await asyncio.to_thread(get_yahoo_fundamentals, symbol.split("/")[0])
 
             balance = await self._get_cached_balance()
             base_balance = balance.get(self.base_currency, 0.0)
