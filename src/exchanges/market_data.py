@@ -427,9 +427,9 @@ def get_multi_timeframe_bars(
     # Sanitize symbol: remove $ prefix and /currency suffix
     symbol = symbol.lstrip('$').split('/')[0]
 
-    # Format symbol for Yahoo Finance: append TICKER_SUFFIX for BTP ISINs
+    # Format symbol for Yahoo Finance: BTP ISINs are used as-is, stocks get TICKER_SUFFIX if missing
     yf_symbol = symbol
-    if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+    if not re.match(r'^IT[A-Z0-9]{10}$', symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
         yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
 
     result = {}
@@ -477,9 +477,9 @@ def get_bars_range(
         logger.warning(f"Unsupported timeframe: {timeframe}")
         return []
 
-    # Format symbol for Yahoo Finance: append TICKER_SUFFIX for BTP ISINs
+    # Format symbol for Yahoo Finance: BTP ISINs are used as-is, stocks get TICKER_SUFFIX if missing
     yf_symbol = symbol
-    if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+    if not re.match(r'^IT[A-Z0-9]{10}$', symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
         yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
 
     start_dt = datetime.fromtimestamp(start_ms / 1000.0, tz=timezone.utc)
