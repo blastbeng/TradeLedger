@@ -1208,7 +1208,7 @@ Maximum symbols to trade: {max_symbols}
 
 You are trading spot only (no shorting). Only output SELL if you currently hold the asset.
 
-**Note on BTP Bonds:** If the symbol is a BTP bond (ISIN format like IT0001234567), adjust your strategy for lower volatility: use longer max hold times, smaller take-profit targets, and ensure stop-losses are wide enough to avoid being triggered by normal bond price fluctuations. **ATR and OHLCV data are NOT available for BTPs.** You MUST use `"stop_loss_method": "fixed"` and set a reasonable `stop_loss_pct` based on the bond's price volatility.
+**Note on BTP Bonds:** If the symbol is a BTP bond (ISIN format like IT0001234567), adjust your strategy for lower volatility: use longer max hold times, smaller take-profit targets, and ensure stop-losses are wide enough to avoid being triggered by normal bond price fluctuations. **ATR and OHLCV data are NOT available for BTPs.** You MUST use `"stop_loss_method": "fixed"` and set a reasonable `stop_loss_pct` based on the bond's price volatility. The `ticker` object includes `name`, `coupon` (annual coupon rate), and `maturity` (expiration date). Bond prices are quoted as a percentage of par value (e.g., a price of 101.68 means 101.68% of face value). Use the coupon and current price to assess the yield to maturity and decide whether the bond is a good buy.
 """
     # --- Fundamental Data ---
     if fundamentals:

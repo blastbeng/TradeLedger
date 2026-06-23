@@ -351,6 +351,9 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                     result[sym]["ask"] = b["last_price"]
                     result[sym]["change_24h"] = b["change_pct"]
                     result[sym]["percentage"] = b["change_pct"]
+                    result[sym]["name"] = b.get("name")
+                    result[sym]["coupon"] = b.get("coupon")
+                    result[sym]["maturity"] = b.get("maturity")
         except Exception as e:
             logger.warning(f"Failed to fetch BTP quotes: {e}")
 
