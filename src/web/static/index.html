@@ -899,7 +899,7 @@
                     let html = '';
                     for (const m of msgs) {
                         const time = new Date(m.timestamp * 1000).toLocaleTimeString();
-                        html += `<div style="border-bottom: 1px solid var(--border); padding: 8px 0;"><span style="color: var(--text-secondary); font-size: 0.8rem;">${time}</span><br>${m.message}</div>`;
+                        html += `<div style="border-bottom: 1px solid var(--border); padding: 8px 0; white-space: pre-wrap;"><span style="color: var(--text-secondary); font-size: 0.8rem;">${time}</span><br>${m.message}</div>`;
                     }
                     messagesDiv.innerHTML = html;
                 } else {
