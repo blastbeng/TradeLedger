@@ -354,30 +354,30 @@
                 <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 12px;">Log a trade you executed manually. This will update your positions and trade history.</p>
                 <form id="manual-trade-form" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; align-items:end;">
                     <div>
-                        <label for="mt-ticker" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Ticker (Stock, ETF, or BTP)</label>
-                        <input type="text" id="mt-ticker" required placeholder="e.g. AAPL, SPY, BTP" style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.9rem;">
+                        <label for="mt-ticker" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Ticker (Azione, ETF o BTP)</label>
+                        <input type="text" id="mt-ticker" required placeholder="es. AAPL, SPY, BTP" style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.9rem;">
                     </div>
                     <div>
-                        <label for="mt-side" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Side</label>
+                        <label for="mt-side" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Operazione</label>
                         <select id="mt-side" style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.9rem;">
                             <option value="buy">Buy</option>
                             <option value="sell">Sell</option>
                         </select>
                     </div>
                     <div>
-                        <label for="mt-quantity" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Quantity</label>
+                        <label for="mt-quantity" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Quantità</label>
                         <input type="number" id="mt-quantity" step="0.0001" min="0" required style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.9rem;">
                     </div>
                     <div>
-                        <label for="mt-money" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Money Spent (Fiat)</label>
+                        <label for="mt-money" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Denaro Speso (Fiat)</label>
                         <input type="number" id="mt-money" step="0.01" min="0" required style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.9rem;">
                     </div>
                     <div>
-                        <label for="mt-fee" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Commissions/Fees</label>
+                        <label for="mt-fee" style="display:block; color:var(--text-secondary); font-size:0.85rem; margin-bottom:4px;">Commissioni/Spese</label>
                         <input type="number" id="mt-fee" step="0.01" min="0" value="0" style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.9rem;">
                     </div>
                     <div>
-                        <button type="submit" style="padding:10px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.9rem; white-space:nowrap;">Log Trade</button>
+                        <button type="submit" style="padding:10px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.9rem; white-space:nowrap;">Registra Operazione</button>
                     </div>
                 </form>
                 <div id="manual-trade-result" style="margin-top:12px; font-size:0.85rem;"></div>
