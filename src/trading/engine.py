@@ -4457,6 +4457,7 @@ class TradingEngine:
                         fee_model="intesa",
                         trade_value=bt_trade_value,
                         is_btp=is_btp,
+                        cooldown_after_loss_seconds=bt_params.get("cooldown_after_loss_seconds"),
                     )
                     bt_summary = format_backtest_summary(backtest_stats)
                     logger.info(f"Backtest for {symbol}: {bt_summary}")

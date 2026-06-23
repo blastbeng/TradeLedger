@@ -44,6 +44,7 @@ def backtest_strategy(
     trade_value: Optional[float] = None,
     is_btp: bool = False,
     max_trades: int = 200,
+    cooldown_after_loss_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Backtest a long-only strategy on historical OHLCV candles.
@@ -280,7 +281,17 @@ def backtest_strategy(
             })
 
         # Move to the next candle after the exit
-        i = exit_index + 1
+        # Apply cooldown if the trade was a loss
+        is_loss = trades[-1]["pnl_pct"] < 0 if trades else False
+
+        if is_loss and cooldown_after_loss_seconds is not None and cooldown_after_loss_seconds > 0:
+            cooldown_end_ts = exit_ts + cooldown_after_loss_seconds * 1000
+            next_i = exit_index + 1
+            while next_i < len(candles) and candles[next_i][0] < cooldown_end_ts:
+                next_i += 1
+            i = next_i
+        else:
+            i = exit_index + 1
 
     if not trades:
         return _empty_result()
