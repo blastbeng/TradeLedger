@@ -10358,12 +10358,73 @@ class TradingEngine:
         )
         effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity)
 
+        # --- Build market snapshot for caching (identical to _process_symbol) ---
+        market_snapshot = {
+            "symbol": symbol,
+            "ticker": ticker,
+            "balance": balance,
+            "open_positions": open_positions,
+            "per_symbol_budget": per_symbol_budget,
+            "max_symbols": self.effective_max_symbols,
+            "performance": perf,
+            "ohlcv_data": ohlcv_data,
+            "assigned_timeframe": assigned_tf,
+            "atr": atr,
+            "atr_multi_tf": atr_multi_tf,
+            "rsi": rsi,
+            "macd": macd,
+            "macd_signal": macd_signal,
+            "macd_hist": macd_hist,
+            "bb_upper": bb_upper,
+            "bb_middle": bb_middle,
+            "bb_lower": bb_lower,
+            "ema_9": ema_9,
+            "ema_21": ema_21,
+            "stochastic_k": stochastic_k,
+            "stochastic_d": stochastic_d,
+            "adx": adx,
+            "plus_di": plus_di,
+            "minus_di": minus_di,
+            "obv": obv,
+            "mfi": mfi,
+            "cci": cci,
+            "williams_r": williams_r,
+            "ichimoku": ichimoku,
+            "donchian_channels": donchian_channels,
+            "drawdown_pct": perf.get("equity_curve", {}).get("drawdown_pct"),
+            "raw_candles": raw_candles,
+            "recent_trades": recent_trades_summary,
+            "historical_ohlcv": historical_ohlcv,
+            "min_order_amount": min_order_amount,
+            "min_order_cost": min_order_cost,
+            "all_symbols": self.current_symbols,
+            "past_trades": past_trades,
+            "aggregate_sentiment": aggregate_sentiment,
+            "cycle_spent": self._cycle_spent,
+            "remaining_balance": remaining,
+            "market_regime": market_regime,
+            "multi_tf_raw_candles": multi_tf_raw_candles,
+            "multi_tf_indicators": multi_tf_indicators,
+            "session_info": session_info,
+            "sentiment_trend": sentiment_trend_val,
+            "volume_trend": volume_trend_val,
+            "market_breadth": getattr(self, '_market_breadth', None),
+            "full_market_breadth": full_market_breadth,
+            "parabolic_sar": parabolic_sar,
+            "keltner_channels": keltner_channels,
+            "atr_percentile": atr_percentile,
+            "global_risk_multiplier": global_risk_mult,
+            "trading_paused": trading_paused,  # False for simulation
+        }
+        market_hash = compute_market_hash(market_snapshot)
+
         return {
             "ticker": ticker, "prompt": prompt, "atr": atr, "assigned_tf": assigned_tf,
             "tf_seconds": tf_seconds, "historical_ohlcv": historical_ohlcv,
             "raw_candles": raw_candles, "current_price": current_price,
             "base_balance": base_balance, "is_btp": is_btp,
             "model_type": strategy_model_type, "temperature": effective_temp,
+            "market_hash": market_hash,
         }
 
     async def simulate_backtest(self, symbol: str) -> Dict[str, Any]:
@@ -10374,6 +10435,7 @@ class TradingEngine:
         
         model_type = data.get("model_type", "mind")
         temperature = data.get("temperature", 0.2)
+        market_hash = data.get("market_hash")
 
         try:
             result = await asyncio.wait_for(
@@ -10382,6 +10444,7 @@ class TradingEngine:
                     compact_prompt(data["prompt"]),
                     COMPACTED_SYSTEM_PROMPT,
                     60,
+                    market_hash=market_hash,
                     model_type=model_type,
                     temperature=temperature,
                 ),
@@ -10449,6 +10512,7 @@ class TradingEngine:
         
         model_type = data.get("model_type", "mind")
         temperature = data.get("temperature", 0.2)
+        market_hash = data.get("market_hash")
 
         try:
             result = await asyncio.wait_for(
@@ -10457,6 +10521,7 @@ class TradingEngine:
                     compact_prompt(data["prompt"]),
                     COMPACTED_SYSTEM_PROMPT,
                     60,
+                    market_hash=market_hash,
                     model_type=model_type,
                     temperature=temperature,
                 ),
