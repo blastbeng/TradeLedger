@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 import pandas as pd
+import requests
 import yfinance as yf
 
 from src.config.settings import settings
@@ -39,7 +40,16 @@ def _discover_ftse_mib_tickers() -> List[str]:
     if scraping fails.
     """
     try:
-        tables = pd.read_html("https://en.wikipedia.org/wiki/FTSE_MIB")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; Bot/1.0)"
+        }
+        response = requests.get(
+            "https://en.wikipedia.org/wiki/FTSE_MIB",
+            headers=headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+        tables = pd.read_html(response.text)
     except Exception as e:
         logger.warning(f"Failed to scrape FTSE MIB table from Wikipedia: {e}")
         return []
