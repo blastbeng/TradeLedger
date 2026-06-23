@@ -418,6 +418,12 @@ def get_multi_timeframe_bars(
     """
     if not timeframes:
         return {}
+
+    # Format symbol for Yahoo Finance: append TICKER_SUFFIX for BTP ISINs
+    yf_symbol = symbol
+    if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+        yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
+
     result = {}
     for tf in timeframes:
         interval = TIMEFRAME_MAP.get(tf)
@@ -425,11 +431,15 @@ def get_multi_timeframe_bars(
             logger.warning(f"Unsupported timeframe: {tf}")
             continue
         try:
-            ticker = yf.Ticker(symbol)
+            ticker = yf.Ticker(yf_symbol)
             # yfinance intraday data is limited to 60 days
-            period = "60d" if interval in ("5m", "15m", "60m") else "1y"
+            # For daily and longer timeframes, use "max" to get all available history (medium/long-term)
+            period = "60d" if interval in ("5m", "15m", "60m") else "max"
             hist = ticker.history(period=period, interval=interval)
             if not hist.empty:
+                # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
+                ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
+                hist = hist[[col for col in ohlcv_cols if col in hist.columns]]
                 candles = []
                 for idx, row in hist.iterrows():
                     ts = int(idx.timestamp() * 1000)
@@ -455,12 +465,21 @@ def get_bars_range(
     if not interval:
         logger.warning(f"Unsupported timeframe: {timeframe}")
         return []
+
+    # Format symbol for Yahoo Finance: append TICKER_SUFFIX for BTP ISINs
+    yf_symbol = symbol
+    if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+        yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
+
     start_dt = datetime.fromtimestamp(start_ms / 1000.0, tz=timezone.utc)
     end_dt = datetime.now(timezone.utc)
     try:
-        ticker = yf.Ticker(symbol)
+        ticker = yf.Ticker(yf_symbol)
         hist = ticker.history(start=start_dt, end=end_dt, interval=interval)
         if not hist.empty:
+            # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
+            ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
+            hist = hist[[col for col in ohlcv_cols if col in hist.columns]]
             candles = []
             for idx, row in hist.iterrows():
                 ts = int(idx.timestamp() * 1000)
