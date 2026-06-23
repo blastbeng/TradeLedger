@@ -1859,9 +1859,8 @@ class TradingEngine:
         # Fetch tickers for a subset to keep prompt size manageable
         # Apply sentiment filter if configured
         if settings.SYMBOL_SELECTION_MIN_SENTIMENT > -1.0 and settings.NEWS_ENABLED:
-            # Pre-fetch sentiment for all available pairs (or a larger batch) to filter
-            # To avoid too many DB calls, we can fetch sentiment for the first N pairs
-            candidate_pairs = available_pairs[:settings.SYMBOL_SELECTION_CANDIDATE_LIMIT]  # look at a larger pool
+            # Pre-fetch sentiment for all available pairs to filter
+            candidate_pairs = available_pairs
             filtered_pairs = []
             for sym in candidate_pairs:
                 try:
@@ -1874,15 +1873,18 @@ class TradingEngine:
                         filtered_pairs.append(sym)
                 except Exception:
                     filtered_pairs.append(sym)  # include if error
-            sample_pairs = filtered_pairs[:settings.SYMBOL_SELECTION_CANDIDATE_LIMIT]
+            sample_pairs = filtered_pairs
         else:
-            sample_pairs = available_pairs[:settings.SYMBOL_SELECTION_MAX_SYMBOLS]
+            sample_pairs = available_pairs
 
-        # Ensure BTPs are always included in the candidate pool so they flow
+        # Ensure BTPs and ETFs are always included in the candidate pool so they flow
         # through volume sorting, OHLCV fetch, indicator computation, etc.
         for btp in btp_pairs:
             if btp not in sample_pairs:
                 sample_pairs.append(btp)
+        for etf in etf_pairs:
+            if etf not in sample_pairs:
+                sample_pairs.append(etf)
 
         # Remove fully excluded symbols from the candidate pool
         sample_pairs = [
@@ -1941,14 +1943,15 @@ class TradingEngine:
                     if t.get('last') is None:
                         t['last'] = yahoo.get('last')
 
-        # --- Limit candidate pool to top N by 24h volume (preserve BTPs and ETFs) ---
+        # --- Sort candidate pool by 24h volume (preserve BTPs and ETFs) ---
         def _volume(sym):
             t = tickers.get(sym, {})
             return t.get('quoteVolume', 0) or 0
         stock_sample_sorted = sorted([s for s in sample_pairs if s in stock_pairs and s not in etf_pairs], key=_volume, reverse=True)
         etf_sample_sorted = [s for s in sample_pairs if s in etf_pairs]
         btp_sample_sorted = [s for s in sample_pairs if s in btp_pairs]
-        sample_pairs = stock_sample_sorted[:settings.SYMBOL_SELECTION_TOP_VOLUME_LIMIT] + etf_sample_sorted + btp_sample_sorted
+        # Pass ALL discovered stocks, ETFs, and BTPs to the LLM
+        sample_pairs = stock_sample_sorted + etf_sample_sorted + btp_sample_sorted
 
         # Fetch news sentiment for all candidate stocks
         news_sentiment = {}
@@ -2301,11 +2304,10 @@ class TradingEngine:
             composite = 0.6 * trend + 0.4 * sentiment_score
             composite_scores[sym] = round(composite, 3)
 
-        # Build a shortlist for the LLM: top N by composite score,
+        # Build a shortlist for the LLM: all symbols sorted by composite score,
         # plus any currently held symbols and historically best symbols.
-        top_n = settings.LLM_STOCK_SELECTION_TOP_N
         sorted_by_composite = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
-        shortlist = sorted_by_composite[:top_n]
+        shortlist = sorted_by_composite
 
         # Always include currently held symbols (they must be managed)
         for entry in self.current_symbols:
@@ -2328,7 +2330,7 @@ class TradingEngine:
 
         # Always include ALL discovered ETFs for the LLM to consider
         for sym in etf_pairs:
-            if sym in sample_pairs and sym not in shortlist:
+            if sym not in shortlist:
                 shortlist.append(sym)
 
         # Always include all BTPs for the LLM to consider
