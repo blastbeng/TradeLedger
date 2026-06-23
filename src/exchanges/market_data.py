@@ -29,91 +29,37 @@ def _fetch_country(symbol: str) -> Optional[str]:
         return None
 
 
-def _discover_ftse_mib_tickers() -> List[str]:
-    """Scrape the FTSE MIB constituent list from Wikipedia.
+def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
+    """Scrape a Wikipedia constituent list from one or more URLs.
 
-    Returns a list of base symbols (suffix stripped). Returns an empty list
-    if scraping fails.
-    """
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        response = requests.get(
-            "https://en.wikipedia.org/wiki/FTSE_MIB",
-            headers=headers,
-            timeout=10,
-        )
-        response.raise_for_status()
-        tables = pd.read_html(response.text)
-    except Exception as e:
-        logger.warning(f"Failed to scrape FTSE MIB table from Wikipedia: {e}")
-        return []
-
-    for table in tables:
-        ticker_col = None
-        for col in table.columns:
-            col_str = str(col).lower()
-            if any(kw in col_str for kw in ("ticker", "symbol", "code", "isin", "ticker symbol")):
-                ticker_col = col
-                break
-        if ticker_col is None:
-            # Last resort: look for a column whose values look like tickers (uppercase, short)
-            for col in table.columns:
-                sample = table[col].dropna().astype(str).head(5).tolist()
-                if all(re.match(r'^[A-Z0-9\.]+$', s) for s in sample):
-                    ticker_col = col
-                    break
-        if ticker_col is not None:
-            tickers = table[ticker_col].dropna().astype(str).tolist()
-            # Clean tickers: remove any existing suffix (split by '.' and take first part)
-            base_symbols = []
-            for t in tickers:
-                t = t.strip().upper()
-                # Remove any exchange suffix (e.g., ".MI", ".L")
-                base = t.split(".")[0] if "." in t else t
-                # Keep only alphanumeric base symbols
-                if re.match(r"^[A-Z0-9]+$", base):
-                    base_symbols.append(base)
-            if base_symbols:
-                logger.info(f"Discovered {len(base_symbols)} FTSE MIB tickers from Wikipedia")
-                return base_symbols
-
-    logger.warning("No ticker column found in Wikipedia FTSE MIB tables.")
-    return []
-
-
-def _discover_ftse_all_share_tickers() -> List[str]:
-    """Scrape the FTSE Italia All-Share constituent list from Wikipedia.
-
-    Returns a list of base symbols (suffix stripped). Returns an empty list
-    if scraping fails.
+    Returns base symbols (suffix stripped). Tries each URL in order; returns
+    the first non‑empty result.
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    urls_to_try = [
-        "https://en.wikipedia.org/wiki/FTSE_Italia_All-Share",
-        "https://it.wikipedia.org/wiki/FTSE_Italia_All-Share",
-    ]
-    for url in urls_to_try:
+    for url in urls:
         try:
             response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             tables = pd.read_html(response.text)
         except Exception as e:
-            logger.debug(f"Failed to scrape FTSE Italia All-Share table from {url}: {e}")
+            logger.debug(f"Failed to scrape {url}: {e}")
             continue
 
         for table in tables:
+            # Flatten multi‑level column names
+            if isinstance(table.columns, pd.MultiIndex):
+                table.columns = [' '.join(col).strip() for col in table.columns.values]
+            # Try to find a ticker column
             ticker_col = None
             for col in table.columns:
                 col_str = str(col).lower()
-                if any(kw in col_str for kw in ("ticker", "symbol", "code", "isin", "ticker symbol")):
+                if any(kw in col_str for kw in ("ticker", "symbol", "code", "isin", "ticker symbol", "simbolo")):
                     ticker_col = col
                     break
             if ticker_col is None:
-                # Last resort: look for a column whose values look like tickers (uppercase, short)
+                # Last resort: look for a column whose values look like tickers
                 for col in table.columns:
                     sample = table[col].dropna().astype(str).head(5).tolist()
                     if all(re.match(r'^[A-Z0-9\.]+$', s) for s in sample):
@@ -128,10 +74,10 @@ def _discover_ftse_all_share_tickers() -> List[str]:
                     if re.match(r"^[A-Z0-9]+$", base):
                         base_symbols.append(base)
                 if base_symbols:
-                    logger.info(f"Discovered {len(base_symbols)} FTSE Italia All-Share tickers from Wikipedia")
+                    logger.info(f"Discovered {len(base_symbols)} {index_name} tickers from {url}")
                     return base_symbols
 
-    logger.warning("No ticker column found in Wikipedia FTSE Italia All-Share tables.")
+    logger.warning(f"No ticker column found in any Wikipedia page for {index_name}.")
     return []
 
 
@@ -222,6 +168,54 @@ def _discover_euronext_milan_tickers() -> List[str]:
     return base_symbols
 
 
+def _discover_euronext_milan_from_html() -> List[str]:
+    """Scrape the Euronext Milan equities list page for ticker symbols."""
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        url = "https://live.euronext.com/en/markets/milan/equities/list"
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        tables = pd.read_html(response.text)
+    except Exception as e:
+        logger.warning(f"Failed to scrape Euronext Milan HTML page: {e}")
+        return []
+
+    for table in tables:
+        # Flatten multi‑level columns
+        if isinstance(table.columns, pd.MultiIndex):
+            table.columns = [' '.join(col).strip() for col in table.columns.values]
+        ticker_col = None
+        for col in table.columns:
+            col_str = str(col).lower()
+            if any(kw in col_str for kw in ("ticker", "symbol", "code", "isin", "name")):
+                # Prefer shorter columns
+                if ticker_col is None or len(str(table[col].iloc[0])) < len(str(table[ticker_col].iloc[0])):
+                    ticker_col = col
+        if ticker_col is None:
+            # Fallback: any column with short uppercase strings
+            for col in table.columns:
+                sample = table[col].dropna().astype(str).head(5).tolist()
+                if all(re.match(r'^[A-Z0-9\.]+$', s) for s in sample):
+                    ticker_col = col
+                    break
+        if ticker_col is not None:
+            tickers = table[ticker_col].dropna().astype(str).tolist()
+            base_symbols = []
+            for t in tickers:
+                t = t.strip().upper()
+                base = t.split(".")[0] if "." in t else t
+                if re.match(r"^[A-Z0-9]+$", base):
+                    base_symbols.append(base)
+            if base_symbols:
+                logger.info(f"Discovered {len(base_symbols)} Milan tickers from Euronext HTML page")
+                return base_symbols
+
+    logger.warning("No ticker column found on Euronext Milan HTML page.")
+    return []
+
+
 def get_tradable_assets() -> List[str]:
     """Return a list of tradable Italian equity symbols, filtered by country.
 
@@ -231,10 +225,16 @@ def get_tradable_assets() -> List[str]:
     TARGET_COUNTRY. Results are cached in Redis for 24 hours.
     """
     # Discover tickers from Wikipedia (FTSE MIB constituents)
-    base_symbols = _discover_ftse_mib_tickers()
+    base_symbols = _discover_wikipedia_tickers(
+        ["https://en.wikipedia.org/wiki/FTSE_MIB", "https://it.wikipedia.org/wiki/FTSE_MIB"],
+        "FTSE MIB"
+    )
 
     # --- FTSE Italia All-Share constituents ---
-    all_share = _discover_ftse_all_share_tickers()
+    all_share = _discover_wikipedia_tickers(
+        ["https://en.wikipedia.org/wiki/FTSE_Italia_All-Share", "https://it.wikipedia.org/wiki/FTSE_Italia_All-Share"],
+        "FTSE Italia All-Share"
+    )
     if all_share:
         existing = set(base_symbols)
         for t in all_share:
@@ -255,6 +255,8 @@ def get_tradable_assets() -> List[str]:
     # --- Euronext Milan ISIN directory (official list) ---
     if settings.EURONEXT_TICKER_DISCOVERY_ENABLED:
         euronext_tickers = _discover_euronext_milan_tickers()
+        if not euronext_tickers:
+            euronext_tickers = _discover_euronext_milan_from_html()
         if euronext_tickers:
             existing = set(base_symbols)
             for t in euronext_tickers:
