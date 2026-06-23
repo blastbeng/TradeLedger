@@ -48,7 +48,7 @@ def get_cached_llm_response(
 
     # Build cache key (unchanged logic)
     if market_hash:
-        cache_key = f"llm:{model_type}:market:{market_hash}:t{int(temperature * 100) if temperature is not None else 'def'}"
+        cache_key = f"llm:{provider}:{model}:{model_type}:market:{market_hash}:t{int(temperature * 100) if temperature is not None else 'def'}"
     else:
         key_data = json.dumps(
             {"prompt": prompt, "system": system_prompt, "model_type": model_type,
