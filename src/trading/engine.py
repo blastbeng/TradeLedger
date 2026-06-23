@@ -4294,7 +4294,14 @@ class TradingEngine:
                     bt_sl_pct = (bt_atr_mult * atr) / current_price
                 else:
                     bt_sl_pct = bt_params.get("stop_loss_pct", 0.02)
-                bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
+                if "take_profit_atr_multiple" in bt_params and atr is not None and atr > 0 and current_price is not None and current_price > 0:
+                    bt_tp_atr_mult = bt_params.get("take_profit_atr_multiple")
+                    if bt_tp_atr_mult is not None:
+                        bt_tp_pct = (bt_tp_atr_mult * atr) / current_price
+                    else:
+                        bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
+                else:
+                    bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
                 bt_max_hold = bt_params.get("max_hold_time_seconds")
                 bt_trailing = bt_params.get("trailing_stop", False)
                 bt_trail_dist = bt_params.get("trailing_stop_distance_pct")
