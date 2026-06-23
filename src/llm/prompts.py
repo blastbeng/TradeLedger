@@ -374,14 +374,14 @@ def build_stock_selection_prompt(
     news_section = ""
     if settings.NEWS_ENABLED:
         news_lines = []
-        symbols_to_check = available_symbols[:50]
+        symbols_to_check = available_symbols
         for sym in symbols_to_check:
             articles = get_news_for_symbol(sym, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
             if articles:
                 formatted = _format_news_for_prompt(articles)
                 news_lines.append(f"**{sym}**\n{formatted}")
         if news_lines:
-            news_section = "Recent news for top stocks:\n\n" + "\n\n".join(news_lines)
+            news_section = "Recent news for all candidate stocks:\n\n" + "\n\n".join(news_lines)
 
     available_timeframes = [tf for tf in settings.OHLCV_TIMEFRAMES if tf in TIMEFRAME_MAP]
     prompt = f"""Current base currency: {base_currency}
