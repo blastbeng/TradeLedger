@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     @field_validator("RISK_PER_TRADE_PCT")
     @classmethod
     def validate_risk_per_trade_pct(cls, v: float) -> float:
-        if not (0.0 < v <= 0.1):
-            raise ValueError("RISK_PER_TRADE_PCT must be between 0.0 and 0.1")
+        if not (0.0 < v <= 1.0):
+            raise ValueError("RISK_PER_TRADE_PCT must be between 0.0 and 1.0")
         return v
 
     # Risk management check interval (seconds) – stop-loss/take-profit checks
