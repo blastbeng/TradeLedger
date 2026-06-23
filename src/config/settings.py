@@ -358,7 +358,6 @@ class Settings(BaseSettings):
     NEWS_MAX_ARTICLES_PER_SYMBOL: int = 5
     NEWS_CACHE_TTL_SECONDS: int = 1800       # 30 minutes
     NEWS_HTTP_TIMEOUT_SECONDS: float = 30.0   # timeout for each news source HTTP request
-    NEWS_INITIAL_FETCH_TIMEOUT_SECONDS: float = 60.0   # max seconds for initial news fetch on startup
     NEWS_RETENTION_SECONDS: int = 86400   # delete articles older than 24 hours
 
     # News-driven symbol discovery
@@ -395,7 +394,6 @@ class Settings(BaseSettings):
     GOOGLE_NEWS_MAX_ARTICLES: int = 5
 
     # StockTwits API
-    STOCKTWITS_API_KEY: Optional[str] = None
     STOCKTWITS_MAX_POSTS: int = 5
 
 
