@@ -247,6 +247,11 @@ Key principles:
   - **Tobin Tax (Italian State Tax):** 0.12% of trade value, applied ONLY on BUY orders.
   - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately 0.60% of the trade value PLUS €5.00 in fixed fees (for larger trades > €1,500). For smaller trades, the €3.50 minimum commission applies on both sides, making the total fixed cost €12.00.
   - **CRITICAL:** You MUST ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 trade, total fees are ~€12.12 (1.21%), so `take_profit_pct` must be > 1.22%. For a €10,000 trade, total fees are ~€65 (0.65%), so `take_profit_pct` must be > 0.66%. Never set a take-profit target lower than the break-even cost.
+- **BTP Bond Transaction Costs:** BTP bonds have different fees:
+  - **Bank Commission:** 0.24% of trade value, with a minimum of €3.50. No fixed execution fee.
+  - **Tobin Tax:** Exempt (sovereign bonds are not subject to Tobin tax).
+  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately 0.48% of the trade value (for larger trades). For smaller trades, the €3.50 minimum applies on both sides, making the total fixed cost €7.00.
+  - **CRITICAL:** For BTPs, ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 BTP trade, total fees are ~€7.00 (0.70%), so `take_profit_pct` must be > 0.71%. For a €10,000 BTP trade, total fees are ~€48 (0.48%), so `take_profit_pct` must be > 0.49%.
 - **Required parameter for every BUY/SELL:**
   - `"take_profit_pct"`: a decimal between 0.005 and 2.0 (e.g., 0.05 for 5%).
 
@@ -919,23 +924,48 @@ Maximum symbols to trade: {max_symbols}
     if atr_multi_tf:
         prompt += f"ATR across timeframes: {json.dumps(atr_multi_tf)}\n"
     # --- Transaction cost break-even calculation ---
-    # Intesa Sanpaolo Investo fees: max(3.50, V*0.0024) + 2.50 + V*0.0012 (buy)
-    # max(3.50, V*0.0024) + 2.50 (sell)
+    # Detect BTP bonds (ISIN format) to apply the correct fee structure.
+    _is_btp = bool(re.match(r'^IT[A-Z0-9]{10}', symbol.split("/")[0]))
     trade_value = min(per_symbol_budget, remaining_balance if remaining_balance is not None else per_symbol_budget)
     if trade_value > 0:
-        buy_fee = max(3.50, trade_value * 0.0024) + 2.50 + (trade_value * 0.0012)
-        sell_fee = max(3.50, trade_value * 0.0024) + 2.50
-        total_fees = buy_fee + sell_fee
-        break_even_pct = total_fees / trade_value
-        prompt += (
-            f"\n**Transaction Cost Break-Even (Intesa Sanpaolo Investo):**\n"
-            f"For a trade size of ~{trade_value:.2f} {quote_currency}:\n"
-            f"  Estimated Buy Fee: {buy_fee:.2f} {quote_currency}\n"
-            f"  Estimated Sell Fee: {sell_fee:.2f} {quote_currency}\n"
-            f"  Total Round-Trip Fees: {total_fees:.2f} {quote_currency} ({break_even_pct*100:.2f}% of trade value)\n"
-            f"**Your `take_profit_pct` MUST be strictly greater than {break_even_pct*100:.2f}% to be profitable.**\n"
-            f"Set your `take_profit_pct` comfortably above this break-even percentage.\n"
-        )
+        if _is_btp:
+            # BTP fees: BTP_FEE_PERC with BTP_MIN_FEE, no Tobin tax, no fixed execution fee
+            btp_fee_perc = settings.BTP_FEE_PERC
+            btp_min_fee = settings.BTP_MIN_FEE
+            if settings.BTP_IS_PRIMARY_ISSUANCE:
+                buy_fee = 0.0
+                sell_fee = 0.0
+            else:
+                buy_fee = max(btp_min_fee, trade_value * btp_fee_perc)
+                sell_fee = max(btp_min_fee, trade_value * btp_fee_perc)
+            total_fees = buy_fee + sell_fee
+            break_even_pct = total_fees / trade_value
+            prompt += (
+                f"\n**Transaction Cost Break-Even (BTP Bond – Intesa Sanpaolo Investo):**\n"
+                f"For a trade size of ~{trade_value:.2f} {quote_currency}:\n"
+                f"  Estimated Buy Fee: {buy_fee:.2f} {quote_currency} (no Tobin tax)\n"
+                f"  Estimated Sell Fee: {sell_fee:.2f} {quote_currency}\n"
+                f"  Total Round-Trip Fees: {total_fees:.2f} {quote_currency} ({break_even_pct*100:.2f}% of trade value)\n"
+                f"**Your `take_profit_pct` MUST be strictly greater than {break_even_pct*100:.2f}% to be profitable.**\n"
+                f"BTP bonds have lower fees than stocks (no Tobin tax, no fixed execution fee).\n"
+                f"Set your `take_profit_pct` comfortably above this break-even percentage.\n"
+            )
+        else:
+            # Standard stock/ETF fees: max(3.50, V*0.0024) + 2.50 + V*0.0012 (buy)
+            # max(3.50, V*0.0024) + 2.50 (sell)
+            buy_fee = max(3.50, trade_value * 0.0024) + 2.50 + (trade_value * 0.0012)
+            sell_fee = max(3.50, trade_value * 0.0024) + 2.50
+            total_fees = buy_fee + sell_fee
+            break_even_pct = total_fees / trade_value
+            prompt += (
+                f"\n**Transaction Cost Break-Even (Intesa Sanpaolo Investo):**\n"
+                f"For a trade size of ~{trade_value:.2f} {quote_currency}:\n"
+                f"  Estimated Buy Fee: {buy_fee:.2f} {quote_currency}\n"
+                f"  Estimated Sell Fee: {sell_fee:.2f} {quote_currency}\n"
+                f"  Total Round-Trip Fees: {total_fees:.2f} {quote_currency} ({break_even_pct*100:.2f}% of trade value)\n"
+                f"**Your `take_profit_pct` MUST be strictly greater than {break_even_pct*100:.2f}% to be profitable.**\n"
+                f"Set your `take_profit_pct` comfortably above this break-even percentage.\n"
+            )
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)
