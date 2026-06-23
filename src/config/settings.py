@@ -414,6 +414,11 @@ class Settings(BaseSettings):
         "https://www.borsaitaliana.it/borsa/notizie/rss.html",
         "https://www.milanofinanza.it/rss",
         "https://www.ilsole24ore.com/rss/finanza.xml",
+        "https://it.investing.com/webmaster-tools/rss",
+        "https://news.teleborsa.it/NewsFeed.ashx",
+        "https://news.teleborsa.it/NewsFeed.ashx?channel=energia",
+        "https://news.teleborsa.it/NewsFeed.ashx?channel=banche",
+        "https://www.ilsole24ore.com/rss",
     ]
 
     # YouTube Data API v3
@@ -449,6 +454,9 @@ class Settings(BaseSettings):
     BTP_FEE_PERC: float = 0.0024
     BTP_MIN_FEE: float = 3.50
     BTP_IS_PRIMARY_ISSUANCE: bool = False
+
+    # Banca d'Italia BCE comunicati scraping for BTP news
+    BANCA_D_ITALIA_BTP_NEWS_ENABLED: bool = False
 
     # Notification log control
     NOTIFICATION_LOG_ENABLED: bool = True

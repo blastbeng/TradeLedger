@@ -7,6 +7,7 @@ import httpx
 import json
 import time
 import feedparser
+from bs4 import BeautifulSoup
 from urllib.parse import quote
 
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -154,10 +155,24 @@ def _analyze_sentiment(text: str) -> Dict[str, Any]:
     return {"label": label, "compound": round(compound, 4)}
 
 
-def _is_relevant(symbol: str, title: str, summary: str) -> bool:
+def _is_relevant(symbol: str, title: str, summary: str, name: Optional[str] = None) -> bool:
     """Return True if the article is likely relevant to the trading symbol."""
     text = f"{title} {summary}".lower()
     sym_lower = symbol.split("/")[0].lower()
+
+    # Check for BTP ISIN or name
+    is_btp = sym_lower.startswith("it") and len(sym_lower) == 12
+    if is_btp or (name and "btp" in name.lower()):
+        if sym_lower in text:
+            return True
+        if name:
+            name_lower = name.lower()
+            if name_lower in text:
+                return True
+            if " " in name_lower:
+                if name_lower.split()[0] in text:
+                    return True
+        return False
 
     # If searching by company name or BTP name (contains a space),
     # check if the first word is in the text.
@@ -242,32 +257,37 @@ def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List[Dict[
 
     articles: List[Dict[str, str]] = []
 
+    is_btp = bool(re.match(r'^IT[A-Z0-9]{10}$', base_symbol))
+
+    if is_btp:
+        articles.extend(_fetch_banca_d_italia_btp_news(base_symbol, name))
+
     enabled = _get_enabled_sources()
     logger.debug(f"Enabled news sources for {symbol}: {enabled}")
     for source in enabled:
         for term in search_terms:
             source_start = time.time()
             if source == "newsapi":
-                articles.extend(_fetch_newsapi(term))
+                articles.extend(_fetch_newsapi(term, name=name))
             elif source == "twitter":
                 if term == base_symbol:
-                    articles.extend(_fetch_twitter(term, use_cashtag=True))
+                    articles.extend(_fetch_twitter(term, use_cashtag=True, name=name))
                 else:
-                    articles.extend(_fetch_twitter(term, use_cashtag=False))
+                    articles.extend(_fetch_twitter(term, use_cashtag=False, name=name))
             elif source == "reddit":
-                articles.extend(_fetch_reddit(term))
+                articles.extend(_fetch_reddit(term, name=name))
             elif source == "facebook":
-                articles.extend(_fetch_facebook(term))
+                articles.extend(_fetch_facebook(term, name=name))
             elif source == "youtube":
-                articles.extend(_fetch_youtube(term))
+                articles.extend(_fetch_youtube(term, name=name))
             elif source == "googlenews":
-                articles.extend(_fetch_googlenews(term))
+                articles.extend(_fetch_googlenews(term, name=name))
             elif source == "stocktwits":
                 # StockTwits only supports ticker symbols, not company names
                 if term == base_symbol:
-                    articles.extend(_fetch_stocktwits(term))
+                    articles.extend(_fetch_stocktwits(term, name=name))
             elif source == "rss":
-                articles.extend(_fetch_rss(term))
+                articles.extend(_fetch_rss(term, name=name))
             source_time = time.time() - source_start
             if source_time > 2.0:
                 logger.debug(f"Slow news source '{source}' for {term}: {source_time:.2f}s")
@@ -408,7 +428,7 @@ def _source_fingerprint() -> str:
 # NewsAPI.org
 # ---------------------------------------------------------------------------
 
-def _fetch_newsapi(symbol: str) -> List[Dict[str, str]]:
+def _fetch_newsapi(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
     if not settings.NEWS_API_KEY:
         return []
     try:
@@ -448,7 +468,7 @@ def _fetch_newsapi(symbol: str) -> List[Dict[str, str]]:
             description = art.get("description", "") or ""
             text = f"{title} {description}"
             sentiment = _analyze_sentiment(text)
-            if not _is_relevant(symbol, title, description):
+            if not _is_relevant(symbol, title, description, name=name):
                 continue
             articles.append({
                 "title": title,
@@ -469,7 +489,7 @@ def _fetch_newsapi(symbol: str) -> List[Dict[str, str]]:
 # Twitter (X) via API v2
 # ---------------------------------------------------------------------------
 
-def _fetch_twitter(symbol: str, use_cashtag: bool = True) -> List[Dict[str, str]]:
+def _fetch_twitter(symbol: str, use_cashtag: bool = True, name: Optional[str] = None) -> List[Dict[str, str]]:
     if not settings.TWITTER_BEARER_TOKEN:
         return []
     try:
@@ -495,7 +515,7 @@ def _fetch_twitter(symbol: str, use_cashtag: bool = True) -> List[Dict[str, str]
         if tweets.data:
             for tweet in tweets.data:
                 sentiment = _analyze_sentiment(tweet.text)
-                if not _is_relevant(symbol, tweet.text[:100], tweet.text):
+                if not _is_relevant(symbol, tweet.text[:100], tweet.text, name=name):
                     continue
                 articles.append({
                     "title": tweet.text[:100],
@@ -516,7 +536,7 @@ def _fetch_twitter(symbol: str, use_cashtag: bool = True) -> List[Dict[str, str]
 # Reddit
 # ---------------------------------------------------------------------------
 
-def _fetch_reddit(symbol: str) -> List[Dict[str, str]]:
+def _fetch_reddit(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
     if not settings.REDDIT_CLIENT_ID or not settings.REDDIT_CLIENT_SECRET:
         return []
     try:
@@ -544,7 +564,7 @@ def _fetch_reddit(symbol: str) -> List[Dict[str, str]]:
             text = f"{sub.title} {sub.selftext[:300] if sub.selftext else ''}"
             sentiment = _analyze_sentiment(text)
             reddit_summary = sub.selftext[:300] if sub.selftext else sub.title
-            if not _is_relevant(symbol, sub.title, reddit_summary):
+            if not _is_relevant(symbol, sub.title, reddit_summary, name=name):
                 continue
             articles.append({
                 "title": sub.title,
@@ -565,7 +585,7 @@ def _fetch_reddit(symbol: str) -> List[Dict[str, str]]:
 # Facebook (Graph API)
 # ---------------------------------------------------------------------------
 
-def _fetch_facebook(symbol: str) -> List[Dict[str, str]]:
+def _fetch_facebook(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
     if not settings.FACEBOOK_PAGE_ACCESS_TOKEN or not settings.FACEBOOK_PAGE_ID:
         return []
     try:
@@ -614,7 +634,7 @@ def _fetch_facebook(symbol: str) -> List[Dict[str, str]]:
 # YouTube Data API v3
 # ---------------------------------------------------------------------------
 
-def _fetch_youtube(symbol: str) -> List[Dict[str, str]]:
+def _fetch_youtube(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
     if not settings.YOUTUBE_API_KEY:
         return []
     try:
@@ -640,7 +660,7 @@ def _fetch_youtube(symbol: str) -> List[Dict[str, str]]:
             description = snippet.get("description", "")
             text = f"{title} {description}"
             sentiment = _analyze_sentiment(text)
-            if not _is_relevant(symbol, title, description[:300]):
+            if not _is_relevant(symbol, title, description[:300], name=name):
                 continue
             articles.append({
                 "title": title,
@@ -663,7 +683,7 @@ def _fetch_youtube(symbol: str) -> List[Dict[str, str]]:
 # Google News RSS
 # ---------------------------------------------------------------------------
 
-def _fetch_googlenews(symbol: str) -> List[Dict[str, str]]:
+def _fetch_googlenews(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
     """Fetch news from Google News RSS feed."""
     try:
         _get_rate_limiter().wait("googlenews")
@@ -678,7 +698,7 @@ def _fetch_googlenews(symbol: str) -> List[Dict[str, str]]:
             summary = entry.get("summary", "") or entry.get("description", "")
             text = f"{title} {summary}"
             sentiment = _analyze_sentiment(text)
-            if not _is_relevant(symbol, title, summary[:300]):
+            if not _is_relevant(symbol, title, summary[:300], name=name):
                 continue
             articles.append({
                 "title": title,
@@ -699,7 +719,7 @@ def _fetch_googlenews(symbol: str) -> List[Dict[str, str]]:
 # StockTwits API
 # ---------------------------------------------------------------------------
 
-def _fetch_stocktwits(symbol: str) -> List[Dict[str, str]]:
+def _fetch_stocktwits(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
     """Fetch recent twits from StockTwits public API (no key required)."""
     try:
         _get_rate_limiter().wait("stocktwits")
@@ -753,7 +773,7 @@ def _fetch_stocktwits(symbol: str) -> List[Dict[str, str]]:
                     label = sentiment["label"]
                     compound = sentiment["compound"]
 
-                if not _is_relevant(symbol, title, body[:300]):
+                if not _is_relevant(symbol, title, body[:300], name=name):
                     continue
 
                 articles.append({
@@ -783,7 +803,7 @@ def _fetch_stocktwits(symbol: str) -> List[Dict[str, str]]:
 # RSS Feeds
 # ---------------------------------------------------------------------------
 
-def _fetch_rss(symbol: str) -> List[Dict[str, str]]:
+def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
     """Fetch news from configured RSS feeds, filtering for symbol mentions."""
     _cleanup_rss_cache()
     articles = []
@@ -835,16 +855,28 @@ def _fetch_rss(symbol: str) -> List[Dict[str, str]]:
                 summary = entry.get("summary", "") or entry.get("description", "")
                 combined = f"{title} {summary}".lower()
                 sym_lower = symbol.split("/")[0].lower()
+                name_lower = name.lower() if name else None
+
+                found = False
                 if " " in sym_lower:
-                    # For company names, check if the first word is in the text
-                    if sym_lower.split()[0] not in combined:
-                        continue
+                    if sym_lower.split()[0] in combined:
+                        found = True
                 else:
-                    if sym_lower not in combined:
-                        continue
+                    if sym_lower in combined:
+                        found = True
+
+                if not found and name_lower:
+                    if name_lower in combined:
+                        found = True
+                    elif " " in name_lower:
+                        if name_lower.split()[0] in combined:
+                            found = True
+
+                if not found:
+                    continue
                 text = f"{title} {summary}"
                 sentiment = _analyze_sentiment(text)
-                if not _is_relevant(symbol, title, summary[:300]):
+                if not _is_relevant(symbol, title, summary[:300], name=name):
                     continue
                 articles.append({
                     "title": title,
@@ -864,6 +896,70 @@ def _fetch_rss(symbol: str) -> List[Dict[str, str]]:
         except Exception as e:
             logger.warning(f"RSS fetch failed for {feed_url}: {e}")
     logger.debug(f"RSS total articles for {symbol}: {len(articles)}")
+    return articles
+
+
+def _fetch_banca_d_italia_btp_news(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
+    """Scrape Banca d'Italia BCE comunicati for BTP news."""
+    if not settings.BANCA_D_ITALIA_BTP_NEWS_ENABLED:
+        return []
+
+    articles = []
+    sym_lower = symbol.split("/")[0].lower()
+    name_lower = name.lower() if name else None
+
+    base_url = "https://www.bancaditalia.it/media/bce-comunicati/index.html"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; TradingBot/1.0; +https://github.com/your-repo)"
+    }
+
+    for page in range(1, 11):
+        url = f"{base_url}?page={page}"
+        try:
+            resp = httpx.get(url, headers=headers, timeout=15.0, follow_redirects=True)
+            if resp.status_code != 200:
+                break
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            items = soup.find_all("a", href=True)
+            found_items = False
+            for a in items:
+                href = a.get("href", "")
+                if "/media/bce-comunicati/documenti/" in href:
+                    title = a.get_text(strip=True)
+                    if not title:
+                        continue
+                    found_items = True
+
+                    title_lower = title.lower()
+                    if sym_lower in title_lower or (name_lower and name_lower in title_lower) or (name_lower and " " in name_lower and name_lower.split()[0] in title_lower):
+                        date_str = ""
+                        parent = a.find_parent("li") or a.find_parent("div")
+                        if parent:
+                            date_div = parent.find("div", class_=re.compile(r"date|data", re.I))
+                            if date_div:
+                                date_str = date_div.get_text(strip=True)
+
+                        full_url = href
+                        if not full_url.startswith("http"):
+                            full_url = "https://www.bancaditalia.it" + full_url
+
+                        articles.append({
+                            "title": title,
+                            "source": "Banca d'Italia",
+                            "url": full_url,
+                            "published_at": date_str,
+                            "summary": title,
+                            "sentiment": _analyze_sentiment(title),
+                        })
+            if not found_items:
+                break
+        except Exception as e:
+            logger.warning(f"Banca d'Italia scrape failed for page {page}: {e}")
+            break
+
+        time.sleep(0.5)
+
     return articles
 
 
