@@ -4302,6 +4302,17 @@ class TradingEngine:
 
                 bt_candles = historical_ohlcv or raw_candles
                 backtest_stats = None
+                # Compute accurate fee rate based on trade size
+                bt_trade_value = per_symbol_budget  # approximate trade size
+                if bt_trade_value > 0:
+                    from src.exchanges.fees import calculate_transaction_costs
+                    buy_costs = calculate_transaction_costs("BUY", 100.0, bt_trade_value / 100.0, symbol=symbol)
+                    sell_costs = calculate_transaction_costs("SELL", 100.0, bt_trade_value / 100.0, symbol=symbol)
+                    total_fee_pct = (buy_costs["total_costs"] + sell_costs["total_costs"]) / bt_trade_value
+                    bt_fee_rate = total_fee_pct / 2  # per-side rate
+                else:
+                    bt_fee_rate = 0.006
+
                 if bt_candles and len(bt_candles) >= 10:
                     backtest_stats = backtest_strategy(
                         candles=bt_candles,
@@ -4311,7 +4322,7 @@ class TradingEngine:
                         trailing_stop=bt_trailing,
                         trailing_stop_distance_pct=bt_trail_dist,
                         trailing_stop_activation_pct=bt_trail_act,
-                        fee_rate=0.006,
+                        fee_rate=bt_fee_rate,
                     )
                     bt_summary = format_backtest_summary(backtest_stats)
                     logger.info(f"Backtest for {symbol}: {bt_summary}")
@@ -4331,6 +4342,13 @@ class TradingEngine:
                         base_currency=self.base_currency,
                         trading_paused=trading_paused,
                     )
+                    # Append position info if exists
+                    if symbol in self.positions:
+                        pos = self.positions[symbol]
+                        step2_prompt += (
+                            f"\n**Existing Position:** You already hold {pos['amount']:.6f} "
+                            f"at entry {pos['price']:.4f}. A BUY will ADD to this position (scale in).\n"
+                        )
 
                     # Call LLM for Step 2
                     try:
@@ -4351,12 +4369,43 @@ class TradingEngine:
                         logger.info(f"LLM Step 2 call completed for {symbol} (provider={llm_provider}, model={llm_model})")
                         
                         # Parse Step 2 response
-                        final_strategy = create_strategy_from_llm(step2_response)
-                        signal = final_strategy.generate_signal({})
-                        signal.model_type = strategy_model_type
-                        signal.llm_provider = llm_provider
-                        signal.llm_model = llm_model
-                        signal.backtest_summary = bt_summary
+                        try:
+                            final_strategy = create_strategy_from_llm(step2_response)
+                        except ValueError:
+                            # Retry with correction prompt
+                            correction = (
+                                "Your previous response was not valid JSON. "
+                                "Output ONLY a single JSON object. "
+                                "Here is the request:\n\n" + step2_prompt
+                            )
+                            try:
+                                retry_result = await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        get_cached_llm_response,
+                                        compact_prompt(correction),
+                                        COMPACTED_SYSTEM_PROMPT, 30,
+                                        model_type="actuator",
+                                        temperature=effective_temp,
+                                    ),
+                                    timeout=settings.LLM_TIMEOUT
+                                )
+                                final_strategy = create_strategy_from_llm(retry_result["response"])
+                                step2_response = retry_result["response"]
+                                llm_provider = retry_result["provider"]
+                                llm_model = retry_result["model"]
+                            except Exception:
+                                logger.error(f"Step 2 JSON parse retry failed for {symbol}. Using preliminary decision.")
+                                final_strategy = None
+
+                        if final_strategy is not None:
+                            signal = final_strategy.generate_signal({})
+                            signal.model_type = strategy_model_type
+                            signal.llm_provider = llm_provider
+                            signal.llm_model = llm_model
+                            signal.backtest_summary = bt_summary
+                        else:
+                            signal = preliminary_signal
+                            signal.backtest_summary = bt_summary
                         # Carry over execution-critical fields from Step 1 if not provided in Step 2
                         if signal.action == "BUY":
                             if signal.entry_condition is None and preliminary_signal.entry_condition is not None:
@@ -5925,6 +5974,8 @@ class TradingEngine:
                 msg = f"{emoji} SIGNAL {display_symbol}: {signal.action} (confidence: {signal.confidence:.2f})"
                 if signal.reasoning:
                     msg += f" – {signal.reasoning[:200]}"
+                if hasattr(signal, 'backtest_summary') and signal.backtest_summary:
+                    msg += f"\n📈 Backtest: {signal.backtest_summary}"
                 await self.notifier.send_notification(
                     msg,
                     summary={
@@ -5933,6 +5984,7 @@ class TradingEngine:
                         "confidence": signal.confidence,
                         "reason": (signal.reasoning or "")[:200],
                         "strategy_type": signal.strategy_type,
+                        "backtest": getattr(signal, 'backtest_summary', None),
                     }
                 )
             return
