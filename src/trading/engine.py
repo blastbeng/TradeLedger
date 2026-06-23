@@ -880,6 +880,18 @@ class TradingEngine:
         Uses yfinance to fetch the name.
         """
         base = symbol.split("/")[0] if "/" in symbol else symbol
+
+        if re.match(r'^IT[A-Z0-9]{10}$', base):
+            # It's a BTP bond, try to get the name from the BTP cache
+            try:
+                btp_bonds = await asyncio.to_thread(discover_btp_bonds)
+                for b in btp_bonds:
+                    if b["isin"] == base:
+                        return b["name"]
+            except Exception:
+                pass
+            return base
+
         cache_key = f"stock_name:{base}"
         try:
             cached = await asyncio.to_thread(self.redis.get, cache_key)

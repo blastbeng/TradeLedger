@@ -276,14 +276,33 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         return {}
 
     result = {}
+    btp_symbols = [s for s in symbols if re.match(r'^IT[A-Z0-9]{10}$', s)]
+    stock_symbols = [s for s in symbols if s not in btp_symbols]
+
     # Initialize result with None for all symbols
     for sym in symbols:
         result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
 
+    # Fetch BTP quotes from Borsa Italiana cache
+    if btp_symbols:
+        try:
+            btp_bonds = discover_btp_bonds()
+            btp_map = {b["isin"]: b for b in btp_bonds}
+            for sym in btp_symbols:
+                if sym in btp_map:
+                    b = btp_map[sym]
+                    result[sym]["last"] = b["last_price"]
+                    result[sym]["bid"] = b["last_price"]
+                    result[sym]["ask"] = b["last_price"]
+                    result[sym]["change_24h"] = b["change_pct"]
+                    result[sym]["percentage"] = b["change_pct"]
+        except Exception as e:
+            logger.warning(f"Failed to fetch BTP quotes: {e}")
+
     # Batch in chunks of 10 to avoid yfinance rate limits and timeouts
     chunk_size = 10
-    for i in range(0, len(symbols), chunk_size):
-        chunk = symbols[i:i+chunk_size]
+    for i in range(0, len(stock_symbols), chunk_size):
+        chunk = stock_symbols[i:i+chunk_size]
         try:
             # Fetch intraday data for latest price and volume
             intraday = yf.download(chunk, period="1d", interval="5m", progress=False, group_by='column')
@@ -397,11 +416,22 @@ def get_bars_range(
 
 def discover_btp_bonds() -> List[Dict[str, Any]]:
     """Discover and parse BTP bonds from Borsa Italiana."""
+    redis_client = get_redis_client()
+    cache_key = "btp_bonds_list"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            import json
+            return json.loads(cached)
+    except Exception:
+        pass
+
     url = settings.BORSA_ITALIANA_BTP_URL
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     bonds = []
+    import json
 
     for page in range(1, 11):
         page_url = f"{url}?&page={page}"
@@ -447,5 +477,10 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Failed to fetch BTP page {page}: {e}")
             break
+
+    try:
+        redis_client.setex(cache_key, 300, json.dumps(bonds))  # Cache for 5 minutes
+    except Exception as e:
+        logger.warning(f"Failed to cache BTP bonds: {e}")
 
     return bonds
