@@ -143,6 +143,19 @@ async def news():
         result.append({"symbol": symbol, "display_symbol": display, "summary": summary})
     return result
 
+@app.get("/api/messages")
+async def messages():
+    redis = get_redis_client()
+    raw_messages = await asyncio.to_thread(redis.lrange, "web:messages", 0, -1)
+    messages = []
+    for raw in raw_messages:
+        try:
+            msg = json.loads(raw)
+            messages.append(msg)
+        except Exception:
+            pass
+    return messages
+
 @app.get("/api/history")
 async def history(limit: int = 50):
     engine = get_engine()

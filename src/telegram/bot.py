@@ -901,6 +901,16 @@ class TelegramBot:
                     disable_notification=disable_notification,
                 )
                 logger.debug(f"Notification sent successfully (silent={disable_notification}).")
+                # Store message for web interface
+                try:
+                    msg_data = json.dumps({
+                        "timestamp": time.time(),
+                        "message": message
+                    })
+                    await asyncio.to_thread(self.redis.lpush, "web:messages", msg_data)
+                    await asyncio.to_thread(self.redis.ltrim, "web:messages", 0, 99)
+                except Exception as e:
+                    logger.warning(f"Failed to store message for web interface: {e}")
             except Exception as e:
                 logger.error(f"Failed to send Telegram notification: {e}", exc_info=True)
         else:
