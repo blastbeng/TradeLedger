@@ -330,7 +330,7 @@ def build_stock_selection_prompt(
     per_symbol_budget: float,
     market_limits: Dict[str, Dict[str, Any]],
     performance: Optional[Dict[str, Any]] = None,
-    ohlcv_data: Optional[Dict[str, Dict[str, List]]] = None,
+    ohlcv_summary: Optional[Dict[str, Dict[str, Any]]] = None,
     market_trend: Optional[Dict[str, Any]] = None,
     symbol_indicators: Optional[Dict[str, Dict[str, Any]]] = None,
     daily_pnl: Optional[float] = None,
@@ -369,30 +369,6 @@ def build_stock_selection_prompt(
                 agg = get_aggregate_sentiment_from_db(symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
                 if agg:
                     ticker_summary[symbol]["sentiment"] = agg
-
-    # Build OHLCV summary if provided
-    ohlcv_summary = {}
-    if ohlcv_data:
-        for symbol in available_symbols:
-            if symbol in ohlcv_data:
-                tf_data = ohlcv_data[symbol]
-                summary = {}
-                for tf, candles in tf_data.items():
-                    if not candles:
-                        continue
-                    open_price = candles[0][1]
-                    close_price = candles[-1][4]
-                    high = max(c[2] for c in candles)
-                    low = min(c[3] for c in candles)
-                    volume = sum(c[5] for c in candles)
-                    change_pct = ((close_price - open_price) / open_price) * 100 if open_price else 0
-                    summary[tf] = {
-                        "change_pct": round(change_pct, 2),
-                        "high": high,
-                        "low": low,
-                        "volume": volume,
-                    }
-                ohlcv_summary[symbol] = summary
 
     # --- News section ---
     news_section = ""
