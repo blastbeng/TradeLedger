@@ -324,6 +324,16 @@
 
     <div class="container">
         <div class="dashboard">
+            <div class="card col-3">
+                <h2>📈 Tracked Symbols</h2>
+                <div id="symbols">-</div>
+            </div>
+
+            <div class="card col-3">
+                <h2>💰 Balances</h2>
+                <div id="balances">-</div>
+            </div>
+
             <div class="card col-6" id="manual-trade-card">
                 <h2>📝 Manual Trade Entry</h2>
                 <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 12px;">Log a trade you executed manually. This will update your positions and trade history.</p>
@@ -358,21 +368,6 @@
                 <div id="manual-trade-result" style="margin-top:12px; font-size:0.85rem;"></div>
             </div>
 
-            <div class="card col-6">
-                <h2>📨 Messages</h2>
-                <div id="messages" style="max-height: 400px; overflow-y: auto; font-size: 0.9rem;"></div>
-            </div>
-
-            <div class="card col-3">
-                <h2>📈 Tracked Symbols</h2>
-                <div id="symbols">-</div>
-            </div>
-
-            <div class="card col-3">
-                <h2>💰 Balances</h2>
-                <div id="balances">-</div>
-            </div>
-
             <div class="card col-3">
                 <h2>📈 Profit Summary</h2>
                 <div id="profit">-</div>
@@ -381,6 +376,11 @@
             <div class="card col-3">
                 <h2>⚠️ Risk Metrics</h2>
                 <div id="risk">-</div>
+            </div>
+
+            <div class="card col-6">
+                <h2>📨 Messages</h2>
+                <div id="messages" style="max-height: 400px; overflow-y: auto; font-size: 0.9rem;"></div>
             </div>
 
             <div class="card card-full">
@@ -530,7 +530,7 @@
                     const span = document.createElement('span');
                     span.textContent = `📈 ${entry.display || entry.symbol + ' (' + entry.timeframe + ')'}`;
                     span.className = 'clickable-symbol';
-                    span.style.marginRight = '8px';
+                    span.style.display = 'block';
                     span.onclick = () => openChart(entry.symbol, entry.timeframe);
                     symbolsDiv.appendChild(span);
                 });
