@@ -136,6 +136,21 @@ class Settings(BaseSettings):
             raise ValueError("ENTRY_CONDITION_MIN_TIMEOUT_MULT must be >= 1.0")
         return v
 
+    # Strategy evaluation interval multiplier (medium/long-term)
+    # The base interval is the candle timeframe; this multiplier increases it
+    # to avoid excessive LLM calls. E.g., 4x means 1h candles → 4h interval.
+    STRATEGY_INTERVAL_MULTIPLIER: int = 4
+
+    # Active period settings – during these windows, the bot evaluates more frequently
+    # to catch opening/closing opportunities.
+    MARKET_OPEN_ACTIVE_MINUTES: int = 60
+    MARKET_CLOSE_ACTIVE_MINUTES: int = 30
+    ACTIVE_PERIOD_INTERVAL_SECONDS: int = 900  # 15 minutes
+
+    # Entry signal monitor interval (seconds) – how often to scan for entry signals.
+    # For medium/long-term, 15 minutes is sufficient.
+    ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS: int = 900
+
     # OHLCV timeframes for multi-timeframe analysis
     OHLCV_TIMEFRAMES: list[str] = ["1h", "1d"]
 

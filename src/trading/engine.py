@@ -61,9 +61,9 @@ from src.database import load_trading_state, save_trading_state, insert_trade, g
 
 logger = logging.getLogger(__name__)
 
-SYMBOL_REEVALUATION_INTERVAL = 3600  # seconds (60 minutes)
-DEFAULT_STRATEGY_INTERVAL = 600   # fallback when no timeframe or no symbols (10 minutes)
-MIN_SYMBOL_REEVALUATION_INTERVAL = 300  # seconds (5 minutes) – prevents rapid toggling
+SYMBOL_REEVALUATION_INTERVAL = 14400  # seconds (4 hours) – medium/long-term
+DEFAULT_STRATEGY_INTERVAL = 3600   # fallback when no timeframe or no symbols (1 hour)
+MIN_SYMBOL_REEVALUATION_INTERVAL = 600  # seconds (10 minutes) – prevents rapid toggling
 MIN_LLM_PAUSE_DURATION = 1800  # seconds (30 min) – LLM cannot resume before this
 MAX_STOP_LOSS_REVIEWS = 10   # force-sell after this many consecutive stop-loss reviews
 MAX_TAKE_PROFIT_REVIEWS = 10   # force-sell after this many consecutive take-profit reviews
@@ -659,7 +659,7 @@ class TradingEngine:
                             )
                     else:
                         logger.info("Market opened, trading already active.")
-                    # Always trigger immediate symbol re-evaluation to restart the 60-minute cycle
+                    # Always trigger immediate symbol re-evaluation to restart the cycle
                     self._reeval_trigger.set()
                     # Reset the "opening soon" notification flag
                     self._market_opening_soon_notified = False
@@ -1679,9 +1679,32 @@ class TradingEngine:
 
                 # Process any symbol whose evaluation interval has elapsed
                 now = time.time()
+
+                # Compute active period status once per loop iteration
+                clock = await self._get_clock()
+                is_active_period = False
+                if clock and clock.is_open:
+                    now_rome = clock.timestamp
+                    market_open_dt = now_rome.replace(hour=9, minute=0, second=0, microsecond=0)
+                    minutes_since_open = (now_rome - market_open_dt).total_seconds() / 60
+                    if 0 <= minutes_since_open < settings.MARKET_OPEN_ACTIVE_MINUTES:
+                        is_active_period = True
+                    if not is_active_period:
+                        market_close_dt = now_rome.replace(hour=17, minute=30, second=0, microsecond=0)
+                        minutes_to_close = (market_close_dt - now_rome).total_seconds() / 60
+                        if 0 < minutes_to_close < settings.MARKET_CLOSE_ACTIVE_MINUTES:
+                            is_active_period = True
+
                 for symbol_entry in self.current_symbols:
                     symbol = symbol_entry["symbol"]
                     default_interval = self._timeframe_to_seconds(symbol_entry["timeframe"])
+                    # Apply multiplier for medium/long-term trading to reduce LLM calls
+                    default_interval = default_interval * settings.STRATEGY_INTERVAL_MULTIPLIER
+                    # Cap at 1 day to ensure positions are still checked at least daily
+                    default_interval = min(default_interval, 86400)
+                    # Use shorter interval during active periods (market open/close)
+                    if is_active_period:
+                        default_interval = min(default_interval, settings.ACTIVE_PERIOD_INTERVAL_SECONDS)
                     interval = self._strategy_intervals.get(symbol, default_interval)
                     last_eval = self._last_strategy_eval.get(symbol, 0)
                     if now - last_eval >= interval:
@@ -7183,8 +7206,9 @@ class TradingEngine:
         last_time = snapshot.get("timestamp", 0)
         last_price = snapshot.get("price", 0)
 
-        # Always call if enough time has passed (2× the normal interval)
-        if now - last_time > 2 * timeframe_seconds:
+        # Always call if enough time has passed (2× the effective interval)
+        effective_interval = timeframe_seconds * settings.STRATEGY_INTERVAL_MULTIPLIER
+        if now - last_time > 2 * effective_interval:
             return False
 
         # Fetch LLM-driven skip thresholds from Redis.
@@ -7278,7 +7302,7 @@ class TradingEngine:
                         self._last_strategy_eval.pop(symbol, None)
             except Exception as e:
                 logger.error(f"Entry signal monitor error: {e}", exc_info=True)
-            await asyncio.sleep(300)  # check every 5 minutes (medium/long-term)
+            await asyncio.sleep(settings.ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS)
 
     async def _detect_entry_signal(self, symbol: str, timeframe: str) -> bool:
         """Return True if a favourable entry condition is detected for the symbol.
