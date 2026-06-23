@@ -81,6 +81,9 @@ def validate_signal(
         tp_atr_valid = tp_atr is not None and isinstance(tp_atr, (int, float)) and tp_atr > 0
         if not tp_valid and not tp_atr_valid:
             return Signal(action="HOLD", confidence=0.0, reasoning="Invalid or missing take_profit_pct or take_profit_atr_multiple")
+        # When using ATR-based take-profit, take_profit_pct must also be valid as a fallback
+        if tp_atr_valid and not tp_valid:
+            return Signal(action="HOLD", confidence=0.0, reasoning="take_profit_pct is required as a fallback when using take_profit_atr_multiple")
         trailing = params["trailing_stop"]
         if not isinstance(trailing, bool):
             return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop must be boolean")

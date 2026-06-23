@@ -6211,7 +6211,15 @@ class TradingEngine:
             else:
                 if "take_profit_atr_multiple" in params:
                     logger.warning(f"ATR unavailable for {symbol}, falling back to fixed take_profit_pct from LLM params.")
-                tp_pct = params["take_profit_pct"]
+                tp_pct = params.get("take_profit_pct")
+                if tp_pct is None or tp_pct <= 0:
+                    logger.warning(f"Cannot execute BUY for {symbol}: take_profit_pct missing/invalid and ATR unavailable.")
+                    if self.notifier:
+                        await self.notifier.send_notification(
+                            f"⚠️ Skipping BUY {display_symbol}: missing take_profit_pct and ATR unavailable.",
+                            summary={"symbol": symbol, "action": "SKIP", "reason": "Missing take_profit_pct and ATR unavailable"}
+                        )
+                    return
             trailing_stop = params["trailing_stop"]
             trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
 
