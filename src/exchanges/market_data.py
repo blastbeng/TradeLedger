@@ -77,6 +77,50 @@ def _discover_ftse_mib_tickers() -> List[str]:
     return []
 
 
+def _discover_ftse_all_share_tickers() -> List[str]:
+    """Scrape the FTSE Italia All-Share constituent list from Wikipedia.
+
+    Returns a list of base symbols (suffix stripped). Returns an empty list
+    if scraping fails.
+    """
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = requests.get(
+            "https://en.wikipedia.org/wiki/FTSE_Italia_All-Share",
+            headers=headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+        tables = pd.read_html(response.text)
+    except Exception as e:
+        logger.warning(f"Failed to scrape FTSE Italia All-Share table from Wikipedia: {e}")
+        return []
+
+    for table in tables:
+        ticker_col = None
+        for col in table.columns:
+            col_str = str(col).lower()
+            if "ticker" in col_str or "symbol" in col_str:
+                ticker_col = col
+                break
+        if ticker_col is not None:
+            tickers = table[ticker_col].dropna().astype(str).tolist()
+            base_symbols = []
+            for t in tickers:
+                t = t.strip().upper()
+                base = t.split(".")[0] if "." in t else t
+                if re.match(r"^[A-Z0-9]+$", base):
+                    base_symbols.append(base)
+            if base_symbols:
+                logger.info(f"Discovered {len(base_symbols)} FTSE Italia All-Share tickers from Wikipedia")
+                return base_symbols
+
+    logger.warning("No ticker column found in Wikipedia FTSE Italia All-Share tables.")
+    return []
+
+
 def get_tradable_assets() -> List[str]:
     """Return a list of tradable Italian equity symbols, filtered by country.
 
@@ -87,6 +131,25 @@ def get_tradable_assets() -> List[str]:
     """
     # Discover tickers from Wikipedia (FTSE MIB constituents)
     base_symbols = _discover_ftse_mib_tickers()
+
+    # --- FTSE Italia All-Share constituents ---
+    all_share = _discover_ftse_all_share_tickers()
+    if all_share:
+        existing = set(base_symbols)
+        for t in all_share:
+            if t not in existing:
+                base_symbols.append(t)
+                existing.add(t)
+
+    # --- User-configured additional tickers ---
+    extra = settings.ADDITIONAL_TICKERS
+    if extra:
+        existing = set(base_symbols)
+        for t in extra:
+            t_clean = t.strip().upper()
+            if t_clean and t_clean not in existing:
+                base_symbols.append(t_clean)
+                existing.add(t_clean)
 
     # Discover additional tickers from news RSS feeds
     try:

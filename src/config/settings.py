@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # regardless of volume or composite score.
     ALWAYS_INCLUDE_ETFS: list[str] = []
 
+    # Additional base tickers (without suffix) that are always added to the discovery pool.
+    # Useful for stocks that are not in the FTSE MIB or news feeds.
+    ADDITIONAL_TICKERS: list[str] = []
+
     # Minimum composite score for a symbol to be used in the volume‑based fallback.
     # Symbols below this score are skipped even if they have high volume.
     FALLBACK_MIN_COMPOSITE_SCORE: float = 0.1
