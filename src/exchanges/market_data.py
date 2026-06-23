@@ -1,5 +1,6 @@
 import logging
 import re
+import warnings
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
@@ -42,9 +43,11 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
         try:
             response = requests.get(url, headers=headers, timeout=15)
             response.raise_for_status()
-            tables = pd.read_html(response.text)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                tables = pd.read_html(response.text)
         except Exception as e:
-            logger.debug(f"Failed to scrape {url}: {e}")
+            logger.debug(f"Failed to scrape {url}: {str(e)[:200]}")
             continue
 
         for table in tables:
@@ -132,7 +135,7 @@ def _discover_euronext_milan_tickers() -> List[str]:
             df = pd.read_csv(io.StringIO(response.text), sep=None, engine='python', dtype=str)
             break
         except Exception as e:
-            logger.debug(f"Euronext CSV attempt failed for {url}: {e}")
+            logger.debug(f"Euronext CSV attempt failed for {url}: {str(e)[:200]}")
             continue
     else:
         logger.warning("All Euronext CSV URLs failed.")
@@ -197,9 +200,11 @@ def _discover_euronext_milan_from_html() -> List[str]:
         url = "https://live.euronext.com/en/markets/milan/equities/list"
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
-        tables = pd.read_html(response.text)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            tables = pd.read_html(response.text)
     except Exception as e:
-        logger.warning(f"Failed to scrape Euronext Milan HTML page: {e}")
+        logger.warning(f"Failed to scrape Euronext Milan HTML page: {str(e)[:200]}")
         return []
 
     for table in tables:
@@ -254,9 +259,13 @@ def _discover_euronext_milan_json() -> List[str]:
     try:
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
+        content_type = response.headers.get('content-type', '')
+        if 'json' not in content_type and not response.text.strip().startswith(('{', '[')):
+            logger.debug(f"Euronext JSON API returned non-JSON content (type={content_type}, length={len(response.text)})")
+            return []
         data = response.json()
     except Exception as e:
-        logger.warning(f"Euronext JSON API failed: {e}")
+        logger.warning(f"Euronext JSON API failed: {str(e)[:200]}")
         return []
 
     # Handle cases where the list is nested inside a dictionary
