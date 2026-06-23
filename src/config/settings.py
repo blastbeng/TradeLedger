@@ -160,14 +160,15 @@ class Settings(BaseSettings):
             raise ValueError(f"OHLCV_TIMEFRAMES contains unsupported timeframes: {invalid}. Allowed medium/long-term timeframes: {allowed}")
         return v
 
-    # Number of days of OHLCV data to retain and use for backtest / LLM analysis
-    OHLCV_RETENTION_DAYS: int = 90
+    # Number of days of OHLCV data to retain and use for backtest / LLM analysis.
+    # For medium/long-term trading (1d, 1w, 1M), we need at least 1-2 years of data.
+    OHLCV_RETENTION_DAYS: int = 730
 
     @field_validator("OHLCV_RETENTION_DAYS")
     @classmethod
     def validate_ohlcv_retention_days(cls, v: int) -> int:
-        if v < 7:
-            raise ValueError("OHLCV_RETENTION_DAYS must be at least 7")
+        if v < 30:
+            raise ValueError("OHLCV_RETENTION_DAYS must be at least 30 for medium/long-term analysis")
         return v
 
     # Yahoo Finance fallback for missing bid/ask quotes

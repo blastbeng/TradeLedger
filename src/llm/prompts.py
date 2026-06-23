@@ -547,7 +547,7 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
         )
     if historical_ohlcv_summary:
         prompt += (
-            "\nHistorical OHLCV summary from database (up to 30 days, price change %, high, low, volume, candle count):\n"
+            "\nHistorical OHLCV summary from database (up to 2 years, price change %, high, low, volume, candle count):\n"
             f"{json.dumps(historical_ohlcv_summary, indent=2)}\n"
         )
     if symbol_indicators:
