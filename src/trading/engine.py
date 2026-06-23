@@ -2884,7 +2884,7 @@ class TradingEngine:
                         else:
                             # LLM requests resume – only allowed if the pause was LLM-initiated
                             current_source = await asyncio.to_thread(self.redis.get, "trading:pause_source")
-                            if current_source and current_source.decode() != "llm":
+                            if current_source and current_source != "llm":
                                 logger.info("LLM resume request ignored because pause was not initiated by LLM.")
                             else:
                                 if trading_paused_bool:
