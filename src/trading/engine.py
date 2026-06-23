@@ -748,7 +748,8 @@ class TradingEngine:
         try:
             from src.news.fetcher import fetch_news_for_symbol
             base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
-            articles = await asyncio.to_thread(fetch_news_for_symbol, symbol)
+            stock_name = await self._get_stock_name(symbol)
+            articles = await asyncio.to_thread(fetch_news_for_symbol, symbol, stock_name)
             if articles:
                 await asyncio.to_thread(store_news_articles, base_symbol, articles)
         except Exception as e:
@@ -831,7 +832,8 @@ class TradingEngine:
 
                 for sym in symbols_to_refresh:
                     try:
-                        articles = await asyncio.to_thread(fetch_news_for_symbol, sym)
+                        stock_name = await self._get_stock_name(sym)
+                        articles = await asyncio.to_thread(fetch_news_for_symbol, sym, stock_name)
                         if articles:
                             base_symbol = sym.split("/")[0] if "/" in sym else sym
                             await asyncio.to_thread(store_news_articles, base_symbol, articles)

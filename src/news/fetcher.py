@@ -182,7 +182,7 @@ def _is_relevant(symbol: str, title: str, summary: str) -> bool:
 # Public API
 # ---------------------------------------------------------------------------
 
-def fetch_news_for_symbol(symbol: str) -> List[Dict[str, str]]:
+def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
     """
     Fetch news articles for a trading symbol from all enabled sources.
     Returns a list of dicts with keys:
@@ -194,12 +194,18 @@ def fetch_news_for_symbol(symbol: str) -> List[Dict[str, str]]:
 
     # Use base symbol (e.g., "AAPL") for caching, not the full pair
     base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+    if base_symbol.endswith(settings.TICKER_SUFFIX):
+        base_symbol = base_symbol[:-len(settings.TICKER_SUFFIX)]
+
+    search_terms = [base_symbol]
+    if name:
+        search_terms.append(name)
 
     start_time = time.time()
-    logger.debug(f"Fetching news for {symbol} (base symbol: {base_symbol})...")
+    logger.debug(f"Fetching news for {symbol} (base symbol: {base_symbol}, name: {name})...")
 
     redis_client = get_redis_client()
-    cache_key = f"news:{base_symbol}:{_source_fingerprint()}"
+    cache_key = f"news:{base_symbol}:{name if name else ''}:{_source_fingerprint()}"
     cached = redis_client.get(cache_key)
     if cached:
         try:
@@ -214,26 +220,32 @@ def fetch_news_for_symbol(symbol: str) -> List[Dict[str, str]]:
     enabled = _get_enabled_sources()
     logger.debug(f"Enabled news sources for {symbol}: {enabled}")
     for source in enabled:
-        source_start = time.time()
-        if source == "newsapi":
-            articles.extend(_fetch_newsapi(symbol))
-        elif source == "twitter":
-            articles.extend(_fetch_twitter(symbol))
-        elif source == "reddit":
-            articles.extend(_fetch_reddit(symbol))
-        elif source == "facebook":
-            articles.extend(_fetch_facebook(symbol))
-        elif source == "youtube":
-            articles.extend(_fetch_youtube(symbol))
-        elif source == "googlenews":
-            articles.extend(_fetch_googlenews(symbol))
-        elif source == "stocktwits":
-            articles.extend(_fetch_stocktwits(symbol))
-        elif source == "rss":
-            articles.extend(_fetch_rss(symbol))
-        source_time = time.time() - source_start
-        if source_time > 2.0:
-            logger.debug(f"Slow news source '{source}' for {symbol}: {source_time:.2f}s")
+        for term in search_terms:
+            source_start = time.time()
+            if source == "newsapi":
+                articles.extend(_fetch_newsapi(term))
+            elif source == "twitter":
+                if term == base_symbol:
+                    articles.extend(_fetch_twitter(term, use_cashtag=True))
+                else:
+                    articles.extend(_fetch_twitter(term, use_cashtag=False))
+            elif source == "reddit":
+                articles.extend(_fetch_reddit(term))
+            elif source == "facebook":
+                articles.extend(_fetch_facebook(term))
+            elif source == "youtube":
+                articles.extend(_fetch_youtube(term))
+            elif source == "googlenews":
+                articles.extend(_fetch_googlenews(term))
+            elif source == "stocktwits":
+                # StockTwits only supports ticker symbols, not company names
+                if term == base_symbol:
+                    articles.extend(_fetch_stocktwits(term))
+            elif source == "rss":
+                articles.extend(_fetch_rss(term))
+            source_time = time.time() - source_start
+            if source_time > 2.0:
+                logger.debug(f"Slow news source '{source}' for {term}: {source_time:.2f}s")
 
     # Deduplicate by URL
     seen = set()
@@ -432,7 +444,7 @@ def _fetch_newsapi(symbol: str) -> List[Dict[str, str]]:
 # Twitter (X) via API v2
 # ---------------------------------------------------------------------------
 
-def _fetch_twitter(symbol: str) -> List[Dict[str, str]]:
+def _fetch_twitter(symbol: str, use_cashtag: bool = True) -> List[Dict[str, str]]:
     if not settings.TWITTER_BEARER_TOKEN:
         return []
     try:
@@ -444,7 +456,11 @@ def _fetch_twitter(symbol: str) -> List[Dict[str, str]]:
         _get_rate_limiter().wait("twitter")
         logger.debug(f"Fetching Twitter for {symbol}...")
         client = tweepy.Client(bearer_token=settings.TWITTER_BEARER_TOKEN, timeout=settings.NEWS_HTTP_TIMEOUT_SECONDS)
-        query = f"${symbol.split('/')[0]} stock -is:retweet lang:en"
+        base = symbol.split('/')[0]
+        if use_cashtag:
+            query = f"${base} stock -is:retweet lang:en"
+        else:
+            query = f"{base} stock -is:retweet lang:en"
         tweets = client.search_recent_tweets(
             query=query,
             max_results=min(settings.NEWS_MAX_ARTICLES_PER_SYMBOL, 10),
