@@ -1325,7 +1325,7 @@ class TradingEngine:
         current_price: float,
     ) -> str:
         """Classify market regime using multiple indicators."""
-        if current_price <= 0:
+        if current_price is None or current_price <= 0:
             return "unknown"
 
         # Read LLM-decided regime thresholds from Redis (set during stock selection).
