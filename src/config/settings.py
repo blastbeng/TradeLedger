@@ -355,6 +355,10 @@ class Settings(BaseSettings):
     NEWS_SYMBOL_DISCOVERY_MIN_SENTIMENT: float = 0.3
     NEWS_SYMBOL_DISCOVERY_MIN_ARTICLES: int = 3
 
+    # RSS-based ticker discovery (scan RSS feeds for symbols with TICKER_SUFFIX)
+    NEWS_TICKER_DISCOVERY_ENABLED: bool = False
+    NEWS_TICKER_DISCOVERY_MAX_SYMBOLS: int = 10
+
     # Facebook (Graph API)
     FACEBOOK_PAGE_ACCESS_TOKEN: Optional[str] = None
     FACEBOOK_PAGE_ID: Optional[str] = None

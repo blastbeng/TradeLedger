@@ -46,10 +46,11 @@ from src.indicators import (
     compute_pivot_points,
 )
 try:
-    from src.news.fetcher import discover_trending_stocks, detect_upcoming_events
+    from src.news.fetcher import discover_trending_stocks, detect_upcoming_events, discover_tickers_from_news
 except ImportError:
     discover_trending_stocks = None
     detect_upcoming_events = None
+    discover_tickers_from_news = None
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
@@ -1716,6 +1717,24 @@ class TradingEngine:
         old_symbols = list(self.current_symbols)
         plain_assets = await self._get_tradable_assets()
         available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+
+        # --- RSS-based ticker discovery: scan news feeds for symbols with TICKER_SUFFIX ---
+        if settings.NEWS_ENABLED and settings.NEWS_TICKER_DISCOVERY_ENABLED and discover_tickers_from_news is not None:
+            try:
+                rss_discovered = await asyncio.to_thread(
+                    discover_tickers_from_news,
+                    existing_pairs=available_pairs,
+                )
+                # Convert discovered base symbols to full pairs and add to the front
+                for base in rss_discovered:
+                    pair = f"{base}/{self.base_currency}"
+                    if pair not in available_pairs:
+                        available_pairs.insert(0, pair)
+                if rss_discovered:
+                    logger.info(f"RSS ticker discovery added {len(rss_discovered)} new symbols: {rss_discovered}")
+            except Exception as e:
+                logger.warning(f"RSS ticker discovery failed: {e}")
+
         if not available_pairs:
             logger.warning("No available pairs found.")
             return
