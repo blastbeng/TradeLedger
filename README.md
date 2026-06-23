@@ -1,4 +1,4 @@
-# Italian Stock Trading Bot
+# TradeLedger
 
 An AI-powered trading bot focused on **medium to long-term investment horizons** that uses an external LLM (Ollama or OpenAI) to dynamically select Italian stocks/ETFs and generate trading strategies. Uses **yfinance** for market data and supports two operation modes: **Paper Trader** (simulated) and **Notifier** (signal-only with manual trade tracking via web UI).
 
