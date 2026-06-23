@@ -4170,14 +4170,40 @@ class TradingEngine:
                 return
 
             strategy_model_type = self._choose_model_tier(
+                atr=atr,
                 atr_percentile=atr_percentile,
-                market_regime=market_regime,
-                sentiment_trend_val=sentiment_trend_val,
                 rsi=rsi,
-                macd_hist=macd_hist,
                 macd=macd,
                 macd_signal=macd_signal,
+                macd_hist=macd_hist,
+                bb_upper=bb_upper,
+                bb_middle=bb_middle,
+                bb_lower=bb_lower,
+                ema_9=ema_9,
+                ema_21=ema_21,
+                stochastic_k=stochastic_k,
+                adx=adx,
+                plus_di=plus_di,
+                minus_di=minus_di,
+                mfi=mfi,
+                cci=cci,
+                williams_r=williams_r,
+                ichimoku=ichimoku,
+                market_regime=market_regime,
+                market_breadth=getattr(self, '_market_breadth', None),
+                full_market_breadth=full_market_breadth,
+                sentiment_trend_val=sentiment_trend_val,
+                volume_trend=volume_trend_val,
+                unrealized_pnl=unrealized_pnl,
+                drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
+                portfolio_exposure_pct=portfolio_exposure_pct,
+                portfolio_stop_risk_pct=portfolio_stop_risk_pct,
                 is_critical=is_critical,
+                trading_paused=trading_paused,
+                symbol_event=symbol_event,
+                fundamentals=fundamentals,
+                consecutive_losses=perf.get("equity_curve", {}).get("consecutive_losses", 0),
+                current_price=ticker['last'],
             )
 
             # Compute prompt complexity for temperature selection
@@ -4187,12 +4213,40 @@ class TradingEngine:
                     _conflicting = True
             strategy_complexity = self._compute_prompt_complexity(
                 num_candidates=len(self.current_symbols),
-                market_breadth=getattr(self, '_market_breadth', None),
-                fear_greed=None,
                 volatility_percentile=atr_percentile,
+                rsi=rsi,
+                macd=macd,
+                macd_signal=macd_signal,
+                macd_hist=macd_hist,
+                bb_upper=bb_upper,
+                bb_middle=bb_middle,
+                bb_lower=bb_lower,
+                ema_9=ema_9,
+                ema_21=ema_21,
+                stochastic_k=stochastic_k,
+                adx=adx,
+                plus_di=plus_di,
+                minus_di=minus_di,
+                mfi=mfi,
+                cci=cci,
+                williams_r=williams_r,
+                ichimoku=ichimoku,
+                market_breadth=getattr(self, '_market_breadth', None),
+                full_market_breadth=full_market_breadth,
                 sentiment_trend_magnitude=abs(sentiment_trend_val) if sentiment_trend_val is not None else None,
-                conflicting_signals=_conflicting,
+                volume_trend=volume_trend_val,
+                market_regime=market_regime,
+                unrealized_pnl=unrealized_pnl,
+                drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
+                portfolio_exposure_pct=portfolio_exposure_pct,
+                portfolio_stop_risk_pct=portfolio_stop_risk_pct,
                 is_critical=is_critical,
+                trading_paused=trading_paused,
+                symbol_event=symbol_event,
+                fundamentals=fundamentals,
+                consecutive_losses=perf.get("equity_curve", {}).get("consecutive_losses", 0),
+                current_price=ticker['last'],
+                conflicting_signals=_conflicting,
             )
             effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity)
 
@@ -7633,42 +7687,162 @@ class TradingEngine:
 
     def _choose_model_tier(
         self,
-        atr_percentile: Optional[float],
-        market_regime: str,
-        sentiment_trend_val: Optional[float],
-        rsi: Optional[float],
-        macd_hist: Optional[float],
-        macd: Optional[float],
-        macd_signal: Optional[float],
-        is_critical: bool,
+        # Volatility
+        atr: Optional[float] = None,
+        atr_percentile: Optional[float] = None,
+        # Core indicators
+        rsi: Optional[float] = None,
+        macd: Optional[float] = None,
+        macd_signal: Optional[float] = None,
+        macd_hist: Optional[float] = None,
+        bb_upper: Optional[float] = None,
+        bb_middle: Optional[float] = None,
+        bb_lower: Optional[float] = None,
+        ema_9: Optional[float] = None,
+        ema_21: Optional[float] = None,
+        stochastic_k: Optional[float] = None,
+        adx: Optional[float] = None,
+        plus_di: Optional[float] = None,
+        minus_di: Optional[float] = None,
+        mfi: Optional[float] = None,
+        cci: Optional[float] = None,
+        williams_r: Optional[float] = None,
+        ichimoku: Optional[Dict[str, Any]] = None,
+        # Market context
+        market_regime: str = "",
+        market_breadth: Optional[Dict[str, Any]] = None,
+        full_market_breadth: Optional[Dict[str, Any]] = None,
+        sentiment_trend_val: Optional[float] = None,
+        volume_trend: Optional[float] = None,
+        # Portfolio context
+        unrealized_pnl: Optional[float] = None,
+        drawdown_pct: Optional[float] = None,
+        portfolio_exposure_pct: Optional[float] = None,
+        portfolio_stop_risk_pct: Optional[float] = None,
+        # Position state
+        is_critical: bool = False,
+        trading_paused: bool = False,
+        # Events & fundamentals
+        symbol_event: Optional[Dict[str, Any]] = None,
+        fundamentals: Optional[Dict[str, Any]] = None,
+        # Past performance
+        consecutive_losses: int = 0,
+        # Current price
+        current_price: Optional[float] = None,
     ) -> str:
-        """Return "mind" or "actuator" based on market complexity."""
+        """Return "mind" or "actuator" based on market complexity.
+
+        Considers the same parameters as Step 1 (build_strategy_prompt) to ensure
+        model selection is calibrated to the full market context.
+        """
         if is_critical:
             return "mind"
 
         complexity = 0
 
-        # High or low volatility extremes
+        # 1. Volatility extremes (ATR percentile)
         if atr_percentile is not None:
             if atr_percentile > 80 or atr_percentile < 20:
                 complexity += 1
 
-        # Turbulent market regime
-        if market_regime and ("high volatility" in market_regime or "squeeze" in market_regime):
+        # 2. Turbulent market regime
+        if market_regime and any(kw in market_regime for kw in ("high volatility", "squeeze", "expansion", "ranging")):
             complexity += 1
 
-        # Strong sentiment swing
+        # 3. Strong sentiment swing
         if sentiment_trend_val is not None and abs(sentiment_trend_val) > 0.2:
             complexity += 1
 
-        # Conflicting technicals (RSI extreme vs MACD direction)
+        # 4. Conflicting technicals: RSI extreme vs MACD direction
         if rsi is not None and macd_hist is not None:
             if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
                 complexity += 1
 
-        # MACD crossover nearby (hist near zero while lines close)
-        if macd is not None and macd_signal is not None:
-            if abs(macd - macd_signal) < 0.0001 * abs(macd) if macd else 0:
+        # 5. MACD crossover nearby (lines very close → indecision)
+        if macd is not None and macd_signal is not None and macd != 0:
+            if abs(macd - macd_signal) < 0.0001 * abs(macd):
+                complexity += 1
+
+        # 6. Bollinger Band squeeze or expansion
+        if bb_upper is not None and bb_lower is not None and bb_middle is not None and bb_middle > 0:
+            bb_width = (bb_upper - bb_lower) / bb_middle
+            if bb_width < 0.02 or bb_width > 0.08:
+                complexity += 1
+
+        # 7. EMA alignment conflict with ADX/DI trend
+        if ema_9 is not None and ema_21 is not None and adx is not None and plus_di is not None and minus_di is not None:
+            ema_bullish = ema_9 > ema_21
+            di_bullish = plus_di > minus_di
+            if ema_bullish != di_bullish and adx > 25:
+                complexity += 1
+
+        # 8. Stochastic extremes
+        if stochastic_k is not None and (stochastic_k < 20 or stochastic_k > 80):
+            complexity += 1
+
+        # 9. MFI extremes
+        if mfi is not None and (mfi < 20 or mfi > 80):
+            complexity += 1
+
+        # 10. CCI extremes
+        if cci is not None and (cci < -100 or cci > 100):
+            complexity += 1
+
+        # 11. Williams %R extremes
+        if williams_r is not None and (williams_r < -80 or williams_r > -20):
+            complexity += 1
+
+        # 12. Ichimoku cloud conflict (price inside cloud = uncertainty)
+        if ichimoku is not None and current_price is not None:
+            cloud_top = ichimoku.get("cloud_top")
+            cloud_bottom = ichimoku.get("cloud_bottom")
+            if cloud_top is not None and cloud_bottom is not None:
+                if cloud_bottom <= current_price <= cloud_top:
+                    complexity += 1
+
+        # 13. Portfolio stress: high exposure or high stop risk
+        if portfolio_exposure_pct is not None and portfolio_exposure_pct > 70:
+            complexity += 1
+        if portfolio_stop_risk_pct is not None and portfolio_stop_risk_pct > 8:
+            complexity += 1
+
+        # 14. Account drawdown
+        if drawdown_pct is not None and drawdown_pct > 10:
+            complexity += 1
+
+        # 15. Large unrealized loss (position under stress)
+        if unrealized_pnl is not None and unrealized_pnl < 0:
+            complexity += 1
+
+        # 16. Volume spike
+        if volume_trend is not None and volume_trend > 3.0:
+            complexity += 1
+
+        # 17. Symbol event detected (earnings, FDA, M&A, etc.)
+        if symbol_event is not None and symbol_event.get("has_event"):
+            complexity += 1
+
+        # 18. Consecutive losses
+        if consecutive_losses >= 3:
+            complexity += 1
+
+        # 19. Extreme fundamentals (very high P/E or negative margins)
+        if fundamentals is not None:
+            pe = fundamentals.get("pe_ratio")
+            if pe is not None and (pe > 50 or pe < 0):
+                complexity += 1
+            margins = fundamentals.get("profit_margins")
+            if margins is not None and margins < 0:
+                complexity += 1
+
+        # 20. Market breadth extremes
+        if market_breadth is not None:
+            pos_pct = market_breadth.get("positive_pct", 50)
+            if pos_pct > 80 or pos_pct < 20:
+                complexity += 1
+        if full_market_breadth is not None:
+            pos_pct = full_market_breadth.get("positive_pct", 50)
+            if pos_pct > 80 or pos_pct < 20:
                 complexity += 1
 
         # For medium/long-term, only use the expensive "mind" model when
@@ -7678,49 +7852,175 @@ class TradingEngine:
 
     def _compute_prompt_complexity(
         self,
+        # Candidate/portfolio context
         num_candidates: int = 0,
-        market_breadth: Optional[Dict[str, Any]] = None,
-        fear_greed: Optional[Dict[str, Any]] = None,
+        # Volatility
         volatility_percentile: Optional[float] = None,
+        # Core indicators
+        rsi: Optional[float] = None,
+        macd: Optional[float] = None,
+        macd_signal: Optional[float] = None,
+        macd_hist: Optional[float] = None,
+        bb_upper: Optional[float] = None,
+        bb_middle: Optional[float] = None,
+        bb_lower: Optional[float] = None,
+        ema_9: Optional[float] = None,
+        ema_21: Optional[float] = None,
+        stochastic_k: Optional[float] = None,
+        adx: Optional[float] = None,
+        plus_di: Optional[float] = None,
+        minus_di: Optional[float] = None,
+        mfi: Optional[float] = None,
+        cci: Optional[float] = None,
+        williams_r: Optional[float] = None,
+        ichimoku: Optional[Dict[str, Any]] = None,
+        # Market context
+        market_breadth: Optional[Dict[str, Any]] = None,
+        full_market_breadth: Optional[Dict[str, Any]] = None,
         sentiment_trend_magnitude: Optional[float] = None,
-        conflicting_signals: bool = False,
+        volume_trend: Optional[float] = None,
+        market_regime: str = "",
+        # Portfolio context
+        unrealized_pnl: Optional[float] = None,
+        drawdown_pct: Optional[float] = None,
+        portfolio_exposure_pct: Optional[float] = None,
+        portfolio_stop_risk_pct: Optional[float] = None,
+        # Position state
         is_critical: bool = False,
+        trading_paused: bool = False,
+        # Events & fundamentals
+        symbol_event: Optional[Dict[str, Any]] = None,
+        fundamentals: Optional[Dict[str, Any]] = None,
+        # Past performance
+        consecutive_losses: int = 0,
+        # Current price
+        current_price: Optional[float] = None,
+        # Legacy params (kept for backward compat with other call sites)
+        fear_greed: Optional[Dict[str, Any]] = None,
+        conflicting_signals: bool = False,
     ) -> float:
-        """Return a complexity score between 0.0 (simple) and 1.0 (very complex)."""
-        score = 0.0
-        # More candidates → more complex
-        if num_candidates > 20:
-            score += 0.2
-        elif num_candidates > 10:
-            score += 0.1
+        """Return a complexity score between 0.0 (simple) and 1.0 (very complex).
 
-        # Extreme market breadth (very high or very low) adds complexity
+        Considers the same parameters as Step 1 (build_strategy_prompt) to ensure
+        temperature selection is calibrated to the full market context.
+        """
+        score = 0.0
+
+        # --- Candidate count ---
+        if num_candidates > 20:
+            score += 0.05
+        elif num_candidates > 10:
+            score += 0.03
+
+        # --- Volatility extremes ---
+        if volatility_percentile is not None and (volatility_percentile > 80 or volatility_percentile < 20):
+            score += 0.05
+
+        # --- Indicator extremes ---
+        if rsi is not None and (rsi < 30 or rsi > 70):
+            score += 0.03
+        if stochastic_k is not None and (stochastic_k < 20 or stochastic_k > 80):
+            score += 0.03
+        if mfi is not None and (mfi < 20 or mfi > 80):
+            score += 0.03
+        if cci is not None and (cci < -100 or cci > 100):
+            score += 0.03
+        if williams_r is not None and (williams_r < -80 or williams_r > -20):
+            score += 0.03
+
+        # --- Conflicting technicals ---
+        if rsi is not None and macd_hist is not None:
+            if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
+                score += 0.05
+        if ema_9 is not None and ema_21 is not None and adx is not None and plus_di is not None and minus_di is not None:
+            ema_bullish = ema_9 > ema_21
+            di_bullish = plus_di > minus_di
+            if ema_bullish != di_bullish and adx > 25:
+                score += 0.05
+        if conflicting_signals:
+            score += 0.05
+
+        # --- MACD crossover nearby ---
+        if macd is not None and macd_signal is not None and macd != 0:
+            if abs(macd - macd_signal) < 0.0001 * abs(macd):
+                score += 0.03
+
+        # --- Bollinger squeeze/expansion ---
+        if bb_upper is not None and bb_lower is not None and bb_middle is not None and bb_middle > 0:
+            bb_width = (bb_upper - bb_lower) / bb_middle
+            if bb_width < 0.02 or bb_width > 0.08:
+                score += 0.04
+
+        # --- Ichimoku cloud conflict ---
+        if ichimoku is not None and current_price is not None:
+            cloud_top = ichimoku.get("cloud_top")
+            cloud_bottom = ichimoku.get("cloud_bottom")
+            if cloud_top is not None and cloud_bottom is not None:
+                if cloud_bottom <= current_price <= cloud_top:
+                    score += 0.04
+
+        # --- Market regime turbulence ---
+        if market_regime and any(kw in market_regime for kw in ("high volatility", "squeeze", "expansion", "ranging")):
+            score += 0.04
+
+        # --- Market breadth extremes ---
         if market_breadth:
             pos_pct = market_breadth.get("positive_pct", 50)
             if pos_pct > 80 or pos_pct < 20:
-                score += 0.15
+                score += 0.04
+        if full_market_breadth:
+            pos_pct = full_market_breadth.get("positive_pct", 50)
+            if pos_pct > 80 or pos_pct < 20:
+                score += 0.03
 
-        # Extreme fear/greed
+        # --- Sentiment swing ---
+        if sentiment_trend_magnitude is not None and sentiment_trend_magnitude > 0.2:
+            score += 0.04
+
+        # --- Volume spike ---
+        if volume_trend is not None and volume_trend > 3.0:
+            score += 0.03
+
+        # --- Portfolio stress ---
+        if portfolio_exposure_pct is not None and portfolio_exposure_pct > 70:
+            score += 0.04
+        if portfolio_stop_risk_pct is not None and portfolio_stop_risk_pct > 8:
+            score += 0.04
+        if drawdown_pct is not None and drawdown_pct > 10:
+            score += 0.04
+        if unrealized_pnl is not None and unrealized_pnl < 0:
+            score += 0.03
+
+        # --- Consecutive losses ---
+        if consecutive_losses >= 3:
+            score += 0.04
+
+        # --- Symbol event ---
+        if symbol_event is not None and symbol_event.get("has_event"):
+            score += 0.04
+
+        # --- Fundamentals extreme ---
+        if fundamentals is not None:
+            pe = fundamentals.get("pe_ratio")
+            if pe is not None and (pe > 50 or pe < 0):
+                score += 0.03
+            margins = fundamentals.get("profit_margins")
+            if margins is not None and margins < 0:
+                score += 0.03
+
+        # --- Critical decision ---
+        if is_critical:
+            score += 0.1
+
+        # --- Trading paused (adds uncertainty) ---
+        if trading_paused:
+            score += 0.03
+
+        # --- Legacy fear_greed ---
         if fear_greed:
             fg = fear_greed.get("value", 50)
             if fg <= 25 or fg >= 75:
-                score += 0.1
-
-        # High volatility percentile
-        if volatility_percentile is not None and (volatility_percentile > 80 or volatility_percentile < 20):
-            score += 0.1
-
-        # Strong sentiment swing
-        if sentiment_trend_magnitude is not None and sentiment_trend_magnitude > 0.2:
-            score += 0.1
-
-        # Conflicting technical signals
-        if conflicting_signals:
-            score += 0.15
-
-        # Critical decision (stop-loss, take-profit, etc.)
-        if is_critical:
-            score += 0.2
+                score += 0.05
 
         return min(1.0, score)
 
