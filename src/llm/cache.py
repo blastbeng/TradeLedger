@@ -85,6 +85,9 @@ def get_cached_llm_response(
         else:
             from src.llm.llm_client import _get_ollama_response
             response_text = _get_ollama_response(prompt, system_prompt, model=model, base_url=base_url, api_key=api_key, temperature=temperature)
+        
+        if not response_text or not response_text.strip():
+            raise RuntimeError("LLM returned an empty response")
     except Exception as e:
         if provider == "ollama":
             # --- Fallback to OpenAI-compatible provider ---
