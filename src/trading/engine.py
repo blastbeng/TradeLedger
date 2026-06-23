@@ -339,7 +339,7 @@ class TradingEngine:
         logger.info("Trading engine stopped.")
 
     async def _periodic_reconcile(self):
-        """Run position reconciliation every 60 seconds."""
+        """Run position reconciliation every 5 minutes (medium/long-term)."""
         while self._running:
             if self._reconcile_running:
                 logger.warning("Reconcile still running; skipping this cycle.")
@@ -7671,8 +7671,9 @@ class TradingEngine:
                 complexity += 1
 
         # For medium/long-term, only use the expensive "mind" model when
-        # complexity is genuinely high. Routine evaluations use "actuator".
-        return "mind" if complexity >= 0.5 else "actuator"
+        # complexity is genuinely high (at least 2 factors). Routine
+        # evaluations use "actuator" to conserve tokens.
+        return "mind" if complexity >= 2 else "actuator"
 
     def _compute_prompt_complexity(
         self,

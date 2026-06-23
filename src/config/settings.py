@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     # Main engine loop polling interval (seconds). For medium/long-term trading,
     # a longer interval reduces CPU usage while still processing symbols at their
     # designated strategy intervals.
-    ENGINE_LOOP_INTERVAL_SECONDS: int = 30
+    ENGINE_LOOP_INTERVAL_SECONDS: int = 60
 
     # Initial delay before first symbol evaluation (seconds)
     # Allows WebSocket and Telegram bot to initialize before first LLM call
@@ -155,7 +155,7 @@ class Settings(BaseSettings):
     OHLCV_TIMEFRAMES: list[str] = ["1h", "1d"]
 
     # Market data download interval (seconds)
-    MARKET_DATA_REFRESH_SECONDS: int = 300
+    MARKET_DATA_REFRESH_SECONDS: int = 900
 
     # OHLCV download staggering (delay between symbols)
     OHLCV_DOWNLOAD_SYMBOL_DELAY_SECONDS: float = 2.0
@@ -353,7 +353,7 @@ class Settings(BaseSettings):
 
     # Maximum time (seconds) a queued limit order is allowed to stay open.
     # After this timeout the engine will cancel the order and free the capital.
-    QUEUED_ORDER_TIMEOUT_SECONDS: float = 300.0   # 5 minutes
+    QUEUED_ORDER_TIMEOUT_SECONDS: float = 900.0   # 15 minutes (medium/long-term)
 
     @field_validator("QUEUED_ORDER_TIMEOUT_SECONDS")
     @classmethod
@@ -378,7 +378,7 @@ class Settings(BaseSettings):
     NEWS_UPDATE_INTERVAL_MINUTES: int = 60
 
     # Fast news refresh for currently tracked symbols (minutes)
-    NEWS_FAST_UPDATE_INTERVAL_MINUTES: int = 5
+    NEWS_FAST_UPDATE_INTERVAL_MINUTES: int = 15
 
     NEWS_API_KEY: Optional[str] = None       # for NewsAPI.org
     TWITTER_BEARER_TOKEN: Optional[str] = None
