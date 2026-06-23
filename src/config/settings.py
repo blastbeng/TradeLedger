@@ -322,6 +322,19 @@ class Settings(BaseSettings):
             raise ValueError("LIMIT_PRICE_MAX_DISTANCE_PCT must be >= 0")
         return v
 
+    # Minimum viable trade amount (in base currency) to ensure round-trip fees
+    # are a reasonable percentage of trade value. The LLM can override this
+    # dynamically via the "min_viable_trade_amount" field in its JSON response.
+    # Set to 0 to disable the check.
+    MIN_VIABLE_TRADE_AMOUNT: float = 500.0
+
+    @field_validator("MIN_VIABLE_TRADE_AMOUNT")
+    @classmethod
+    def validate_min_viable_trade_amount(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("MIN_VIABLE_TRADE_AMOUNT must be >= 0")
+        return v
+
     # Maximum time (seconds) a queued limit order is allowed to stay open.
     # After this timeout the engine will cancel the order and free the capital.
     QUEUED_ORDER_TIMEOUT_SECONDS: float = 300.0   # 5 minutes

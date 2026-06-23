@@ -2119,6 +2119,50 @@ class TradingEngine:
         # Recompute per-symbol budget with the effective max
         per_symbol_budget = base_balance / self.effective_max_symbols
 
+        # --- Minimum viable trade amount check ---
+        min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "trading:min_viable_trade_amount")
+            if raw:
+                min_viable_amount = float(raw)
+        except Exception:
+            pass
+
+        if min_viable_amount > 0 and base_balance > 0:
+            max_by_viable = int(base_balance // min_viable_amount)
+            if max_by_viable < self.effective_max_symbols:
+                old_eff = self.effective_max_symbols
+                if max_by_viable > 0:
+                    self.effective_max_symbols = max_by_viable
+                    per_symbol_budget = base_balance / self.effective_max_symbols
+                    logger.info(
+                        f"Adjusted effective_max_symbols from {old_eff} to {self.effective_max_symbols} "
+                        f"based on min viable trade amount {min_viable_amount:.2f} "
+                        f"(per-symbol budget now {per_symbol_budget:.2f})"
+                    )
+                else:
+                    self.effective_max_symbols = 0
+                    logger.warning(
+                        f"Balance {base_balance:.2f} {self.base_currency} is below minimum viable trade amount "
+                        f"{min_viable_amount:.2f}. Cannot trade profitably."
+                    )
+                    self.current_symbols = []
+                    await asyncio.to_thread(self.redis.set, last_key, now)
+                    if self.notifier:
+                        await self.notifier.send_notification(
+                            f"⚠️ Balance {base_balance:.2f} {self.base_currency} is below the minimum viable trade amount "
+                            f"({min_viable_amount:.2f} {self.base_currency}). "
+                            f"Round-trip fees would consume too much of each trade. "
+                            f"Deposit more funds or reduce MIN_VIABLE_TRADE_AMOUNT to allow smaller trades.",
+                            summary={
+                                "action": "HOLD",
+                                "reason": "Balance below minimum viable trade amount",
+                                "base_balance": base_balance,
+                                "min_viable_amount": min_viable_amount,
+                            }
+                        )
+                    return
+
         # Compute pairwise correlation matrix from OHLCV close prices
         correlation_matrix: Dict[str, Dict[str, float]] = {}
         if ohlcv_data and settings.OHLCV_TIMEFRAMES:
@@ -2312,6 +2356,7 @@ class TradingEngine:
             symbol_events=symbol_events,
             symbol_trend_scores=symbol_trend_scores,
             market_breadth=market_breadth,
+            min_viable_trade_amount=min_viable_amount,
         )
         if auto_resume_note:
             prompt += "\n" + auto_resume_note
@@ -2560,6 +2605,14 @@ class TradingEngine:
                     await asyncio.to_thread(self.redis.setex, "trading:limit_price_max_distance_pct", 7 * 24 * 3600, str(float(limit_price_max_dist)))
                 else:
                     await asyncio.to_thread(self.redis.delete, "trading:limit_price_max_distance_pct")
+
+                # Parse LLM-controlled minimum viable trade amount
+                min_viable = parsed.get("min_viable_trade_amount")
+                if min_viable is not None and isinstance(min_viable, (int, float)) and min_viable > 0:
+                    await asyncio.to_thread(self.redis.setex, "trading:min_viable_trade_amount", 7 * 24 * 3600, str(float(min_viable)))
+                    logger.info(f"LLM set min viable trade amount to {float(min_viable):.2f}")
+                else:
+                    await asyncio.to_thread(self.redis.delete, "trading:min_viable_trade_amount")
 
                 # Parse LLM evaluation skip thresholds
                 skip_price_mult = parsed.get("skip_eval_price_change_atr_mult")
@@ -3379,6 +3432,15 @@ class TradingEngine:
         base_symbol = symbol.split("/")[0]
         is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
 
+        # Read min viable trade amount (LLM override or settings default)
+        min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "trading:min_viable_trade_amount")
+            if raw:
+                min_viable_amount = float(raw)
+        except Exception:
+            pass
+
         # If the market is closed, do not generate any signals (save LLM costs).
         if not await self._is_market_open():
             logger.info(f"Skipping {display_symbol}: market closed.")
@@ -3975,6 +4037,7 @@ class TradingEngine:
                 fundamentals=fundamentals,
                 vwap=vwap,
                 daily_pivot_points=daily_pivot_points,
+                min_viable_trade_amount=min_viable_amount,
             )
             logger.info(f"LLM prompt for {symbol}: {len(prompt)} chars")
             # Build a market snapshot dict for caching (per-symbol)
@@ -6275,6 +6338,34 @@ class TradingEngine:
                             "symbol": symbol,
                             "action": "SKIP",
                             "reason": "Insufficient balance",
+                        }
+                    )
+                return
+
+            # --- Minimum viable trade amount check ---
+            min_viable = settings.MIN_VIABLE_TRADE_AMOUNT
+            try:
+                raw = await asyncio.to_thread(self.redis.get, "trading:min_viable_trade_amount")
+                if raw:
+                    min_viable = float(raw)
+            except Exception:
+                pass
+            if min_viable > 0 and amount < min_viable:
+                logger.info(
+                    f"Skipping BUY {symbol}: trade amount {amount:.2f} {quote} "
+                    f"below minimum viable {min_viable:.2f} {quote}"
+                )
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"⚠️ Skipping BUY {display_symbol}: amount {amount:.2f} {quote} "
+                        f"below minimum viable trade amount {min_viable:.2f} {quote} "
+                        f"(fees would consume too much of the trade value)",
+                        summary={
+                            "symbol": symbol,
+                            "action": "SKIP",
+                            "reason": "Below minimum viable trade amount",
+                            "amount": amount,
+                            "min_viable": min_viable,
                         }
                     )
                 return

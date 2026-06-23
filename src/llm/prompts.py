@@ -343,6 +343,7 @@ def build_stock_selection_prompt(
     symbol_events: Optional[Dict[str, Dict[str, Any]]] = None,
     symbol_trend_scores: Optional[Dict[str, float]] = None,
     market_breadth: Optional[Dict[str, Any]] = None,
+    min_viable_trade_amount: float = 0.0,
 ) -> str:
     """Build a prompt to ask the LLM which stocks/ETFs to trade."""
     # Summarize tickers and limits for the prompt
@@ -407,8 +408,22 @@ def build_stock_selection_prompt(
 Your available {base_currency} balance: {base_balance:.2f}
 Maximum number of stocks to trade: {max_symbols}
 Budget per stock: {per_symbol_budget:.2f} {base_currency}
+Minimum viable trade amount: {min_viable_trade_amount:.2f} {base_currency}
 Available timeframes: {json.dumps(available_timeframes)}
 Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols) if current_symbols else "None"}"""
+
+    if min_viable_trade_amount > 0:
+        prompt += (
+            f"\n**CRITICAL — Fee Structure & Minimum Viable Trade Amount:**\n"
+            f"With Intesa Sanpaolo Investo fees (0.24% commission with €3.50 minimum + €2.50 fixed per order "
+            f"+ 0.12% Tobin tax on BUY only), the round-trip cost for a {min_viable_trade_amount:.0f} {base_currency} trade "
+            f"is approximately {((max(3.50, min_viable_trade_amount * 0.0024) + 2.50 + min_viable_trade_amount * 0.0012 + max(3.50, min_viable_trade_amount * 0.0024) + 2.50) / min_viable_trade_amount * 100):.1f}% of trade value.\n"
+            f"Trades below this amount have fees that consume too large a percentage, making profit nearly impossible.\n"
+            f"**You MUST select at most `max_stocks` symbols such that `base_balance / max_stocks >= {min_viable_trade_amount:.2f}`.** "
+            f"If the budget per stock would be below {min_viable_trade_amount:.2f} {base_currency}, select FEWER stocks to concentrate capital. "
+            f"If even 1 stock cannot meet this threshold (base_balance < {min_viable_trade_amount:.2f}), select 0 stocks and explain that the balance is insufficient for profitable trading.\n"
+            f"You may override `min_viable_trade_amount` in your JSON response to increase or decrease it based on your assessment of current fee/market conditions.\n"
+        )
 
     # --- Open positions summary ---
     if open_positions:
@@ -477,6 +492,7 @@ Return a JSON object with the following fields:
 - "max_portfolio_stop_risk_pct": a float between 0.0 and 1.0 (e.g., 0.05 for 5%). The maximum total stop-loss risk as a percentage of portfolio value.
 - "min_risk_reward_ratio": a positive number (e.g., 1.5). The minimum reward:risk ratio required for all trades. Trades with a lower ratio will be rejected.
 - "limit_price_max_distance_pct": an optional float between 0.0 and 1.0 (e.g., 0.05 for 5%). The maximum allowed distance of a limit price from the current best bid/ask. Orders with a limit price further away than this are rejected to avoid indefinite queuing. Set to 0.0 to disable the check entirely. If omitted, the engine uses its default (0.05).
+- "min_viable_trade_amount": an optional positive number (e.g., 500.0) indicating the minimum amount in {base_currency} that should be allocated to a single trade for it to be profitable after fees. You may increase this if you believe the current value is too low for profitable trading, or decrease it (but not below 0) if you want to allow smaller trades. The engine will limit the number of simultaneous positions so that each receives at least this amount.
 - "reasoning": a short string (max 200 characters) explaining why you selected these specific stocks and timeframes. This will be shown to the user, so make it informative.
 
 You may optionally include "stock_revaluation_interval_seconds" (integer >= 60) to change how often the bot re-evaluates the stock list.
@@ -727,6 +743,7 @@ def build_strategy_prompt(
     fundamentals: Optional[Dict[str, Any]] = None,
     vwap: Optional[float] = None,
     daily_pivot_points: Optional[Dict[str, float]] = None,
+    min_viable_trade_amount: float = 0.0,
 ) -> str:
     """Build a prompt to generate a trading strategy for a specific stock/ETF."""
     current_price = ticker.get("last") if ticker else None
