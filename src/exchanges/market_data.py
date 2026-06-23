@@ -440,48 +440,52 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     for sym in symbols:
         result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
 
-    try:
-        # Fetch intraday data for latest price and volume
-        intraday = yf.download(symbols, period="1d", interval="5m", progress=False, group_by='column')
-        if not intraday.empty:
-            last_row = intraday.iloc[-1]
-            for sym in symbols:
-                try:
-                    if len(symbols) > 1:
-                        last = last_row[("Close", sym)]
-                        volume = last_row[("Volume", sym)]
-                    else:
-                        last = last_row["Close"]
-                        volume = last_row["Volume"]
-                    if not pd.isna(last):
-                        result[sym]["last"] = float(last)
-                    if not pd.isna(volume):
-                        result[sym]["volume"] = float(volume)
-                        result[sym]["quoteVolume"] = float(volume)
-                except Exception:
-                    pass
-    except Exception as e:
-        logger.warning(f"Batch intraday download failed: {e}")
+    # Batch in chunks of 10 to avoid yfinance rate limits and timeouts
+    chunk_size = 10
+    for i in range(0, len(symbols), chunk_size):
+        chunk = symbols[i:i+chunk_size]
+        try:
+            # Fetch intraday data for latest price and volume
+            intraday = yf.download(chunk, period="1d", interval="5m", progress=False, group_by='column')
+            if not intraday.empty:
+                last_row = intraday.iloc[-1]
+                for sym in chunk:
+                    try:
+                        if len(chunk) > 1:
+                            last = last_row[("Close", sym)]
+                            volume = last_row[("Volume", sym)]
+                        else:
+                            last = last_row["Close"]
+                            volume = last_row["Volume"]
+                        if not pd.isna(last):
+                            result[sym]["last"] = float(last)
+                        if not pd.isna(volume):
+                            result[sym]["volume"] = float(volume)
+                            result[sym]["quoteVolume"] = float(volume)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Batch intraday download failed for chunk {i//chunk_size}: {e}")
 
-    try:
-        # Fetch daily data for previous close to calculate change_24h
-        daily = yf.download(symbols, period="2d", interval="1d", progress=False, group_by='column')
-        if not daily.empty:
-            for sym in symbols:
-                try:
-                    if len(symbols) > 1:
-                        prev_close = daily[("Close", sym)].iloc[-2]
-                    else:
-                        prev_close = daily["Close"].iloc[-2]
-                    if not pd.isna(prev_close) and result[sym]["last"]:
-                        last = result[sym]["last"]
-                        change_24h = ((last - prev_close) / prev_close * 100) if prev_close > 0 else None
-                        result[sym]["change_24h"] = change_24h
-                        result[sym]["percentage"] = change_24h
-                except Exception:
-                    pass
-    except Exception as e:
-        logger.warning(f"Batch daily download failed: {e}")
+        try:
+            # Fetch daily data for previous close to calculate change_24h
+            daily = yf.download(chunk, period="2d", interval="1d", progress=False, group_by='column')
+            if not daily.empty:
+                for sym in chunk:
+                    try:
+                        if len(chunk) > 1:
+                            prev_close = daily[("Close", sym)].iloc[-2]
+                        else:
+                            prev_close = daily["Close"].iloc[-2]
+                        if not pd.isna(prev_close) and result[sym]["last"]:
+                            last = result[sym]["last"]
+                            change_24h = ((last - prev_close) / prev_close * 100) if prev_close > 0 else None
+                            result[sym]["change_24h"] = change_24h
+                            result[sym]["percentage"] = change_24h
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Batch daily download failed for chunk {i//chunk_size}: {e}")
 
     return result
 
