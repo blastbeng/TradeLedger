@@ -9257,6 +9257,12 @@ class TradingEngine:
                         # A new fill occurred (partial or final)
                         delta_cost = delta_qty * filled_avg_price
                         # Build a trade dict for this delta
+                        # Recompute the actual fee for this fill (PaperTrader already
+                        # deducted it from the balance, but does not store it in the order)
+                        _quote_ccy = queued['symbol'].split("/")[1] if "/" in queued['symbol'] else self.base_currency
+                        _fee_costs = calculate_transaction_costs(
+                            queued['side'].upper(), filled_avg_price, delta_qty, symbol=queued['symbol']
+                        )
                         trade_dict = {
                             'id': str(paper_order.id),
                             'symbol': queued['symbol'],
@@ -9264,7 +9270,7 @@ class TradingEngine:
                             'amount': delta_qty,
                             'price': filled_avg_price,
                             'cost': delta_cost,
-                            'fee': {'cost': 0.0, 'currency': queued['symbol'].split("/")[1] if "/" in queued['symbol'] else self.base_currency},
+                            'fee': {'cost': _fee_costs["total_costs"], 'currency': _quote_ccy},
                             'status': 'closed',
                             'timestamp': int(time.time() * 1000),
                         }
