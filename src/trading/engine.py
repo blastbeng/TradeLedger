@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range, discover_btp_bonds
+from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range, discover_btp_bonds, discover_italian_ucits_etfs
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
 from src.trading.paper_trader import PaperTrader
 from src.llm.cache import get_cached_llm_response, compute_market_hash
@@ -1791,6 +1791,10 @@ class TradingEngine:
         # Fetch BTP bonds
         btp_bonds = await asyncio.to_thread(discover_btp_bonds)
         btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
+
+        # Fetch ETFs
+        etf_symbols = await asyncio.to_thread(discover_italian_ucits_etfs)
+        etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
         btp_quotes = {f"{b['isin']}/{self.base_currency}": {
             "last": b["last_price"],
             "bid": b["last_price"],
@@ -1937,13 +1941,14 @@ class TradingEngine:
                     if t.get('last') is None:
                         t['last'] = yahoo.get('last')
 
-        # --- Limit candidate pool to top N by 24h volume (preserve BTPs) ---
+        # --- Limit candidate pool to top N by 24h volume (preserve BTPs and ETFs) ---
         def _volume(sym):
             t = tickers.get(sym, {})
             return t.get('quoteVolume', 0) or 0
-        stock_sample_sorted = sorted([s for s in sample_pairs if s in stock_pairs], key=_volume, reverse=True)
+        stock_sample_sorted = sorted([s for s in sample_pairs if s in stock_pairs and s not in etf_pairs], key=_volume, reverse=True)
+        etf_sample_sorted = [s for s in sample_pairs if s in etf_pairs]
         btp_sample_sorted = [s for s in sample_pairs if s in btp_pairs]
-        sample_pairs = stock_sample_sorted[:settings.SYMBOL_SELECTION_TOP_VOLUME_LIMIT] + btp_sample_sorted
+        sample_pairs = stock_sample_sorted[:settings.SYMBOL_SELECTION_TOP_VOLUME_LIMIT] + etf_sample_sorted + btp_sample_sorted
 
         # Fetch news sentiment for all candidate stocks
         news_sentiment = {}
@@ -2008,13 +2013,8 @@ class TradingEngine:
                 }
 
 
-        # Use the already volume‑sorted sample_pairs for OHLCV fetch (limit to 20 to avoid rate limits)
-        sorted_by_vol = sample_pairs[:50]
-        # Always include BTPs in the OHLCV fetch so the LLM has technical data for them
-        btp_in_sample = [s for s in sample_pairs if s in btp_pairs]
-        for btp in btp_in_sample:
-            if btp not in sorted_by_vol:
-                sorted_by_vol.append(btp)
+        # Fetch OHLCV for ALL candidate pairs (Stocks, ETFs, BTPs) so indicators are available for the LLM
+        sorted_by_vol = sample_pairs
 
         # Fetch multi-timeframe OHLCV for these stocks
         ohlcv_data = {}
