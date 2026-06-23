@@ -1965,18 +1965,17 @@ class TradingEngine:
                     logger.info(f"Could not fetch news sentiment for {sym}: {e}")
 
             # Fetch news for BTPs specifically (they have no volume, so background refresh won't cover them)
-            if settings.BANCA_D_ITALIA_BTP_NEWS_ENABLED:
-                for sym in btp_pairs:
-                    if sym in sample_pairs:
-                        try:
-                            await self._fetch_and_store_news_for_symbol(sym)
-                            # Re-read sentiment after fetching
-                            base = sym.split("/")[0]
-                            agg = await self._get_cached_sentiment(sym)
-                            if agg:
-                                news_sentiment[base] = agg
-                        except Exception as e:
-                            logger.debug(f"BTP news fetch failed for {sym}: {e}")
+            for sym in btp_pairs:
+                if sym in sample_pairs:
+                    try:
+                        await self._fetch_and_store_news_for_symbol(sym)
+                        # Re-read sentiment after fetching
+                        base = sym.split("/")[0]
+                        agg = await self._get_cached_sentiment(sym)
+                        if agg:
+                            news_sentiment[base] = agg
+                    except Exception as e:
+                        logger.debug(f"BTP news fetch failed for {sym}: {e}")
 
             # Fetch news for ETFs specifically (they may not have high volume, so background refresh won't cover them)
             if settings.NEWS_ENABLED:
