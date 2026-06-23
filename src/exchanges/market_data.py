@@ -311,6 +311,12 @@ def get_tradable_assets() -> List[str]:
     target_country = settings.TARGET_COUNTRY.lower()
     filtered = []
     for symbol in candidates:
+        # BTP ISINs start with IT and are Italian bonds, skip yfinance country check
+        if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+            if target_country == "italy":
+                filtered.append(symbol)
+            continue
+        
         country = _fetch_country(symbol)
         if country is not None and country.lower() == target_country:
             filtered.append(symbol)
@@ -444,11 +450,15 @@ def _get_btp_investing_id(isin: str, name: str) -> Optional[int]:
     try:
         # investiny uses https://tvc6.investing.com/search
         url = "https://tvc6.investing.com/search"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        logger.info(f"Searching Investing.com ID for BTP {isin} ({name})")
 
         # Try searching by ISIN first, then by name
         for query in [isin, name]:
             params = {"query": query, "limit": 1, "type": ""}
-            response = httpx.get(url, params=params, timeout=10.0)
+            response = httpx.get(url, params=params, timeout=10.0, headers=headers)
             if response.status_code == 200:
                 results = response.json()
                 if results:
@@ -474,13 +484,17 @@ def _fetch_btp_candles(isin: str, name: str, timeframe: str, from_date: datetime
     try:
         # investiny uses https://tvc6.investing.com/history
         url = "https://tvc6.investing.com/history"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        logger.info(f"Fetching BTP history for {isin} {timeframe} from Investing.com")
         params = {
             "symbol": investing_id,
             "resolution": interval,
             "from": int(from_date.timestamp()),
             "to": int(to_date.timestamp()),
         }
-        response = httpx.get(url, params=params, timeout=15.0)
+        response = httpx.get(url, params=params, timeout=15.0, headers=headers)
         if response.status_code != 200:
             logger.warning(f"Failed to fetch BTP candles for {isin} {timeframe}: HTTP {response.status_code}")
             return []
@@ -540,6 +554,7 @@ def get_multi_timeframe_bars(
         # Use investiny for BTPs (ISINs)
         if re.match(r'^IT[A-Z0-9]{10}$', symbol):
             name = _get_btp_name(symbol)
+            logger.info(f"Fetching BTP candles for {symbol} ({name}) timeframe {tf}")
             now = datetime.now(timezone.utc)
             inv_interval = INVESTINY_TIMEFRAME_MAP.get(tf)
             if inv_interval == "1H":
