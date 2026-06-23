@@ -1,5 +1,6 @@
 import json
 import re
+from src.config.settings import settings
 from .base import Signal, LLMStrategy
 
 
