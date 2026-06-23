@@ -351,7 +351,7 @@ class TradingEngine:
                 logger.error(f"Reconcile error: {e}", exc_info=True)
             finally:
                 self._reconcile_running = False
-            await asyncio.sleep(60)
+            await asyncio.sleep(300)
 
     async def _periodic_reevaluate(self):
         """Re-evaluate stock selection periodically."""
