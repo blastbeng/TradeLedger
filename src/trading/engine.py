@@ -1834,7 +1834,7 @@ class TradingEngine:
         tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in stock_sample}
 
         # Add BTP quotes directly without using yfinance
-        tickers.update({pair: btp_quotes.get(pair, {}) for pair in btp_sample})
+        tickers.update(btp_quotes)
 
         # Filter out symbols with no valid last price
         valid_sample_pairs = [
@@ -2197,9 +2197,8 @@ class TradingEngine:
             if pair in sample_pairs and pair not in shortlist:
                 shortlist.append(pair)
 
-        # Always include a few BTPs for the LLM to consider
-        btp_in_sample = [s for s in sample_pairs if s in btp_pairs]
-        for sym in btp_in_sample[:5]:
+        # Always include all BTPs for the LLM to consider
+        for sym in btp_pairs:
             if sym not in shortlist:
                 shortlist.append(sym)
 
