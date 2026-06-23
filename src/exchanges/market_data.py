@@ -14,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 # Map our timeframe strings to yfinance interval strings
 TIMEFRAME_MAP = {
-    "5m": "5m",
-    "15m": "15m",
     "1h": "60m",
     "1d": "1d",
 }
