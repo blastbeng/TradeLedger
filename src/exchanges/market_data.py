@@ -112,6 +112,43 @@ def _get_hardcoded_tickers() -> List[str]:
     ]
 
 
+def _discover_financedatabase_tickers() -> List[str]:
+    """Discover base tickers using the FinanceDatabase library based on TARGET_COUNTRY."""
+    try:
+        import financedatabase as fd
+    except ImportError:
+        logger.warning("financedatabase not installed. Skipping FinanceDatabase ticker discovery.")
+        return []
+
+    country = settings.TARGET_COUNTRY.capitalize()
+    suffix = settings.TICKER_SUFFIX
+    try:
+        equities = fd.Equities()
+        df = equities.select(country=country)
+        if df is None or df.empty:
+            logger.warning(f"No tickers found in FinanceDatabase for country: {country}")
+            return []
+
+        base_symbols = []
+        for symbol in df.index:
+            # We only want symbols that match our configured suffix (e.g., .MI)
+            if suffix and symbol.endswith(suffix):
+                base = symbol[:-len(suffix)]
+                if re.match(r"^[A-Z0-9]+$", base):
+                    base_symbols.append(base)
+            elif not suffix:
+                # If no suffix is configured, just take the base symbol
+                base = symbol.split(".")[0] if "." in symbol else symbol
+                if re.match(r"^[A-Z0-9]+$", base):
+                    base_symbols.append(base)
+
+        logger.info(f"Discovered {len(base_symbols)} tickers from FinanceDatabase for {country}")
+        return base_symbols
+    except Exception as e:
+        logger.warning(f"FinanceDatabase ticker discovery failed: {e}")
+        return []
+
+
 def get_tradable_assets() -> List[str]:
     """Return a list of tradable Italian equity symbols, filtered by country.
 
@@ -147,6 +184,16 @@ def get_tradable_assets() -> List[str]:
             if t_clean and t_clean not in existing:
                 base_symbols.append(t_clean)
                 existing.add(t_clean)
+
+    # --- FinanceDatabase ticker discovery ---
+    if settings.FINANCEDATABASE_TICKER_DISCOVERY_ENABLED:
+        fd_tickers = _discover_financedatabase_tickers()
+        if fd_tickers:
+            existing = set(base_symbols)
+            for t in fd_tickers:
+                if t not in existing:
+                    base_symbols.append(t)
+                    existing.add(t)
 
     # Discover additional tickers from news RSS feeds
     try:
