@@ -1159,8 +1159,8 @@
         document.getElementById('btn-force-reeval').addEventListener('click', () => {
             fetch('/api/force-reeval', { method: 'POST' })
                 .then(res => res.json())
-                .then(data => alert(data.status || 'Forced re-evaluation triggered.'))
-                .catch(err => alert('Error: ' + err.message));
+                .then(data => showToast(data.status || 'Forced re-evaluation triggered.'))
+                .catch(err => showToast('Error: ' + err.message));
         });
         document.getElementById('btn-refresh-news').addEventListener('click', () => {
             const newsDiv = document.getElementById('news');
@@ -1215,6 +1215,18 @@
             } catch (err) {
                 resultDiv.textContent = `Error: ${err.message}`;
             }
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById("toast");
+            toast.textContent = message;
+            toast.style.visibility = "visible";
+            if (toast._timeoutId) {
+                clearTimeout(toast._timeoutId);
+            }
+            toast._timeoutId = setTimeout(() => {
+                toast.style.visibility = "hidden";
+            }, 3000);
         }
 
         connect();
@@ -1309,6 +1321,7 @@
 
         // Initial request
         requestWakeLock();
-    </script>
+    <div id="toast" style="visibility: hidden; min-width: 250px; margin-left: -125px; background-color: var(--card-bg); color: var(--text); text-align: center; border-radius: 6px; padding: 16px; position: fixed; z-index: 1001; left: 50%; bottom: 30px; border: 1px solid var(--border); box-shadow: var(--shadow);"></div>
+
 </body>
 </html>
