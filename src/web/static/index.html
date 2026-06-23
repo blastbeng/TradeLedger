@@ -431,6 +431,17 @@
             </div>
 
             <div class="card card-full">
+                <h2>🧪 Simulation Lab</h2>
+                <div class="table-wrapper">
+                    <table id="simulation-table">
+                        <thead><tr><th>Ticker</th><th>Timeframe</th><th>Actions</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="simulation-result" style="margin-top: 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-family: monospace; white-space: pre-wrap; max-height: 400px; overflow-y: auto; font-size: 0.85rem; color: var(--text-secondary);">Select a ticker and run a simulation.</div>
+            </div>
+
+            <div class="card card-full">
                 <h2>🎮 Controls</h2>
                 <div class="controls-grid">
                     <button id="btn-pause" style="background:var(--accent);">⏸️ Pause</button>
@@ -693,6 +704,37 @@
                 }
                 const tfoot = document.querySelector('#positions-table tfoot');
                 if (tfoot) tfoot.innerHTML = '';
+            }
+
+            // Simulation Lab Table
+            const simBody = document.querySelector('#simulation-table tbody');
+            simBody.innerHTML = '';
+            if (data.current_symbols && data.current_symbols.length > 0) {
+                data.current_symbols.forEach(entry => {
+                    const row = simBody.insertRow();
+                    row.insertCell().textContent = entry.display || entry.symbol;
+                    row.insertCell().textContent = entry.timeframe || '—';
+                    const actionsCell = row.insertCell();
+                    
+                    const btBtn = document.createElement('button');
+                    btBtn.textContent = 'Backtest';
+                    btBtn.style.cssText = 'background: var(--accent); color: #fff; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; margin-right: 8px; font-size: 0.8rem;';
+                    btBtn.onclick = () => runSimulation(entry.symbol, 'backtest');
+                    actionsCell.appendChild(btBtn);
+                    
+                    const decBtn = document.createElement('button');
+                    decBtn.textContent = 'Simulate Decision';
+                    decBtn.style.cssText = 'background: #a371f7; color: #fff; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem;';
+                    decBtn.onclick = () => runSimulation(entry.symbol, 'decision');
+                    actionsCell.appendChild(decBtn);
+                });
+            } else {
+                const row = simBody.insertRow();
+                const cell = row.insertCell();
+                cell.colSpan = 3;
+                cell.textContent = 'No tracked tickers';
+                cell.style.textAlign = 'center';
+                cell.style.color = 'var(--text-secondary)';
             }
 
             // Queued Orders
@@ -1133,6 +1175,40 @@
                     newsDiv.textContent = 'Failed to load news.';
                 });
         });
+
+        async function runSimulation(symbol, type) {
+            const resultDiv = document.getElementById('simulation-result');
+            resultDiv.textContent = `Running ${type} simulation for ${symbol}...`;
+            try {
+                const endpoint = type === 'backtest' ? 'backtest' : 'decision';
+                const resp = await fetch(`/api/simulate/${endpoint}/${encodeURIComponent(symbol)}`, { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    resultDiv.textContent = `Error: ${err.detail || 'Simulation failed'}`;
+                    return;
+                }
+                const data = await resp.json();
+                let text = `=== Simulation Result for ${symbol} ===\n\n`;
+                if (data.error) {
+                    text += `Error: ${data.error}\n`;
+                    if (data.raw_response) {
+                        text += `Raw LLM Response:\n${data.raw_response}\n`;
+                    }
+                } else {
+                    text += `Action: ${data.action}\n\n`;
+                    text += `--- Step 1 Response ---\n${data.step1_response}\n\n`;
+                    if (data.backtest_summary) {
+                        text += `--- Backtest Summary ---\n${data.backtest_summary}\n\n`;
+                    }
+                    if (data.step2_response) {
+                        text += `--- Step 2 Response ---\n${data.step2_response}\n`;
+                    }
+                }
+                resultDiv.textContent = text;
+            } catch (err) {
+                resultDiv.textContent = `Error: ${err.message}`;
+            }
+        }
 
         connect();
 

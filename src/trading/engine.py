@@ -7,7 +7,7 @@ import re
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
@@ -9865,3 +9865,504 @@ class TradingEngine:
             except Exception as e:
                 logger.warning(f"Sync batch quote fetch failed: {e}")
         return tickers
+
+    async def _run_backtest_from_signal(
+        self,
+        symbol: str,
+        signal: Signal,
+        atr: Optional[float],
+        current_price: float,
+        tf_secs: int,
+        assigned_tf: str,
+        historical_ohlcv: Optional[List[List]],
+        raw_candles: Optional[List[List]],
+        base_balance: float,
+        is_btp: bool,
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        """Run a backtest using the parameters from a signal. Returns (stats, summary)."""
+        bt_params = signal.strategy_params or {}
+        bt_stop_method = bt_params.get("stop_loss_method", "fixed")
+        if bt_stop_method == "atr_multiple" and atr is not None and atr > 0 and current_price > 0:
+            bt_atr_mult = bt_params.get("stop_loss_atr_multiple", 2.0)
+            bt_sl_pct = (bt_atr_mult * atr) / current_price
+        else:
+            bt_sl_pct = bt_params.get("stop_loss_pct", 0.02)
+        if "take_profit_atr_multiple" in bt_params and atr is not None and atr > 0 and current_price > 0:
+            bt_tp_atr_mult = bt_params.get("take_profit_atr_multiple")
+            if bt_tp_atr_mult is not None:
+                bt_tp_pct = (bt_tp_atr_mult * atr) / current_price
+            else:
+                bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
+        else:
+            bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
+        bt_max_hold = bt_params.get("max_hold_time_seconds")
+        bt_trailing = bt_params.get("trailing_stop", False)
+        bt_trail_dist = bt_params.get("trailing_stop_distance_pct")
+        bt_trail_act = bt_params.get("trailing_stop_activation_pct")
+
+        bt_period_days = bt_params.get("backtest_period_days")
+        if bt_period_days is not None:
+            bt_period_days = max(30, min(int(bt_period_days), settings.OHLCV_RETENTION_DAYS))
+            bt_since_ms = int(time.time() * 1000) - bt_period_days * 24 * 60 * 60 * 1000
+            bt_limit = int((bt_period_days * 86400) / tf_secs) + 100
+            bt_db_candles = await asyncio.to_thread(
+                get_ohlcv, symbol, assigned_tf, since_ms=bt_since_ms, limit=bt_limit
+            )
+            if bt_db_candles:
+                bt_candles = [
+                    [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
+                    for c in bt_db_candles
+                ]
+            else:
+                bt_candles = historical_ohlcv or raw_candles
+        else:
+            bt_candles = historical_ohlcv or raw_candles
+
+        bt_position_fraction = bt_params.get("position_size_fraction", 1.0 / self.effective_max_symbols if self.effective_max_symbols > 0 else 1.0)
+        bt_trade_value = base_balance * bt_position_fraction
+        if bt_trade_value > 0:
+            from src.exchanges.fees import calculate_transaction_costs
+            buy_costs = calculate_transaction_costs("BUY", 100.0, bt_trade_value / 100.0, symbol=symbol)
+            sell_costs = calculate_transaction_costs("SELL", 100.0, bt_trade_value / 100.0, symbol=symbol)
+            total_fee_pct = (buy_costs["total_costs"] + sell_costs["total_costs"]) / bt_trade_value
+            bt_fee_rate = total_fee_pct / 2
+        else:
+            bt_fee_rate = 0.006
+
+        atr_series = None
+        if bt_params.get("trailing_stop_atr_multiple") and bt_candles and len(bt_candles) >= 15:
+            try:
+                import numpy as np
+                import talib
+                highs = np.array([c[2] for c in bt_candles], dtype=float)
+                lows = np.array([c[3] for c in bt_candles], dtype=float)
+                closes = np.array([c[4] for c in bt_candles], dtype=float)
+                atr_arr = talib.ATR(highs, lows, closes, timeperiod=14)
+                atr_series = [None if np.isnan(v) else float(v) for v in atr_arr]
+            except Exception:
+                pass
+
+        if bt_candles and len(bt_candles) >= 20:
+            backtest_stats = backtest_strategy(
+                candles=bt_candles,
+                stop_loss_pct=bt_sl_pct,
+                take_profit_pct=bt_tp_pct,
+                max_hold_time_seconds=bt_max_hold,
+                trailing_stop=bt_trailing,
+                trailing_stop_distance_pct=bt_trail_dist,
+                trailing_stop_activation_pct=bt_trail_act,
+                partial_take_profit_levels=bt_params.get("partial_take_profit_levels"),
+                breakeven_activation_pct=bt_params.get("breakeven_activation_pct"),
+                trailing_take_profit=bt_params.get("trailing_take_profit", False),
+                trailing_take_profit_distance_pct=bt_params.get("trailing_take_profit_distance_pct"),
+                trailing_stop_atr_multiple=bt_params.get("trailing_stop_atr_multiple"),
+                atr_values=atr_series,
+                max_unrealized_loss_pct=bt_params.get("max_unrealized_loss_pct"),
+                fee_rate=bt_fee_rate,
+                fee_model="intesa",
+                trade_value=bt_trade_value,
+                is_btp=is_btp,
+                cooldown_after_loss_seconds=bt_params.get("cooldown_after_loss_seconds"),
+                slippage_pct=0.001,
+            )
+            bt_summary = format_backtest_summary(backtest_stats)
+            return backtest_stats, bt_summary
+        return None, "Insufficient data for backtest (need ≥20 candles)."
+
+    async def _prepare_simulation_data(self, symbol: str) -> Dict[str, Any]:
+        """Fetch all necessary data and build the strategy prompt for simulation."""
+        symbol_entry = next((e for e in self.current_symbols if e["symbol"] == symbol), None)
+        if not symbol_entry:
+            return {"error": f"Symbol {symbol} not found in current_symbols"}
+        
+        assigned_tf = symbol_entry["timeframe"]
+        tf_seconds = self._timeframe_to_seconds(assigned_tf)
+        base_symbol = symbol.split("/")[0]
+        is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
+
+        async with self._exchange_semaphore:
+            quotes = await asyncio.to_thread(get_quotes, [base_symbol])
+            ticker = quotes.get(base_symbol)
+        if ticker is None:
+            return {"error": "No ticker data"}
+        current_price = ticker['last']
+
+        if not is_btp:
+            bid = ticker.get('bid')
+            ask = ticker.get('ask')
+            if bid is None or ask is None:
+                yahoo = await asyncio.to_thread(get_yahoo_quote, base_symbol)
+                if yahoo:
+                    if bid is None: ticker['bid'] = yahoo.get('bid')
+                    if ask is None: ticker['ask'] = yahoo.get('ask')
+
+        fundamentals = None
+        if settings.YAHOO_FINANCE_ENABLED and not is_btp:
+            fundamentals = await asyncio.to_thread(get_yahoo_fundamentals, base_symbol)
+
+        balance = await self._get_cached_balance()
+        base_balance = balance.get(self.base_currency, 0.0)
+        per_symbol_budget = base_balance / self.effective_max_symbols if self.effective_max_symbols > 0 else 0.0
+
+        ohlcv_data = {}
+        if settings.OHLCV_TIMEFRAMES:
+            try:
+                async with self._exchange_semaphore:
+                    ohlcv_data = await asyncio.to_thread(
+                        get_multi_timeframe_bars, base_symbol, settings.OHLCV_TIMEFRAMES, limit=100
+                    )
+            except Exception:
+                pass
+            for tf in settings.OHLCV_TIMEFRAMES:
+                if tf not in ohlcv_data or not ohlcv_data[tf]:
+                    db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
+                    if db_candles:
+                        ohlcv_data[tf] = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+
+        multi_tf_indicators = {}
+        multi_tf_raw_candles = {}
+        atr = rsi = macd = macd_signal = macd_hist = None
+        bb_upper = bb_middle = bb_lower = ema_9 = ema_21 = None
+        stochastic_k = stochastic_d = adx = plus_di = minus_di = None
+        obv = mfi = cci = williams_r = ichimoku = donchian_channels = None
+        parabolic_sar = keltner_channels = vwap = daily_pivot_points = None
+        atr_multi_tf = {}
+        atr_percentile = None
+
+        for tf in settings.OHLCV_TIMEFRAMES:
+            if tf in ohlcv_data and ohlcv_data[tf]:
+                candles = ohlcv_data[tf]
+                multi_tf_raw_candles[tf] = candles
+                ind = compute_all_indicators(candles)
+                multi_tf_indicators[tf] = ind
+                if tf == assigned_tf:
+                    atr = ind.get('atr')
+                    rsi = ind.get('rsi')
+                    macd = ind.get('macd')
+                    macd_signal = ind.get('macd_signal')
+                    macd_hist = ind.get('macd_hist')
+                    bb_upper = ind.get('bb_upper')
+                    bb_middle = ind.get('bb_middle')
+                    bb_lower = ind.get('bb_lower')
+                    ema_9 = ind.get('ema_9')
+                    ema_21 = ind.get('ema_21')
+                    stochastic_k = ind.get('stochastic_k')
+                    stochastic_d = ind.get('stochastic_d')
+                    adx = ind.get('adx')
+                    plus_di = ind.get('plus_di')
+                    minus_di = ind.get('minus_di')
+                    obv = ind.get('obv')
+                    mfi = ind.get('mfi')
+                    cci = ind.get('cci')
+                    williams_r = ind.get('williams_r')
+                    ichimoku = ind.get('ichimoku')
+                    donchian_channels = ind.get('donchian_channels')
+                    parabolic_sar = ind.get('parabolic_sar')
+                    keltner_channels = ind.get('keltner_channels')
+                    vwap = compute_vwap(candles)
+
+        for tf in settings.OHLCV_TIMEFRAMES:
+            if tf in multi_tf_raw_candles:
+                tf_atr = compute_atr(multi_tf_raw_candles[tf])
+                if tf_atr is not None and tf_atr > 0:
+                    atr_multi_tf[tf] = tf_atr
+
+        if "1d" in multi_tf_raw_candles and len(multi_tf_raw_candles["1d"]) >= 2:
+            daily_candles = multi_tf_raw_candles["1d"]
+            prev_daily = daily_candles[-2]
+            daily_pivot_points = compute_pivot_points(prev_daily[2], prev_daily[3], prev_daily[4])
+
+        if atr is not None and atr > 0:
+            atr_percentile_key = f"atr_percentile:{symbol}"
+            try:
+                stored_atr = await asyncio.to_thread(self.redis.get, atr_percentile_key)
+                if stored_atr:
+                    atr_history = json.loads(stored_atr)
+                else:
+                    atr_history = []
+                if len(atr_history) >= 5:
+                    sorted_atr = sorted(atr_history)
+                    rank = sum(1 for v in sorted_atr if v <= atr)
+                    atr_percentile = round(rank / len(sorted_atr) * 100, 1)
+            except Exception:
+                pass
+
+        market_regime = await self._classify_market_regime(
+            adx=adx, plus_di=plus_di, minus_di=minus_di, ema_9=ema_9, ema_21=ema_21,
+            bb_upper=bb_upper, bb_lower=bb_lower, bb_middle=bb_middle,
+            atr=atr, atr_percentile=atr_percentile, current_price=current_price
+        )
+
+        raw_candles = multi_tf_raw_candles.get(assigned_tf)
+        historical_ohlcv = None
+        try:
+            since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+            hist_limit = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds) + 100
+            db_candles = await asyncio.to_thread(get_ohlcv, symbol, assigned_tf, since_ms=since_ms, limit=hist_limit)
+            if db_candles:
+                historical_ohlcv = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+        except Exception:
+            pass
+
+        perf = self._compute_performance_metrics()
+        trade_pattern_analysis = self._compute_trade_pattern_analysis()
+        symbol_event = None
+        if settings.NEWS_ENABLED and detect_upcoming_events is not None:
+            try:
+                symbol_event = await asyncio.to_thread(detect_upcoming_events, symbol)
+            except Exception:
+                pass
+
+        aggregate_sentiment = None
+        if settings.NEWS_ENABLED:
+            try:
+                aggregate_sentiment = await self._get_cached_sentiment(symbol)
+            except Exception:
+                pass
+
+        sentiment_trend_val = None
+        if aggregate_sentiment:
+            current_compound = aggregate_sentiment.get("avg_compound")
+            prev_key = f"sentiment:prev:{base_symbol}"
+            prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
+            prev_compound = float(prev_raw) if prev_raw else None
+            if current_compound is not None and prev_compound is not None:
+                sentiment_trend_val = round(current_compound - prev_compound, 4)
+
+        volume_trend_val = None
+        current_volume = ticker.get('quoteVolume', 0) or 0
+        if current_volume > 0:
+            volume_trend_val = await self._compute_volume_trend(symbol, current_volume)
+
+        full_market_breadth = None
+        try:
+            full_breadth_raw = await asyncio.to_thread(self.redis.get, "market:breadth:full")
+            if full_breadth_raw:
+                full_market_breadth = json.loads(full_breadth_raw)
+        except Exception:
+            pass
+        session_info = self._get_session_info()
+
+        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Rome"))
+        weekday = now_rome.weekday()
+        if weekday < 5:
+            rome_minutes = now_rome.hour * 60 + now_rome.minute
+            close_minutes = 17 * 60 + 30
+            minutes_to_market_close = close_minutes - rome_minutes
+            if minutes_to_market_close < 0: minutes_to_market_close = 0
+        else:
+            minutes_to_market_close = None
+
+        global_risk_mult = None
+        global_mult_raw = await asyncio.to_thread(self.redis.get, "trading:global_risk_multiplier")
+        if global_mult_raw:
+            try: global_risk_mult = float(global_mult_raw)
+            except: pass
+
+        max_port_exp = max_port_risk = None
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_exposure_pct")
+            if raw: max_port_exp = float(raw)
+            raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_stop_risk_pct")
+            if raw: max_port_risk = float(raw)
+        except: pass
+
+        min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "trading:min_viable_trade_amount")
+            if raw: min_viable_amount = float(raw)
+        except: pass
+
+        prompt = build_strategy_prompt(
+            symbol=symbol, ticker=ticker, balance=balance, open_positions=[],
+            per_symbol_budget=per_symbol_budget, max_symbols=self.effective_max_symbols,
+            base_currency=self.base_currency, performance=perf, ohlcv_data=ohlcv_data,
+            assigned_timeframe=assigned_tf, atr=atr, atr_multi_tf=atr_multi_tf, rsi=rsi,
+            macd=macd, macd_signal=macd_signal, macd_hist=macd_hist, bb_upper=bb_upper,
+            bb_middle=bb_middle, bb_lower=bb_lower, ema_9=ema_9, ema_21=ema_21,
+            stochastic_k=stochastic_k, stochastic_d=stochastic_d, adx=adx, plus_di=plus_di,
+            minus_di=minus_di, obv=obv, mfi=mfi, cci=cci, williams_r=williams_r,
+            unrealized_pnl=None, position_info=None,
+            drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
+            raw_candles=raw_candles, recent_trades=[], historical_ohlcv=historical_ohlcv,
+            min_order_amount=None, min_order_cost=None, all_symbols=self.current_symbols,
+            past_trades=[], cycle_spent=0.0, remaining_balance=base_balance,
+            market_regime=market_regime, multi_tf_raw_candles=multi_tf_raw_candles,
+            multi_tf_indicators=multi_tf_indicators, session_info=session_info,
+            sentiment_trend=sentiment_trend_val, volume_trend=volume_trend_val,
+            ichimoku=ichimoku, market_breadth=getattr(self, '_market_breadth', None),
+            full_market_breadth=full_market_breadth, parabolic_sar=parabolic_sar,
+            keltner_channels=keltner_channels, donchian_channels=donchian_channels,
+            atr_percentile=atr_percentile, global_risk_multiplier=global_risk_mult,
+            trading_paused=False, max_hold_expired=False, max_hold_expired_count=0,
+            stop_loss_triggered=False, stop_loss_review_count=0,
+            take_profit_triggered=False, take_profit_review_count=0,
+            partial_tp_triggered=False, partial_tp_review_count=0,
+            partial_tp_triggered_levels=None, partial_tp_executed_levels=[],
+            dust_sweep_triggered=False, dust_sweep_review_count=0,
+            max_stop_loss_reviews=10, max_take_profit_reviews=10,
+            max_partial_tp_reviews=10, max_dust_sweep_reviews=10,
+            portfolio_exposure_pct=None, portfolio_stop_risk_pct=None,
+            portfolio_total_value=base_balance, portfolio_open_count=len(self.positions),
+            portfolio_available_capital=base_balance, last_decision=self._last_decisions.get(symbol),
+            minutes_to_market_close=minutes_to_market_close,
+            current_strategy_interval_seconds=self._strategy_intervals.get(symbol, tf_seconds),
+            max_portfolio_exposure_pct=max_port_exp, max_portfolio_stop_risk_pct=max_port_risk,
+            trade_pattern_analysis=trade_pattern_analysis, symbol_event=symbol_event,
+            queued_orders=self.queued_orders, fundamentals=fundamentals, vwap=vwap,
+            daily_pivot_points=daily_pivot_points, min_viable_trade_amount=min_viable_amount,
+        )
+
+        return {
+            "ticker": ticker, "prompt": prompt, "atr": atr, "assigned_tf": assigned_tf,
+            "tf_seconds": tf_seconds, "historical_ohlcv": historical_ohlcv,
+            "raw_candles": raw_candles, "current_price": current_price,
+            "base_balance": base_balance, "is_btp": is_btp,
+        }
+
+    async def simulate_backtest(self, symbol: str) -> Dict[str, Any]:
+        """Simulate Step 1 (LLM strategy proposal) and run backtest without executing trades."""
+        data = await self._prepare_simulation_data(symbol)
+        if "error" in data:
+            return data
+        
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response,
+                    compact_prompt(data["prompt"]),
+                    COMPACTED_SYSTEM_PROMPT,
+                    60,
+                    model_type="mind",
+                    temperature=0.2,
+                ),
+                timeout=settings.LLM_TIMEOUT
+            )
+            step1_response = result["response"]
+        except Exception as e:
+            return {"error": f"LLM call failed: {e}"}
+
+        try:
+            preliminary_strategy = create_strategy_from_llm(step1_response)
+            preliminary_signal = preliminary_strategy.generate_signal({})
+        except ValueError as e:
+            return {"error": f"Failed to parse LLM response: {e}", "raw_response": step1_response}
+
+        if preliminary_signal.action == "BUY":
+            backtest_stats, bt_summary = await self._run_backtest_from_signal(
+                symbol=symbol,
+                signal=preliminary_signal,
+                atr=data["atr"],
+                current_price=data["current_price"],
+                tf_secs=data["tf_seconds"],
+                assigned_tf=data["assigned_tf"],
+                historical_ohlcv=data["historical_ohlcv"],
+                raw_candles=data["raw_candles"],
+                base_balance=data["base_balance"],
+                is_btp=data["is_btp"],
+            )
+            return {
+                "step1_response": step1_response,
+                "action": preliminary_signal.action,
+                "backtest_summary": bt_summary,
+            }
+        else:
+            return {
+                "step1_response": step1_response,
+                "action": preliminary_signal.action,
+                "backtest_summary": "No backtest performed (action is not BUY)",
+            }
+
+    async def simulate_decision(self, symbol: str) -> Dict[str, Any]:
+        """Simulate Step 1 and Step 2 (final LLM decision) without executing trades."""
+        data = await self._prepare_simulation_data(symbol)
+        if "error" in data:
+            return data
+        
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response,
+                    compact_prompt(data["prompt"]),
+                    COMPACTED_SYSTEM_PROMPT,
+                    60,
+                    model_type="mind",
+                    temperature=0.2,
+                ),
+                timeout=settings.LLM_TIMEOUT
+            )
+            step1_response = result["response"]
+        except Exception as e:
+            return {"error": f"LLM Step 1 call failed: {e}"}
+
+        try:
+            preliminary_strategy = create_strategy_from_llm(step1_response)
+            preliminary_signal = preliminary_strategy.generate_signal({})
+        except ValueError as e:
+            return {"error": f"Failed to parse LLM Step 1 response: {e}", "raw_response": step1_response}
+
+        if preliminary_signal.action != "BUY":
+            return {
+                "step1_response": step1_response,
+                "step2_response": "N/A (Step 1 action is not BUY)",
+                "action": preliminary_signal.action,
+                "backtest_summary": "No backtest performed (action is not BUY)",
+            }
+
+        backtest_stats, bt_summary = await self._run_backtest_from_signal(
+            symbol=symbol,
+            signal=preliminary_signal,
+            atr=data["atr"],
+            current_price=data["current_price"],
+            tf_secs=data["tf_seconds"],
+            assigned_tf=data["assigned_tf"],
+            historical_ohlcv=data["historical_ohlcv"],
+            raw_candles=data["raw_candles"],
+            base_balance=data["base_balance"],
+            is_btp=data["is_btp"],
+        )
+
+        step2_prompt = build_final_decision_prompt(
+            symbol=symbol,
+            ticker=data["ticker"],
+            preliminary_decision={
+                "action": preliminary_signal.action,
+                "confidence": preliminary_signal.confidence,
+                "reasoning": preliminary_signal.reasoning,
+                "strategy_params": preliminary_signal.strategy_params,
+                "timeframe": data["assigned_tf"],
+            },
+            backtest_stats=backtest_stats or {},
+            backtest_summary=bt_summary,
+            base_currency=self.base_currency,
+            trading_paused=False,
+            step1_prompt=data["prompt"],
+        )
+
+        try:
+            step2_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response,
+                    compact_prompt(step2_prompt),
+                    COMPACTED_SYSTEM_PROMPT,
+                    60,
+                    model_type="mind",
+                    temperature=0.2,
+                ),
+                timeout=settings.LLM_TIMEOUT
+            )
+            step2_response = step2_result["response"]
+        except Exception as e:
+            return {
+                "step1_response": step1_response,
+                "error": f"LLM Step 2 call failed: {e}",
+                "action": preliminary_signal.action,
+                "backtest_summary": bt_summary,
+            }
+
+        return {
+            "step1_response": step1_response,
+            "step2_response": step2_response,
+            "action": preliminary_signal.action,
+            "backtest_summary": bt_summary,
+        }

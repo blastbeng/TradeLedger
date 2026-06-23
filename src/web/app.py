@@ -419,3 +419,13 @@ async def websocket_endpoint(websocket: WebSocket):
             await asyncio.sleep(2)
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
+
+@app.post("/api/simulate/backtest/{symbol:path}")
+async def simulate_backtest(symbol: str):
+    engine = get_engine()
+    return await engine.simulate_backtest(symbol)
+
+@app.post("/api/simulate/decision/{symbol:path}")
+async def simulate_decision(symbol: str):
+    engine = get_engine()
+    return await engine.simulate_decision(symbol)
