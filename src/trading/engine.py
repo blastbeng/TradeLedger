@@ -2858,7 +2858,7 @@ class TradingEngine:
                         if pause_trading:
                             # Only pause if not already manually paused
                             current_source = await asyncio.to_thread(self.redis.get, "trading:pause_source")
-                            if current_source and (current_source.decode() if isinstance(current_source, bytes) else current_source) == "manual":
+                            if current_source and current_source == "manual":
                                 logger.info("LLM pause request ignored because trading is manually paused.")
                             else:
                                 await asyncio.to_thread(self.redis.set, "trading:paused", "1")
