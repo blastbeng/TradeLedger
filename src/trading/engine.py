@@ -4367,7 +4367,7 @@ class TradingEngine:
                 else:
                     bt_fee_rate = 0.006
 
-                if bt_candles and len(bt_candles) >= 10:
+                if bt_candles and len(bt_candles) >= 20:
                     backtest_stats = backtest_strategy(
                         candles=bt_candles,
                         stop_loss_pct=bt_sl_pct,
@@ -4489,7 +4489,7 @@ class TradingEngine:
                         signal = preliminary_signal
                         signal.backtest_summary = bt_summary
                 else:
-                    logger.info(f"Insufficient data for backtest for {symbol}. Using preliminary decision.")
+                    logger.info(f"Insufficient data for backtest for {symbol} (need ≥20 candles). Using preliminary decision.")
                     signal = preliminary_signal
             else:
                 # For SELL or HOLD, no backtest needed, use preliminary decision
@@ -5638,8 +5638,12 @@ class TradingEngine:
                                 new_stop = highest_price * (1 - distance)
 
                         if new_stop is not None and new_stop > pos["stop_loss"]:
-                            pos["stop_loss"] = new_stop
-                            logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
+                            # Only update trailing stop if the improvement is at least 0.1%
+                            # to avoid over-tightening on micro-movements (medium/long-term)
+                            min_improvement = pos["stop_loss"] * 0.001
+                            if new_stop - pos["stop_loss"] >= min_improvement:
+                                pos["stop_loss"] = new_stop
+                                logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
 
                 # --- Format symbol for notifications ---
                 stock_name = await self._get_stock_name(symbol)
@@ -7206,9 +7210,10 @@ class TradingEngine:
         last_time = snapshot.get("timestamp", 0)
         last_price = snapshot.get("price", 0)
 
-        # Always call if enough time has passed (2× the effective interval)
+        # Always call if enough time has passed (3× the effective interval)
+        # For medium/long-term, be more patient before forcing an evaluation
         effective_interval = timeframe_seconds * settings.STRATEGY_INTERVAL_MULTIPLIER
-        if now - last_time > 2 * effective_interval:
+        if now - last_time > 3 * effective_interval:
             return False
 
         # Fetch LLM-driven skip thresholds from Redis.
@@ -7419,12 +7424,6 @@ class TradingEngine:
                 and prev_macd_val <= prev_macd_signal and macd_val > macd_signal):
             return True
 
-        # 5. Stochastic %K crossing above 20 (leaving oversold)
-        prev_stoch_k = prev.get("stoch_k")
-        if (prev_stoch_k is not None and stoch_k is not None
-                and prev_stoch_k <= 20 and stoch_k > 20):
-            return True
-
         # 6. ADX rising above moderate threshold and +DI > -DI (trend start)
         prev_adx = prev.get("adx")
         if (adx is not None and plus_di is not None and minus_di is not None
@@ -7444,8 +7443,8 @@ class TradingEngine:
             if prev_width < bb_squeeze_width and current_close is not None and current_close > bb_upper:
                 return True
 
-        # 8. Volume spike (current volume > 2 * EMA of volume)
-        if volumes and volume_ema > 0 and volumes[-1] > 2.0 * volume_ema:
+        # 8. Volume spike (current volume > 3 * EMA of volume) — significant only
+        if volumes and volume_ema > 0 and volumes[-1] > 3.0 * volume_ema:
             return True
 
         # 9. EMA9 crossing above EMA21 (golden cross)
@@ -7476,10 +7475,6 @@ class TradingEngine:
             # Previous close was below or inside cloud, current close above cloud top
             if prev_close <= cloud_top and current_close > cloud_top:
                 return True
-
-        # 13. MACD histogram positive (bullish momentum) – no previous state needed
-        if macd_hist is not None and macd_hist > 0:
-            return True
 
         return False
 
@@ -7675,7 +7670,9 @@ class TradingEngine:
             if abs(macd - macd_signal) < 0.0001 * abs(macd) if macd else 0:
                 complexity += 1
 
-        return "mind" if complexity >= 0.3 else "actuator"
+        # For medium/long-term, only use the expensive "mind" model when
+        # complexity is genuinely high. Routine evaluations use "actuator".
+        return "mind" if complexity >= 0.5 else "actuator"
 
     def _compute_prompt_complexity(
         self,

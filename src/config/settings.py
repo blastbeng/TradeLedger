@@ -123,7 +123,7 @@ class Settings(BaseSettings):
 
     # Minimum seconds between forced LLM evaluations triggered by the entry signal monitor.
     # Keeps the bot responsive without spamming the LLM.
-    ENTRY_SIGNAL_COOLDOWN_SECONDS: int = 30
+    ENTRY_SIGNAL_COOLDOWN_SECONDS: int = 300
 
     # Minimum entry condition timeout as a multiple of the candle timeframe.
     # e.g., 2.0 means the timeout must be at least 2 × the candle period.
