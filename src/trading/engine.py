@@ -8751,20 +8751,25 @@ class TradingEngine:
 
         signal_dict = queued.get('signal', {}) or {}
         params = signal_dict.get('strategy_params', {}) or {}
-        sl_pct = params.get("stop_loss_pct")
         timeframe = queued.get('timeframe')
         atr = queued.get('atr')
+        fill_price = trade_dict['price']
+
+        # Determine stop-loss percentage based on method
+        stop_method = params.get("stop_loss_method", "fixed")
+        if stop_method == "atr_multiple" and atr is not None and atr > 0 and fill_price > 0:
+            atr_mult = params.get("stop_loss_atr_multiple")
+            if atr_mult is not None:
+                sl_pct = (atr_mult * atr) / fill_price
+            else:
+                sl_pct = params.get("stop_loss_pct")
+        else:
+            sl_pct = params.get("stop_loss_pct")
+
         # Determine take-profit percentage based on method
-        if "take_profit_atr_multiple" in params and atr is not None and atr > 0:
+        if "take_profit_atr_multiple" in params and atr is not None and atr > 0 and fill_price > 0:
             tp_atr_mult = params["take_profit_atr_multiple"]
-            # Need current price to calculate percentage. Since we don't have it here easily,
-            # we fall back to fixed if ATR is present but we can't calculate the percentage.
-            # However, the engine already calculated it at signal time, so we can just use the fixed fallback.
-            # A better approach is to recalculate on the fly if needed, but for simplicity, we use the fixed fallback.
-            # The engine will update the TP in the risk management loop if needed.
-            # Actually, we can just use the fixed pct as a fallback, the engine will handle it.
-            # Let's just use the fixed pct here to be safe.
-            tp_pct = params.get("take_profit_pct")
+            tp_pct = (tp_atr_mult * atr) / fill_price
         else:
             tp_pct = params.get("take_profit_pct")
         trailing_stop = params.get("trailing_stop", False)
