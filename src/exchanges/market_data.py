@@ -1,7 +1,7 @@
 import logging
 import re
 import warnings
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 
 import pandas as pd
@@ -21,6 +21,13 @@ TIMEFRAME_MAP = {
     "1d": "1d",
     "1w": "1wk",
     "1M": "1mo",
+}
+
+INVESTINY_TIMEFRAME_MAP = {
+    "1h": "1H",
+    "1d": "D",
+    "1w": "W",
+    "1M": "M",
 }
 
 def _fetch_country(symbol: str) -> Optional[str]:
@@ -412,6 +419,83 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     return result
 
 
+def _get_btp_name(isin: str) -> str:
+    """Get the BTP name from the cached BTP bonds list."""
+    try:
+        btp_bonds = discover_btp_bonds()
+        for b in btp_bonds:
+            if b["isin"] == isin:
+                return b["name"]
+    except Exception:
+        pass
+    return isin
+
+def _get_btp_investing_id(isin: str, name: str) -> Optional[int]:
+    """Search and cache the Investing.com ID for a BTP using investiny."""
+    redis_client = get_redis_client()
+    cache_key = f"investing_id:{isin}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return int(cached)
+    except Exception:
+        pass
+
+    try:
+        from investiny import search_assets
+        # Try searching by ISIN first, then by name
+        results = search_assets(query=isin, limit=1)
+        if not results:
+            results = search_assets(query=name, limit=1)
+        if results:
+            investing_id = int(results[0]["ticker"])
+            redis_client.setex(cache_key, 86400, str(investing_id))
+            return investing_id
+    except Exception as e:
+        logger.warning(f"Failed to get investing_id for BTP {isin} ({name}): {e}")
+    return None
+
+def _fetch_btp_candles(isin: str, name: str, timeframe: str, from_date: datetime, to_date: datetime, limit: int) -> List[List[float]]:
+    """Fetch BTP candles using investiny."""
+    investing_id = _get_btp_investing_id(isin, name)
+    if not investing_id:
+        return []
+    
+    interval = INVESTINY_TIMEFRAME_MAP.get(timeframe)
+    if not interval:
+        logger.warning(f"Unsupported timeframe for investiny: {timeframe}")
+        return []
+    
+    from_str = from_date.strftime("%m/%d/%Y")
+    to_str = to_date.strftime("%m/%d/%Y")
+    
+    try:
+        from investiny import historical_data
+        data = historical_data(investing_id=investing_id, from_date=from_str, to_date=to_str, interval=interval)
+        
+        candles = []
+        dates = data.get("date", [])
+        opens = data.get("open", [])
+        highs = data.get("high", [])
+        lows = data.get("low", [])
+        closes = data.get("close", [])
+        volumes = data.get("volume", [])
+        
+        for i in range(len(dates)):
+            ts = int(pd.to_datetime(dates[i]).timestamp() * 1000)
+            o = float(opens[i]) if i < len(opens) else 0.0
+            h = float(highs[i]) if i < len(highs) else 0.0
+            l = float(lows[i]) if i < len(lows) else 0.0
+            c = float(closes[i]) if i < len(closes) else 0.0
+            v = float(volumes[i]) if i < len(volumes) and volumes[i] else 0.0
+            candles.append([ts, o, h, l, c, v])
+        
+        return candles[-limit:]
+    except Exception as e:
+        logger.warning(f"Failed to fetch BTP candles for {isin} {timeframe}: {e}")
+        return []
+
+
 def get_multi_timeframe_bars(
     symbol: str = "", timeframes: List[str] = None, limit: int = 24
 ) -> Dict[str, List[List[float]]]:
@@ -437,6 +521,25 @@ def get_multi_timeframe_bars(
         interval = TIMEFRAME_MAP.get(tf)
         if not interval:
             logger.warning(f"Unsupported timeframe: {tf}")
+            continue
+        # Use investiny for BTPs (ISINs)
+        if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+            name = _get_btp_name(symbol)
+            now = datetime.now(timezone.utc)
+            inv_interval = INVESTINY_TIMEFRAME_MAP.get(tf)
+            if inv_interval == "1H":
+                from_date = now - timedelta(days=60)
+            elif inv_interval == "D":
+                from_date = now - timedelta(days=365)
+            elif inv_interval == "W":
+                from_date = now - timedelta(days=365*5)
+            elif inv_interval == "M":
+                from_date = now - timedelta(days=365*10)
+            else:
+                from_date = now - timedelta(days=365)
+            
+            candles = _fetch_btp_candles(symbol, name, tf, from_date, now, limit)
+            result[tf] = candles
             continue
         try:
             ticker = yf.Ticker(yf_symbol)
@@ -476,6 +579,14 @@ def get_bars_range(
     if not interval:
         logger.warning(f"Unsupported timeframe: {timeframe}")
         return []
+
+    # Use investiny for BTPs (ISINs)
+    if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+        name = _get_btp_name(symbol)
+        from_date = datetime.fromtimestamp(start_ms / 1000.0, tz=timezone.utc)
+        to_date = datetime.now(timezone.utc)
+        candles = _fetch_btp_candles(symbol, name, timeframe, from_date, to_date, limit)
+        return candles
 
     # Format symbol for Yahoo Finance: BTP ISINs are used as-is, stocks get TICKER_SUFFIX if missing
     yf_symbol = symbol
