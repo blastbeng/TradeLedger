@@ -121,6 +121,61 @@ def _discover_ftse_all_share_tickers() -> List[str]:
     return []
 
 
+def _discover_euronext_milan_tickers() -> List[str]:
+    """Download the Euronext ISIN directory CSV and extract all Milan-listed tickers.
+
+    Returns a list of base symbols (suffix stripped). Returns an empty list
+    if the download or parsing fails.
+    """
+    try:
+        # Official CSV download URL for Euronext ISIN directory (all markets)
+        url = "https://live.euronext.com/en/isin-directory/download?format=csv"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        # Parse CSV using pandas
+        import io
+        df = pd.read_csv(io.StringIO(response.text), dtype=str)
+
+        # Filter rows where the "Market" column contains "Milan" (case-insensitive)
+        if "Market" not in df.columns:
+            logger.warning("Euronext CSV missing 'Market' column; cannot filter for Milan.")
+            return []
+
+        milan_mask = df["Market"].str.lower().str.contains("milan", na=False)
+        milan_df = df[milan_mask]
+
+        # Extract ticker symbols – try common column names
+        ticker_col = None
+        for col in ["Ticker", "Symbol", "Code", "ISIN Code"]:
+            if col in milan_df.columns:
+                ticker_col = col
+                break
+
+        if ticker_col is None:
+            logger.warning("Euronext CSV has no recognisable ticker column.")
+            return []
+
+        tickers = milan_df[ticker_col].dropna().astype(str).tolist()
+        base_symbols = []
+        for t in tickers:
+            t = t.strip().upper()
+            # Remove any exchange suffix (e.g., ".MI", ".MIL")
+            base = t.split(".")[0] if "." in t else t
+            if re.match(r"^[A-Z0-9]+$", base):
+                base_symbols.append(base)
+
+        if base_symbols:
+            logger.info(f"Discovered {len(base_symbols)} Milan tickers from Euronext ISIN directory")
+        return base_symbols
+    except Exception as e:
+        logger.warning(f"Failed to scrape Euronext ISIN directory: {e}")
+        return []
+
+
 def get_tradable_assets() -> List[str]:
     """Return a list of tradable Italian equity symbols, filtered by country.
 
@@ -150,6 +205,16 @@ def get_tradable_assets() -> List[str]:
             if t_clean and t_clean not in existing:
                 base_symbols.append(t_clean)
                 existing.add(t_clean)
+
+    # --- Euronext Milan ISIN directory (official list) ---
+    if settings.EURONEXT_TICKER_DISCOVERY_ENABLED:
+        euronext_tickers = _discover_euronext_milan_tickers()
+        if euronext_tickers:
+            existing = set(base_symbols)
+            for t in euronext_tickers:
+                if t not in existing:
+                    base_symbols.append(t)
+                    existing.add(t)
 
     # Discover additional tickers from news RSS feeds
     try:

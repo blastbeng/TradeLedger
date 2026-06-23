@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     # Useful for stocks that are not in the FTSE MIB or news feeds.
     ADDITIONAL_TICKERS: list[str] = []
 
+    # Enable scraping the Euronext ISIN directory for Milan-listed tickers
+    EURONEXT_TICKER_DISCOVERY_ENABLED: bool = True
+
     # Minimum composite score for a symbol to be used in the volume‑based fallback.
     # Symbols below this score are skipped even if they have high volume.
     FALLBACK_MIN_COMPOSITE_SCORE: float = 0.1
