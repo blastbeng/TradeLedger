@@ -481,7 +481,7 @@ You may optionally include the following fields:
 - "stock_revaluation_interval_seconds" (integer >= 60) to change how often the bot re-evaluates the stock list.
 - "pause_trading" (boolean): true to pause trading, false to resume. Always include "pause_reason" (string) when setting pause_trading. You may also set "pause_duration_seconds" (positive integer) to auto-resume after a delay.
 
-Example: {{"stocks": [{{"symbol": "ENI.MI/EUR", "timeframe": "1d", "sector": "Energy", "max_tenure_hours": 48}}, {{"symbol": "ENEL.MI/EUR", "timeframe": "1h", "sector": "Utilities"}}, {{"symbol": "STM.MI/EUR", "timeframe": "1d", "sector": "Technology"}}], "max_stocks": 3, "max_positions_per_sector": 2, "skip_eval_price_change_atr_mult": 0.5, "skip_eval_rsi_change": 5.0, "skip_eval_rsi_oversold": 30.0, "skip_eval_rsi_overbought": 70.0, "skip_eval_macd_hist_change": 0.0005, "regime_adx_strong": 40.0, "regime_adx_moderate": 25.0, "regime_volatility_high_pct": 80.0, "regime_volatility_low_pct": 20.0, "regime_bb_squeeze_width": 0.02, "regime_bb_expansion_width": 0.08, "min_stop_loss_atr_mult": 1.5, "min_max_hold_time_mult": 1.5, "max_stop_loss_reviews": 3, "max_take_profit_reviews": 3, "min_llm_pause_duration_seconds": 3600, "pause_max_consecutive_keep": 3, "pause_force_resume_risk_multiplier": 0.3, "max_partial_tp_reviews": 3, "max_dust_sweep_reviews": 3, "reasoning": "ENI shows strong uptrend on 1d with high volume; ENEL has bullish MACD crossover on 1h.", "stock_revaluation_interval_seconds": 300, "max_portfolio_exposure_pct": 0.8, "max_portfolio_stop_risk_pct": 0.1, "min_risk_reward_ratio": 1.5, "limit_price_max_distance_pct": 0.05, "pause_trading": false, "pause_reason": "Market conditions are favorable"}}
+Example: {{"stocks": [{{"symbol": "ENI.MI/EUR", "timeframe": "1d", "sector": "Energy", "max_tenure_hours": 48}}, {{"symbol": "ENEL.MI/EUR", "timeframe": "1d", "sector": "Utilities"}}, {{"symbol": "STM.MI/EUR", "timeframe": "1w", "sector": "Technology"}}], "max_stocks": 3, "max_positions_per_sector": 2, "skip_eval_price_change_atr_mult": 0.5, "skip_eval_rsi_change": 5.0, "skip_eval_rsi_oversold": 30.0, "skip_eval_rsi_overbought": 70.0, "skip_eval_macd_hist_change": 0.0005, "regime_adx_strong": 40.0, "regime_adx_moderate": 25.0, "regime_volatility_high_pct": 80.0, "regime_volatility_low_pct": 20.0, "regime_bb_squeeze_width": 0.02, "regime_bb_expansion_width": 0.08, "min_stop_loss_atr_mult": 1.5, "min_max_hold_time_mult": 1.5, "max_stop_loss_reviews": 3, "max_take_profit_reviews": 3, "min_llm_pause_duration_seconds": 3600, "pause_max_consecutive_keep": 3, "pause_force_resume_risk_multiplier": 0.3, "max_partial_tp_reviews": 3, "max_dust_sweep_reviews": 3, "reasoning": "ENI shows strong uptrend on 1d with high volume; ENEL has bullish MACD crossover on 1d.", "stock_revaluation_interval_seconds": 300, "max_portfolio_exposure_pct": 0.8, "max_portfolio_stop_risk_pct": 0.1, "min_risk_reward_ratio": 1.5, "limit_price_max_distance_pct": 0.05, "pause_trading": false, "pause_reason": "Market conditions are favorable"}}
 
 Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_risk_pct` to at least **0.1** unless you have a very strong reason to be more conservative. Higher limits allow the bot to take more positions simultaneously and capture more opportunities. Do not unnecessarily restrict capital deployment."""
     # --- Enhanced pause/resume guidance ---
@@ -732,8 +732,8 @@ def build_strategy_prompt(
     current_price = ticker.get("last") if ticker else None
     if assigned_timeframe and assigned_timeframe not in TIMEFRAME_MAP:
         logger.warning(f"Assigned timeframe {assigned_timeframe} is not supported by yfinance. Falling back to default.")
-        assigned_timeframe = "1h" if "1h" in TIMEFRAME_MAP else list(TIMEFRAME_MAP.keys())[0]
-    tf_seconds = _timeframe_to_seconds(assigned_timeframe) if assigned_timeframe else 3600
+        assigned_timeframe = "1d" if "1d" in TIMEFRAME_MAP else list(TIMEFRAME_MAP.keys())[0]
+    tf_seconds = _timeframe_to_seconds(assigned_timeframe) if assigned_timeframe else 86400
     min_hold = 2 * tf_seconds
     prompt = f"""Symbol: {symbol}
 Current ticker: {json.dumps(ticker)}
@@ -1050,7 +1050,7 @@ Maximum symbols to trade: {max_symbols}
                     )
         prompt += (
             "Use these summaries to assess momentum and trend across timeframes. "
-            "The higher timeframes (1h, 4h) show the larger trend, while lower timeframes "
+            "The higher timeframes (1d, 1w) show the larger trend, while lower timeframes "
             "provide additional context for entry and exit timing.\n"
         )
     if multi_tf_indicators:
@@ -1286,18 +1286,18 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         "The object must have a `\"type\"` field and, except for `\"delay\"`, a `\"timeout_seconds\"` field.\n"
         "Supported types:\n"
         "- `\"limit_price\"`: wait for the price to drop to or below `\"price\"`.\n"
-        "  Example: {\"type\": \"limit_price\", \"price\": 1.23, \"timeout_seconds\": 300}\n"
+        "  Example: {\"type\": \"limit_price\", \"price\": 1.23, \"timeout_seconds\": 3600}\n"
         "- `\"rsi_threshold\"`: wait for RSI(14) to fall below `\"rsi_below\"`.\n"
-        "  Example: {\"type\": \"rsi_threshold\", \"rsi_below\": 30, \"timeout_seconds\": 600}\n"
+        "  Example: {\"type\": \"rsi_threshold\", \"rsi_below\": 30, \"timeout_seconds\": 7200}\n"
         "- `\"delay\"`: simply wait `\"delay_seconds\"` before executing.\n"
-        "  Example: {\"type\": \"delay\", \"delay_seconds\": 60}\n"
+        "  Example: {\"type\": \"delay\", \"delay_seconds\": 3600}\n"
         "- `\"indicator_combo\"`: wait until ALL listed indicator conditions are met.\n"
-        "  Example: {\"type\": \"indicator_combo\", \"conditions\": [ {\"indicator\": \"rsi\", \"threshold\": 30, \"direction\": \"below\"}, {\"indicator\": \"macd_hist\", \"threshold\": 0, \"direction\": \"above\"} ], \"timeout_seconds\": 600}\n"
+        "  Example: {\"type\": \"indicator_combo\", \"conditions\": [ {\"indicator\": \"rsi\", \"threshold\": 30, \"direction\": \"below\"}, {\"indicator\": \"macd_hist\", \"threshold\": 0, \"direction\": \"above\"} ], \"timeout_seconds\": 7200}\n"
         "If a timeout expires without the condition being met, the trade is skipped entirely.\n"
         "**Important:** The engine enforces a minimum timeout of 300 seconds or "
         f"{settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT}× the candle timeframe, whichever is larger. "
         "Set `timeout_seconds` to at least this value, and prefer longer timeouts for higher timeframes "
-        "(e.g., 900–1800 s for 1h candles).\n"
+        "(e.g., 3600–7200 s for 1d candles).\n"
     )
     prompt += (
         "\n**Output ONLY the raw JSON object as specified.**\n\n"
