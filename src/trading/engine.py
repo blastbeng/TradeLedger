@@ -4413,7 +4413,8 @@ class TradingEngine:
                 bt_candles = historical_ohlcv or raw_candles
                 backtest_stats = None
                 # Compute accurate fee rate based on trade size
-                bt_trade_value = per_symbol_budget  # approximate trade size
+                bt_position_fraction = bt_params.get("position_size_fraction", 1.0 / self.effective_max_symbols if self.effective_max_symbols > 0 else 1.0)
+                bt_trade_value = base_balance * bt_position_fraction
                 if bt_trade_value > 0:
                     from src.exchanges.fees import calculate_transaction_costs
                     buy_costs = calculate_transaction_costs("BUY", 100.0, bt_trade_value / 100.0, symbol=symbol)
@@ -4458,6 +4459,7 @@ class TradingEngine:
                         trade_value=bt_trade_value,
                         is_btp=is_btp,
                         cooldown_after_loss_seconds=bt_params.get("cooldown_after_loss_seconds"),
+                        slippage_pct=0.001,  # 0.1% slippage simulation
                     )
                     bt_summary = format_backtest_summary(backtest_stats)
                     logger.info(f"Backtest for {symbol}: {bt_summary}")

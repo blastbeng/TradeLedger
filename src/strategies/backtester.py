@@ -45,6 +45,7 @@ def backtest_strategy(
     is_btp: bool = False,
     max_trades: int = 200,
     cooldown_after_loss_seconds: Optional[int] = None,
+    slippage_pct: float = 0.0,
 ) -> Dict[str, Any]:
     """
     Backtest a long-only strategy on historical OHLCV candles.
@@ -177,7 +178,7 @@ def backtest_strategy(
                     if candle[1] <= target_exit:
                         exit_price = candle[1]
                     else:
-                        exit_price = target_exit
+                        exit_price = target_exit * (1 - slippage_pct)
                     exit_ts = candle_ts
                     exit_reason = "max_unrealized_loss"
                     exit_index = j
@@ -195,7 +196,7 @@ def backtest_strategy(
                     tp_target = entry_price * (1 + lvl_pct)
                     if candle_high >= tp_target:
                         # If the candle opens above the target, the fill happens at the open price (gap up)
-                        actual_tp_fill = candle[1] if candle[1] >= tp_target else tp_target
+                        actual_tp_fill = candle[1] if candle[1] >= tp_target else tp_target * (1 - slippage_pct)
                         partial_gross = (actual_tp_fill - entry_price) / entry_price * lvl_frac
                         if fee_model == "intesa" and trade_value and trade_value > 0:
                             partial_entry_fee_pct = (
@@ -236,7 +237,7 @@ def backtest_strategy(
                 if candle[1] <= current_stop:
                     exit_price = candle[1]
                 else:
-                    exit_price = current_stop
+                    exit_price = current_stop * (1 - slippage_pct)
                 exit_ts = candle_ts
                 exit_reason = "stop_loss"
                 exit_index = j
@@ -248,7 +249,7 @@ def backtest_strategy(
                 if candle[1] >= take_profit_price:
                     exit_price = candle[1]
                 else:
-                    exit_price = take_profit_price
+                    exit_price = take_profit_price * (1 - slippage_pct)
                 exit_ts = candle_ts
                 exit_reason = "take_profit"
                 exit_index = j
