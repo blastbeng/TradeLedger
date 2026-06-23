@@ -983,6 +983,13 @@ Maximum symbols to trade: {max_symbols}
                 f"**Your `take_profit_pct` MUST be strictly greater than {break_even_pct*100:.2f}% to be profitable.**\n"
                 f"Set your `take_profit_pct` comfortably above this break-even percentage.\n"
             )
+    if min_viable_trade_amount > 0:
+        prompt += (
+            f"\n**Minimum Viable Trade Amount:** {min_viable_trade_amount:.2f} {base_currency}\n"
+            f"Your `position_size_fraction` must result in a trade value of AT LEAST {min_viable_trade_amount:.2f} {base_currency}. "
+            f"If the available balance × your `position_size_fraction` is below this amount, the trade will be skipped because fees would consume too much of the trade value. "
+            f"Adjust your `position_size_fraction` accordingly — use a larger fraction to ensure the trade meets this minimum.\n"
+        )
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)
