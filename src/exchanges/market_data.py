@@ -7,6 +7,8 @@ from typing import List, Dict, Any, Optional
 import pandas as pd
 import requests
 import yfinance as yf
+import httpx
+from bs4 import BeautifulSoup
 
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
@@ -391,3 +393,59 @@ def get_bars_range(
     except Exception as e:
         logger.warning(f"Failed to fetch bars range for {symbol} {timeframe}: {e}")
         return []
+
+
+def discover_btp_bonds() -> List[Dict[str, Any]]:
+    """Discover and parse BTP bonds from Borsa Italiana."""
+    url = settings.BORSA_ITALIANA_BTP_URL
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    bonds = []
+
+    for page in range(1, 11):
+        page_url = f"{url}?&page={page}"
+        try:
+            response = httpx.get(page_url, headers=headers, timeout=15.0, follow_redirects=True)
+            if response.status_code != 200:
+                break
+
+            soup = BeautifulSoup(response.text, "html.parser")
+            table = soup.find("table")
+            if not table:
+                break
+
+            rows = table.find_all("tr")
+            for row in rows:
+                cols = row.find_all("td")
+                if len(cols) < 3:
+                    continue
+
+                isin_text = cols[0].get_text(separator=" ", strip=True)
+                isin_match = re.search(r'IT[A-Z0-9]{10}', isin_text)
+                if not isin_match:
+                    continue
+                isin = isin_match.group(0)
+
+                name = cols[1].get_text(strip=True)
+
+                last_price_str = cols[2].get_text(strip=True).replace(",", ".")
+                try:
+                    last_price = float(last_price_str) if last_price_str else None
+                except ValueError:
+                    last_price = None
+
+                change_pct = 0.0
+
+                if last_price is not None:
+                    bonds.append({
+                        "isin": isin,
+                        "name": name,
+                        "last_price": last_price,
+                        "change_pct": change_pct
+                    })
+        except Exception as e:
+            logger.warning(f"Failed to fetch BTP page {page}: {e}")
+            break
+
+    return bonds

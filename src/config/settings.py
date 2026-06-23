@@ -412,6 +412,9 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
 
+    # Borsa Italiana BTP list URL
+    BORSA_ITALIANA_BTP_URL: str = "https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/lista.html"
+
     # Notification log control
     NOTIFICATION_LOG_ENABLED: bool = True
 

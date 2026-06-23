@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Any
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range
+from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range, discover_btp_bonds
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
 from src.trading.paper_trader import PaperTrader
 from src.llm.cache import get_cached_llm_response, compute_market_hash
@@ -1717,7 +1717,22 @@ class TradingEngine:
 
         old_symbols = list(self.current_symbols)
         plain_assets = await self._get_tradable_assets()
-        available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+        stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+
+        # Fetch BTP bonds
+        btp_bonds = await asyncio.to_thread(discover_btp_bonds)
+        btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
+        btp_quotes = {f"{b['isin']}/{self.base_currency}": {
+            "last": b["last_price"],
+            "bid": b["last_price"],
+            "ask": b["last_price"],
+            "volume": 0,
+            "change_24h": b["change_pct"],
+            "percentage": b["change_pct"],
+            "quoteVolume": 0,
+        } for b in btp_bonds}
+
+        available_pairs = stock_pairs + btp_pairs
 
         # --- RSS-based ticker discovery: scan news feeds for symbols with TICKER_SUFFIX ---
         if settings.NEWS_ENABLED and settings.NEWS_TICKER_DISCOVERY_ENABLED and discover_tickers_from_news is not None:
@@ -1798,9 +1813,16 @@ class TradingEngine:
             )
         ]
 
-        plain_sample = [s.split("/")[0] for s in sample_pairs]
+        # Separate stocks and BTPs for quote fetching
+        stock_sample = [s for s in sample_pairs if s in stock_pairs]
+        btp_sample = [s for s in sample_pairs if s in btp_pairs]
+
+        plain_sample = [s.split("/")[0] for s in stock_sample]
         raw_quotes = await asyncio.to_thread(get_quotes, plain_sample)
-        tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_pairs}
+        tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in stock_sample}
+
+        # Add BTP quotes directly without using yfinance
+        tickers.update({pair: btp_quotes.get(pair, {}) for pair in btp_sample})
 
         # Filter out symbols with no valid last price
         valid_sample_pairs = [
