@@ -4357,6 +4357,30 @@ class TradingEngine:
                         signal.llm_provider = llm_provider
                         signal.llm_model = llm_model
                         signal.backtest_summary = bt_summary
+                        # Carry over execution-critical fields from Step 1 if not provided in Step 2
+                        if signal.action == "BUY":
+                            if signal.entry_condition is None and preliminary_signal.entry_condition is not None:
+                                signal.entry_condition = preliminary_signal.entry_condition
+                            if signal.order_type is None and preliminary_signal.order_type is not None:
+                                signal.order_type = preliminary_signal.order_type
+                            if signal.limit_price is None and preliminary_signal.limit_price is not None:
+                                signal.limit_price = preliminary_signal.limit_price
+                            if signal.stop_price is None and preliminary_signal.stop_price is not None:
+                                signal.stop_price = preliminary_signal.stop_price
+                            if signal.stop_loss_order_type is None and preliminary_signal.stop_loss_order_type is not None:
+                                signal.stop_loss_order_type = preliminary_signal.stop_loss_order_type
+                            if signal.stop_loss_stop_price is None and preliminary_signal.stop_loss_stop_price is not None:
+                                signal.stop_loss_stop_price = preliminary_signal.stop_loss_stop_price
+                            if signal.stop_loss_limit_price is None and preliminary_signal.stop_loss_limit_price is not None:
+                                signal.stop_loss_limit_price = preliminary_signal.stop_loss_limit_price
+                            if signal.stop_loss_trail_offset is None and preliminary_signal.stop_loss_trail_offset is not None:
+                                signal.stop_loss_trail_offset = preliminary_signal.stop_loss_trail_offset
+                            if signal.take_profit_order_type is None and preliminary_signal.take_profit_order_type is not None:
+                                signal.take_profit_order_type = preliminary_signal.take_profit_order_type
+                            if signal.take_profit_limit_price is None and preliminary_signal.take_profit_limit_price is not None:
+                                signal.take_profit_limit_price = preliminary_signal.take_profit_limit_price
+                            if signal.trail_offset is None and preliminary_signal.trail_offset is not None:
+                                signal.trail_offset = preliminary_signal.trail_offset
                     except Exception as e:
                         logger.error(f"LLM Step 2 call failed for {symbol}: {e}. Using preliminary decision.")
                         signal = preliminary_signal
@@ -6658,6 +6682,8 @@ class TradingEngine:
                 order["timeframe"] = timeframe
                 order["buy_confidence"] = signal.confidence
                 order["buy_reasoning"] = (signal.reasoning or "")[:200]
+                if hasattr(signal, 'backtest_summary') and signal.backtest_summary:
+                    order["backtest_summary"] = signal.backtest_summary
                 self.trade_history.append(order)
                 self._balance_cache = None  # force refresh on next fetch
                 await asyncio.to_thread(insert_trade, order)
