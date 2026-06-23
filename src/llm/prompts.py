@@ -312,6 +312,10 @@ Output strict JSON only. The response must start with '{' or '[' and end with '}
 - **ETFs:** ETFs generally have lower volatility and smoother trends than individual stocks. Be aware of decay in leveraged ETFs if held long.
 - **BTP Bonds (Italian Sovereign Bonds):** The asset universe may also include BTPs identified by their ISIN code (e.g., IT0001234567). BTPs are fixed-income securities with significantly lower volatility compared to stocks. When trading BTPs, use wider stop-losses (or ATR-based stops if ATR is available), longer max hold times, and smaller take-profit targets relative to stocks. They are suitable for capital preservation and steady income.
 
+- **Two-Step Decision Process:** You will now operate in two steps. 
+  1. In the first step, you will analyze the market data, indicators, and statistical summaries, and propose your strategy parameters (stop_loss_pct, take_profit_pct, max_hold_time_seconds, trailing_stop, etc.) along with a preliminary action. The engine will run a local Python backtest using your parameters.
+  2. In the second step, you will receive the backtest results and be asked to make your final trading decision (BUY, SELL, or HOLD) based on those results.
+
 **Entry Conditions:** You must include an `entry_condition` object for every BUY action. The strategy prompt provides full details and examples.
 
 """
@@ -1158,11 +1162,11 @@ Maximum symbols to trade: {max_symbols}
                 f"  Recent momentum (last 5 candles): {recent_momentum_pct:+.2f}%\n"
             )
         prompt += (
-            "**Note:** The engine will run an independent Python backtest on the full historical data using your "
-            "stop_loss_pct, take_profit_pct, max_hold_time_seconds, and trailing_stop parameters. "
-            "If the Python backtest shows a win rate below 25% and a profit factor below 0.5 (with at least "
-            "5 trades), your strategy will be rejected and you will be asked to revise. Make sure your "
-            "parameters are historically profitable based on the statistical summary above.\n"
+            "**Step 1: Propose Strategy Parameters**\n"
+            "Based on the indicators and statistical summaries above, propose your strategy parameters "
+            "(stop_loss_pct, take_profit_pct, max_hold_time_seconds, trailing_stop, etc.). "
+            "The engine will run a local Python backtest using these parameters. "
+            "You may also include a preliminary `action` and `confidence`, but your final decision will be made in Step 2 after reviewing the backtest results.\n"
         )
     if drawdown_pct is not None:
         prompt += f"Current account drawdown: {drawdown_pct}%\n"
