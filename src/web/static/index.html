@@ -126,9 +126,12 @@
 
         .dashboard {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            grid-template-columns: repeat(12, 1fr);
             gap: 20px;
         }
+
+        .col-6 { grid-column: span 6; }
+        .col-3 { grid-column: span 3; }
 
         .card {
             background: var(--card-bg);
@@ -270,6 +273,9 @@
             .dashboard {
                 grid-template-columns: 1fr;
             }
+            .col-6, .col-3 {
+                grid-column: 1 / -1;
+            }
             .card {
                 padding: 16px;
             }
@@ -318,7 +324,7 @@
 
     <div class="container">
         <div class="dashboard">
-            <div class="card" id="manual-trade-card">
+            <div class="card col-6" id="manual-trade-card">
                 <h2>📝 Manual Trade Entry</h2>
                 <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 12px;">Log a trade you executed manually. This will update your positions and trade history.</p>
                 <form id="manual-trade-form" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; align-items:end;">
@@ -352,27 +358,27 @@
                 <div id="manual-trade-result" style="margin-top:12px; font-size:0.85rem;"></div>
             </div>
 
-            <div class="card">
+            <div class="card col-6">
                 <h2>📨 Messages</h2>
                 <div id="messages" style="max-height: 400px; overflow-y: auto; font-size: 0.9rem;"></div>
             </div>
 
-            <div class="card">
+            <div class="card col-3">
                 <h2>📈 Tracked Symbols</h2>
                 <div id="symbols">-</div>
             </div>
 
-            <div class="card">
+            <div class="card col-3">
                 <h2>💰 Balances</h2>
                 <div id="balances">-</div>
             </div>
 
-            <div class="card">
+            <div class="card col-3">
                 <h2>📈 Profit Summary</h2>
                 <div id="profit">-</div>
             </div>
 
-            <div class="card">
+            <div class="card col-3">
                 <h2>⚠️ Risk Metrics</h2>
                 <div id="risk">-</div>
             </div>
