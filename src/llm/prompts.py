@@ -1480,14 +1480,22 @@ Full statistics: {json.dumps(backtest_stats, indent=2)}
 Based on the backtest results above, make your final trading decision. 
 If the backtest shows poor performance (e.g., negative total P&L, low win rate, high drawdown), you should reconsider and likely output HOLD or adjust your parameters.
 If the backtest confirms your strategy is viable, output your final action (BUY, SELL, or HOLD).
-
-**Output ONLY the raw JSON object as specified.**
-Return a JSON object with these **required** fields:
-- `action`: one of BUY, SELL, HOLD
-- `confidence`: a float between 0.0 and 1.0
-- `reasoning`: a string explaining your final decision, specifically referencing the backtest results.
-- `strategy`: an object containing `type` and `parameters` (you may keep the same parameters from Step 1 or adjust them based on the backtest).
 """
+    prompt += (
+        "**Output ONLY the raw JSON object as specified.**\n"
+        "Return a JSON object with these **required** fields:\n"
+        "- `action`: one of BUY, SELL, HOLD\n"
+        "- `confidence`: a float between 0.0 and 1.0\n"
+        "- `reasoning`: a string explaining your final decision, specifically referencing the backtest results.\n"
+        "- `strategy`: an object containing `type` and `parameters`.\n"
+        "  The `parameters` object MUST include ALL required trading parameters (same as Step 1):\n"
+        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, etc.\n"
+        "  You may adjust `position_size_fraction` based on backtest performance (e.g., reduce size if drawdown is high).\n"
+    )
+    prompt += (
+        "\nIf your final action is BUY, you MUST also include an `entry_condition` object (same format as Step 1).\n"
+        "You may also include `order_type`, `limit_price`, `time_in_force`, and other execution parameters.\n"
+    )
     if trading_paused:
         prompt += (
             "\n**Trading is currently PAUSED.** You may ONLY output SELL or HOLD actions. "
