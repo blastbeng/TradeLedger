@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
@@ -283,13 +284,18 @@ async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
         candles = bars.get(timeframe, [])
         result = []
         for candle in candles:
+            # Sanitize non-finite floats (NaN, Infinity) to None for JSON compliance
+            def _sanitize(v):
+                if isinstance(v, float) and not math.isfinite(v):
+                    return None
+                return v
             result.append({
                 "timestamp": candle[0],
-                "open": candle[1],
-                "high": candle[2],
-                "low": candle[3],
-                "close": candle[4],
-                "volume": candle[5],
+                "open": _sanitize(candle[1]),
+                "high": _sanitize(candle[2]),
+                "low": _sanitize(candle[3]),
+                "close": _sanitize(candle[4]),
+                "volume": _sanitize(candle[5]),
             })
         return {"symbol": symbol, "timeframe": timeframe, "data": result}
     except Exception as e:
