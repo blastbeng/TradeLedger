@@ -1055,7 +1055,8 @@ class TradingEngine:
                     logger.info("Starting market data download cycle...")
                     now_ms = int(time.time() * 1000)
                     start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
-                    for symbol_entry in self.current_symbols:
+
+                    async def _download_symbol_data(symbol_entry):
                         symbol = symbol_entry["symbol"]
                         tf = symbol_entry["timeframe"]
                         logger.debug(f"Downloading market data for {symbol} ({tf})")
@@ -1064,8 +1065,9 @@ class TradingEngine:
                             await self._fill_gaps(symbol, tf)
                         except Exception as e:
                             logger.warning(f"Market data download failed for {symbol} {tf}: {e}")
-                        # Configurable delay between stocks to avoid rate limits
-                        await asyncio.sleep(settings.OHLCV_DOWNLOAD_SYMBOL_DELAY_SECONDS)
+
+                    download_tasks = [_download_symbol_data(entry) for entry in self.current_symbols]
+                    await asyncio.gather(*download_tasks)
                     logger.info("Market data download cycle complete.")
                     # Clean up old OHLCV data (older than retention period)
                     await asyncio.to_thread(cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
