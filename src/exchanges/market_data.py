@@ -216,6 +216,51 @@ def _discover_euronext_milan_from_html() -> List[str]:
     return []
 
 
+def _discover_euronext_milan_json() -> List[str]:
+    """Fetch the Euronext Milan instrument list via the JSON API.
+
+    Returns base symbols (suffix stripped). Returns an empty list on failure.
+    """
+    import json
+    url = "https://live.euronext.com/en/ajax/getDirectoryDownload?format=json&market=XMIL"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        logger.warning(f"Euronext JSON API failed: {e}")
+        return []
+
+    # The JSON structure is a list of objects; each has "isin", "name", "symbol", "market", etc.
+    if not isinstance(data, list):
+        logger.warning("Euronext JSON response is not a list.")
+        return []
+
+    base_symbols = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        # The market is already filtered by the API parameter, but double-check
+        market = item.get("market", "")
+        if "milan" not in market.lower():
+            continue
+        symbol = item.get("symbol") or item.get("ticker") or item.get("code")
+        if not symbol:
+            continue
+        symbol = symbol.strip().upper()
+        base = symbol.split(".")[0] if "." in symbol else symbol
+        if re.match(r"^[A-Z0-9]+$", base):
+            base_symbols.append(base)
+
+    if base_symbols:
+        logger.info(f"Discovered {len(base_symbols)} Milan tickers from Euronext JSON API")
+    return base_symbols
+
+
 def get_tradable_assets() -> List[str]:
     """Return a list of tradable Italian equity symbols, filtered by country.
 
@@ -226,13 +271,13 @@ def get_tradable_assets() -> List[str]:
     """
     # Discover tickers from Wikipedia (FTSE MIB constituents)
     base_symbols = _discover_wikipedia_tickers(
-        ["https://en.wikipedia.org/wiki/FTSE_MIB", "https://it.wikipedia.org/wiki/FTSE_MIB"],
+        ["https://it.wikipedia.org/wiki/FTSE_MIB", "https://en.wikipedia.org/wiki/FTSE_MIB"],
         "FTSE MIB"
     )
 
     # --- FTSE Italia All-Share constituents ---
     all_share = _discover_wikipedia_tickers(
-        ["https://en.wikipedia.org/wiki/FTSE_Italia_All-Share", "https://it.wikipedia.org/wiki/FTSE_Italia_All-Share"],
+        ["https://it.wikipedia.org/wiki/FTSE_Italia_All-Share", "https://en.wikipedia.org/wiki/FTSE_Italia_All-Share"],
         "FTSE Italia All-Share"
     )
     if all_share:
@@ -257,6 +302,8 @@ def get_tradable_assets() -> List[str]:
         euronext_tickers = _discover_euronext_milan_tickers()
         if not euronext_tickers:
             euronext_tickers = _discover_euronext_milan_from_html()
+        if not euronext_tickers:
+            euronext_tickers = _discover_euronext_milan_json()
         if euronext_tickers:
             existing = set(base_symbols)
             for t in euronext_tickers:
