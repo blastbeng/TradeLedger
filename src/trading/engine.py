@@ -1169,7 +1169,22 @@ class TradingEngine:
                 running_equity += trade.get("realized_pnl", 0.0)
             equity_series.append(running_equity)
         peak = max(equity_series) if equity_series else self.initial_balance
-        current_equity = equity_series[-1] if equity_series else self.initial_balance
+
+        # Current equity includes unrealized P&L from open positions
+        current_realized_equity = equity_series[-1] if equity_series else self.initial_balance
+        unrealized_pnl = 0.0
+        try:
+            pos_tickers = self._get_all_position_tickers_sync()
+            for sym, pos in self.positions.items():
+                t = pos_tickers.get(sym)
+                if t and t.get('last'):
+                    unrealized_pnl += (t['last'] - pos['price']) * pos['amount']
+        except Exception:
+            pass
+        current_equity = current_realized_equity + unrealized_pnl
+        # If current equity exceeds peak, update peak (new all-time high including unrealized)
+        if current_equity > peak:
+            peak = current_equity
         drawdown_pct = ((peak - current_equity) / peak * 100) if peak > 0 else 0.0
 
         daily_pnl = self._daily_realized_pnl()
