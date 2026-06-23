@@ -3589,11 +3589,11 @@ class TradingEngine:
                     if tf_atr is not None and tf_atr > 0:
                         atr_multi_tf[tf] = tf_atr
 
-        # Compute daily pivot points from the 1d timeframe (if available)
-        if "1d" in multi_tf_raw_candles and len(multi_tf_raw_candles["1d"]) >= 2:
-            daily_candles = multi_tf_raw_candles["1d"]
-            prev_daily = daily_candles[-2]  # [ts, o, h, l, c, v]
-            daily_pivot_points = compute_pivot_points(prev_daily[2], prev_daily[3], prev_daily[4])
+            # Compute daily pivot points from the 1d timeframe (if available)
+            if "1d" in multi_tf_raw_candles and len(multi_tf_raw_candles["1d"]) >= 2:
+                daily_candles = multi_tf_raw_candles["1d"]
+                prev_daily = daily_candles[-2]  # [ts, o, h, l, c, v]
+                daily_pivot_points = compute_pivot_points(prev_daily[2], prev_daily[3], prev_daily[4])
 
             # ATR Percentile (volatility context)
             atr_percentile = None
