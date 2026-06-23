@@ -2354,7 +2354,21 @@ class TradingEngine:
                     logger.error(
                         f"LLM symbol selection failed after all retries: {e}. Falling back to volume-based selection."
                     )
-        logger.info(f"LLM stock selection raw response: {response}")
+        if response:
+            # Truncate long responses to avoid flooding logs with HTML error pages
+            if len(response) > 500:
+                logger.info("LLM stock selection raw response (truncated): %.500s...", response)
+            else:
+                logger.info("LLM stock selection raw response: %s", response)
+            # Warn if the response looks like HTML (common when the LLM endpoint returns an error page)
+            if response.lstrip().startswith('<'):
+                logger.warning(
+                    "LLM stock selection response appears to be HTML (length %d). "
+                    "The LLM endpoint may be returning an error page.",
+                    len(response)
+                )
+        else:
+            logger.info("LLM stock selection returned empty response")
 
         # Initialize variables that may be used later even if LLM fails
         parsed = {}
