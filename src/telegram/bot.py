@@ -185,14 +185,17 @@ class TelegramBot:
             actuator_model = settings.OPENAI_ACTUATOR_MODEL
         msg += f"<b>🧠 LLM Mind:</b> {mind_provider} / {mind_model}\n"
         msg += f"<b>🧠 LLM Actuator:</b> {actuator_provider} / {actuator_model}\n\n"
-        symbol_list = []
-        for entry in symbols:
-            symbol = entry["symbol"]
-            tf = entry["timeframe"]
-            name = await self.engine._get_stock_name(symbol)
-            display = self.engine._format_symbol_display(symbol, name, tf)
-            symbol_list.append(display)
-        msg += f"<b>📈 Tracked Symbols:</b> {', '.join(symbol_list) if symbol_list else 'None'}\n\n"
+        msg += "<b>📈 Tracked Tickers:</b>\n"
+        if symbols:
+            for entry in symbols:
+                symbol = entry["symbol"]
+                tf = entry["timeframe"]
+                name = await self.engine._get_stock_name(symbol)
+                display = self.engine._format_symbol_display(symbol, name, tf)
+                msg += f"  • <code>{display}</code>\n"
+        else:
+            msg += "  None\n"
+        msg += "\n"
 
         if positions:
             msg += "<b>📈 Open Positions:</b>\n"
