@@ -525,7 +525,7 @@ class TradingEngine:
                 logger.error(f"Full market breadth computation error: {e}", exc_info=True)
             finally:
                 self._full_breadth_running = False
-            await asyncio.sleep(300)  # every 5 minutes
+            await asyncio.sleep(600)  # every 10 minutes
 
     async def _market_clock_monitor(self):
         """Periodically check market clock and pause/resume trading based on market open/close."""
@@ -667,7 +667,7 @@ class TradingEngine:
                     self._last_market_closed_notify_time = 0.0
             except Exception as e:
                 logger.error(f"Market clock monitor error: {e}", exc_info=True)
-            await asyncio.sleep(30)  # check every 30 seconds
+            await asyncio.sleep(60)  # check every 60 seconds
 
     async def _get_sentiment_str(self, symbol: str) -> str:
         """Get a short news sentiment string for notifications, including an LLM summary."""
@@ -1662,7 +1662,7 @@ class TradingEngine:
 
         while self._running:
             try:
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(settings.ENGINE_LOOP_INTERVAL_SECONDS)
 
                 # Process any symbol whose evaluation interval has elapsed
                 now = time.time()
@@ -7057,7 +7057,7 @@ class TradingEngine:
                         self._last_strategy_eval.pop(symbol, None)
             except Exception as e:
                 logger.error(f"Entry signal monitor error: {e}", exc_info=True)
-            await asyncio.sleep(60)  # check every 60 seconds (medium/long-term)
+            await asyncio.sleep(300)  # check every 5 minutes (medium/long-term)
 
     async def _detect_entry_signal(self, symbol: str, timeframe: str) -> bool:
         """Return True if a favourable entry condition is detected for the symbol.
@@ -7240,7 +7240,7 @@ class TradingEngine:
 
     async def _check_pending_entries(self):
         """Periodically check pending entry conditions and execute if met."""
-        await asyncio.sleep(2)  # short initial delay
+        await asyncio.sleep(10)  # short initial delay
         while self._running:
             try:
                 now = time.time()
@@ -8771,7 +8771,7 @@ class TradingEngine:
                     # else: still open / partially_filled / accepted – keep waiting
             except Exception as e:
                 logger.error(f"Error processing queued orders: {e}", exc_info=True)
-            await asyncio.sleep(30)  # check every 30 seconds (medium/long-term)
+            await asyncio.sleep(120)  # check every 2 minutes (medium/long-term)
 
     async def _handle_queued_buy_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any]):
         """Process a queued BUY limit order that has filled in the simulator."""
@@ -9121,7 +9121,7 @@ class TradingEngine:
                         await asyncio.to_thread(self.trader.cancel_order, order_id)
             except Exception as e:
                 logger.error(f"Orphaned order cleanup error: {e}", exc_info=True)
-            await asyncio.sleep(300)  # every 5 minutes
+            await asyncio.sleep(900)  # every 15 minutes
 
     def _is_excluded(self, symbol: str, timeframe: str) -> bool:
         """Return True if (symbol, timeframe) is in the EXCLUDED_SYMBOLS list."""

@@ -29,7 +29,12 @@ class Settings(BaseSettings):
         return v
 
     # Risk management check interval (seconds) – stop-loss/take-profit checks
-    RISK_CHECK_INTERVAL_SECONDS: int = 30
+    RISK_CHECK_INTERVAL_SECONDS: int = 120
+
+    # Main engine loop polling interval (seconds). For medium/long-term trading,
+    # a longer interval reduces CPU usage while still processing symbols at their
+    # designated strategy intervals.
+    ENGINE_LOOP_INTERVAL_SECONDS: int = 30
 
     # Initial delay before first symbol evaluation (seconds)
     # Allows WebSocket and Telegram bot to initialize before first LLM call
