@@ -93,7 +93,7 @@ class TradingEngine:
         self.max_symbols = settings.MAX_SYMBOLS
         self.effective_max_symbols = self.max_symbols
         self.redis = get_redis_client()
-        self._exchange_semaphore = asyncio.Semaphore(3)  # max 3 concurrent API calls
+        self._exchange_semaphore = asyncio.Semaphore(10)  # max 10 concurrent API calls
 
         self.current_symbols: List[Dict[str, str]] = []   # each dict: {"symbol": ..., "timeframe": ...}
         self.positions: Dict[str, Dict[str, Any]] = {}  # symbol -> position info
@@ -1953,43 +1953,43 @@ class TradingEngine:
         # Pass ALL discovered stocks, ETFs, and BTPs to the LLM
         sample_pairs = stock_sample_sorted + etf_sample_sorted + btp_sample_sorted
 
-        # Fetch news sentiment for all candidate stocks
+        # Fetch news sentiment for all candidate stocks concurrently
         news_sentiment = {}
         if settings.NEWS_ENABLED:
-            for sym in sample_pairs:
+            async def fetch_sentiment_for_symbol(sym):
                 try:
                     agg = await self._get_cached_sentiment(sym)
                     if agg:
-                        news_sentiment[sym.split("/")[0] if "/" in sym else sym] = agg
+                        return sym.split("/")[0] if "/" in sym else sym, agg
                 except Exception as e:
                     logger.info(f"Could not fetch news sentiment for {sym}: {e}")
+                return None, None
 
-            # Fetch news for BTPs specifically (they have no volume, so background refresh won't cover them)
-            for sym in btp_pairs:
-                if sym in sample_pairs:
-                    try:
-                        await self._fetch_and_store_news_for_symbol(sym)
-                        # Re-read sentiment after fetching
-                        base = sym.split("/")[0]
-                        agg = await self._get_cached_sentiment(sym)
-                        if agg:
-                            news_sentiment[base] = agg
-                    except Exception as e:
-                        logger.debug(f"BTP news fetch failed for {sym}: {e}")
+            sentiment_tasks = [fetch_sentiment_for_symbol(sym) for sym in sample_pairs]
+            sentiment_results = await asyncio.gather(*sentiment_tasks)
+            for base, agg in sentiment_results:
+                if base and agg:
+                    news_sentiment[base] = agg
 
-            # Fetch news for ETFs specifically (they may not have high volume, so background refresh won't cover them)
-            if settings.NEWS_ENABLED:
-                for sym in etf_pairs:
-                    if sym in sample_pairs:
-                        try:
-                            await self._fetch_and_store_news_for_symbol(sym)
-                            # Re-read sentiment after fetching
-                            base = sym.split("/")[0]
-                            agg = await self._get_cached_sentiment(sym)
-                            if agg:
-                                news_sentiment[base] = agg
-                        except Exception as e:
-                            logger.debug(f"ETF news fetch failed for {sym}: {e}")
+            # Fetch news for BTPs and ETFs concurrently (they may not have high volume, so background refresh won't cover them)
+            async def fetch_and_store_news(sym):
+                try:
+                    await self._fetch_and_store_news_for_symbol(sym)
+                    # Re-read sentiment after fetching
+                    base = sym.split("/")[0]
+                    agg = await self._get_cached_sentiment(sym)
+                    if agg:
+                        return base, agg
+                except Exception as e:
+                    logger.debug(f"News fetch failed for {sym}: {e}")
+                return None, None
+
+            news_fetch_symbols = [sym for sym in btp_pairs + etf_pairs if sym in sample_pairs]
+            news_fetch_tasks = [fetch_and_store_news(sym) for sym in news_fetch_symbols]
+            news_fetch_results = await asyncio.gather(*news_fetch_tasks)
+            for base, agg in news_fetch_results:
+                if base and agg:
+                    news_sentiment[base] = agg
 
         # Sentiment trend (delta from previous cycle)
         sentiment_trend: Dict[str, Optional[float]] = {}
