@@ -4645,6 +4645,7 @@ class TradingEngine:
                 "position_size_fraction": params.get("position_size_fraction") if (params := signal.strategy_params) else None,
                 "stop_loss_method": params.get("stop_loss_method") if (params := signal.strategy_params) else None,
             }
+            params = signal.strategy_params or {}
             # --- Format symbol for notification ---
             stock_name = await self._get_stock_name(symbol)
             display_symbol = self._format_symbol_display(symbol, stock_name, assigned_tf)
