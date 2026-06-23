@@ -4423,6 +4423,20 @@ class TradingEngine:
                 else:
                     bt_fee_rate = 0.006
 
+                # Pre-compute ATR series for Chandelier Exit simulation
+                atr_series = None
+                if bt_params.get("trailing_stop_atr_multiple") and bt_candles and len(bt_candles) >= 15:
+                    try:
+                        import numpy as np
+                        import talib
+                        highs = np.array([c[2] for c in bt_candles], dtype=float)
+                        lows = np.array([c[3] for c in bt_candles], dtype=float)
+                        closes = np.array([c[4] for c in bt_candles], dtype=float)
+                        atr_arr = talib.ATR(highs, lows, closes, timeperiod=14)
+                        atr_series = [None if np.isnan(v) else float(v) for v in atr_arr]
+                    except Exception as e:
+                        logger.warning(f"Failed to compute ATR series for backtest: {e}")
+
                 if bt_candles and len(bt_candles) >= 20:
                     backtest_stats = backtest_strategy(
                         candles=bt_candles,
@@ -4432,7 +4446,17 @@ class TradingEngine:
                         trailing_stop=bt_trailing,
                         trailing_stop_distance_pct=bt_trail_dist,
                         trailing_stop_activation_pct=bt_trail_act,
+                        partial_take_profit_levels=bt_params.get("partial_take_profit_levels"),
+                        breakeven_activation_pct=bt_params.get("breakeven_activation_pct"),
+                        trailing_take_profit=bt_params.get("trailing_take_profit", False),
+                        trailing_take_profit_distance_pct=bt_params.get("trailing_take_profit_distance_pct"),
+                        trailing_stop_atr_multiple=bt_params.get("trailing_stop_atr_multiple"),
+                        atr_values=atr_series,
+                        max_unrealized_loss_pct=bt_params.get("max_unrealized_loss_pct"),
                         fee_rate=bt_fee_rate,
+                        fee_model="intesa",
+                        trade_value=bt_trade_value,
+                        is_btp=is_btp,
                     )
                     bt_summary = format_backtest_summary(backtest_stats)
                     logger.info(f"Backtest for {symbol}: {bt_summary}")

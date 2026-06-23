@@ -13,6 +13,17 @@ from typing import Dict, Any, Optional, List
 logger = logging.getLogger(__name__)
 
 
+def _compute_intesa_fees(trade_value: float, side: str, is_btp: bool = False) -> float:
+    """Compute Intesa Sanpaolo Investo fees for a trade."""
+    if is_btp:
+        commission = max(3.50, trade_value * 0.0024)
+        return commission  # no fixed fee, no Tobin tax
+    commission = max(3.50, trade_value * 0.0024)
+    fixed_fee = 2.50
+    tobin_tax = trade_value * 0.0012 if side == "buy" else 0.0
+    return commission + fixed_fee + tobin_tax
+
+
 def backtest_strategy(
     candles: List[List],
     stop_loss_pct: float,
@@ -21,7 +32,17 @@ def backtest_strategy(
     trailing_stop: bool = False,
     trailing_stop_distance_pct: Optional[float] = None,
     trailing_stop_activation_pct: Optional[float] = None,
+    partial_take_profit_levels: Optional[List[Dict]] = None,
+    breakeven_activation_pct: Optional[float] = None,
+    trailing_take_profit: bool = False,
+    trailing_take_profit_distance_pct: Optional[float] = None,
+    trailing_stop_atr_multiple: Optional[float] = None,
+    atr_values: Optional[List[Optional[float]]] = None,
+    max_unrealized_loss_pct: Optional[float] = None,
     fee_rate: float = 0.0,
+    fee_model: str = "flat",
+    trade_value: Optional[float] = None,
+    is_btp: bool = False,
     max_trades: int = 200,
 ) -> Dict[str, Any]:
     """
@@ -75,6 +96,11 @@ def backtest_strategy(
         trailing_activated = False
         trailing_stop_price = stop_loss_price
 
+        # Partial take-profit state
+        remaining_fraction = 1.0
+        partial_tp_executed: set = set()
+        partial_trades: List[Dict[str, Any]] = []
+
         exit_price = None
         exit_ts = None
         exit_reason = None
@@ -98,7 +124,10 @@ def backtest_strategy(
                 break
 
             # Update trailing stop
-            if trailing_stop and trailing_stop_distance_pct is not None:
+            if trailing_stop and (
+                trailing_stop_distance_pct is not None
+                or (trailing_stop_atr_multiple is not None and atr_values is not None)
+            ):
                 if candle_high > highest_price:
                     highest_price = candle_high
 
@@ -109,13 +138,89 @@ def backtest_strategy(
                         trailing_activated = True
 
                 if trailing_activated or trailing_stop_activation_pct is None:
-                    new_ts = highest_price * (1 - trailing_stop_distance_pct)
-                    if new_ts > trailing_stop_price:
-                        trailing_stop_price = new_ts
+                    if trailing_stop_atr_multiple is not None and atr_values is not None:
+                        # ATR-based trailing stop (Chandelier Exit)
+                        if j < len(atr_values) and atr_values[j] is not None and atr_values[j] > 0:
+                            new_ts = highest_price - (atr_values[j] * trailing_stop_atr_multiple)
+                            if new_ts > trailing_stop_price:
+                                trailing_stop_price = new_ts
+                    elif trailing_stop_distance_pct is not None:
+                        new_ts = highest_price * (1 - trailing_stop_distance_pct)
+                        if new_ts > trailing_stop_price:
+                            trailing_stop_price = new_ts
 
                 current_stop = trailing_stop_price
             else:
                 current_stop = stop_loss_price
+
+            # --- Breakeven stop ---
+            if breakeven_activation_pct is not None and breakeven_activation_pct > 0:
+                profit_pct = (candle_high - entry_price) / entry_price
+                if profit_pct >= breakeven_activation_pct:
+                    breakeven_stop = entry_price
+                    if breakeven_stop > current_stop:
+                        current_stop = breakeven_stop
+
+            # --- Trailing take-profit ---
+            if trailing_take_profit and trailing_take_profit_distance_pct is not None:
+                new_tp = candle_high * (1 - trailing_take_profit_distance_pct)
+                if new_tp > take_profit_price:
+                    take_profit_price = new_tp
+
+            # --- Max unrealized loss (soft stop) ---
+            if max_unrealized_loss_pct is not None and max_unrealized_loss_pct > 0:
+                unrealized = (candle_low - entry_price) / entry_price
+                if unrealized <= -max_unrealized_loss_pct:
+                    exit_price = entry_price * (1 - max_unrealized_loss_pct)
+                    exit_ts = candle_ts
+                    exit_reason = "max_unrealized_loss"
+                    exit_index = j
+                    break
+
+            # --- Partial take-profit levels ---
+            if partial_take_profit_levels:
+                for lvl_idx, level in enumerate(partial_take_profit_levels):
+                    if lvl_idx in partial_tp_executed:
+                        continue
+                    lvl_pct = level.get("take_profit_pct", 0)
+                    lvl_frac = level.get("fraction", 0)
+                    if lvl_pct <= 0 or lvl_frac <= 0 or lvl_frac >= 1:
+                        continue
+                    tp_target = entry_price * (1 + lvl_pct)
+                    if candle_high >= tp_target:
+                        partial_gross = (tp_target - entry_price) / entry_price * lvl_frac
+                        if fee_model == "intesa" and trade_value and trade_value > 0:
+                            partial_entry_fee_pct = (
+                                _compute_intesa_fees(trade_value, "buy", is_btp)
+                                / trade_value * lvl_frac
+                            )
+                            partial_exit_value = trade_value * lvl_frac * (tp_target / entry_price)
+                            partial_exit_fee_pct = (
+                                _compute_intesa_fees(partial_exit_value, "sell", is_btp)
+                                / trade_value
+                            )
+                            partial_net = partial_gross - partial_entry_fee_pct - partial_exit_fee_pct
+                        else:
+                            partial_net = partial_gross - (
+                                entry_price * fee_rate + tp_target * fee_rate
+                            ) / entry_price * lvl_frac
+                        remaining_fraction *= (1 - lvl_frac)
+                        partial_tp_executed.add(lvl_idx)
+                        partial_trades.append({
+                            "entry_price": entry_price,
+                            "exit_price": tp_target,
+                            "exit_reason": f"partial_tp_{lvl_idx}",
+                            "pnl_pct": partial_net,
+                            "hold_time_seconds": (candle_ts - entry_ts) / 1000.0,
+                        })
+
+            # --- If all partial TPs executed, exit the remaining position ---
+            if remaining_fraction <= 0:
+                exit_price = candle_close
+                exit_ts = candle_ts
+                exit_reason = "all_partial_tp"
+                exit_index = j
+                break
 
             # Check stop-loss (conservative: assume stop hits first if both hit in same candle)
             if candle_low <= current_stop:
@@ -140,21 +245,39 @@ def backtest_strategy(
             exit_reason = "end_of_data"
             exit_index = len(candles) - 1
 
-        # Calculate P&L (including fees)
-        entry_fee = entry_price * fee_rate
-        exit_fee = exit_price * fee_rate
-        gross_pnl_pct = (exit_price - entry_price) / entry_price
-        net_pnl_pct = gross_pnl_pct - (entry_fee + exit_fee) / entry_price
+        # Record partial trades first
+        for pt in partial_trades:
+            trades.append(pt)
 
-        hold_time_seconds = (exit_ts - entry_ts) / 1000.0
+        # Calculate final P&L (including fees), scaled by remaining_fraction
+        if remaining_fraction > 0:
+            if fee_model == "intesa" and trade_value and trade_value > 0:
+                entry_fee_pct = (
+                    _compute_intesa_fees(trade_value, "buy", is_btp)
+                    / trade_value * remaining_fraction
+                )
+                exit_trade_value = trade_value * remaining_fraction * (exit_price / entry_price)
+                exit_fee_pct = (
+                    _compute_intesa_fees(exit_trade_value, "sell", is_btp)
+                    / trade_value
+                )
+                gross_pnl_pct = (exit_price - entry_price) / entry_price * remaining_fraction
+                net_pnl_pct = gross_pnl_pct - entry_fee_pct - exit_fee_pct
+            else:
+                entry_fee = entry_price * fee_rate
+                exit_fee = exit_price * fee_rate
+                gross_pnl_pct = (exit_price - entry_price) / entry_price * remaining_fraction
+                net_pnl_pct = gross_pnl_pct - (entry_fee + exit_fee) / entry_price * remaining_fraction
 
-        trades.append({
-            "entry_price": entry_price,
-            "exit_price": exit_price,
-            "exit_reason": exit_reason,
-            "pnl_pct": net_pnl_pct,
-            "hold_time_seconds": hold_time_seconds,
-        })
+            hold_time_seconds = (exit_ts - entry_ts) / 1000.0
+
+            trades.append({
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "exit_reason": exit_reason,
+                "pnl_pct": net_pnl_pct,
+                "hold_time_seconds": hold_time_seconds,
+            })
 
         # Move to the next candle after the exit
         i = exit_index + 1
@@ -178,6 +301,7 @@ def _empty_result() -> Dict[str, Any]:
         "avg_hold_time_seconds": 0,
         "max_consecutive_losses": 0,
         "sharpe_ratio": 0.0,
+        "partial_tp_count": 0,
         "insufficient_data": True,
     }
 
@@ -228,6 +352,10 @@ def _compute_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
     std_pnl = variance ** 0.5
     sharpe_ratio = (mean_pnl / std_pnl) if std_pnl > 0 else 0.0
 
+    partial_tp_count = sum(
+        1 for t in trades if t.get("exit_reason", "").startswith("partial_tp_")
+    )
+
     return {
         "total_trades": len(trades),
         "wins": len(wins),
@@ -240,6 +368,7 @@ def _compute_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
         "avg_hold_time_seconds": round(avg_hold),
         "max_consecutive_losses": max_consec_losses,
         "sharpe_ratio": round(sharpe_ratio, 4),
+        "partial_tp_count": partial_tp_count,
         "insufficient_data": False,
     }
 
@@ -258,5 +387,6 @@ def format_backtest_summary(stats: Dict[str, Any]) -> str:
         f"Profit factor: {stats['profit_factor']:.2f}, "
         f"Sharpe ratio: {stats.get('sharpe_ratio', 0.0):.2f}, "
         f"Avg hold: {stats['avg_hold_time_seconds']/3600:.1f}h, "
-        f"Max consec. losses: {stats['max_consecutive_losses']}"
+        f"Max consec. losses: {stats['max_consecutive_losses']}, "
+        f"Partial TPs: {stats.get('partial_tp_count', 0)}"
     )
