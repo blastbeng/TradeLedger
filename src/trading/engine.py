@@ -4253,7 +4253,7 @@ class TradingEngine:
                 bt_params = signal.strategy_params or {}
                 # Compute sl_pct and tp_pct (same logic as execution)
                 bt_stop_method = bt_params.get("stop_loss_method", "fixed")
-                if bt_stop_method == "atr_multiple" and atr is not None and atr > 0 and current_price > 0:
+                if bt_stop_method == "atr_multiple" and atr is not None and atr > 0 and current_price is not None and current_price > 0:
                     bt_atr_mult = bt_params.get("stop_loss_atr_multiple", 2.0)
                     bt_sl_pct = (bt_atr_mult * atr) / current_price
                 else:
