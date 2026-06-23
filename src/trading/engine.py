@@ -1903,8 +1903,15 @@ class TradingEngine:
         stock_sample = [s for s in sample_pairs if s in stock_pairs]
         btp_sample = [s for s in sample_pairs if s in btp_pairs]
 
+        # Parallelize get_quotes by splitting into chunks of 10
         plain_sample = [s.split("/")[0] for s in stock_sample]
-        raw_quotes = await asyncio.to_thread(get_quotes, plain_sample)
+        chunk_size = 10
+        chunks = [plain_sample[i:i + chunk_size] for i in range(0, len(plain_sample), chunk_size)]
+        quote_tasks = [asyncio.to_thread(get_quotes, chunk) for chunk in chunks]
+        quote_results = await asyncio.gather(*quote_tasks)
+        raw_quotes = {}
+        for res in quote_results:
+            raw_quotes.update(res)
         tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in stock_sample}
 
         # Add BTP quotes directly without using yfinance
@@ -2065,75 +2072,79 @@ class TradingEngine:
             results = await asyncio.gather(*tasks)
             ohlcv_data = dict(results)
 
-        # Compute indicators for each stock with OHLCV data, for ALL timeframes
-        symbol_indicators = {}
-        for sym, tf_data in ohlcv_data.items():
-            symbol_indicators[sym] = {}
+        # Compute indicators for each stock with OHLCV data, for ALL timeframes (parallelized)
+        primary_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+
+        def _compute_indicators_and_score(sym: str, tf_data: Dict[str, List[List]]) -> Tuple[str, Dict[str, Dict[str, Any]], float]:
+            sym_indicators = {}
             for tf in settings.OHLCV_TIMEFRAMES:
                 if tf in tf_data and tf_data[tf]:
                     candles = tf_data[tf]
                     ind = compute_all_indicators(candles)
                     if ind:
-                        symbol_indicators[sym][tf] = ind
+                        sym_indicators[tf] = ind
 
-        # --- Compute trend quality scores for candidate stocks ---
-        symbol_trend_scores: Dict[str, float] = {}
-        primary_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
-        for sym in sample_pairs:
+            # Compute trend quality score
+            trend_score = 0.0
             try:
-                tf_indicators = symbol_indicators.get(sym, {})
-                ind = tf_indicators.get(primary_tf, {})
-
+                ind = sym_indicators.get(primary_tf, {})
                 score = 0.0
                 components = 0
 
-                # ADX (trend strength): 0-100, higher = stronger trend
                 adx_val = ind.get('adx')
                 if adx_val is not None:
-                    adx_score = min(1.0, adx_val / 50.0)
-                    score += adx_score
+                    score += min(1.0, adx_val / 50.0)
                     components += 1
 
-                # EMA alignment: EMA9 vs EMA21
                 ema_9_val = ind.get('ema_9')
                 ema_21_val = ind.get('ema_21')
                 if ema_9_val is not None and ema_21_val is not None:
-                    ema_score = 1.0 if ema_9_val > ema_21_val else 0.0
-                    score += ema_score
+                    score += 1.0 if ema_9_val > ema_21_val else 0.0
                     components += 1
 
-                # RSI direction consistency (not at extremes = healthier trend)
                 rsi_val = ind.get('rsi')
                 if rsi_val is not None:
                     if 40 <= rsi_val <= 70:
-                        rsi_score = 1.0
+                        score += 1.0
                     elif 30 <= rsi_val <= 80:
-                        rsi_score = 0.5
+                        score += 0.5
                     else:
-                        rsi_score = 0.0
-                    score += rsi_score
+                        score += 0.0
                     components += 1
 
-                # MACD histogram direction (momentum confirmation)
                 macd_hist_val = ind.get('macd_hist')
                 if macd_hist_val is not None:
-                    macd_score = 1.0 if macd_hist_val > 0 else 0.0
-                    score += macd_score
+                    score += 1.0 if macd_hist_val > 0 else 0.0
                     components += 1
 
-                # +DI vs -DI (directional confirmation)
                 plus_di_val = ind.get('plus_di')
                 minus_di_val = ind.get('minus_di')
                 if plus_di_val is not None and minus_di_val is not None:
-                    di_score = 1.0 if plus_di_val > minus_di_val else 0.0
-                    score += di_score
+                    score += 1.0 if plus_di_val > minus_di_val else 0.0
                     components += 1
 
                 if components > 0:
-                    symbol_trend_scores[sym] = round(score / components, 3)
-                else:
-                    symbol_trend_scores[sym] = 0.0
+                    trend_score = round(score / components, 3)
             except Exception:
+                pass
+
+            return sym, sym_indicators, trend_score
+
+        indicator_tasks = [
+            asyncio.to_thread(_compute_indicators_and_score, sym, tf_data)
+            for sym, tf_data in ohlcv_data.items()
+        ]
+        indicator_results = await asyncio.gather(*indicator_tasks)
+
+        symbol_indicators = {}
+        symbol_trend_scores: Dict[str, float] = {}
+        for sym, inds, score in indicator_results:
+            symbol_indicators[sym] = inds
+            symbol_trend_scores[sym] = score
+
+        # Ensure all sample_pairs have a trend score even if OHLCV was missing
+        for sym in sample_pairs:
+            if sym not in symbol_trend_scores:
                 symbol_trend_scores[sym] = 0.0
 
         # Fetch historical OHLCV from database for longer-term trend analysis (up to 30 days)
@@ -2263,47 +2274,51 @@ class TradingEngine:
                         )
                     return
 
-        # Compute pairwise correlation matrix from OHLCV close prices
-        correlation_matrix: Dict[str, Dict[str, float]] = {}
-        if ohlcv_data and settings.OHLCV_TIMEFRAMES:
-            primary_tf = settings.OHLCV_TIMEFRAMES[0]
-            close_series: Dict[str, List[float]] = {}
-            for sym in sorted_by_vol:
-                if sym in ohlcv_data and primary_tf in ohlcv_data[sym]:
-                    candles = ohlcv_data[sym][primary_tf]
-                    if len(candles) >= 12:
-                        close_series[sym] = [c[4] for c in candles]
-            # Compute percentage returns
-            returns_series: Dict[str, List[float]] = {}
-            for sym, closes in close_series.items():
-                returns = [(closes[i] - closes[i - 1]) / closes[i - 1]
-                           for i in range(1, len(closes)) if closes[i - 1] != 0]
-                if len(returns) >= 10:
-                    returns_series[sym] = returns
-            # Pairwise Pearson correlation
-            corr_symbols = list(returns_series.keys())
-            for sym_a in corr_symbols:
-                correlation_matrix[sym_a] = {}
-                for sym_b in corr_symbols:
-                    if sym_a == sym_b:
-                        correlation_matrix[sym_a][sym_b] = 1.0
-                    elif sym_b in correlation_matrix and sym_a in correlation_matrix[sym_b]:
-                        correlation_matrix[sym_a][sym_b] = correlation_matrix[sym_b][sym_a]
-                    else:
-                        ret_a = returns_series[sym_a]
-                        ret_b = returns_series[sym_b]
-                        min_len = min(len(ret_a), len(ret_b))
-                        if min_len < 2:
-                            continue
-                        a = ret_a[-min_len:]
-                        b = ret_b[-min_len:]
-                        mean_a = sum(a) / min_len
-                        mean_b = sum(b) / min_len
-                        cov = sum((a[k] - mean_a) * (b[k] - mean_b) for k in range(min_len)) / min_len
-                        std_a = (sum((x - mean_a) ** 2 for x in a) / min_len) ** 0.5
-                        std_b = (sum((x - mean_b) ** 2 for x in b) / min_len) ** 0.5
-                        if std_a > 0 and std_b > 0:
-                            correlation_matrix[sym_a][sym_b] = round(cov / (std_a * std_b), 3)
+        # Compute pairwise correlation matrix from OHLCV close prices (run in thread to avoid blocking)
+        def _compute_correlation_matrix():
+            corr_matrix: Dict[str, Dict[str, float]] = {}
+            if ohlcv_data and settings.OHLCV_TIMEFRAMES:
+                primary_tf = settings.OHLCV_TIMEFRAMES[0]
+                close_series: Dict[str, List[float]] = {}
+                for sym in sorted_by_vol:
+                    if sym in ohlcv_data and primary_tf in ohlcv_data[sym]:
+                        candles = ohlcv_data[sym][primary_tf]
+                        if len(candles) >= 12:
+                            close_series[sym] = [c[4] for c in candles]
+                # Compute percentage returns
+                returns_series: Dict[str, List[float]] = {}
+                for sym, closes in close_series.items():
+                    returns = [(closes[i] - closes[i - 1]) / closes[i - 1]
+                               for i in range(1, len(closes)) if closes[i - 1] != 0]
+                    if len(returns) >= 10:
+                        returns_series[sym] = returns
+                # Pairwise Pearson correlation
+                corr_symbols = list(returns_series.keys())
+                for sym_a in corr_symbols:
+                    corr_matrix[sym_a] = {}
+                    for sym_b in corr_symbols:
+                        if sym_a == sym_b:
+                            corr_matrix[sym_a][sym_b] = 1.0
+                        elif sym_b in corr_matrix and sym_a in corr_matrix[sym_b]:
+                            corr_matrix[sym_a][sym_b] = corr_matrix[sym_b][sym_a]
+                        else:
+                            ret_a = returns_series[sym_a]
+                            ret_b = returns_series[sym_b]
+                            min_len = min(len(ret_a), len(ret_b))
+                            if min_len < 2:
+                                continue
+                            a = ret_a[-min_len:]
+                            b = ret_b[-min_len:]
+                            mean_a = sum(a) / min_len
+                            mean_b = sum(b) / min_len
+                            cov = sum((a[k] - mean_a) * (b[k] - mean_b) for k in range(min_len)) / min_len
+                            std_a = (sum((x - mean_a) ** 2 for x in a) / min_len) ** 0.5
+                            std_b = (sum((x - mean_b) ** 2 for x in b) / min_len) ** 0.5
+                            if std_a > 0 and std_b > 0:
+                                corr_matrix[sym_a][sym_b] = round(cov / (std_a * std_b), 3)
+            return corr_matrix
+
+        correlation_matrix = await asyncio.to_thread(_compute_correlation_matrix)
 
         perf = self._compute_performance_metrics()
         trade_pattern_analysis = self._compute_trade_pattern_analysis()
@@ -2357,16 +2372,23 @@ class TradingEngine:
         sample_pairs = shortlist
         logger.info(f"Curated LLM candidate list: {len(sample_pairs)} symbols")
 
-        # --- Detect upcoming corporate events from news ---
+        # --- Detect upcoming corporate events from news (parallelized) ---
         symbol_events: Dict[str, Dict[str, Any]] = {}
         if settings.NEWS_ENABLED and detect_upcoming_events is not None:
-            for sym in sample_pairs:
+            async def _detect_event(sym: str):
                 try:
                     event = await asyncio.to_thread(detect_upcoming_events, sym)
                     if event:
-                        symbol_events[sym] = event
+                        return sym, event
                 except Exception:
                     pass
+                return sym, None
+
+            event_tasks = [_detect_event(sym) for sym in sample_pairs]
+            event_results = await asyncio.gather(*event_tasks)
+            for sym, event in event_results:
+                if event:
+                    symbol_events[sym] = event
         session_info = self._get_session_info()
 
         # Market breadth: percentage of candidate stocks with positive 24h change
