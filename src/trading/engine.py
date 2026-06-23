@@ -9259,6 +9259,7 @@ class TradingEngine:
                         # Build a trade dict for this delta
                         # Recompute the actual fee for this fill (PaperTrader already
                         # deducted it from the balance, but does not store it in the order)
+                        from src.exchanges.fees import calculate_transaction_costs
                         _quote_ccy = queued['symbol'].split("/")[1] if "/" in queued['symbol'] else self.base_currency
                         _fee_costs = calculate_transaction_costs(
                             queued['side'].upper(), filled_avg_price, delta_qty, symbol=queued['symbol']
