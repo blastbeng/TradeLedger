@@ -558,6 +558,10 @@ class TradingEngine:
                     else:
                         countdown_str = f"{int(remaining_seconds)}s"
                     reason = "Market closed"
+                    # Check if we already sent the market closed notification
+                    source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
+                    source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
+                    already_market_closed = (source == "market_closed")
                     # Delete all existing pause keys to ensure clean state
                     pause_keys = [
                         "trading:paused",
@@ -576,7 +580,7 @@ class TradingEngine:
                     await asyncio.to_thread(self.redis.set, "trading:pause_reason", reason)
                     await asyncio.to_thread(self.redis.set, "trading:market_next_open", clock.next_open.isoformat())
                     logger.info(f"Market closed, pausing trading. Reason: {reason}")
-                    if self.notifier:
+                    if self.notifier and not already_market_closed:
                         await self.notifier.send_notification(
                             f"⏸️ {reason}",
                             summary={"action": "PAUSE", "reason": reason}
