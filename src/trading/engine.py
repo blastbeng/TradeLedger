@@ -10019,6 +10019,9 @@ class TradingEngine:
                     if db_candles:
                         ohlcv_data[tf] = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
 
+        # Fetch indicator config from position if exists
+        ind_cfg = self.positions.get(symbol, {}).get('indicator_config') if symbol in self.positions else None
+
         multi_tf_indicators = {}
         multi_tf_raw_candles = {}
         atr = rsi = macd = macd_signal = macd_hist = None
@@ -10033,7 +10036,7 @@ class TradingEngine:
             if tf in ohlcv_data and ohlcv_data[tf]:
                 candles = ohlcv_data[tf]
                 multi_tf_raw_candles[tf] = candles
-                ind = compute_all_indicators(candles)
+                ind = compute_all_indicators(candles, config=ind_cfg)
                 multi_tf_indicators[tf] = ind
                 if tf == assigned_tf:
                     atr = ind.get('atr')
@@ -10173,8 +10176,105 @@ class TradingEngine:
             if raw: min_viable_amount = float(raw)
         except: pass
 
+        # --- Emulate _process_symbol context ---
+        open_positions = [pos for pos in self.positions.values() if pos.get("symbol") == symbol]
+        position_info = self.positions.get(symbol)
+        unrealized_pnl = None
+        if position_info:
+            unrealized_pnl = (current_price - position_info['price']) * position_info['amount']
+
+        portfolio_total_value = base_balance
+        portfolio_exposure = 0.0
+        portfolio_stop_risk = 0.0
+        pos_tickers = await self._get_all_position_tickers()
+        for sym, pos in self.positions.items():
+            try:
+                t = pos_tickers.get(sym)
+                price = t['last'] if t and t.get('last') else 0.0
+                pos_value = pos['amount'] * price
+                portfolio_exposure += pos_value
+                portfolio_total_value += pos_value
+                stop_loss = pos.get('stop_loss')
+                if stop_loss is not None and price > 0:
+                    loss_if_stop = pos_value * (price - stop_loss) / price
+                    portfolio_stop_risk += max(0, loss_if_stop)
+            except Exception:
+                pass
+        portfolio_exposure_pct = (portfolio_exposure / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
+        portfolio_stop_risk_pct = (portfolio_stop_risk / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
+        portfolio_available_capital = max(0.0, base_balance - self._cycle_spent)
+
+        recent_trades = [t for t in self.trade_history if t.get("side") == "sell"][-5:]
+        recent_trades_summary = [
+            {
+                "symbol": t["symbol"],
+                "realized_pnl": t.get("realized_pnl", 0.0),
+                "strategy": t.get("strategy_type", "unknown"),
+            }
+            for t in recent_trades
+        ]
+
+        past_trades = [t for t in self.trade_history if t.get("symbol") == symbol and t.get("side") == "sell"][-10:]
+
+        try:
+            asset = await self._get_asset_info(symbol)
+            min_order_amount = float(asset.min_order_size) if asset.min_order_size else None
+        except Exception:
+            min_order_amount = None
+        if min_order_amount is not None and current_price:
+            min_order_cost = min_order_amount * current_price
+        else:
+            min_order_cost = None
+
+        max_sl_reviews = MAX_STOP_LOSS_REVIEWS
+        max_tp_reviews = MAX_TAKE_PROFIT_REVIEWS
+        max_partial_tp_reviews = settings.MAX_PARTIAL_TP_REVIEWS
+        max_dust_sweep_reviews = settings.MAX_DUST_SWEEP_REVIEWS
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "trading:max_stop_loss_reviews")
+            if raw: max_sl_reviews = int(raw)
+            raw = await asyncio.to_thread(self.redis.get, "trading:max_take_profit_reviews")
+            if raw: max_tp_reviews = int(raw)
+            raw = await asyncio.to_thread(self.redis.get, "trading:max_partial_tp_reviews")
+            if raw: max_partial_tp_reviews = int(raw)
+            raw = await asyncio.to_thread(self.redis.get, "trading:max_dust_sweep_reviews")
+            if raw: max_dust_sweep_reviews = int(raw)
+        except Exception:
+            pass
+
+        trading_paused = False  # Force False for simulation
+
+        max_hold_expired = False
+        max_hold_expired_count = 0
+        stop_loss_triggered = False
+        stop_loss_review_count = 0
+        take_profit_triggered = False
+        take_profit_review_count = 0
+        partial_tp_triggered = False
+        partial_tp_review_count = 0
+        partial_tp_triggered_levels = []
+        dust_sweep_triggered = False
+        dust_sweep_review_count = 0
+        if symbol in self.positions:
+            pos = self.positions[symbol]
+            max_hold_expired = pos.get("_max_hold_expired", False)
+            max_hold_expired_count = pos.get("_max_hold_expired_count", 0)
+            stop_loss_triggered = pos.get("_stop_loss_triggered", False)
+            stop_loss_review_count = pos.get("_stop_loss_review_count", 0)
+            take_profit_triggered = pos.get("_take_profit_triggered", False)
+            take_profit_review_count = pos.get("_take_profit_review_count", 0)
+            partial_tp_triggered = pos.get("_partial_tp_triggered", False) or pos.get("_partial_tp_triggered_single", False)
+            partial_tp_review_count = pos.get("_partial_tp_review_count", 0) or pos.get("_partial_tp_single_review_count", 0)
+            partial_tp_triggered_levels = pos.get("_partial_tp_triggered_levels", [])
+            dust_sweep_triggered = pos.get("_dust_sweep_triggered", False)
+            dust_sweep_review_count = pos.get("_dust_sweep_review_count", 0)
+
+        partial_tp_executed_levels = self.positions[symbol].get("partial_tp_levels_triggered", []) if symbol in self.positions else []
+
+        remaining = max(0.0, base_balance - self._cycle_spent)
+
         prompt = build_strategy_prompt(
-            symbol=symbol, ticker=ticker, balance=balance, open_positions=[],
+            symbol=symbol, ticker=ticker, balance=balance, open_positions=open_positions,
             per_symbol_budget=per_symbol_budget, max_symbols=self.effective_max_symbols,
             base_currency=self.base_currency, performance=perf, ohlcv_data=ohlcv_data,
             assigned_timeframe=assigned_tf, atr=atr, atr_multi_tf=atr_multi_tf, rsi=rsi,
@@ -10182,11 +10282,11 @@ class TradingEngine:
             bb_middle=bb_middle, bb_lower=bb_lower, ema_9=ema_9, ema_21=ema_21,
             stochastic_k=stochastic_k, stochastic_d=stochastic_d, adx=adx, plus_di=plus_di,
             minus_di=minus_di, obv=obv, mfi=mfi, cci=cci, williams_r=williams_r,
-            unrealized_pnl=None, position_info=None,
+            unrealized_pnl=unrealized_pnl, position_info=position_info,
             drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
-            raw_candles=raw_candles, recent_trades=[], historical_ohlcv=historical_ohlcv,
-            min_order_amount=None, min_order_cost=None, all_symbols=self.current_symbols,
-            past_trades=[], cycle_spent=0.0, remaining_balance=base_balance,
+            raw_candles=raw_candles, recent_trades=recent_trades_summary, historical_ohlcv=historical_ohlcv,
+            min_order_amount=min_order_amount, min_order_cost=min_order_cost, all_symbols=self.current_symbols,
+            past_trades=past_trades, cycle_spent=self._cycle_spent, remaining_balance=remaining,
             market_regime=market_regime, multi_tf_raw_candles=multi_tf_raw_candles,
             multi_tf_indicators=multi_tf_indicators, session_info=session_info,
             sentiment_trend=sentiment_trend_val, volume_trend=volume_trend_val,
@@ -10194,17 +10294,18 @@ class TradingEngine:
             full_market_breadth=full_market_breadth, parabolic_sar=parabolic_sar,
             keltner_channels=keltner_channels, donchian_channels=donchian_channels,
             atr_percentile=atr_percentile, global_risk_multiplier=global_risk_mult,
-            trading_paused=False, max_hold_expired=False, max_hold_expired_count=0,
-            stop_loss_triggered=False, stop_loss_review_count=0,
-            take_profit_triggered=False, take_profit_review_count=0,
-            partial_tp_triggered=False, partial_tp_review_count=0,
-            partial_tp_triggered_levels=None, partial_tp_executed_levels=[],
-            dust_sweep_triggered=False, dust_sweep_review_count=0,
-            max_stop_loss_reviews=10, max_take_profit_reviews=10,
-            max_partial_tp_reviews=10, max_dust_sweep_reviews=10,
-            portfolio_exposure_pct=None, portfolio_stop_risk_pct=None,
-            portfolio_total_value=base_balance, portfolio_open_count=len(self.positions),
-            portfolio_available_capital=base_balance, last_decision=self._last_decisions.get(symbol),
+            trading_paused=trading_paused, max_hold_expired=max_hold_expired, max_hold_expired_count=max_hold_expired_count,
+            stop_loss_triggered=stop_loss_triggered, stop_loss_review_count=stop_loss_review_count,
+            take_profit_triggered=take_profit_triggered, take_profit_review_count=take_profit_review_count,
+            partial_tp_triggered=partial_tp_triggered, partial_tp_review_count=partial_tp_review_count,
+            partial_tp_triggered_levels=partial_tp_triggered_levels if partial_tp_triggered_levels else None,
+            partial_tp_executed_levels=partial_tp_executed_levels,
+            dust_sweep_triggered=dust_sweep_triggered, dust_sweep_review_count=dust_sweep_review_count,
+            max_stop_loss_reviews=max_sl_reviews, max_take_profit_reviews=max_tp_reviews,
+            max_partial_tp_reviews=max_partial_tp_reviews, max_dust_sweep_reviews=max_dust_sweep_reviews,
+            portfolio_exposure_pct=portfolio_exposure_pct, portfolio_stop_risk_pct=portfolio_stop_risk_pct,
+            portfolio_total_value=portfolio_total_value, portfolio_open_count=len(self.positions),
+            portfolio_available_capital=portfolio_available_capital, last_decision=self._last_decisions.get(symbol),
             minutes_to_market_close=minutes_to_market_close,
             current_strategy_interval_seconds=self._strategy_intervals.get(symbol, tf_seconds),
             max_portfolio_exposure_pct=max_port_exp, max_portfolio_stop_risk_pct=max_port_risk,
@@ -10213,11 +10314,56 @@ class TradingEngine:
             daily_pivot_points=daily_pivot_points, min_viable_trade_amount=min_viable_amount,
         )
 
+        # Compute complexity and model tier for perfect emulation
+        _conflicting = False
+        if rsi is not None and macd_hist is not None:
+            if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
+                _conflicting = True
+        strategy_complexity = self._compute_prompt_complexity(
+            num_candidates=len(self.current_symbols),
+            volatility_percentile=atr_percentile,
+            rsi=rsi, macd=macd, macd_signal=macd_signal, macd_hist=macd_hist,
+            bb_upper=bb_upper, bb_middle=bb_middle, bb_lower=bb_lower,
+            ema_9=ema_9, ema_21=ema_21, stochastic_k=stochastic_k,
+            adx=adx, plus_di=plus_di, minus_di=minus_di,
+            mfi=mfi, cci=cci, williams_r=williams_r, ichimoku=ichimoku,
+            market_breadth=getattr(self, '_market_breadth', None),
+            full_market_breadth=full_market_breadth,
+            sentiment_trend_magnitude=abs(sentiment_trend_val) if sentiment_trend_val is not None else None,
+            volume_trend=volume_trend_val, market_regime=market_regime,
+            unrealized_pnl=unrealized_pnl,
+            drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
+            portfolio_exposure_pct=portfolio_exposure_pct,
+            portfolio_stop_risk_pct=portfolio_stop_risk_pct,
+            is_critical=(max_hold_expired or stop_loss_triggered or take_profit_triggered or partial_tp_triggered or dust_sweep_triggered),
+            trading_paused=trading_paused, symbol_event=symbol_event, fundamentals=fundamentals,
+            consecutive_losses=perf.get("equity_curve", {}).get("consecutive_losses", 0),
+            current_price=current_price, conflicting_signals=_conflicting,
+        )
+        strategy_model_type = self._choose_model_tier(
+            atr=atr, atr_percentile=atr_percentile, rsi=rsi, macd=macd, macd_signal=macd_signal, macd_hist=macd_hist,
+            bb_upper=bb_upper, bb_middle=bb_middle, bb_lower=bb_lower, ema_9=ema_9, ema_21=ema_21,
+            stochastic_k=stochastic_k, adx=adx, plus_di=plus_di, minus_di=minus_di,
+            mfi=mfi, cci=cci, williams_r=williams_r, ichimoku=ichimoku,
+            market_regime=market_regime, market_breadth=getattr(self, '_market_breadth', None),
+            full_market_breadth=full_market_breadth, sentiment_trend_val=sentiment_trend_val,
+            volume_trend=volume_trend_val, unrealized_pnl=unrealized_pnl,
+            drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
+            portfolio_exposure_pct=portfolio_exposure_pct,
+            portfolio_stop_risk_pct=portfolio_stop_risk_pct,
+            is_critical=(max_hold_expired or stop_loss_triggered or take_profit_triggered or partial_tp_triggered or dust_sweep_triggered),
+            trading_paused=trading_paused, symbol_event=symbol_event, fundamentals=fundamentals,
+            consecutive_losses=perf.get("equity_curve", {}).get("consecutive_losses", 0),
+            current_price=current_price,
+        )
+        effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity)
+
         return {
             "ticker": ticker, "prompt": prompt, "atr": atr, "assigned_tf": assigned_tf,
             "tf_seconds": tf_seconds, "historical_ohlcv": historical_ohlcv,
             "raw_candles": raw_candles, "current_price": current_price,
             "base_balance": base_balance, "is_btp": is_btp,
+            "model_type": strategy_model_type, "temperature": effective_temp,
         }
 
     async def simulate_backtest(self, symbol: str) -> Dict[str, Any]:
@@ -10226,6 +10372,9 @@ class TradingEngine:
         if "error" in data:
             return data
         
+        model_type = data.get("model_type", "mind")
+        temperature = data.get("temperature", 0.2)
+
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -10233,8 +10382,8 @@ class TradingEngine:
                     compact_prompt(data["prompt"]),
                     COMPACTED_SYSTEM_PROMPT,
                     60,
-                    model_type="mind",
-                    temperature=0.2,
+                    model_type=model_type,
+                    temperature=temperature,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -10246,7 +10395,26 @@ class TradingEngine:
             preliminary_strategy = create_strategy_from_llm(step1_response)
             preliminary_signal = preliminary_strategy.generate_signal({})
         except ValueError as e:
-            return {"error": f"Failed to parse LLM response: {e}", "raw_response": step1_response}
+            # Retry with correction prompt
+            logger.warning(f"Simulation Step 1 parse failed for {symbol}: {e}. Retrying.")
+            correction_prompt = (
+                "Your previous response was not valid JSON. "
+                "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
+                "Here is the original request:\n\n" + data["prompt"]
+            )
+            try:
+                retry_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_cached_llm_response, compact_prompt(correction_prompt), COMPACTED_SYSTEM_PROMPT, 30,
+                        model_type="actuator", temperature=temperature,
+                    ),
+                    timeout=settings.LLM_TIMEOUT
+                )
+                step1_response = retry_result["response"]
+                preliminary_strategy = create_strategy_from_llm(step1_response)
+                preliminary_signal = preliminary_strategy.generate_signal({})
+            except Exception as e2:
+                return {"error": f"Failed to parse LLM response after retry: {e2}", "raw_response": step1_response}
 
         if preliminary_signal.action == "BUY":
             backtest_stats, bt_summary = await self._run_backtest_from_signal(
@@ -10279,6 +10447,9 @@ class TradingEngine:
         if "error" in data:
             return data
         
+        model_type = data.get("model_type", "mind")
+        temperature = data.get("temperature", 0.2)
+
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -10286,8 +10457,8 @@ class TradingEngine:
                     compact_prompt(data["prompt"]),
                     COMPACTED_SYSTEM_PROMPT,
                     60,
-                    model_type="mind",
-                    temperature=0.2,
+                    model_type=model_type,
+                    temperature=temperature,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -10299,7 +10470,26 @@ class TradingEngine:
             preliminary_strategy = create_strategy_from_llm(step1_response)
             preliminary_signal = preliminary_strategy.generate_signal({})
         except ValueError as e:
-            return {"error": f"Failed to parse LLM Step 1 response: {e}", "raw_response": step1_response}
+            # Retry with correction prompt
+            logger.warning(f"Simulation Step 1 parse failed for {symbol}: {e}. Retrying.")
+            correction_prompt = (
+                "Your previous response was not valid JSON. "
+                "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
+                "Here is the original request:\n\n" + data["prompt"]
+            )
+            try:
+                retry_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_cached_llm_response, compact_prompt(correction_prompt), COMPACTED_SYSTEM_PROMPT, 30,
+                        model_type="actuator", temperature=temperature,
+                    ),
+                    timeout=settings.LLM_TIMEOUT
+                )
+                step1_response = retry_result["response"]
+                preliminary_strategy = create_strategy_from_llm(step1_response)
+                preliminary_signal = preliminary_strategy.generate_signal({})
+            except Exception as e2:
+                return {"error": f"Failed to parse LLM Step 1 response after retry: {e2}", "raw_response": step1_response}
 
         if preliminary_signal.action != "BUY":
             return {
@@ -10335,9 +10525,17 @@ class TradingEngine:
             backtest_stats=backtest_stats or {},
             backtest_summary=bt_summary,
             base_currency=self.base_currency,
-            trading_paused=False,
+            trading_paused=False, # Pass actual trading_paused if needed, but Step 2 prompt handles it
             step1_prompt=data["prompt"],
         )
+        
+        # Append position info if exists
+        if symbol in self.positions:
+            pos = self.positions[symbol]
+            step2_prompt += (
+                f"\n**Existing Position:** You already hold {pos['amount']:.6f} "
+                f"at entry {pos['price']:.4f}. A BUY will ADD to this position (scale in).\n"
+            )
 
         try:
             step2_result = await asyncio.wait_for(
@@ -10346,8 +10544,8 @@ class TradingEngine:
                     compact_prompt(step2_prompt),
                     COMPACTED_SYSTEM_PROMPT,
                     60,
-                    model_type="mind",
-                    temperature=0.2,
+                    model_type=model_type,
+                    temperature=temperature,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -10359,6 +10557,38 @@ class TradingEngine:
                 "action": preliminary_signal.action,
                 "backtest_summary": bt_summary,
             }
+
+        # Validate Step 2 response
+        try:
+            create_strategy_from_llm(step2_response)
+        except ValueError:
+            # Retry with correction prompt
+            logger.warning(f"Simulation Step 2 parse failed for {symbol}. Retrying.")
+            correction = (
+                "Your previous response was not valid JSON. "
+                "Output ONLY a single JSON object. "
+                "Here is the request:\n\n" + step2_prompt
+            )
+            try:
+                retry_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_cached_llm_response,
+                        compact_prompt(correction),
+                        COMPACTED_SYSTEM_PROMPT, 30,
+                        model_type="actuator",
+                        temperature=temperature,
+                    ),
+                    timeout=settings.LLM_TIMEOUT
+                )
+                step2_response = retry_result["response"]
+            except Exception as e2:
+                return {
+                    "step1_response": step1_response,
+                    "step2_response": step2_response,
+                    "error": f"Failed to parse LLM Step 2 response after retry: {e2}",
+                    "action": preliminary_signal.action,
+                    "backtest_summary": bt_summary,
+                }
 
         return {
             "step1_response": step1_response,
