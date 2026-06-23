@@ -25,12 +25,11 @@ def compute_rsi(closes: List[float], period: int = 14) -> Optional[float]:
 
 
 def compute_ema(data: List[float], period: int) -> List[float]:
-    """Compute Exponential Moving Average."""
+    """Compute Exponential Moving Average. Returns full-length list with NaN warmup."""
     if len(data) < period:
         return []
     result = talib.EMA(np.array(data, dtype=float), timeperiod=period)
-    # talib returns NaNs for the initial period, strip them to match original behavior
-    return result[~np.isnan(result)].tolist()
+    return result.tolist()
 
 
 def compute_stochastic(
@@ -325,8 +324,8 @@ def compute_all_indicators(
         ind['bb_lower'] = bb_lower
         ema_9_list = compute_ema(closes, ema_fast)
         ema_21_list = compute_ema(closes, ema_slow)
-        ind['ema_9'] = ema_9_list[-1] if ema_9_list else None
-        ind['ema_21'] = ema_21_list[-1] if ema_21_list else None
+        ind['ema_9'] = ema_9_list[-1] if ema_9_list and not np.isnan(ema_9_list[-1]) else None
+        ind['ema_21'] = ema_21_list[-1] if ema_21_list and not np.isnan(ema_21_list[-1]) else None
         stoch_k, stoch_d = compute_stochastic(highs, lows, closes, period=stoch_k_period, smooth_k=stoch_d_period)
         ind['stochastic_k'] = stoch_k
         ind['stochastic_d'] = stoch_d
@@ -374,6 +373,8 @@ def compute_keltner_channels(
     if not ema_values:
         return None
     middle = ema_values[-1]
+    if np.isnan(middle):
+        return None
     candles = [[0, 0, h, l, c, 0] for h, l, c in zip(highs, lows, closes)]
     atr = compute_atr(candles, period)
     if atr is None:

@@ -102,6 +102,7 @@ def backtest_strategy(
         remaining_fraction = 1.0
         partial_tp_executed: set = set()
         partial_trades: List[Dict[str, Any]] = []
+        entry_fee_charged = False
 
         exit_price = None
         exit_ts = None
@@ -199,16 +200,13 @@ def backtest_strategy(
                         actual_tp_fill = candle[1] if candle[1] >= tp_target else tp_target * (1 - slippage_pct)
                         partial_gross = (actual_tp_fill - entry_price) / entry_price * lvl_frac
                         if fee_model == "intesa" and trade_value and trade_value > 0:
-                            partial_entry_fee_pct = (
-                                _compute_intesa_fees(trade_value, "buy", is_btp)
-                                / trade_value * lvl_frac
-                            )
+                            entry_fee_pct = 0.0
+                            if not entry_fee_charged:
+                                entry_fee_pct = _compute_intesa_fees(trade_value, "buy", is_btp) / trade_value
+                                entry_fee_charged = True
                             partial_exit_value = trade_value * lvl_frac * (actual_tp_fill / entry_price)
-                            partial_exit_fee_pct = (
-                                _compute_intesa_fees(partial_exit_value, "sell", is_btp)
-                                / trade_value
-                            )
-                            partial_net = partial_gross - partial_entry_fee_pct - partial_exit_fee_pct
+                            partial_exit_fee_pct = _compute_intesa_fees(partial_exit_value, "sell", is_btp) / trade_value
+                            partial_net = partial_gross - entry_fee_pct - partial_exit_fee_pct
                         else:
                             partial_net = partial_gross - (
                                 entry_price * fee_rate + actual_tp_fill * fee_rate
@@ -269,15 +267,12 @@ def backtest_strategy(
         # Calculate final P&L (including fees), scaled by remaining_fraction
         if remaining_fraction > 0:
             if fee_model == "intesa" and trade_value and trade_value > 0:
-                entry_fee_pct = (
-                    _compute_intesa_fees(trade_value, "buy", is_btp)
-                    / trade_value * remaining_fraction
-                )
+                entry_fee_pct = 0.0
+                if not entry_fee_charged:
+                    entry_fee_pct = _compute_intesa_fees(trade_value, "buy", is_btp) / trade_value
+                    entry_fee_charged = True
                 exit_trade_value = trade_value * remaining_fraction * (exit_price / entry_price)
-                exit_fee_pct = (
-                    _compute_intesa_fees(exit_trade_value, "sell", is_btp)
-                    / trade_value
-                )
+                exit_fee_pct = _compute_intesa_fees(exit_trade_value, "sell", is_btp) / trade_value
                 gross_pnl_pct = (exit_price - entry_price) / entry_price * remaining_fraction
                 net_pnl_pct = gross_pnl_pct - entry_fee_pct - exit_fee_pct
             else:
