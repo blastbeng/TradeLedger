@@ -3546,11 +3546,15 @@ class TradingEngine:
             # --- Skip if no meaningful market data is available ---
             # If we have no OHLCV candles at all, there is nothing for the LLM to analyse.
             # Skip to save costs and noise.
+            # BTP bonds (ISIN format) are exempt: yfinance does not provide OHLCV for them,
+            # but they can still be evaluated by the LLM using the current price alone.
+            base_symbol = symbol.split("/")[0]
+            is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
             no_ohlcv = (
                 not ohlcv_data
                 or all(len(candles) == 0 for candles in ohlcv_data.values())
             )
-            if no_ohlcv:
+            if no_ohlcv and not is_btp:
                 logger.info(
                     f"Skipping {symbol}: no OHLCV data – market data unavailable."
                 )
