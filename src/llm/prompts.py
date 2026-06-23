@@ -1069,23 +1069,42 @@ Maximum symbols to trade: {max_symbols}
                     "Explain in your reasoning how the indicators support your decision.\n"
                 )
     if historical_ohlcv:
-        # Provide raw candles for backtesting
-        raw_candles_str = _format_raw_candles_compact(historical_ohlcv, max_candles=200)
+        # Provide a statistical summary instead of raw candles to reduce prompt size
+        # and avoid "lost in the middle" syndrome. The Python backtester handles
+        # the deterministic validation independently.
+        hist_summary = _summarize_ohlcv(historical_ohlcv)
+        if hist_summary:
+            # Compute additional statistics for the last N candles
+            closes = [c[4] for c in historical_ohlcv]
+            volumes = [c[5] for c in historical_ohlcv]
+            last_20 = closes[-20:] if len(closes) >= 20 else closes
+            avg_close = sum(last_20) / len(last_20) if last_20 else 0
+            max_close = max(last_20) if last_20 else 0
+            min_close = min(last_20) if last_20 else 0
+            avg_volume = sum(volumes[-20:]) / min(len(volumes), 20) if volumes else 0
+            # Recent momentum (last 5 candles)
+            last_5_closes = closes[-5:] if len(closes) >= 5 else closes
+            if len(last_5_closes) >= 2 and last_5_closes[0] > 0:
+                recent_momentum_pct = ((last_5_closes[-1] - last_5_closes[0]) / last_5_closes[0]) * 100
+            else:
+                recent_momentum_pct = 0.0
+
+            prompt += (
+                f"\nHistorical OHLCV statistical summary (last {hist_summary['candle_count']} candles, "
+                f"{assigned_timeframe or 'default'} timeframe):\n"
+                f"  Overall change: {hist_summary['change_pct']:.2f}%\n"
+                f"  High: {hist_summary['high']:.4f}  Low: {hist_summary['low']:.4f}\n"
+                f"  Total volume: {hist_summary['volume']:.0f}\n"
+                f"  Last 20 candles — avg close: {avg_close:.4f}, max: {max_close:.4f}, min: {min_close:.4f}\n"
+                f"  Avg volume (last 20): {avg_volume:.0f}\n"
+                f"  Recent momentum (last 5 candles): {recent_momentum_pct:+.2f}%\n"
+            )
         prompt += (
-            f"\nRaw historical OHLCV candles for backtesting "
-            f"(last {min(len(historical_ohlcv), 200)} candles, "
-            f"format: [timestamp_ms, open, high, low, close, volume]):\n"
-            f"{raw_candles_str}\n"
-        )
-        prompt += (
-            "**REQUIRED:** Perform a backtest on these candles using your proposed strategy. "
-            "You MUST include a `backtest_summary` field in your JSON output with the results "
-            "(e.g., \"3 wins, 2 losses, net +2.3%\"). If there is not enough data, explain why in the field.\n"
-            "**Note:** The engine will also run an independent Python backtest on this data using your "
+            "**Note:** The engine will run an independent Python backtest on the full historical data using your "
             "stop_loss_pct, take_profit_pct, max_hold_time_seconds, and trailing_stop parameters. "
             "If the Python backtest shows a win rate below 25% and a profit factor below 0.5 (with at least "
             "5 trades), your strategy will be rejected and you will be asked to revise. Make sure your "
-            "parameters are historically profitable.\n"
+            "parameters are historically profitable based on the statistical summary above.\n"
         )
     if drawdown_pct is not None:
         prompt += f"Current account drawdown: {drawdown_pct}%\n"

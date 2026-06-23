@@ -7430,7 +7430,7 @@ class TradingEngine:
             if abs(macd - macd_signal) < 0.0001 * abs(macd) if macd else 0:
                 complexity += 1
 
-        return "mind" if complexity >= 1 else "actuator"
+        return "mind" if complexity >= 0.3 else "actuator"
 
     def _compute_prompt_complexity(
         self,
