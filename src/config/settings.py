@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     # Market filtering
     TICKER_SUFFIX: str = ".MI"
     TARGET_COUNTRY: str = "italy"
+    ETF_ITALY_KEYWORDS: str = "FTSE MIB, Italy, BTP"
 
     @field_validator("TARGET_COUNTRY")
     @classmethod

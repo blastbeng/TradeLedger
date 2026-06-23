@@ -151,6 +151,52 @@ def _discover_financedatabase_tickers() -> List[str]:
         return []
 
 
+def discover_italian_ucits_etfs() -> List[str]:
+    """Discover Italian-focused UCITS ETFs using FinanceDatabase."""
+    try:
+        import financedatabase as fd
+    except ImportError:
+        logger.warning("financedatabase not installed. Skipping ETF discovery.")
+        return []
+
+    keywords = [k.strip().lower() for k in settings.ETF_ITALY_KEYWORDS.split(",") if k.strip()]
+    if not keywords:
+        return []
+
+    try:
+        etfs = fd.ETFs()
+        # Try to filter by country first, fallback to all if unsupported
+        try:
+            df = etfs.select(country="Italy")
+        except Exception:
+            df = etfs.select()
+
+        if df is None or df.empty:
+            return []
+
+        base_symbols = []
+        for symbol, row in df.iterrows():
+            name = str(row.get('name', '')).lower()
+            # MANDATORY SAFETY FILTER: Must contain "UCITS"
+            if 'ucits' not in name and 'ucits' not in symbol.lower():
+                continue
+
+            # Apply keyword filter to ensure Italian economy focus
+            if not any(kw in name for kw in keywords):
+                continue
+
+            # Extract short alphanumeric symbol (strip exchange suffix)
+            base = symbol.split(".")[0] if "." in symbol else symbol
+            if re.match(r"^[A-Z0-9]+$", base):
+                base_symbols.append(base)
+
+        logger.info(f"Discovered {len(base_symbols)} Italian UCITS ETFs matching keywords.")
+        return base_symbols
+    except Exception as e:
+        logger.warning(f"Failed to discover Italian UCITS ETFs: {e}")
+        return []
+
+
 def get_tradable_assets() -> List[str]:
     """Return a list of tradable Italian equity symbols, filtered by country.
 
@@ -196,6 +242,15 @@ def get_tradable_assets() -> List[str]:
                 if t not in existing:
                     base_symbols.append(t)
                     existing.add(t)
+
+    # --- Italian UCITS ETF discovery ---
+    etf_symbols = discover_italian_ucits_etfs()
+    if etf_symbols:
+        existing = set(base_symbols)
+        for etf in etf_symbols:
+            if etf not in existing:
+                base_symbols.append(etf)
+                existing.add(etf)
 
     # Discover additional tickers from news RSS feeds
     try:
