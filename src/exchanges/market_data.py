@@ -332,6 +332,9 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     if not symbols:
         return {}
 
+    # Sanitize symbols: remove $ prefix and /currency suffix
+    symbols = [s.lstrip('$').split('/')[0] for s in symbols]
+
     result = {}
     btp_symbols = [s for s in symbols if re.match(r'^IT[A-Z0-9]{10}$', s)]
     stock_symbols = [s for s in symbols if s not in btp_symbols]
@@ -421,6 +424,9 @@ def get_multi_timeframe_bars(
     if not timeframes:
         return {}
 
+    # Sanitize symbol: remove $ prefix and /currency suffix
+    symbol = symbol.lstrip('$').split('/')[0]
+
     # Format symbol for Yahoo Finance: append TICKER_SUFFIX for BTP ISINs
     yf_symbol = symbol
     if re.match(r'^IT[A-Z0-9]{10}$', symbol):
@@ -463,6 +469,9 @@ def get_bars_range(
 
     Returns a list of candles [timestamp_ms, open, high, low, close, volume].
     """
+    # Sanitize symbol: remove $ prefix and /currency suffix
+    symbol = symbol.lstrip('$').split('/')[0]
+
     interval = TIMEFRAME_MAP.get(timeframe)
     if not interval:
         logger.warning(f"Unsupported timeframe: {timeframe}")

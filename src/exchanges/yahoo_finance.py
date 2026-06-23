@@ -22,6 +22,7 @@ def get_yahoo_quote(symbol: str) -> Optional[Dict[str, Any]]:
 
     # Normalise symbol: yfinance expects ticker without exchange suffix
     base = symbol.split("/")[0] if "/" in symbol else symbol
+    base = base.lstrip('$')
 
     redis_client = get_redis_client()
     cache_key = f"yahoo_quote:{base}"
@@ -87,6 +88,7 @@ def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
         return None
 
     base = symbol.split("/")[0] if "/" in symbol else symbol
+    base = base.lstrip('$')
 
     try:
         ticker = yf.Ticker(base)
