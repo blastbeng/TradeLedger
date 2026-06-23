@@ -709,6 +709,8 @@ def build_strategy_prompt(
     symbol_event: Optional[Dict[str, Any]] = None,
     queued_orders: Optional[List[Dict[str, Any]]] = None,
     fundamentals: Optional[Dict[str, Any]] = None,
+    vwap: Optional[float] = None,
+    daily_pivot_points: Optional[Dict[str, float]] = None,
 ) -> str:
     """Build a prompt to generate a trading strategy for a specific stock/ETF."""
     current_price = ticker.get("last") if ticker else None
@@ -1141,6 +1143,17 @@ Maximum symbols to trade: {max_symbols}
             f"Lower={donchian_channels['lower']:.6f}\n"
         )
         prompt += "Donchian Channels: highest high/lowest low over lookback period. Breakout above upper = new high (bullish), below lower = new low (bearish). Narrow channel = low volatility (squeeze).\n"
+
+    if vwap is not None:
+        prompt += f"\nVWAP (14-period, {assigned_timeframe or 'default'}): {vwap:.6f}\n"
+        prompt += "VWAP is the volume-weighted average price. Price above VWAP = bullish, below = bearish. Use as dynamic support/resistance.\n"
+
+    if daily_pivot_points:
+        prompt += f"\n**Daily Pivot Points (Support/Resistance):**\n"
+        prompt += f"  Pivot: {daily_pivot_points['pivot']}\n"
+        prompt += f"  Resistances: R1={daily_pivot_points['r1']}, R2={daily_pivot_points['r2']}, R3={daily_pivot_points['r3']}\n"
+        prompt += f"  Supports: S1={daily_pivot_points['s1']}, S2={daily_pivot_points['s2']}, S3={daily_pivot_points['s3']}\n"
+        prompt += "Use these levels for potential entry (near supports) and exit (near resistances).\n"
 
     # --- News section (detailed articles) ---
     news_section = ""

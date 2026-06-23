@@ -385,3 +385,40 @@ def compute_keltner_channels(
         "middle": round(middle, 8),
         "lower": round(lower, 8),
     }
+
+
+def compute_vwap(candles: List[List], period: int = 14) -> Optional[float]:
+    """Compute rolling VWAP over the last N periods."""
+    if len(candles) < period:
+        return None
+    recent = candles[-period:]
+    total_pv = 0.0
+    total_v = 0.0
+    for c in recent:
+        typical_price = (c[2] + c[3] + c[4]) / 3.0
+        volume = c[5]
+        total_pv += typical_price * volume
+        total_v += volume
+    if total_v == 0:
+        return None
+    return round(total_pv / total_v, 6)
+
+
+def compute_pivot_points(prev_high: float, prev_low: float, prev_close: float) -> Dict[str, float]:
+    """Compute standard pivot points and support/resistance levels."""
+    p = (prev_high + prev_low + prev_close) / 3.0
+    r1 = 2 * p - prev_low
+    s1 = 2 * p - prev_high
+    r2 = p + (prev_high - prev_low)
+    s2 = p - (prev_high - prev_low)
+    r3 = prev_high + 2 * (p - prev_low)
+    s3 = prev_low - 2 * (prev_high - p)
+    return {
+        "pivot": round(p, 4),
+        "r1": round(r1, 4),
+        "r2": round(r2, 4),
+        "r3": round(r3, 4),
+        "s1": round(s1, 4),
+        "s2": round(s2, 4),
+        "s3": round(s3, 4),
+    }

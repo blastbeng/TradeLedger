@@ -42,6 +42,8 @@ from src.indicators import (
     compute_keltner_channels,
     compute_donchian_channels,
     compute_all_indicators,
+    compute_vwap,
+    compute_pivot_points,
 )
 try:
     from src.news.fetcher import discover_trending_stocks, detect_upcoming_events
@@ -3543,6 +3545,8 @@ class TradingEngine:
             donchian_channels = None
             parabolic_sar = None
             keltner_channels = None
+            vwap = None
+            daily_pivot_points = None
 
             for tf in settings.OHLCV_TIMEFRAMES:
                 if tf in ohlcv_data and ohlcv_data[tf]:
@@ -3574,6 +3578,8 @@ class TradingEngine:
                         donchian_channels = ind.get('donchian_channels')
                         parabolic_sar = ind.get('parabolic_sar')
                         keltner_channels = ind.get('keltner_channels')
+                        # Compute rolling VWAP for the assigned timeframe
+                        vwap = compute_vwap(candles)
 
             # Compute ATR for each timeframe (volatility term structure)
             atr_multi_tf: Dict[str, float] = {}
@@ -3582,6 +3588,12 @@ class TradingEngine:
                     tf_atr = compute_atr(multi_tf_raw_candles[tf])
                     if tf_atr is not None and tf_atr > 0:
                         atr_multi_tf[tf] = tf_atr
+
+        # Compute daily pivot points from the 1d timeframe (if available)
+        if "1d" in multi_tf_raw_candles and len(multi_tf_raw_candles["1d"]) >= 2:
+            daily_candles = multi_tf_raw_candles["1d"]
+            prev_daily = daily_candles[-2]  # [ts, o, h, l, c, v]
+            daily_pivot_points = compute_pivot_points(prev_daily[2], prev_daily[3], prev_daily[4])
 
             # ATR Percentile (volatility context)
             atr_percentile = None
@@ -3878,6 +3890,8 @@ class TradingEngine:
                 symbol_event=symbol_event,
                 queued_orders=self.queued_orders,
                 fundamentals=fundamentals,
+                vwap=vwap,
+                daily_pivot_points=daily_pivot_points,
             )
             logger.info(f"LLM prompt for {symbol}: {len(prompt)} chars")
             # Build a market snapshot dict for caching (per-symbol)
@@ -4227,6 +4241,7 @@ class TradingEngine:
                         trailing_stop=bt_trailing,
                         trailing_stop_distance_pct=bt_trail_dist,
                         trailing_stop_activation_pct=bt_trail_act,
+                        fee_rate=0.006,  # Approximate 0.6% round-trip fee for Italian stocks
                     )
                     bt_summary = format_backtest_summary(backtest_stats)
                     logger.info(f"Backtest for {symbol}: {bt_summary}")
