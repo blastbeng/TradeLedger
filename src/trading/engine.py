@@ -151,6 +151,7 @@ class TradingEngine:
         # Performance metrics cache – avoids recomputing on every symbol evaluation
         self._perf_cache: Optional[Dict[str, Any]] = None
         self._perf_cache_trade_count: int = -1
+        self._perf_cache_time: float = 0.0
 
         # Trade pattern analysis cache – recomputed only when new trades are added
         self._trade_pattern_cache: Optional[Dict[str, Any]] = None
@@ -1094,7 +1095,12 @@ class TradingEngine:
         """Analyze trade history to produce per-symbol and per-strategy performance summaries."""
         # Cache check: if no new trades have been added since the last computation,
         # return the cached result to avoid expensive iteration over trade_history.
-        if len(self.trade_history) == self._perf_cache_trade_count and self._perf_cache is not None:
+        now = time.time()
+        if (
+            len(self.trade_history) == self._perf_cache_trade_count
+            and self._perf_cache is not None
+            and (now - self._perf_cache_time) < 60  # 60-second TTL for unrealized P&L freshness
+        ):
             return self._perf_cache
 
         from collections import defaultdict
@@ -1215,6 +1221,7 @@ class TradingEngine:
         # Update the cache so subsequent calls with the same trade count are fast
         self._perf_cache = result
         self._perf_cache_trade_count = len(self.trade_history)
+        self._perf_cache_time = now
 
         return result
 
