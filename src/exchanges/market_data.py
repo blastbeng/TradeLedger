@@ -520,6 +520,14 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
                 except ValueError:
                     last_price = None
 
+                # Extract Coupon (Cedola) and Maturity (Scadenza)
+                coupon_str = cols[3].get_text(strip=True).replace(",", ".") if len(cols) > 3 else ""
+                try:
+                    coupon = float(coupon_str) if coupon_str else None
+                except ValueError:
+                    coupon = None
+
+                maturity = cols[4].get_text(strip=True) if len(cols) > 4 else None
                 change_pct = 0.0
 
                 if last_price is not None:
@@ -527,7 +535,9 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
                         "isin": isin,
                         "name": name,
                         "last_price": last_price,
-                        "change_pct": change_pct
+                        "change_pct": change_pct,
+                        "coupon": coupon,
+                        "maturity": maturity,
                     })
         except Exception as e:
             logger.warning(f"Failed to fetch BTP page {page}: {e}")

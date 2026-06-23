@@ -1743,6 +1743,8 @@ class TradingEngine:
             "percentage": b["change_pct"],
             "quoteVolume": 0,
             "name": b["name"],
+            "coupon": b.get("coupon"),
+            "maturity": b.get("maturity"),
         } for b in btp_bonds}
 
         available_pairs = stock_pairs + btp_pairs

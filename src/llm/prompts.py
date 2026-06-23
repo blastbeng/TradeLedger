@@ -352,6 +352,8 @@ def build_stock_selection_prompt(
                 "volume": t.get("quoteVolume"),
                 "min_trade_cost": limits.get("min_cost"),  # now always a number
                 "name": t.get("name"),
+                "coupon": t.get("coupon"),
+                "maturity": t.get("maturity"),
             }
             if settings.NEWS_ENABLED:
                 agg = get_aggregate_sentiment_from_db(symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
@@ -1206,7 +1208,7 @@ Maximum symbols to trade: {max_symbols}
 
 You are trading spot only (no shorting). Only output SELL if you currently hold the asset.
 
-**Note on BTP Bonds:** If the symbol is a BTP bond (ISIN format like IT0001234567), adjust your strategy for lower volatility: use longer max hold times, smaller take-profit targets, and ensure stop-losses are wide enough to avoid being triggered by normal bond price fluctuations.
+**Note on BTP Bonds:** If the symbol is a BTP bond (ISIN format like IT0001234567), adjust your strategy for lower volatility: use longer max hold times, smaller take-profit targets, and ensure stop-losses are wide enough to avoid being triggered by normal bond price fluctuations. **ATR and OHLCV data are NOT available for BTPs.** You MUST use `"stop_loss_method": "fixed"` and set a reasonable `stop_loss_pct` based on the bond's price volatility.
 """
     # --- Fundamental Data ---
     if fundamentals:
