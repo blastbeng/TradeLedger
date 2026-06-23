@@ -584,7 +584,7 @@ class TradingEngine:
                     await asyncio.to_thread(self.redis.set, "trading:pause_source", "market_closed")
                     await asyncio.to_thread(self.redis.set, "trading:pause_reason", reason)
                     await asyncio.to_thread(self.redis.set, "trading:market_next_open", clock.next_open.isoformat())
-                    logger.info(f"Market closed, pausing trading. Reason: {reason}")
+                    logger.debug(f"Market closed, pausing trading. Reason: {reason}")
                     if self.notifier and not already_market_closed:
                         await self.notifier.send_notification(
                             f"⏸️ {reason}",
