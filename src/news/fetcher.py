@@ -1,4 +1,5 @@
 import logging
+import re
 import threading
 from typing import List, Dict, Any, Optional
 import hashlib
@@ -156,6 +157,28 @@ def _is_relevant(symbol: str, title: str, summary: str) -> bool:
     """Return True if the article is likely relevant to the trading symbol."""
     text = f"{title} {summary}".lower()
     sym_lower = symbol.split("/")[0].lower()
+
+    # If searching by company name or BTP name (contains a space),
+    # check if the first word is in the text.
+    if " " in sym_lower:
+        first_word = sym_lower.split()[0]
+        if first_word in text:
+            # Give it a high score so it passes the threshold
+            score = 3
+            stock_keywords = [
+                "stock", "equity", "etf", "market", "trading", "bullish", "bearish",
+                "price", "volume", "breakout", "support", "resistance",
+                "earnings", "revenue", "dividend", "sector", "index",
+                "fed", "interest rate", "inflation", "gdp", "jobs report",
+                "analyst", "upgrade", "downgrade", "ipo", "merger", "acquisition",
+                "bond", "btp", "treasury", "yield", "maturity",
+            ]
+            for kw in stock_keywords:
+                if kw in text:
+                    score += 1
+            return score >= 3
+        return False
+
     # Must mention the symbol at least once
     if sym_lower not in text:
         return False
@@ -166,6 +189,7 @@ def _is_relevant(symbol: str, title: str, summary: str) -> bool:
         "earnings", "revenue", "dividend", "sector", "index",
         "fed", "interest rate", "inflation", "gdp", "jobs report",
         "analyst", "upgrade", "downgrade", "ipo", "merger", "acquisition",
+        "bond", "btp", "treasury", "yield", "maturity",
     ]
     # Score: +2 for symbol in title, +1 for each stock keyword found
     score = 0
