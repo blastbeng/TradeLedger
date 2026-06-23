@@ -1447,3 +1447,50 @@ Use this data to decide whether to BUY, SELL, or HOLD. If the stock has a poor w
             "The decision is entirely yours based on your assessment of the event's impact.\n"
         )
     return prompt
+
+
+def build_final_decision_prompt(
+    symbol: str,
+    ticker: Dict[str, Any],
+    preliminary_decision: Dict[str, Any],
+    backtest_stats: Dict[str, Any],
+    backtest_summary: str,
+    base_currency: str,
+    trading_paused: bool = False,
+) -> str:
+    """Build a prompt to ask the LLM for its final decision after reviewing backtest results."""
+    current_price = ticker.get("last") if ticker else None
+
+    prompt = f"""**Step 2: Final Trading Decision**
+
+Symbol: {symbol}
+Current price: {current_price}
+Base currency: {base_currency}
+
+**Your Step 1 Preliminary Decision:**
+- Preliminary Action: {preliminary_decision.get("action", "HOLD")}
+- Confidence: {preliminary_decision.get("confidence", 0.0)}
+- Reasoning: {preliminary_decision.get("reasoning", "")}
+- Proposed Strategy Parameters: {json.dumps(preliminary_decision.get("strategy_params", {}), indent=2)}
+
+**Local Python Backtest Results (using your proposed parameters):**
+{backtest_summary}
+Full statistics: {json.dumps(backtest_stats, indent=2)}
+
+Based on the backtest results above, make your final trading decision. 
+If the backtest shows poor performance (e.g., negative total P&L, low win rate, high drawdown), you should reconsider and likely output HOLD or adjust your parameters.
+If the backtest confirms your strategy is viable, output your final action (BUY, SELL, or HOLD).
+
+**Output ONLY the raw JSON object as specified.**
+Return a JSON object with these **required** fields:
+- `action`: one of BUY, SELL, HOLD
+- `confidence`: a float between 0.0 and 1.0
+- `reasoning`: a string explaining your final decision, specifically referencing the backtest results.
+- `strategy`: an object containing `type` and `parameters` (you may keep the same parameters from Step 1 or adjust them based on the backtest).
+"""
+    if trading_paused:
+        prompt += (
+            "\n**Trading is currently PAUSED.** You may ONLY output SELL or HOLD actions. "
+            "Do NOT output BUY under any circumstances.\n"
+        )
+    return prompt
