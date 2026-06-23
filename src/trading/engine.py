@@ -541,7 +541,7 @@ class TradingEngine:
                 paused = await asyncio.to_thread(self.redis.get, "trading:paused")
 
                 if not is_open:
-                    # Market closed – pause if not already paused (atomic)
+                    # Market closed – always pause trading immediately
                     now_rome = clock.timestamp.astimezone(ZoneInfo("Europe/Rome"))
                     next_open_rome = clock.next_open.astimezone(ZoneInfo("Europe/Rome"))
                     remaining_seconds = (clock.next_open - clock.timestamp).total_seconds()
@@ -556,28 +556,29 @@ class TradingEngine:
                     else:
                         countdown_str = f"{int(remaining_seconds)}s"
                     reason = "Market closed"
-                    # Atomic pause: only set keys if not already paused
-                    lua_pause = """
-                        if redis.call("EXISTS", "trading:paused") == 0 then
-                            redis.call("SET", "trading:paused", "1")
-                            redis.call("SET", "trading:pause_source", "market_closed")
-                            redis.call("SET", "trading:pause_reason", ARGV[1])
-                            redis.call("SET", "trading:market_next_open", ARGV[2])
-                            return 1
-                        else
-                            return 0
-                        end
-                    """
-                    was_set = await asyncio.to_thread(
-                        self.redis.eval, lua_pause, 0, reason, clock.next_open.isoformat()
-                    )
-                    if was_set == 1:
-                        logger.info(f"Market closed, pausing trading. Reason: {reason}")
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⏸️ {reason}",
-                                summary={"action": "PAUSE", "reason": reason}
-                            )
+                    # Delete all existing pause keys to ensure clean state
+                    pause_keys = [
+                        "trading:paused",
+                        "trading:pause_source",
+                        "trading:pause_start",
+                        "trading:pause_duration",
+                        "trading:pause_reason",
+                        "trading:llm_pause_time",
+                        "trading:market_next_open",
+                    ]
+                    for key in pause_keys:
+                        await asyncio.to_thread(self.redis.delete, key)
+                    # Set new pause keys unconditionally
+                    await asyncio.to_thread(self.redis.set, "trading:paused", "1")
+                    await asyncio.to_thread(self.redis.set, "trading:pause_source", "market_closed")
+                    await asyncio.to_thread(self.redis.set, "trading:pause_reason", reason)
+                    await asyncio.to_thread(self.redis.set, "trading:market_next_open", clock.next_open.isoformat())
+                    logger.info(f"Market closed, pausing trading. Reason: {reason}")
+                    if self.notifier:
+                        await self.notifier.send_notification(
+                            f"⏸️ {reason}",
+                            summary={"action": "PAUSE", "reason": reason}
+                        )
 
                 # --- Periodic countdown updates while market is closed ---
                 # Only send updates if we are currently paused due to market_closed
