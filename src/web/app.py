@@ -29,7 +29,7 @@ class ManualTradeRequest(BaseModel):
     money_spent: float
     fee: float = 0.0
 
-app = FastAPI(title="Stock Trading Bot")
+app = FastAPI(title="Trade Ledger")
 
 logger = logging.getLogger(__name__)
 
