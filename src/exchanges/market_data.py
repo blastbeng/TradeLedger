@@ -63,7 +63,7 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
                 for col in table.columns:
                     sample = table[col].dropna().astype(str).head(10).tolist()
                     # Match typical ticker patterns like ENI, ENI.MI, etc. (avoid ISINs)
-                    if all(re.match(r'^[A-Z]{1,6}(\.[A-Z]{2})?$', s) for s in sample):
+                    if all(re.match(r'^[A-Z0-9]{1,6}(\.[A-Z]{2})?$', s) for s in sample):
                         ticker_col = col
                         break
             if ticker_col is not None:
@@ -71,6 +71,9 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
                 base_symbols = []
                 for t in tickers:
                     t = t.strip().upper()
+                    # Skip ISINs (e.g., IT0001233417)
+                    if re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", t):
+                        continue
                     base = t.split(".")[0] if "." in t else t
                     if re.match(r"^[A-Z0-9]+$", base):
                         base_symbols.append(base)
@@ -157,7 +160,10 @@ def _discover_euronext_milan_tickers() -> List[str]:
     ticker_col = None
     for col in milan_df.columns:
         col_lower = str(col).lower()
-        if any(kw in col_lower for kw in ("ticker", "symbol", "code", "isin", "name")):
+        # Avoid matching ISIN column as ticker
+        if "isin" in col_lower:
+            continue
+        if any(kw in col_lower for kw in ("ticker", "symbol", "code", "name")):
             # Prefer shorter columns (ticker is usually short)
             if ticker_col is None or len(str(milan_df[col].iloc[0])) < len(str(milan_df[ticker_col].iloc[0])):
                 ticker_col = col
@@ -169,6 +175,9 @@ def _discover_euronext_milan_tickers() -> List[str]:
     base_symbols = []
     for t in tickers:
         t = t.strip().upper()
+        # Skip ISINs
+        if re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", t):
+            continue
         # Remove any exchange suffix (e.g., ".MI", ".MIL")
         base = t.split(".")[0] if "." in t else t
         if re.match(r"^[A-Z0-9]+$", base):
@@ -200,7 +209,9 @@ def _discover_euronext_milan_from_html() -> List[str]:
         ticker_col = None
         for col in table.columns:
             col_str = str(col).lower()
-            if any(kw in col_str for kw in ("ticker", "symbol", "code", "isin", "name")):
+            if "isin" in col_str:
+                continue
+            if any(kw in col_str for kw in ("ticker", "symbol", "code", "name")):
                 # Prefer shorter columns
                 if ticker_col is None or len(str(table[col].iloc[0])) < len(str(table[ticker_col].iloc[0])):
                     ticker_col = col
@@ -216,6 +227,8 @@ def _discover_euronext_milan_from_html() -> List[str]:
             base_symbols = []
             for t in tickers:
                 t = t.strip().upper()
+                if re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", t):
+                    continue
                 base = t.split(".")[0] if "." in t else t
                 if re.match(r"^[A-Z0-9]+$", base):
                     base_symbols.append(base)
@@ -273,6 +286,9 @@ def _discover_euronext_milan_json() -> List[str]:
         if not symbol:
             continue
         symbol = symbol.strip().upper()
+        # Skip ISINs
+        if re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", symbol):
+            continue
         base = symbol.split(".")[0] if "." in symbol else symbol
         if re.match(r"^[A-Z0-9]+$", base):
             base_symbols.append(base)
