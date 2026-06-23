@@ -5854,7 +5854,11 @@ class TradingEngine:
             return
 
         async with self._risk_lock:
-            base, quote = symbol.split("/")
+            parts = symbol.split("/")
+            if len(parts) != 2:
+                logger.error(f"Invalid symbol format: {symbol}")
+                return
+            base, quote = parts
             balance = await self._get_cached_balance()
 
         if signal.action == "BUY":
@@ -8776,7 +8780,11 @@ class TradingEngine:
     async def _handle_queued_buy_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any]):
         """Process a queued BUY limit order that has filled in the simulator."""
         symbol = trade_dict['symbol']
-        base, quote = symbol.split("/")
+        parts = symbol.split("/")
+        if len(parts) != 2:
+            logger.error(f"Invalid symbol format in queued buy fill: {symbol}")
+            return
+        base, quote = parts
         fee = trade_dict.get('fee', {})
         fee_cost = float(fee.get('cost', 0.0) or 0.0)
         fee_currency = fee.get('currency', '')
@@ -8946,7 +8954,11 @@ class TradingEngine:
         position is prorated and updated rather than removed.
         """
         symbol = trade_dict['symbol']
-        base, quote = symbol.split("/")
+        parts = symbol.split("/")
+        if len(parts) != 2:
+            logger.error(f"Invalid symbol format in queued sell fill: {symbol}")
+            return
+        base, quote = parts
         pos = self.positions.get(symbol)
         fee = trade_dict.get('fee', {})
         fee_cost = float(fee.get('cost', 0.0) or 0.0)

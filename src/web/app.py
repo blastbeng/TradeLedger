@@ -378,13 +378,19 @@ async def websocket_endpoint(websocket: WebSocket):
                         for q in engine.queued_orders
                     ]
 
+                    try:
+                        paused_val = await asyncio.to_thread(redis.get, "trading:paused")
+                        is_paused = paused_val == "1"
+                    except Exception:
+                        is_paused = False
+
                     payload = {
                         "current_symbols": current_symbols,
                         "positions": positions,
                         "balances": balances,
                         "profit": profit_summary,
                         "performance": perf,
-                        "paused": await asyncio.to_thread(redis.get, "trading:paused") == "1",
+                        "paused": is_paused,
                         "pause_info": pause_info,
                         "queued_orders": queued_orders_payload,
                     }

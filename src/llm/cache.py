@@ -58,16 +58,19 @@ def get_cached_llm_response(
         cache_key = f"llm:{hashlib.sha256(key_data.encode()).hexdigest()}"
 
     # Try cache
-    cached = redis_client.get(cache_key)
-    if cached:
-        try:
-            data = json.loads(cached)
-            if isinstance(data, dict) and "response" in data:
-                logger.info("LLM cache hit for key %s", cache_key[:32])
-                logger.info("LLM cache hit: key=%.32s, model_type=%s", cache_key, model_type)
-                return data
-        except (json.JSONDecodeError, TypeError):
-            pass  # fall through to re-fetch
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            try:
+                data = json.loads(cached)
+                if isinstance(data, dict) and "response" in data:
+                    logger.info("LLM cache hit for key %s", cache_key[:32])
+                    logger.info("LLM cache hit: key=%.32s, model_type=%s", cache_key, model_type)
+                    return data
+            except (json.JSONDecodeError, TypeError):
+                pass  # fall through to re-fetch
+    except Exception as e:
+        logger.warning(f"Redis cache get failed: {e}. Proceeding without cache.")
 
     logger.debug("LLM cache miss: model_type=%s, system_prompt=%.200s..., prompt=%.500s...", model_type, system_prompt, prompt)
     # --- Primary call ---
@@ -159,8 +162,11 @@ def get_cached_llm_response(
         "provider": used_provider,
         "model": used_model,
     })
-    redis_client.setex(cache_key, ttl, cache_data)
-    logger.debug("LLM cache miss – stored response for key %s (provider=%s, model=%s)", cache_key[:32], used_provider, used_model)
+    try:
+        redis_client.setex(cache_key, ttl, cache_data)
+        logger.debug("LLM cache miss – stored response for key %s (provider=%s, model=%s)", cache_key[:32], used_provider, used_model)
+    except Exception as e:
+        logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
     return {
         "response": response_text,
         "provider": used_provider,
