@@ -95,6 +95,16 @@ def _load_static_tickers() -> List[str]:
         return []
 
 
+def _get_hardcoded_tickers() -> List[str]:
+    """Return a hardcoded list of major Italian tickers as a last resort."""
+    return [
+        "ENI", "ENEL", "ISP", "UCG", "STLA", "TIT", "RACE", "AZM", "BAMI", "MB",
+        "LDO", "TEN", "PRY", "SPM", "BPE", "EXO", "NEXI", "A2A", "RNST", "SRG",
+        "INW", "DHER", "PST", "BZU", "CPR", "TRN", "BMO", "AQUA", "BRS", "TGY",
+        "IWM", "MOL", "HER", "BIA", "CNH", "ST", "UNI", "VBT", "AMP", "BKB"
+    ]
+
+
 def _discover_euronext_milan_tickers() -> List[str]:
     """Download the Euronext ISIN directory CSV and extract all Milan-listed tickers.
 
@@ -332,6 +342,12 @@ def get_tradable_assets() -> List[str]:
         if static:
             logger.info(f"Loaded {len(static)} tickers from static file.")
             base_symbols = static
+
+    if not base_symbols:
+        hardcoded = _get_hardcoded_tickers()
+        if hardcoded:
+            logger.info(f"Loaded {len(hardcoded)} tickers from hardcoded fallback list.")
+            base_symbols = hardcoded
 
     if not base_symbols:
         logger.warning("No tickers discovered from Wikipedia, Euronext, or news feeds.")
