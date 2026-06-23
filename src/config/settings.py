@@ -416,6 +416,11 @@ class Settings(BaseSettings):
     # Borsa Italiana BTP list URL
     BORSA_ITALIANA_BTP_URL: str = "https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/lista.html"
 
+    # BTP Bond Fees (Intesa Sanpaolo Investo)
+    BTP_FEE_PERC: float = 0.0024
+    BTP_MIN_FEE: float = 3.50
+    BTP_IS_PRIMARY_ISSUANCE: bool = False
+
     # Notification log control
     NOTIFICATION_LOG_ENABLED: bool = True
 

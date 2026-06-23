@@ -182,7 +182,7 @@ class PaperTrader:
         if order.side == "buy":
             # amount is in quote currency
             base_amount = order.amount / fill_price
-            costs = calculate_transaction_costs("BUY", fill_price, base_amount)
+            costs = calculate_transaction_costs("BUY", fill_price, base_amount, symbol=order.symbol)
             total_cost = costs["net_value"]
             fee_cost = costs["total_costs"]
             fee_currency = quote
@@ -211,7 +211,7 @@ class PaperTrader:
                 )
                 return
 
-            costs = calculate_transaction_costs("SELL", fill_price, base_amount)
+            costs = calculate_transaction_costs("SELL", fill_price, base_amount, symbol=order.symbol)
             net_quote = costs["net_value"]
             fee_cost = costs["total_costs"]
             fee_currency = quote
@@ -273,7 +273,7 @@ class PaperTrader:
             fill_price = price
 
         base_amount = amount / fill_price
-        costs = calculate_transaction_costs("BUY", fill_price, base_amount)
+        costs = calculate_transaction_costs("BUY", fill_price, base_amount, symbol=symbol)
         total_cost = costs["net_value"]
         fee_cost = costs["total_costs"]
         fee_currency = quote
@@ -360,7 +360,7 @@ class PaperTrader:
                 "timestamp": int(time.time() * 1000),
             }
 
-        costs = calculate_transaction_costs("SELL", fill_price, amount)
+        costs = calculate_transaction_costs("SELL", fill_price, amount, symbol=symbol)
         net_quote = costs["net_value"]
         fee_cost = costs["total_costs"]
         fee_currency = quote

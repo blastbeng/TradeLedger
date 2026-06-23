@@ -1516,7 +1516,7 @@ class TradingEngine:
                     current_price = pos.get("price", 0.0)  # fallback to entry price
                 cost = sold_amount * current_price
                 from src.exchanges.fees import calculate_transaction_costs
-                costs = calculate_transaction_costs("SELL", current_price, sold_amount)
+                costs = calculate_transaction_costs("SELL", current_price, sold_amount, symbol=symbol)
                 fee_cost = costs["total_costs"]
                 trade = {
                     "symbol": symbol,
@@ -5284,7 +5284,7 @@ class TradingEngine:
         # If fee is not provided (0.0), calculate it using the Intesa Sanpaolo Investo logic
         if fee == 0.0:
             from src.exchanges.fees import calculate_transaction_costs
-            costs = calculate_transaction_costs(side.upper(), price, quantity)
+            costs = calculate_transaction_costs(side.upper(), price, quantity, symbol=ticker)
             fee = costs["total_costs"]
 
         trade = {
