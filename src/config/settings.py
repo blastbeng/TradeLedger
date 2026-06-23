@@ -154,10 +154,10 @@ class Settings(BaseSettings):
     def validate_ohlcv_timeframes(cls, v: list[str]) -> list[str]:
         if not isinstance(v, list) or not all(isinstance(tf, str) for tf in v):
             raise ValueError("OHLCV_TIMEFRAMES must be a list of strings")
-        allowed = {"1h", "1d"}
+        allowed = {"1h", "1d", "1w", "1M"}
         invalid = set(v) - allowed
         if invalid:
-            raise ValueError(f"OHLCV_TIMEFRAMES contains unsupported short-term timeframes: {invalid}. Allowed: {allowed}")
+            raise ValueError(f"OHLCV_TIMEFRAMES contains unsupported timeframes: {invalid}. Allowed medium/long-term timeframes: {allowed}")
         return v
 
     # Number of days of OHLCV data to retain and use for backtest / LLM analysis
