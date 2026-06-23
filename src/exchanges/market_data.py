@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 TIMEFRAME_MAP = {
     "1h": "60m",
     "1d": "1d",
+    "1w": "1wk",
+    "1M": "1mo",
 }
 
 def _fetch_country(symbol: str) -> Optional[str]:
