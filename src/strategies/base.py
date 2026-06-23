@@ -15,6 +15,7 @@ class Signal:
     # --- dynamic trading parameters from LLM ---
     stop_loss: Optional[float] = None        # percentage below entry (e.g., 0.05 for 5%)
     take_profit: Optional[float] = None      # percentage above entry (e.g., 0.10 for 10%)
+    take_profit_atr_multiple: Optional[float] = None
     position_size: Optional[float] = None    # fraction of per-symbol budget (0.0 - 1.0)
     trailing_stop: Optional[bool] = False    # whether to use a trailing stop
     stop_loss_method: Optional[str] = None

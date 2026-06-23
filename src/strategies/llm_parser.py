@@ -94,6 +94,9 @@ def parse_llm_response(response_text: str) -> Signal:
 
         stop_loss = _safe_float(params.get("stop_loss_pct"))
         take_profit = _safe_float(params.get("take_profit_pct"))
+        take_profit_atr_multiple = _safe_float(params.get("take_profit_atr_multiple"))
+        if take_profit_atr_multiple is not None:
+            params["take_profit_atr_multiple"] = take_profit_atr_multiple
         position_size = _safe_float(params.get("position_size_fraction"))
         if position_size is not None:
             position_size = max(0.0, min(1.0, position_size))
@@ -180,6 +183,7 @@ def parse_llm_response(response_text: str) -> Signal:
             backtest_summary=backtest_summary,
             stop_loss=stop_loss,
             take_profit=take_profit,
+            take_profit_atr_multiple=take_profit_atr_multiple,
             position_size=position_size,
             trailing_stop=trailing_stop,
             reason=reason,

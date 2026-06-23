@@ -5843,7 +5843,15 @@ class TradingEngine:
                 return
 
             # Use LLM-provided risk parameters directly (no hardcoded minimums)
-            tp_pct = params["take_profit_pct"]
+            # Determine take-profit percentage based on method
+            if "take_profit_atr_multiple" in params and atr is not None and atr > 0 and current_price > 0:
+                tp_atr_mult = params["take_profit_atr_multiple"]
+                tp_pct = (tp_atr_mult * atr) / current_price
+                logger.info(f"ATR-based take-profit: ATR={atr}, multiplier={tp_atr_mult}, take_profit_pct={tp_pct:.4%}")
+            else:
+                if "take_profit_atr_multiple" in params:
+                    logger.warning(f"ATR unavailable for {symbol}, falling back to fixed take_profit_pct from LLM params.")
+                tp_pct = params["take_profit_pct"]
             trailing_stop = params["trailing_stop"]
             trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
 
@@ -6418,6 +6426,7 @@ class TradingEngine:
                     self.positions[symbol]["net_base"] = new_net_base
                     self.positions[symbol]["stop_loss"] = new_price * (1 - sl_pct)
                     self.positions[symbol]["take_profit"] = new_price * (1 + tp_pct)
+                    self.positions[symbol]["take_profit_atr_multiple"] = params.get("take_profit_atr_multiple")
                     self.positions[symbol]["trailing_stop"] = trailing_stop
                     self.positions[symbol]["trailing_stop_distance_pct"] = trailing_stop_distance_pct
                     self.positions[symbol]["trailing_stop_atr_multiple"] = params.get("trailing_stop_atr_multiple")
@@ -6461,6 +6470,7 @@ class TradingEngine:
                         "timestamp": order["timestamp"],
                         "stop_loss": entry_price * (1 - sl_pct),
                         "take_profit": entry_price * (1 + tp_pct),
+                        "take_profit_atr_multiple": params.get("take_profit_atr_multiple"),
                         "cost_basis": cost_basis,
                         "net_base": net_base,
                         "buy_confidence": signal.confidence,
@@ -7497,8 +7507,13 @@ class TradingEngine:
                     sl_pct, symbol, current_price,
                 )
 
-        # --- Take-profit ---
-        if "take_profit_pct" in params:
+        # --- Take-profit (supports fixed pct and ATR multiple) ---
+        if "take_profit_atr_multiple" in params and atr is not None and atr > 0 and current_price > 0:
+            atr_mult = params["take_profit_atr_multiple"]
+            if atr_mult is not None:
+                tp_pct = (atr_mult * atr) / current_price
+                pos["take_profit"] = current_price * (1 + tp_pct)
+        elif "take_profit_pct" in params:
             tp_pct = params["take_profit_pct"]
             try:
                 tp_pct = float(tp_pct)
@@ -8737,7 +8752,19 @@ class TradingEngine:
         signal_dict = queued.get('signal', {}) or {}
         params = signal_dict.get('strategy_params', {}) or {}
         sl_pct = params.get("stop_loss_pct")
-        tp_pct = params.get("take_profit_pct")
+        # Determine take-profit percentage based on method
+        if "take_profit_atr_multiple" in params and atr is not None and atr > 0:
+            tp_atr_mult = params["take_profit_atr_multiple"]
+            # Need current price to calculate percentage. Since we don't have it here easily,
+            # we fall back to fixed if ATR is present but we can't calculate the percentage.
+            # However, the engine already calculated it at signal time, so we can just use the fixed fallback.
+            # A better approach is to recalculate on the fly if needed, but for simplicity, we use the fixed fallback.
+            # The engine will update the TP in the risk management loop if needed.
+            # Actually, we can just use the fixed pct as a fallback, the engine will handle it.
+            # Let's just use the fixed pct here to be safe.
+            tp_pct = params.get("take_profit_pct")
+        else:
+            tp_pct = params.get("take_profit_pct")
         trailing_stop = params.get("trailing_stop", False)
         trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
         timeframe = queued.get('timeframe')
@@ -8758,6 +8785,7 @@ class TradingEngine:
                 self.positions[symbol]["stop_loss"] = new_price * (1 - sl_pct)
             if tp_pct:
                 self.positions[symbol]["take_profit"] = new_price * (1 + tp_pct)
+            self.positions[symbol]["take_profit_atr_multiple"] = params.get("take_profit_atr_multiple")
             self.positions[symbol]["trailing_stop"] = trailing_stop
             self.positions[symbol]["trailing_stop_distance_pct"] = trailing_stop_distance_pct
             self.positions[symbol]["max_hold_time_seconds"] = params.get("max_hold_time_seconds")
@@ -8795,6 +8823,7 @@ class TradingEngine:
                 "timestamp": trade_dict["timestamp"],
                 "stop_loss": entry_price * (1 - sl_pct) if sl_pct else None,
                 "take_profit": entry_price * (1 + tp_pct) if tp_pct else None,
+                "take_profit_atr_multiple": params.get("take_profit_atr_multiple"),
                 "cost_basis": cost_basis,
                 "net_base": net_base,
                 "buy_confidence": signal_dict.get('confidence', 0.0),

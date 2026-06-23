@@ -236,6 +236,12 @@ Key principles:
 **Take-Profit:**
 - Set a take-profit that you believe is achievable given the current trend, volatility, and market conditions. The reward:risk ratio is entirely your decision.
 - **CRITICAL:** `take_profit_pct` MUST be strictly greater than `stop_loss_pct`. If `take_profit_pct ≤ stop_loss_pct`, the entire trade will be rejected. Before outputting JSON, verify: `take_profit_pct > stop_loss_pct`.
+- **ATR-based Take-Profit:** You may use `"take_profit_atr_multiple"` to set a dynamic take-profit based on volatility.
+  - Use `"take_profit_method": "atr_multiple"` and set `take_profit_atr_multiple` to a value that reflects your profit target.
+  - For normal volatility, a multiplier of 3.0–5.0 is typical (reward:risk ratio of ~1.5:1 to 2.5:1 if stop is 2x ATR).
+  - In high-volatility environments, you may use a larger multiplier (5.0–8.0) to capture larger swings.
+  - The engine will compute the take-profit distance as `take_profit_atr_multiple × ATR` and convert it to a percentage automatically.
+  - **Required parameter:** `"take_profit_pct"` is ALWAYS required, even when using "atr_multiple" method. Used as a fallback if ATR is unavailable. When using "atr_multiple", set this to your best estimate of what the ATR-based take-profit would be.
 - **Transaction Costs (Intesa Sanpaolo Investo):** The simulator applies the following fees per trade:
   - **Bank Commission:** 0.24% of trade value, with a minimum of €3.50. Plus a fixed execution fee of €2.50 per order.
   - **Tobin Tax (Italian State Tax):** 0.12% of trade value, applied ONLY on BUY orders.

@@ -75,9 +75,12 @@ def validate_signal(
         for key in required:
             if key not in params:
                 return Signal(action="HOLD", confidence=0.0, reasoning=f"Missing required parameter: {key}")
-        tp = params["take_profit_pct"]
-        if not isinstance(tp, (int, float)) or not (0 < tp < 10.0):
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid take_profit_pct")
+        tp = params.get("take_profit_pct")
+        tp_atr = params.get("take_profit_atr_multiple")
+        tp_valid = tp is not None and isinstance(tp, (int, float)) and (0 < tp < 10.0)
+        tp_atr_valid = tp_atr is not None and isinstance(tp_atr, (int, float)) and tp_atr > 0
+        if not tp_valid and not tp_atr_valid:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid or missing take_profit_pct or take_profit_atr_multiple")
         trailing = params["trailing_stop"]
         if not isinstance(trailing, bool):
             return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop must be boolean")
