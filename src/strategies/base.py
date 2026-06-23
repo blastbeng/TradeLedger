@@ -20,6 +20,7 @@ class Signal:
     stop_loss_method: Optional[str] = None
     stop_loss_atr_multiple: Optional[float] = None
     trailing_stop_distance_pct: Optional[float] = None
+    trailing_stop_atr_multiple: Optional[float] = None
     trailing_stop_activation_pct: Optional[float] = None
     max_hold_time_seconds: Optional[int] = None
     cooldown_after_loss_seconds: Optional[int] = 0

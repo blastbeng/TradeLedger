@@ -5333,27 +5333,55 @@ class TradingEngine:
 
                 # Trailing stop update (only if enabled)
                 # Skip if a native trailing-stop order is already handling it
-                if (pos.get("trailing_stop") and pos.get("trailing_stop_distance_pct")
-                        and pos.get("stop_loss_order_type") != "trailing_stop"):
+                if pos.get("trailing_stop") and pos.get("stop_loss_order_type") != "trailing_stop":
                     # Check activation threshold
                     activation_pct = pos.get("trailing_stop_activation_pct")
+                    activated = True
                     if activation_pct is not None:
                         entry_price = pos["price"]
                         profit_pct = (current_price - entry_price) / entry_price
                         if profit_pct < activation_pct:
-                            # Not yet activated; skip trailing stop update
-                            pass
+                            activated = False
+
+                    if activated:
+                        # Track highest price since activation
+                        if "_highest_price" not in pos or current_price > pos["_highest_price"]:
+                            pos["_highest_price"] = current_price
+
+                        highest_price = pos["_highest_price"]
+                        new_stop = None
+
+                        # ATR-based trailing stop (Chandelier Exit)
+                        atr_mult = pos.get("trailing_stop_atr_multiple")
+                        if atr_mult is not None and atr_mult > 0:
+                            # Fetch ATR from DB if we don't have it in this loop
+                            if "_current_atr" not in pos or time.time() - pos.get("_atr_fetched_at", 0) > 300:
+                                tf = pos.get("timeframe")
+                                if tf:
+                                    try:
+                                        db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=50)
+                                        if db_candles and len(db_candles) >= 15:
+                                            raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+                                            pos["_current_atr"] = compute_atr(raw_candles)
+                                            pos["_atr_fetched_at"] = time.time()
+                                    except Exception as e:
+                                        logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {e}")
+                            
+                            current_atr = pos.get("_current_atr")
+                            if current_atr is not None and current_atr > 0:
+                                new_stop = highest_price - (current_atr * atr_mult)
+                            else:
+                                # Fallback to fixed percentage if ATR fetch failed
+                                distance = pos.get("trailing_stop_distance_pct")
+                                if distance is not None:
+                                    new_stop = highest_price * (1 - distance)
                         else:
-                            distance = pos["trailing_stop_distance_pct"]
-                            new_stop = current_price * (1 - distance)
-                            if new_stop > pos["stop_loss"]:
-                                pos["stop_loss"] = new_stop
-                                logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
-                    else:
-                        # No activation threshold – update immediately
-                        distance = pos["trailing_stop_distance_pct"]
-                        new_stop = current_price * (1 - distance)
-                        if new_stop > pos["stop_loss"]:
+                            # Fixed percentage trailing stop
+                            distance = pos.get("trailing_stop_distance_pct")
+                            if distance is not None:
+                                new_stop = highest_price * (1 - distance)
+
+                        if new_stop is not None and new_stop > pos["stop_loss"]:
                             pos["stop_loss"] = new_stop
                             logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
 
@@ -6377,6 +6405,7 @@ class TradingEngine:
                     self.positions[symbol]["take_profit"] = new_price * (1 + tp_pct)
                     self.positions[symbol]["trailing_stop"] = trailing_stop
                     self.positions[symbol]["trailing_stop_distance_pct"] = trailing_stop_distance_pct
+                    self.positions[symbol]["trailing_stop_atr_multiple"] = params.get("trailing_stop_atr_multiple")
                     self.positions[symbol]["max_hold_time_seconds"] = params.get("max_hold_time_seconds")
                     self.positions[symbol]["trailing_stop_activation_pct"] = params.get("trailing_stop_activation_pct")
                     self.positions[symbol]["trailing_take_profit"] = params.get("trailing_take_profit", False)
@@ -6423,6 +6452,7 @@ class TradingEngine:
                         "buy_reasoning": (signal.reasoning or "")[:200],
                         "trailing_stop": trailing_stop,
                         "trailing_stop_distance_pct": trailing_stop_distance_pct,
+                        "trailing_stop_atr_multiple": params.get("trailing_stop_atr_multiple"),
                         "max_hold_time_seconds": params.get("max_hold_time_seconds"),
                         "trailing_stop_activation_pct": params.get("trailing_stop_activation_pct"),
                         "trailing_take_profit": params.get("trailing_take_profit", False),

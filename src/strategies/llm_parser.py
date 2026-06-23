@@ -104,6 +104,9 @@ def parse_llm_response(response_text: str) -> Signal:
         stop_loss_method = params.get("stop_loss_method")
         stop_loss_atr_multiple = _safe_float(params.get("stop_loss_atr_multiple"))
         trailing_stop_distance_pct = _safe_float(params.get("trailing_stop_distance_pct"))
+        trailing_stop_atr_multiple = _safe_float(params.get("trailing_stop_atr_multiple"))
+        if trailing_stop_atr_multiple is not None:
+            params["trailing_stop_atr_multiple"] = trailing_stop_atr_multiple
         trailing_stop_activation_pct = _safe_float(params.get("trailing_stop_activation_pct"))
         cooldown_after_loss_seconds = _safe_int(params.get("cooldown_after_loss_seconds", 0)) or 0
 
@@ -184,6 +187,7 @@ def parse_llm_response(response_text: str) -> Signal:
             stop_loss_method=stop_loss_method,
             stop_loss_atr_multiple=stop_loss_atr_multiple,
             trailing_stop_distance_pct=trailing_stop_distance_pct,
+            trailing_stop_atr_multiple=trailing_stop_atr_multiple,
             trailing_stop_activation_pct=trailing_stop_activation_pct,
             max_hold_time_seconds=max_hold_time_seconds,
             cooldown_after_loss_seconds=cooldown_after_loss_seconds,

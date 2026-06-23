@@ -83,8 +83,11 @@ def validate_signal(
             return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop must be boolean")
         if trailing:
             tsd = params.get("trailing_stop_distance_pct")
-            if tsd is None or not isinstance(tsd, (int, float)) or not (0 < tsd < 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid or missing trailing_stop_distance_pct")
+            ts_atr = params.get("trailing_stop_atr_multiple")
+            tsd_valid = tsd is not None and isinstance(tsd, (int, float)) and (0 < tsd < 1.0)
+            ts_atr_valid = ts_atr is not None and isinstance(ts_atr, (int, float)) and ts_atr > 0
+            if not tsd_valid and not ts_atr_valid:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid or missing trailing_stop_distance_pct or trailing_stop_atr_multiple")
         psf = params["position_size_fraction"]
         if not isinstance(psf, (int, float)) or not (0 < psf <= 1.0):
             return Signal(action="HOLD", confidence=0.0, reasoning="Invalid position_size_fraction")
