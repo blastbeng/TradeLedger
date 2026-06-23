@@ -19,6 +19,7 @@ from src.llm.prompts import (
     SYSTEM_PROMPT,
     build_stock_selection_prompt,
     build_strategy_prompt,
+    build_final_decision_prompt,
     _format_news_for_prompt,
     compact_prompt,
     get_cached_news_summary,
@@ -4249,10 +4250,11 @@ class TradingEngine:
                     )
                 return
 
+            # --- Step 1: Parse preliminary decision ---
             try:
-                strategy = create_strategy_from_llm(response)
+                preliminary_strategy = create_strategy_from_llm(response)
             except ValueError as e:
-                logger.warning(f"LLM response parse failed for {symbol}: {e}. Retrying with correction prompt.")
+                logger.warning(f"LLM Step 1 response parse failed for {symbol}: {e}. Retrying with correction prompt.")
                 correction_prompt = (
                     "Your previous response was not valid JSON. "
                     "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
@@ -4267,16 +4269,105 @@ class TradingEngine:
                         ),
                         timeout=settings.LLM_TIMEOUT
                     )
-                    # Update snapshot after retry call
                     self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist)
-                    strategy = create_strategy_from_llm(response2)
+                    preliminary_strategy = create_strategy_from_llm(response2["response"])
+                    response = response2["response"]
+                    llm_provider = response2["provider"]
+                    llm_model = response2["model"]
                 except Exception as e2:
-                    logger.error(f"LLM response still invalid after retry for {symbol}: {e2}")
-                    strategy = LLMStrategy(Signal(action="HOLD", confidence=0.0, reasoning="Failed to parse LLM response after retry"))
-            signal = strategy.generate_signal({})
-            signal.model_type = strategy_model_type
-            signal.llm_provider = llm_provider
-            signal.llm_model = llm_model
+                    logger.error(f"LLM Step 1 response still invalid after retry for {symbol}: {e2}")
+                    preliminary_strategy = LLMStrategy(Signal(action="HOLD", confidence=0.0, reasoning="Failed to parse LLM Step 1 response after retry"))
+            
+            preliminary_signal = preliminary_strategy.generate_signal({})
+            preliminary_signal.model_type = strategy_model_type
+            preliminary_signal.llm_provider = llm_provider
+            preliminary_signal.llm_model = llm_model
+
+            # --- Step 2: Run backtest and ask LLM for final decision ---
+            # Only run backtest if preliminary action is BUY (long-only strategy)
+            if preliminary_signal.action == "BUY":
+                bt_params = preliminary_signal.strategy_params or {}
+                # Compute sl_pct and tp_pct
+                bt_stop_method = bt_params.get("stop_loss_method", "fixed")
+                if bt_stop_method == "atr_multiple" and atr is not None and atr > 0 and current_price is not None and current_price > 0:
+                    bt_atr_mult = bt_params.get("stop_loss_atr_multiple", 2.0)
+                    bt_sl_pct = (bt_atr_mult * atr) / current_price
+                else:
+                    bt_sl_pct = bt_params.get("stop_loss_pct", 0.02)
+                bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
+                bt_max_hold = bt_params.get("max_hold_time_seconds")
+                bt_trailing = bt_params.get("trailing_stop", False)
+                bt_trail_dist = bt_params.get("trailing_stop_distance_pct")
+                bt_trail_act = bt_params.get("trailing_stop_activation_pct")
+
+                bt_candles = historical_ohlcv or raw_candles
+                backtest_stats = None
+                if bt_candles and len(bt_candles) >= 10:
+                    backtest_stats = backtest_strategy(
+                        candles=bt_candles,
+                        stop_loss_pct=bt_sl_pct,
+                        take_profit_pct=bt_tp_pct,
+                        max_hold_time_seconds=bt_max_hold,
+                        trailing_stop=bt_trailing,
+                        trailing_stop_distance_pct=bt_trail_dist,
+                        trailing_stop_activation_pct=bt_trail_act,
+                        fee_rate=0.006,
+                    )
+                    bt_summary = format_backtest_summary(backtest_stats)
+                    logger.info(f"Backtest for {symbol}: {bt_summary}")
+
+                    # Build Step 2 prompt
+                    step2_prompt = build_final_decision_prompt(
+                        symbol=symbol,
+                        ticker=ticker,
+                        preliminary_decision={
+                            "action": preliminary_signal.action,
+                            "confidence": preliminary_signal.confidence,
+                            "reasoning": preliminary_signal.reasoning,
+                            "strategy_params": preliminary_signal.strategy_params,
+                        },
+                        backtest_stats=backtest_stats,
+                        backtest_summary=bt_summary,
+                        base_currency=self.base_currency,
+                        trading_paused=trading_paused,
+                    )
+
+                    # Call LLM for Step 2
+                    try:
+                        step2_result = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                get_cached_llm_response,
+                                compact_prompt(step2_prompt),
+                                COMPACTED_SYSTEM_PROMPT,
+                                60,
+                                model_type=strategy_model_type,
+                                temperature=effective_temp,
+                            ),
+                            timeout=settings.LLM_TIMEOUT
+                        )
+                        step2_response = step2_result["response"]
+                        llm_provider = step2_result["provider"]
+                        llm_model = step2_result["model"]
+                        logger.info(f"LLM Step 2 call completed for {symbol} (provider={llm_provider}, model={llm_model})")
+                        
+                        # Parse Step 2 response
+                        final_strategy = create_strategy_from_llm(step2_response)
+                        signal = final_strategy.generate_signal({})
+                        signal.model_type = strategy_model_type
+                        signal.llm_provider = llm_provider
+                        signal.llm_model = llm_model
+                        signal.backtest_summary = bt_summary
+                    except Exception as e:
+                        logger.error(f"LLM Step 2 call failed for {symbol}: {e}. Using preliminary decision.")
+                        signal = preliminary_signal
+                        signal.backtest_summary = bt_summary
+                else:
+                    logger.info(f"Insufficient data for backtest for {symbol}. Using preliminary decision.")
+                    signal = preliminary_signal
+            else:
+                # For SELL or HOLD, no backtest needed, use preliminary decision
+                signal = preliminary_signal
+
             current_price = ticker['last']
             # Read LLM-configured validator multipliers from Redis
             min_stop_atr_mult = 1.0
@@ -4305,128 +4396,7 @@ class TradingEngine:
                 global_min_risk_reward_ratio=global_min_rr,
             )
             validated.model_type = getattr(signal, 'model_type', None)
-
-            # If the LLM produced a BUY/SELL but the validator rejected it due to a parameter
-            # error, give the LLM one chance to fix its own mistake.
-            if signal.action != "HOLD" and validated.action == "HOLD":
-                logger.warning(
-                    f"LLM signal for {symbol} rejected by validator. "
-                    f"Original action={signal.action}, confidence={signal.confidence}, "
-                    f"reasoning={validated.reasoning}. Raw LLM response: {response}"
-                )
-                # Only retry if the rejection looks like a parameter mistake (not a market condition)
-                if any(kw in validated.reasoning.lower() for kw in [
-                    "stop_loss_pct", "take_profit_pct", "trailing_stop_distance",
-                    "invalid", "missing", "must be"
-                ]):
-                    correction_prompt = (
-                        f"Your previous trading decision for {symbol} was rejected because: "
-                        f"{validated.reasoning}\n"
-                        "Please fix the error and output a corrected JSON decision. "
-                        "All other market data remains the same."
-                    )
-                    try:
-                        correction_result = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                get_cached_llm_response,
-                                compact_prompt(correction_prompt),
-                                COMPACTED_SYSTEM_PROMPT,
-                                30,
-                                model_type="actuator",
-                                temperature=effective_temp,
-                            ),
-                            timeout=settings.LLM_TIMEOUT
-                        )
-                        corrected_response = correction_result["response"]
-                        llm_provider = correction_result["provider"]
-                        llm_model = correction_result["model"]
-                        corrected_signal = create_strategy_from_llm(corrected_response).generate_signal({})
-                        validated = validate_signal(
-                            corrected_signal,
-                            atr=atr,
-                            price=current_price,
-                            timeframe_seconds=tf_seconds,
-                            min_stop_atr_mult=min_stop_atr_mult,
-                            min_hold_time_mult=min_hold_time_mult,
-                        )
-                        if validated.action != "HOLD":
-                            logger.info(f"LLM corrected its signal for {symbol}: {validated.action}")
-                            signal = corrected_signal  # use the corrected signal for logging
-                        else:
-                            logger.warning(f"LLM correction for {symbol} still invalid: {validated.reasoning}")
-                    except Exception as e:
-                        logger.error(f"LLM correction call failed for {symbol}: {e}")
-
-            # --- Python-based backtest for BUY signals ---
-            backtest_stats = None
-            if validated.action == "BUY":
-                bt_params = signal.strategy_params or {}
-                # Compute sl_pct and tp_pct (same logic as execution)
-                bt_stop_method = bt_params.get("stop_loss_method", "fixed")
-                if bt_stop_method == "atr_multiple" and atr is not None and atr > 0 and current_price is not None and current_price > 0:
-                    bt_atr_mult = bt_params.get("stop_loss_atr_multiple", 2.0)
-                    bt_sl_pct = (bt_atr_mult * atr) / current_price
-                else:
-                    bt_sl_pct = bt_params.get("stop_loss_pct", 0.02)
-                bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
-                bt_max_hold = bt_params.get("max_hold_time_seconds")
-                bt_trailing = bt_params.get("trailing_stop", False)
-                bt_trail_dist = bt_params.get("trailing_stop_distance_pct")
-                bt_trail_act = bt_params.get("trailing_stop_activation_pct")
-
-                # Use historical_ohlcv if available, otherwise raw candles for the assigned timeframe
-                bt_candles = historical_ohlcv or raw_candles
-                if bt_candles and len(bt_candles) >= 10:
-                    backtest_stats = backtest_strategy(
-                        candles=bt_candles,
-                        stop_loss_pct=bt_sl_pct,
-                        take_profit_pct=bt_tp_pct,
-                        max_hold_time_seconds=bt_max_hold,
-                        trailing_stop=bt_trailing,
-                        trailing_stop_distance_pct=bt_trail_dist,
-                        trailing_stop_activation_pct=bt_trail_act,
-                        fee_rate=0.006,  # Approximate 0.6% round-trip fee for Italian stocks
-                    )
-                    bt_summary = format_backtest_summary(backtest_stats)
-                    logger.info(f"Backtest for {symbol}: {bt_summary}")
-
-                    # --- Hard validation gate based on backtest metrics ---
-                    if (
-                        not backtest_stats.get("insufficient_data")
-                        and backtest_stats.get("total_trades", 0) >= 5
-                    ):
-                        # Reject if negative expectancy or excessive drawdown (>25%)
-                        if (
-                            backtest_stats.get("total_pnl_pct", 0.0) < 0
-                            or backtest_stats.get("profit_factor", 1.0) < 1.0
-                            or backtest_stats.get("max_drawdown_pct", 0.0) > 0.25
-                        ):
-                            logger.warning(
-                                f"Hard gate rejected strategy for {symbol}: "
-                                f"total_pnl_pct={backtest_stats.get('total_pnl_pct', 0.0):.4f}, "
-                                f"profit_factor={backtest_stats.get('profit_factor', 1.0):.2f}, "
-                                f"max_drawdown_pct={backtest_stats.get('max_drawdown_pct', 0.0):.4f}. "
-                                f"Rejecting trade outright."
-                            )
-                            validated.action = "HOLD"
-                            validated.confidence = 0.0
-                            validated.reasoning = "Backtest hard gate rejected strategy (negative expectancy or >25% drawdown)"
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"🚫 {display_symbol}: Strategy rejected by backtest hard gate (negative expectancy or >25% drawdown).",
-                                    summary={
-                                        "symbol": symbol,
-                                        "action": "SKIP",
-                                        "reason": "Backtest hard gate rejected",
-                                        "backtest": format_backtest_summary(backtest_stats),
-                                        "model_type": strategy_model_type,
-                                    }
-                                )
-                        else:
-                            # Attach backtest summary to the validated signal for notifications
-                            validated.backtest_summary = format_backtest_summary(backtest_stats)
-                    elif backtest_stats and not backtest_stats.get("insufficient_data"):
-                        validated.backtest_summary = format_backtest_summary(backtest_stats)
+            validated.backtest_summary = getattr(signal, 'backtest_summary', None)
 
             # Log and notify the decision
             logger.info(f"Decision for {symbol}: {validated.action} (confidence: {validated.confidence:.2f})")
