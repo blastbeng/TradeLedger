@@ -2326,6 +2326,11 @@ class TradingEngine:
             if pair in sample_pairs and pair not in shortlist:
                 shortlist.append(pair)
 
+        # Always include ALL discovered ETFs for the LLM to consider
+        for sym in etf_pairs:
+            if sym in sample_pairs and sym not in shortlist:
+                shortlist.append(sym)
+
         # Always include all BTPs for the LLM to consider
         for sym in btp_pairs:
             if sym not in shortlist:
