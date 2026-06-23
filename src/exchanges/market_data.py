@@ -121,6 +121,20 @@ def _discover_ftse_all_share_tickers() -> List[str]:
     return []
 
 
+def _load_static_tickers() -> List[str]:
+    """Load base symbols from a static CSV file if present."""
+    import os
+    path = os.path.join(settings.DATA_DIR, "italian_tickers.csv")
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r") as f:
+            return [line.strip().upper() for line in f if line.strip() and re.match(r"^[A-Z0-9]+$", line.strip())]
+    except Exception as e:
+        logger.warning(f"Failed to load static tickers file: {e}")
+        return []
+
+
 def _discover_euronext_milan_tickers() -> List[str]:
     """Download the Euronext ISIN directory CSV and extract all Milan-listed tickers.
 
@@ -230,6 +244,22 @@ def get_tradable_assets() -> List[str]:
                     existing.add(t)
     except Exception as e:
         logger.warning(f"News ticker discovery failed: {e}")
+
+    # --- Fallback: try static CSV file, then hardcoded list ---
+    if not base_symbols:
+        static = _load_static_tickers()
+        if static:
+            logger.info(f"Loaded {len(static)} tickers from static file.")
+            base_symbols = static
+
+    if not base_symbols:
+        fallback = settings.FALLBACK_TICKERS
+        if fallback:
+            logger.warning(
+                "All dynamic discovery methods returned zero tickers. "
+                f"Using hardcoded fallback list of {len(fallback)} symbols."
+            )
+            base_symbols = [t.strip().upper() for t in fallback if t.strip()]
 
     if not base_symbols:
         logger.warning("No tickers discovered from Wikipedia or news feeds.")

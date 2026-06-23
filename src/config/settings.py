@@ -78,6 +78,16 @@ class Settings(BaseSettings):
     # Useful for stocks that are not in the FTSE MIB or news feeds.
     ADDITIONAL_TICKERS: list[str] = []
 
+    # Hardcoded fallback list of Italian base symbols (without suffix).
+    # Used only when all dynamic discovery methods return zero tickers.
+    FALLBACK_TICKERS: list[str] = [
+        "ENI", "ENEL", "ISP", "UCG", "STM", "RACE", "TIT", "LDO",
+        "G", "CPR", "AMP", "AZM", "BAMI", "BMED", "BPE", "CRDI",
+        "DIA", "ERG", "FBK", "HER", "IG", "INW", "IP", "IVG",
+        "JUVE", "LUX", "MB", "MONC", "NEXI", "PIA", "PRY", "PST",
+        "REC", "SPM", "SRG", "TEN", "TIS", "TRN", "UNI", "VTY",
+    ]
+
     # Enable scraping the Euronext ISIN directory for Milan-listed tickers
     EURONEXT_TICKER_DISCOVERY_ENABLED: bool = True
 
