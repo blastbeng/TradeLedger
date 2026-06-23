@@ -7,6 +7,7 @@ import httpx
 import json
 import time
 import feedparser
+from urllib.parse import quote
 
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
@@ -585,8 +586,14 @@ def _fetch_facebook(symbol: str) -> List[Dict[str, str]]:
             if not message:
                 continue
             # Simple relevance check: symbol appears in the post
-            if symbol.split('/')[0].lower() not in message.lower():
-                continue
+            sym_lower = symbol.split('/')[0].lower()
+            message_lower = message.lower()
+            if " " in sym_lower:
+                if sym_lower.split()[0] not in message_lower:
+                    continue
+            else:
+                if sym_lower not in message_lower:
+                    continue
             sentiment = _analyze_sentiment(message)
             articles.append({
                 "title": message[:100],
@@ -662,7 +669,8 @@ def _fetch_googlenews(symbol: str) -> List[Dict[str, str]]:
         _get_rate_limiter().wait("googlenews")
         logger.debug(f"Fetching Google News for {symbol}...")
         base = symbol.split("/")[0]
-        url = f"https://news.google.com/rss/search?q={base}+stock&hl=en-US&gl=US&ceid=US:en"
+        encoded_base = quote(base)
+        url = f"https://news.google.com/rss/search?q={encoded_base}+stock&hl=en-US&gl=US&ceid=US:en"
         feed = feedparser.parse(url)
         articles = []
         for entry in feed.entries[:settings.GOOGLE_NEWS_MAX_ARTICLES]:
@@ -826,8 +834,14 @@ def _fetch_rss(symbol: str) -> List[Dict[str, str]]:
                 title = entry.get("title", "")
                 summary = entry.get("summary", "") or entry.get("description", "")
                 combined = f"{title} {summary}".lower()
-                if symbol.split("/")[0].lower() not in combined:
-                    continue
+                sym_lower = symbol.split("/")[0].lower()
+                if " " in sym_lower:
+                    # For company names, check if the first word is in the text
+                    if sym_lower.split()[0] not in combined:
+                        continue
+                else:
+                    if sym_lower not in combined:
+                        continue
                 text = f"{title} {summary}"
                 sentiment = _analyze_sentiment(text)
                 if not _is_relevant(symbol, title, summary[:300]):
