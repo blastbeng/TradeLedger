@@ -1871,11 +1871,13 @@ class TradingEngine:
                     if t.get('last') is None:
                         t['last'] = yahoo.get('last')
 
-        # --- Limit candidate pool to top N by 24h volume ---
+        # --- Limit candidate pool to top N by 24h volume (preserve BTPs) ---
         def _volume(sym):
             t = tickers.get(sym, {})
             return t.get('quoteVolume', 0) or 0
-        sample_pairs = sorted(sample_pairs, key=_volume, reverse=True)[:settings.SYMBOL_SELECTION_TOP_VOLUME_LIMIT]
+        stock_sample_sorted = sorted([s for s in sample_pairs if s in stock_pairs], key=_volume, reverse=True)
+        btp_sample_sorted = [s for s in sample_pairs if s in btp_pairs]
+        sample_pairs = stock_sample_sorted[:settings.SYMBOL_SELECTION_TOP_VOLUME_LIMIT] + btp_sample_sorted
 
         # Fetch news sentiment for all candidate stocks
         news_sentiment = {}
@@ -2194,6 +2196,12 @@ class TradingEngine:
             pair = f"{etf}/{self.base_currency}"
             if pair in sample_pairs and pair not in shortlist:
                 shortlist.append(pair)
+
+        # Always include a few BTPs for the LLM to consider
+        btp_in_sample = [s for s in sample_pairs if s in btp_pairs]
+        for sym in btp_in_sample[:5]:
+            if sym not in shortlist:
+                shortlist.append(sym)
 
         # Replace sample_pairs with the curated shortlist for all subsequent steps
         sample_pairs = shortlist
