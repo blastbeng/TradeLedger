@@ -1978,6 +1978,20 @@ class TradingEngine:
                         except Exception as e:
                             logger.debug(f"BTP news fetch failed for {sym}: {e}")
 
+            # Fetch news for ETFs specifically (they may not have high volume, so background refresh won't cover them)
+            if settings.NEWS_ENABLED:
+                for sym in etf_pairs:
+                    if sym in sample_pairs:
+                        try:
+                            await self._fetch_and_store_news_for_symbol(sym)
+                            # Re-read sentiment after fetching
+                            base = sym.split("/")[0]
+                            agg = await self._get_cached_sentiment(sym)
+                            if agg:
+                                news_sentiment[base] = agg
+                        except Exception as e:
+                            logger.debug(f"ETF news fetch failed for {sym}: {e}")
+
         # Sentiment trend (delta from previous cycle)
         sentiment_trend: Dict[str, Optional[float]] = {}
         for sym in sample_pairs:
