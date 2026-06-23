@@ -69,6 +69,7 @@ def parse_llm_response(response_text: str) -> Signal:
             "max_risk_per_trade_pct", "min_profit_per_trade", "min_risk_reward_ratio",
             "min_confidence", "news_sentiment_exit_threshold",
             "strategy_interval_seconds", "limit_price", "time_in_force",
+            "backtest_period_days",
         ]
         for k in known_params:
             if k in data:
@@ -172,6 +173,10 @@ def parse_llm_response(response_text: str) -> Signal:
         take_profit_order_type = data.get("take_profit_order_type")
         take_profit_limit_price = _safe_float(data.get("take_profit_limit_price"))
 
+        backtest_period_days = _safe_int(params.get("backtest_period_days"))
+        if backtest_period_days is not None:
+            backtest_period_days = max(30, min(backtest_period_days, settings.OHLCV_RETENTION_DAYS))
+
         return Signal(
             action=action,
             confidence=confidence,
@@ -206,6 +211,7 @@ def parse_llm_response(response_text: str) -> Signal:
             stop_loss_trail_offset=stop_loss_trail_offset,
             take_profit_order_type=take_profit_order_type,
             take_profit_limit_price=take_profit_limit_price,
+            backtest_period_days=backtest_period_days,
         )
     except (json.JSONDecodeError, ValueError, TypeError) as e:
         raise ValueError(f"Failed to parse LLM response as valid JSON: {e}") from e

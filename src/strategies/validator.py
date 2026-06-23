@@ -157,6 +157,10 @@ def validate_signal(
             si = params["strategy_interval_seconds"]
             if not isinstance(si, (int, float)) or si <= 0:
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid strategy_interval_seconds")
+        if "backtest_period_days" in params:
+            bpd = params["backtest_period_days"]
+            if not isinstance(bpd, (int, float)) or bpd < 30:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_period_days (must be >= 30)")
 
         # Logical consistency checks (no hardcoded values)
         if sl is not None and tp <= sl:

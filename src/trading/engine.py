@@ -3852,8 +3852,11 @@ class TradingEngine:
             historical_ohlcv = None
             try:
                 since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+                # Calculate limit dynamically based on timeframe to fetch all available retention data
+                tf_secs = self._timeframe_to_seconds(assigned_tf)
+                hist_limit = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_secs) + 100
                 db_candles = await asyncio.to_thread(
-                    get_ohlcv, symbol, assigned_tf, since_ms=since_ms, limit=500
+                    get_ohlcv, symbol, assigned_tf, since_ms=since_ms, limit=hist_limit
                 )
                 if db_candles:
                     # Convert list of dicts to list of lists [ts, o, h, l, c, v] as expected by the prompt
@@ -4432,7 +4435,27 @@ class TradingEngine:
                 bt_trail_dist = bt_params.get("trailing_stop_distance_pct")
                 bt_trail_act = bt_params.get("trailing_stop_activation_pct")
 
-                bt_candles = historical_ohlcv or raw_candles
+                # Use LLM-specified backtest_period_days to fetch the correct amount of historical data
+                bt_period_days = bt_params.get("backtest_period_days")
+                if bt_period_days is not None:
+                    bt_period_days = max(30, min(int(bt_period_days), settings.OHLCV_RETENTION_DAYS))
+                    bt_since_ms = int(time.time() * 1000) - bt_period_days * 24 * 60 * 60 * 1000
+                    bt_limit = int((bt_period_days * 86400) / tf_secs) + 100
+                    bt_db_candles = await asyncio.to_thread(
+                        get_ohlcv, symbol, assigned_tf, since_ms=bt_since_ms, limit=bt_limit
+                    )
+                    if bt_db_candles:
+                        bt_candles = [
+                            [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
+                            for c in bt_db_candles
+                        ]
+                        logger.info(f"Backtest using {len(bt_candles)} candles ({bt_period_days} days) for {symbol}")
+                    else:
+                        bt_candles = historical_ohlcv or raw_candles
+                        logger.warning(f"No historical data for requested {bt_period_days} days, falling back to default for {symbol}")
+                else:
+                    bt_candles = historical_ohlcv or raw_candles
+                    logger.info(f"Backtest using default historical data ({len(bt_candles) if bt_candles else 0} candles) for {symbol}")
                 backtest_stats = None
                 # Compute accurate fee rate based on trade size
                 bt_position_fraction = bt_params.get("position_size_fraction", 1.0 / self.effective_max_symbols if self.effective_max_symbols > 0 else 1.0)

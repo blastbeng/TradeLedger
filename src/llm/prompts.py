@@ -1140,6 +1140,19 @@ Maximum symbols to trade: {max_symbols}
                 f"  Avg volume (last 20): {avg_volume:.0f}\n"
                 f"  Recent momentum (last 5 candles): {recent_momentum_pct:+.2f}%\n"
             )
+            prompt += (
+                f"\n**Available Historical Data for Backtest:** Up to {settings.OHLCV_RETENTION_DAYS} days "
+                f"({settings.OHLCV_RETENTION_DAYS // 30} months) of historical OHLCV data is available on the "
+                f"{assigned_timeframe or 'default'} timeframe. The statistical summary above covers "
+                f"{hist_summary['candle_count']} candles.\n"
+                "You MUST include `backtest_period_days` in your strategy parameters to tell the engine "
+                "how many days of history to use for the backtest. Choose a period relevant to your strategy:\n"
+                "- Short-term momentum (1h candles): 30–90 days\n"
+                "- Medium-term swing (1d candles): 90–180 days\n"
+                "- Long-term position (1d/1w candles): 180–365 days\n"
+                "- Very long-term analysis (1w candles): 365–730 days\n"
+                f"If omitted, the engine defaults to {settings.OHLCV_RETENTION_DAYS} days (all available data).\n"
+            )
         prompt += (
             "**Step 1: Propose Strategy Parameters**\n"
             "Based on the indicators and statistical summaries above, propose your strategy parameters "
@@ -1308,7 +1321,7 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         "Include the key factors (indicators, sentiment, market regime, etc.) that led to your decision.\n"
         "- `strategy`: an object containing `type` (string) and `parameters` (object).\n"
         "  The `parameters` object MUST include ALL required trading parameters:\n"
-        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, etc.\n"
+        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`, etc.\n"
         "- `entry_condition`: REQUIRED for every BUY action. An object specifying the exact moment to enter the trade (see Entry Condition section below for format).\n"
         "- `limit_price`: optional, a specific limit price for the order.\n"
         "- `time_in_force`: optional, \"day\" or \"gtc\". Default \"day\".\n"
@@ -1468,6 +1481,10 @@ Based on the backtest results above, make your final trading decision.
 If the backtest shows poor performance (e.g., negative total P&L, low win rate, high drawdown), you should reconsider and likely output HOLD or adjust your parameters.
 If the backtest confirms your strategy is viable, output your final action (BUY, SELL, or HOLD).
 """
+    prompt += (
+        f"\n**Backtest Period:** The backtest was run using {preliminary_decision.get('strategy_params', {}).get('backtest_period_days', 'all available')} "
+        f"days of historical data on the {preliminary_decision.get('strategy_params', {}).get('timeframe', 'assigned')} timeframe.\n"
+    )
     prompt += (
         "**Output ONLY the raw JSON object as specified.**\n"
         "Return a JSON object with these **required** fields:\n"

@@ -46,6 +46,7 @@ class Signal:
     stop_loss_trail_offset: Optional[float] = None
     take_profit_order_type: Optional[str] = None
     take_profit_limit_price: Optional[float] = None
+    backtest_period_days: Optional[int] = None  # LLM-specified backtest lookback period in days
 
 
 class Strategy:
