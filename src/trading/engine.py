@@ -3831,11 +3831,6 @@ class TradingEngine:
             logger.info(f"Skipping {display_symbol}: order already queued.")
             return
 
-        # If trading is paused and we have no open position, skip entirely
-        if trading_paused and symbol not in self.positions:
-            logger.info(f"Skipping {display_symbol}: trading paused and no open position.")
-            return
-
         # --- Max hold expired flag ---
         max_hold_expired = False
         max_hold_expired_count = 0
@@ -4933,8 +4928,9 @@ class TradingEngine:
             # --- Format symbol for notification ---
             stock_name = await self._get_stock_name(symbol)
             display_symbol = self._format_symbol_display(symbol, stock_name, assigned_tf)
-            if self.notifier and not (trading_paused and validated.action == "BUY"):
+            if self.notifier:
                 emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⏸️"}.get(validated.action, "❓")
+                paused_tag = " (PAUSED)" if trading_paused and validated.action == "BUY" else ""
                 # Build a short indicator summary
                 ind_parts = []
                 if rsi is not None:
@@ -4977,7 +4973,7 @@ class TradingEngine:
                 indicator_str = " | ".join(ind_parts) if ind_parts else "No indicators (insufficient OHLCV data)"
                 sentiment_str = await self._get_sentiment_str(symbol)
                 reasoning_str = f" – {validated.reasoning}" if validated.reasoning else ""
-                msg = f"{emoji} {display_symbol}: {validated.action} (confidence: {validated.confidence:.2f}){reasoning_str}"
+                msg = f"{emoji} {display_symbol}: {validated.action} (confidence: {validated.confidence:.2f}){reasoning_str}{paused_tag}"
                 if sentiment_str:
                     msg += f"\n{sentiment_str}"
                 if getattr(validated, 'backtest_summary', None):
