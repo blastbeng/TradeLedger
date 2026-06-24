@@ -1386,10 +1386,10 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
     )
     if trading_paused:
         prompt += (
-            "\n**Trading is currently PAUSED.** You may ONLY output SELL or HOLD actions. "
-            "Do NOT output BUY under any circumstances. "
-            "If you hold this stock, decide whether to continue holding (HOLD) or exit (SELL) "
-            "based on current market conditions, risk parameters, and profit/loss status.\n"
+            "\n**Trading is currently PAUSED.** You can still output BUY, SELL, or HOLD actions. "
+            "However, any BUY signals will NOT be executed; they will only be sent as notifications. "
+            "SELL signals for existing positions will be executed normally if the market is open. "
+            "Please continue to analyze the market and generate signals as you normally would.\n"
         )
     if performance:
         stock_perf = performance.get("stock_performance", {}).get(symbol, {})
@@ -1586,7 +1586,9 @@ If ANY backtest variant confirms a strategy is viable, you may output your final
     )
     if trading_paused:
         prompt += (
-            "\n**Trading is currently PAUSED.** You may ONLY output SELL or HOLD actions. "
-            "Do NOT output BUY under any circumstances.\n"
+            "\n**Trading is currently PAUSED.** You can still output BUY, SELL, or HOLD actions. "
+            "However, any BUY signals will NOT be executed; they will only be sent as notifications. "
+            "SELL signals for existing positions will be executed normally if the market is open. "
+            "Please continue to analyze the market and generate signals as you normally would.\n"
         )
     return prompt

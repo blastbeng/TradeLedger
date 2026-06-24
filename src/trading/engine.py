@@ -3285,24 +3285,12 @@ class TradingEngine:
                 self.current_symbols.append({"symbol": symbol, "timeframe": tf})
                 logger.info(f"Keeping {symbol} in current_symbols due to open position (timeframe={tf})")
 
-        # If trading is paused, keep ONLY symbols with open positions.
+        # If trading is paused, we still keep all symbols so the LLM can generate signals
+        # (which will be notified but not executed in paper mode).
         # The LLM may have just set pause_trading = true, so re-read Redis.
         paused_now = await asyncio.to_thread(self.redis.get, "trading:paused")
         if paused_now and paused_now == "1" and not force:
-            pause_source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
-            pause_source = pause_source_raw.decode() if isinstance(pause_source_raw, bytes) else (pause_source_raw or "")
-            if pause_source != "market_closed":
-                open_symbols = set(self.positions.keys())
-                before_count = len(self.current_symbols)
-                self.current_symbols = [c for c in self.current_symbols if c["symbol"] in open_symbols]
-                removed = before_count - len(self.current_symbols)
-                if removed > 0:
-                    logger.info(
-                        "Trading paused: removed %d symbol(s) without open positions. "
-                        "Remaining: %s",
-                        removed,
-                        [c["symbol"] for c in self.current_symbols],
-                    )
+            logger.info("Trading is paused. Keeping all symbols for signal generation.")
 
         # Update symbol tenure tracking
         now_ts = time.time()
@@ -5360,112 +5348,109 @@ class TradingEngine:
                 )
 
             if validated.action != "HOLD":
-                if trading_paused and validated.action == "BUY":
-                    logger.info(f"Ignoring BUY signal for {symbol}: trading is paused.")
-                else:
-                    # --- Sector concentration limit check (only for BUY) ---
-                    if validated.action == "BUY":
-                        current_sector = None
-                        for entry in self.current_symbols:
-                            if entry["symbol"] == symbol:
-                                current_sector = entry.get("sector")
-                                break
-                        
-                        if current_sector:
-                            max_positions_per_sector_raw = await asyncio.to_thread(self.redis.get, "trading:max_positions_per_sector")
-                            if max_positions_per_sector_raw:
-                                try:
-                                    max_positions_per_sector = int(max_positions_per_sector_raw)
-                                except ValueError:
-                                    max_positions_per_sector = None
-                            else:
+                # --- Sector concentration limit check (only for BUY) ---
+                if validated.action == "BUY":
+                    current_sector = None
+                    for entry in self.current_symbols:
+                        if entry["symbol"] == symbol:
+                            current_sector = entry.get("sector")
+                            break
+                    
+                    if current_sector:
+                        max_positions_per_sector_raw = await asyncio.to_thread(self.redis.get, "trading:max_positions_per_sector")
+                        if max_positions_per_sector_raw:
+                            try:
+                                max_positions_per_sector = int(max_positions_per_sector_raw)
+                            except ValueError:
                                 max_positions_per_sector = None
+                        else:
+                            max_positions_per_sector = None
+                        
+                        if max_positions_per_sector is not None and max_positions_per_sector > 0:
+                            sector_count = 0
+                            for pos_sym in self.positions.keys():
+                                for entry in self.current_symbols:
+                                    if entry["symbol"] == pos_sym and entry.get("sector") == current_sector:
+                                        sector_count += 1
+                                        break
                             
-                            if max_positions_per_sector is not None and max_positions_per_sector > 0:
-                                sector_count = 0
-                                for pos_sym in self.positions.keys():
-                                    for entry in self.current_symbols:
-                                        if entry["symbol"] == pos_sym and entry.get("sector") == current_sector:
-                                            sector_count += 1
-                                            break
-                                
-                                if sector_count >= max_positions_per_sector:
-                                    logger.info(
-                                        f"Skipping BUY {symbol}: sector '{current_sector}' already has "
-                                        f"{sector_count} open positions (max {max_positions_per_sector})"
-                                    )
-                                    if self.notifier:
-                                        stock_name = await self._get_stock_name(symbol)
-                                        display_symbol = self._format_symbol_display(symbol, stock_name, assigned_tf)
-                                        await self.notifier.send_notification(
-                                            f"⚠️ Skipping BUY {display_symbol}: sector '{current_sector}' concentration limit reached ({sector_count}/{max_positions_per_sector})",
-                                            summary={
-                                                "symbol": symbol,
-                                                "action": "SKIP",
-                                                "reason": "Sector concentration limit",
-                                                "sector": current_sector,
-                                                "sector_count": sector_count,
-                                                "max_positions_per_sector": max_positions_per_sector,
-                                            }
-                                        )
-                                    return
-
-                    # --- Entry condition check (only for BUY) ---
-                    if validated.action == "BUY" and validated.entry_condition is not None:
-                        etype = validated.entry_condition.get("type")
-                        if etype == "delay":
-                            # Delay entries are simple time-based waits – schedule directly
-                            delay_sec = validated.entry_condition.get("delay_seconds", 0)
-                            logger.info(f"Scheduling delayed BUY for {symbol} in {delay_sec}s")
-                            asyncio.create_task(
-                                self._execute_delayed_entry(symbol, validated, assigned_tf, delay_sec)
-                            )
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"⏳ Delayed entry for {display_symbol} – executing in {delay_sec}s.",
-                                    summary={
-                                        "symbol": symbol,
-                                        "action": "WAIT",
-                                        "reason": "Delay entry scheduled",
-                                        "delay_seconds": delay_sec,
-                                    }
+                            if sector_count >= max_positions_per_sector:
+                                logger.info(
+                                    f"Skipping BUY {symbol}: sector '{current_sector}' already has "
+                                    f"{sector_count} open positions (max {max_positions_per_sector})"
                                 )
-                            return  # do NOT execute now
+                                if self.notifier:
+                                    stock_name = await self._get_stock_name(symbol)
+                                    display_symbol = self._format_symbol_display(symbol, stock_name, assigned_tf)
+                                    await self.notifier.send_notification(
+                                        f"⚠️ Skipping BUY {display_symbol}: sector '{current_sector}' concentration limit reached ({sector_count}/{max_positions_per_sector})",
+                                        summary={
+                                            "symbol": symbol,
+                                            "action": "SKIP",
+                                            "reason": "Sector concentration limit",
+                                            "sector": current_sector,
+                                            "sector_count": sector_count,
+                                            "max_positions_per_sector": max_positions_per_sector,
+                                        }
+                                    )
+                                return
 
-                        timeout = validated.entry_condition.get("timeout_seconds", 600)
-                        # Enforce a minimum based on the candle timeframe
-                        min_timeout = max(300, int(settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT * tf_seconds))
-                        if timeout < min_timeout:
-                            logger.info(
-                                f"Entry condition timeout for {symbol} too short ({timeout}s), "
-                                f"clamping to minimum {min_timeout}s (timeframe={assigned_tf})"
-                            )
-                            timeout = min_timeout
-                        deadline = time.time() + timeout
-                        # Store for background checking – do NOT block the main loop
-                        self._pending_entries[symbol] = {
-                            "signal": validated,
-                            "deadline": deadline,
-                            "timeframe": assigned_tf,
-                            "condition": validated.entry_condition,
-                        }
-                        logger.info(
-                            f"Queued entry condition for {symbol} (type={etype}, deadline in {timeout}s). "
-                            f"Will monitor in background."
+                # --- Entry condition check (only for BUY) ---
+                if validated.action == "BUY" and validated.entry_condition is not None and not trading_paused:
+                    etype = validated.entry_condition.get("type")
+                    if etype == "delay":
+                        # Delay entries are simple time-based waits – schedule directly
+                        delay_sec = validated.entry_condition.get("delay_seconds", 0)
+                        logger.info(f"Scheduling delayed BUY for {symbol} in {delay_sec}s")
+                        asyncio.create_task(
+                            self._execute_delayed_entry(symbol, validated, assigned_tf, delay_sec)
                         )
                         if self.notifier:
                             await self.notifier.send_notification(
-                                f"⏳ Waiting for entry condition on {display_symbol} "
-                                f"(type={etype}, timeout {timeout}s).",
+                                f"⏳ Delayed entry for {display_symbol} – executing in {delay_sec}s.",
                                 summary={
                                     "symbol": symbol,
                                     "action": "WAIT",
-                                    "reason": "Entry condition pending",
+                                    "reason": "Delay entry scheduled",
+                                    "delay_seconds": delay_sec,
                                 }
                             )
                         return  # do NOT execute now
 
-                    await self._execute_signal(symbol, validated, timeframe=assigned_tf, atr=atr)
+                    timeout = validated.entry_condition.get("timeout_seconds", 600)
+                    # Enforce a minimum based on the candle timeframe
+                    min_timeout = max(300, int(settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT * tf_seconds))
+                    if timeout < min_timeout:
+                        logger.info(
+                            f"Entry condition timeout for {symbol} too short ({timeout}s), "
+                            f"clamping to minimum {min_timeout}s (timeframe={assigned_tf})"
+                        )
+                        timeout = min_timeout
+                    deadline = time.time() + timeout
+                    # Store for background checking – do NOT block the main loop
+                    self._pending_entries[symbol] = {
+                        "signal": validated,
+                        "deadline": deadline,
+                        "timeframe": assigned_tf,
+                        "condition": validated.entry_condition,
+                    }
+                    logger.info(
+                        f"Queued entry condition for {symbol} (type={etype}, deadline in {timeout}s). "
+                        f"Will monitor in background."
+                    )
+                    if self.notifier:
+                        await self.notifier.send_notification(
+                            f"⏳ Waiting for entry condition on {display_symbol} "
+                            f"(type={etype}, timeout {timeout}s).",
+                            summary={
+                                "symbol": symbol,
+                                "action": "WAIT",
+                                "reason": "Entry condition pending",
+                            }
+                        )
+                    return  # do NOT execute now
+
+                await self._execute_signal(symbol, validated, timeframe=assigned_tf, atr=atr)
         except Exception as e:
             logger.error(f"Error processing {symbol}: {e}", exc_info=True)
             if self.notifier:
@@ -5804,6 +5789,14 @@ class TradingEngine:
 
     async def sell_all_positions(self):
         """Sell all open positions at market price."""
+        if not await self._is_market_open():
+            logger.warning("Sell all positions skipped: market is closed.")
+            if self.notifier:
+                await self.notifier.send_notification(
+                    "⏸️ Sell all skipped: market is currently closed.",
+                    summary={"action": "SKIP", "reason": "Market closed"}
+                )
+            return
         for symbol in list(self.positions.keys()):
             await self._execute_signal(
                 symbol,
@@ -5813,6 +5806,14 @@ class TradingEngine:
 
     async def sell_position(self, symbol: str):
         """Sell a specific open position at market price."""
+        if not await self._is_market_open():
+            logger.warning(f"Sell position {symbol} skipped: market is closed.")
+            if self.notifier:
+                await self.notifier.send_notification(
+                    f"⏸️ Sell {symbol} skipped: market is currently closed.",
+                    summary={"symbol": symbol, "action": "SKIP", "reason": "Market closed"}
+                )
+            return
         if symbol in self.positions:
             await self._execute_signal(
                 symbol,
