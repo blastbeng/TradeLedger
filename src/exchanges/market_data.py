@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 import warnings
@@ -203,6 +204,15 @@ def _discover_financedatabase_tickers() -> List[str]:
 
 def discover_italian_ucits_etfs() -> List[str]:
     """Discover Italian-focused UCITS ETFs using FinanceDatabase."""
+    redis_client = get_redis_client()
+    cache_key = "italian_ucits_etfs"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
     try:
         import financedatabase as fd
     except ImportError:
@@ -241,6 +251,11 @@ def discover_italian_ucits_etfs() -> List[str]:
                 base_symbols.append(base)
 
         logger.info(f"Discovered {len(base_symbols)} Italian UCITS ETFs matching keywords.")
+        # Cache for 24 hours
+        try:
+            redis_client.setex(cache_key, 86400, json.dumps(base_symbols))
+        except Exception:
+            pass
         return base_symbols
     except Exception as e:
         logger.warning(f"Failed to discover Italian UCITS ETFs: {e}")
@@ -405,6 +420,16 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 
     # Sanitize symbols: remove $ prefix and /currency suffix
     symbols = [s.lstrip('$').split('/')[0] for s in symbols]
+
+    # Check Redis cache for all symbols
+    redis_client = get_redis_client()
+    cache_key = f"quotes:{hashlib.md5(json.dumps(symbols).encode()).hexdigest()}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
 
     result = {}
     btp_symbols = [s for s in symbols if re.match(r'^IT[A-Z0-9]{10}$', s)]

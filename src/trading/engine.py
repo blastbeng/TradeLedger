@@ -2128,9 +2128,9 @@ class TradingEngine:
         stock_sample = [s for s in sample_pairs if s in stock_pairs]
         btp_sample = [s for s in sample_pairs if s in btp_pairs]
 
-        # Parallelize get_quotes by splitting into chunks of 10
+        # Parallelize get_quotes by splitting into chunks of 50
         plain_sample = [s.split("/")[0] for s in stock_sample]
-        chunk_size = 10
+        chunk_size = 50
         chunks = [plain_sample[i:i + chunk_size] for i in range(0, len(plain_sample), chunk_size)]
         quote_tasks = [asyncio.to_thread(get_quotes, chunk) for chunk in chunks]
         quote_results = await asyncio.gather(*quote_tasks)

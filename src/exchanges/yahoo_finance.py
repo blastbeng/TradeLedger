@@ -91,10 +91,19 @@ def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
     base = symbol.split("/")[0] if "/" in symbol else symbol
     base = base.lstrip('$')
 
+    redis_client = get_redis_client()
+    cache_key = f"yahoo_fundamentals:{base}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
     try:
         ticker = yf.Ticker(base, session=_get_yf_session())
         info = ticker.info
-        return {
+        result = {
             "pe_ratio": info.get("trailingPE"),
             "forward_pe": info.get("forwardPE"),
             "market_cap": info.get("marketCap"),
@@ -105,6 +114,12 @@ def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
             "profit_margins": info.get("profitMargins"),
             "return_on_equity": info.get("returnOnEquity"),
         }
+        # Cache for 24 hours
+        try:
+            redis_client.setex(cache_key, 86400, json.dumps(result))
+        except Exception:
+            pass
+        return result
     except Exception as e:
         logger.warning(f"Yahoo Finance fundamentals failed for {base}: {e}")
         return None
