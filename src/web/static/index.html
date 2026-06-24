@@ -386,17 +386,6 @@
             </div>
 
             <div class="card card-full">
-                <h2>📊 Positions</h2>
-                <div class="table-wrapper">
-                    <table id="positions-table">
-                        <thead><tr><th>Ticker</th><th>Timeframe</th><th>Entry Type</th><th>Amount</th><th>Entry Price</th><th>Current Price</th><th>Unrealized P&L</th><th>Stop Loss</th><th>Take Profit</th><th>Trailing</th><th>Max Hold</th></tr></thead>
-                        <tbody></tbody>
-                        <tfoot></tfoot>
-                    </table>
-                </div>
-            </div>
-
-            <div class="card card-full">
                 <h2>📡 Latest LLM Signals</h2>
                 <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
                     <table id="signals-table">
@@ -407,8 +396,19 @@
             </div>
 
             <div class="card card-full">
+                <h2>📊 Positions</h2>
+                <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
+                    <table id="positions-table">
+                        <thead><tr><th>Ticker</th><th>Timeframe</th><th>Entry Type</th><th>Amount</th><th>Entry Price</th><th>Current Price</th><th>Unrealized P&L</th><th>Stop Loss</th><th>Take Profit</th><th>Trailing</th><th>Max Hold</th></tr></thead>
+                        <tbody></tbody>
+                        <tfoot></tfoot>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card card-full">
                 <h2>⏳ Queued Orders</h2>
-                <div class="table-wrapper">
+                <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
                     <table id="queued-orders-table">
                         <thead><tr><th>Symbol</th><th>Side</th><th>Amount</th><th>Limit</th><th>Type</th><th>Stop</th><th>Trail</th><th>Exit</th></tr></thead>
                         <tbody></tbody>
@@ -418,7 +418,7 @@
 
             <div class="card card-full">
                 <h2>🏆 Performance</h2>
-                <div class="table-wrapper">
+                <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
                     <table id="performance-table">
                         <thead><tr><th>Ticker</th><th>Timeframe</th><th>Trades</th><th>Profit</th><th>Profit %</th><th>Win Rate</th></tr></thead>
                         <tbody></tbody>
@@ -429,7 +429,7 @@
 
             <div class="card card-full">
                 <h2>📜 Closed Trades</h2>
-                <div class="table-wrapper">
+                <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
                     <table id="history-table">
                         <thead><tr><th>Time</th><th>Ticker</th><th>Side</th><th>Amount</th><th>Price</th><th>Fee</th><th>Realized P&L</th><th>Exit Reason</th></tr></thead>
                         <tbody></tbody>
@@ -439,7 +439,7 @@
 
             <div class="card card-full">
                 <h2>📰 News <button id="btn-refresh-news" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Refresh</button></h2>
-                <div id="news">-</div>
+                <div id="news" style="max-height: 400px; overflow-y: auto;">-</div>
             </div>
 
             <div class="card card-full">
