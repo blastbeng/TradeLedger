@@ -433,10 +433,13 @@
             </div>
 
             <div class="card card-full">
-                <h2>🧪 Simulation Lab <button id="btn-force-download" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">⬇️ Download Market Data</button></h2>
+                <h2>🧪 Simulation Lab 
+                    <button id="btn-force-download" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">⬇️ Download Market Data</button>
+                    <button id="btn-run-all-sim" style="margin-left:8px; background:#a371f7; color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🤖 Run All Decisions</button>
+                </h2>
                 <div class="table-wrapper">
                     <table id="simulation-table">
-                        <thead><tr><th>Ticker</th><th>Timeframe</th><th>Actions</th></tr></thead>
+                        <thead><tr><th>Ticker</th><th>Timeframe</th><th>Last Price</th><th>Last Decision</th><th>Actions</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -721,26 +724,33 @@
             if (data.current_symbols && data.current_symbols.length > 0) {
                 data.current_symbols.forEach(entry => {
                     const row = simBody.insertRow();
+                    row.id = `sim-row-${entry.symbol}`;
                     row.insertCell().textContent = entry.display || entry.symbol;
                     row.insertCell().textContent = entry.timeframe || '—';
+                    row.insertCell().textContent = '...'; // Last Price
+                    row.insertCell().textContent = '—'; // Last Decision
                     const actionsCell = row.insertCell();
                     
                     const btBtn = document.createElement('button');
                     btBtn.textContent = 'Backtest';
+                    btBtn.id = `sim-bt-${entry.symbol}`;
                     btBtn.style.cssText = 'background: var(--accent); color: #fff; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; margin-right: 8px; font-size: 0.8rem;';
                     btBtn.onclick = () => runSimulation(entry.symbol, 'backtest');
                     actionsCell.appendChild(btBtn);
                     
                     const decBtn = document.createElement('button');
                     decBtn.textContent = 'Simulate Decision';
+                    decBtn.id = `sim-dec-${entry.symbol}`;
                     decBtn.style.cssText = 'background: #a371f7; color: #fff; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem;';
                     decBtn.onclick = () => runSimulation(entry.symbol, 'decision');
                     actionsCell.appendChild(decBtn);
                 });
+                // Fetch prices for sim table
+                fetchSimPrices(data.current_symbols.map(e => e.symbol));
             } else {
                 const row = simBody.insertRow();
                 const cell = row.insertCell();
-                cell.colSpan = 3;
+                cell.colSpan = 5;
                 cell.textContent = 'No tracked tickers';
                 cell.style.textAlign = 'center';
                 cell.style.color = 'var(--text-secondary)';
@@ -1239,6 +1249,24 @@
                     btn.disabled = false;
                 });
         });
+        document.getElementById('btn-run-all-sim').addEventListener('click', async () => {
+            const btn = document.getElementById('btn-run-all-sim');
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ Running...';
+            btn.disabled = true;
+            
+            const rows = document.querySelectorAll('#simulation-table tbody tr');
+            for (const row of rows) {
+                if (row.id && row.id.startsWith('sim-row-')) {
+                    const symbol = row.id.replace('sim-row-', '');
+                    await runSimulation(symbol, 'decision');
+                }
+            }
+            
+            btn.textContent = originalText;
+            btn.disabled = false;
+            showToast('All simulations completed.');
+        });
         document.getElementById('btn-refresh-news').addEventListener('click', () => {
             const newsDiv = document.getElementById('news');
             newsDiv.textContent = 'Loading...';
@@ -1260,15 +1288,45 @@
                 });
         });
 
+        async function fetchSimPrices(symbols) {
+            if (symbols.length === 0) return;
+            const symList = symbols.join(',');
+            try {
+                const resp = await fetch(`/api/tickers?symbols=${encodeURIComponent(symList)}`);
+                const tickersMap = await resp.json();
+                for (const sym of symbols) {
+                    const row = document.getElementById(`sim-row-${sym}`);
+                    if (row && tickersMap[sym] && tickersMap[sym].last !== undefined) {
+                        row.cells[2].textContent = tickersMap[sym].last.toFixed(4);
+                    } else if (row) {
+                        row.cells[2].textContent = 'N/A';
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch sim prices', e);
+            }
+        }
+
         async function runSimulation(symbol, type) {
             const resultDiv = document.getElementById('simulation-result');
             resultDiv.textContent = `Running ${type} simulation for ${symbol}...`;
+            
+            const row = document.getElementById(`sim-row-${symbol}`);
+            const decCell = row ? row.cells[3] : null;
+            const btBtn = document.getElementById(`sim-bt-${symbol}`);
+            const decBtn = document.getElementById(`sim-dec-${symbol}`);
+            
+            if (btBtn) btBtn.disabled = true;
+            if (decBtn) decBtn.disabled = true;
+            if (decCell) decCell.textContent = 'Running...';
+
             try {
                 const endpoint = type === 'backtest' ? 'backtest' : 'decision';
                 const resp = await fetch(`/api/simulate/${endpoint}/${encodeURIComponent(symbol)}`, { method: 'POST' });
                 if (!resp.ok) {
                     const err = await resp.json();
                     resultDiv.textContent = `Error: ${err.detail || 'Simulation failed'}`;
+                    if (decCell) decCell.textContent = 'Error';
                     return;
                 }
                 const data = await resp.json();
@@ -1278,6 +1336,7 @@
                     if (data.raw_response) {
                         text += `Raw LLM Response:\n${data.raw_response}\n`;
                     }
+                    if (decCell) decCell.textContent = 'Error';
                 } else {
                     text += `Action: ${data.action}\n\n`;
                     text += `--- Step 1 Response ---\n${data.step1_response}\n\n`;
@@ -1287,10 +1346,18 @@
                     if (data.step2_response) {
                         text += `--- Step 2 Response ---\n${data.step2_response}\n`;
                     }
+                    if (decCell) {
+                        decCell.textContent = data.action || 'Done';
+                        decCell.className = data.action === 'BUY' ? 'green' : data.action === 'SELL' ? 'red' : '';
+                    }
                 }
                 resultDiv.textContent = text;
             } catch (err) {
                 resultDiv.textContent = `Error: ${err.message}`;
+                if (decCell) decCell.textContent = 'Error';
+            } finally {
+                if (btBtn) btBtn.disabled = false;
+                if (decBtn) decBtn.disabled = false;
             }
         }
 
