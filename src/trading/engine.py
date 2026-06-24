@@ -10735,22 +10735,55 @@ class TradingEngine:
                 return {"error": f"Failed to parse LLM response after retry: {e2}", "raw_response": step1_response}
 
         if preliminary_signal.action == "BUY":
-            backtest_stats, bt_summary = await self._run_backtest_from_signal(
-                symbol=symbol,
-                signal=preliminary_signal,
-                atr=data["atr"],
-                current_price=data["current_price"],
-                tf_secs=data["tf_seconds"],
-                assigned_tf=data["assigned_tf"],
-                historical_ohlcv=data["historical_ohlcv"],
-                raw_candles=data["raw_candles"],
-                base_balance=data["base_balance"],
-                is_btp=data["is_btp"],
-            )
+            # Determine which variant param sets to backtest
+            variants_to_test = []
+            if preliminary_signal.backtest_variants:
+                variants_to_test = list(preliminary_signal.backtest_variants)
+            else:
+                variants_to_test.append(preliminary_signal.strategy_params or {})
+
+            backtest_results = []
+            for i, variant_params in enumerate(variants_to_test):
+                variant_signal = Signal(
+                    action="BUY",
+                    confidence=preliminary_signal.confidence,
+                    reasoning=preliminary_signal.reasoning,
+                    strategy_params=variant_params,
+                )
+                bt_stats, bt_summary = await self._run_backtest_from_signal(
+                    symbol=symbol,
+                    signal=variant_signal,
+                    atr=data["atr"],
+                    current_price=data["current_price"],
+                    tf_secs=data["tf_seconds"],
+                    assigned_tf=data["assigned_tf"],
+                    historical_ohlcv=data["historical_ohlcv"],
+                    raw_candles=data["raw_candles"],
+                    base_balance=data["base_balance"],
+                    is_btp=data["is_btp"],
+                )
+                if bt_stats is not None:
+                    backtest_results.append({
+                        "variant_params": variant_params,
+                        "summary": bt_summary,
+                        "stats": bt_stats,
+                    })
+                else:
+                    backtest_results.append({
+                        "variant_params": variant_params,
+                        "summary": bt_summary or "Insufficient data for backtest.",
+                        "stats": {},
+                    })
+
+            combined_bt_summary = " | ".join(
+                f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
+            ) if backtest_results else "No backtest performed"
+
             return {
                 "step1_response": step1_response,
                 "action": preliminary_signal.action,
-                "backtest_summary": bt_summary,
+                "backtest_summary": combined_bt_summary,
+                "backtest_results": backtest_results,
             }
         else:
             return {
@@ -10819,18 +10852,50 @@ class TradingEngine:
                 "backtest_summary": "No backtest performed (action is not BUY)",
             }
 
-        backtest_stats, bt_summary = await self._run_backtest_from_signal(
-            symbol=symbol,
-            signal=preliminary_signal,
-            atr=data["atr"],
-            current_price=data["current_price"],
-            tf_secs=data["tf_seconds"],
-            assigned_tf=data["assigned_tf"],
-            historical_ohlcv=data["historical_ohlcv"],
-            raw_candles=data["raw_candles"],
-            base_balance=data["base_balance"],
-            is_btp=data["is_btp"],
-        )
+        # Determine which variant param sets to backtest
+        variants_to_test = []
+        if preliminary_signal.backtest_variants:
+            variants_to_test = list(preliminary_signal.backtest_variants)
+        else:
+            variants_to_test.append(preliminary_signal.strategy_params or {})
+
+        # Run backtest for each variant sequentially
+        backtest_results = []
+        for i, variant_params in enumerate(variants_to_test):
+            variant_signal = Signal(
+                action="BUY",
+                confidence=preliminary_signal.confidence,
+                reasoning=preliminary_signal.reasoning,
+                strategy_params=variant_params,
+            )
+            bt_stats, bt_summary = await self._run_backtest_from_signal(
+                symbol=symbol,
+                signal=variant_signal,
+                atr=data["atr"],
+                current_price=data["current_price"],
+                tf_secs=data["tf_seconds"],
+                assigned_tf=data["assigned_tf"],
+                historical_ohlcv=data["historical_ohlcv"],
+                raw_candles=data["raw_candles"],
+                base_balance=data["base_balance"],
+                is_btp=data["is_btp"],
+            )
+            if bt_stats is not None:
+                backtest_results.append({
+                    "variant_params": variant_params,
+                    "summary": bt_summary,
+                    "stats": bt_stats,
+                })
+            else:
+                backtest_results.append({
+                    "variant_params": variant_params,
+                    "summary": bt_summary or "Insufficient data for backtest.",
+                    "stats": {},
+                })
+
+        combined_bt_summary = " | ".join(
+            f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
+        ) if backtest_results else "No backtest performed"
 
         step2_prompt = build_final_decision_prompt(
             symbol=symbol,
@@ -10842,10 +10907,9 @@ class TradingEngine:
                 "strategy_params": preliminary_signal.strategy_params,
                 "timeframe": data["assigned_tf"],
             },
-            backtest_stats=backtest_stats or {},
-            backtest_summary=bt_summary,
+            backtest_results=backtest_results,
             base_currency=self.base_currency,
-            trading_paused=False, # Pass actual trading_paused if needed, but Step 2 prompt handles it
+            trading_paused=False,
             step1_prompt=data["prompt"],
         )
         
@@ -10875,7 +10939,7 @@ class TradingEngine:
                 "step1_response": step1_response,
                 "error": f"LLM Step 2 call failed: {e}",
                 "action": preliminary_signal.action,
-                "backtest_summary": bt_summary,
+                "backtest_summary": combined_bt_summary,
             }
 
         # Validate Step 2 response
@@ -10907,12 +10971,13 @@ class TradingEngine:
                     "step2_response": step2_response,
                     "error": f"Failed to parse LLM Step 2 response after retry: {e2}",
                     "action": preliminary_signal.action,
-                    "backtest_summary": bt_summary,
+                    "backtest_summary": combined_bt_summary,
                 }
 
         return {
             "step1_response": step1_response,
             "step2_response": step2_response,
             "action": preliminary_signal.action,
-            "backtest_summary": bt_summary,
+            "backtest_summary": combined_bt_summary,
+            "backtest_results": backtest_results,
         }
