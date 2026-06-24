@@ -46,6 +46,10 @@ from src.indicators import (
     compute_all_indicators,
     compute_vwap,
     compute_pivot_points,
+    compute_atr_series,
+    compute_adx_series,
+    compute_rsi_series,
+    compute_macd_series,
 )
 try:
     from src.news.fetcher import discover_trending_stocks, detect_upcoming_events, discover_tickers_from_news
@@ -10141,22 +10145,20 @@ class TradingEngine:
 
         atr_series = None
         adx_series = None
+        rsi_series = None
+        macd_hist_series = None
         if bt_candles and len(bt_candles) >= 15:
             try:
-                import numpy as np
-                import talib
-                highs = np.array([c[2] for c in bt_candles], dtype=float)
-                lows = np.array([c[3] for c in bt_candles], dtype=float)
-                closes = np.array([c[4] for c in bt_candles], dtype=float)
-
                 # Compute ATR series (needed for dynamic ATR stops or trailing stops)
                 if bt_params.get("trailing_stop_atr_multiple") or bt_sl_atr_mult or bt_tp_atr_mult:
-                    atr_arr = talib.ATR(highs, lows, closes, timeperiod=14)
-                    atr_series = [None if np.isnan(v) else float(v) for v in atr_arr]
+                    atr_series = compute_atr_series(bt_candles, period=14)
 
                 # Compute ADX series (always needed for the backtester's trend-strength filter)
-                adx_arr = talib.ADX(highs, lows, closes, timeperiod=14)
-                adx_series = [None if np.isnan(v) else float(v) for v in adx_arr]
+                adx_series = compute_adx_series(bt_candles, period=14)
+
+                # Compute RSI and MACD series for additional backtest filters
+                rsi_series = compute_rsi_series(bt_candles, period=14)
+                _, _, macd_hist_series = compute_macd_series(bt_candles)
             except Exception:
                 pass
 
@@ -10180,6 +10182,9 @@ class TradingEngine:
                 max_unrealized_loss_pct=bt_params.get("max_unrealized_loss_pct"),
                 adx_values=adx_series,
                 min_adx=20.0,
+                rsi_values=rsi_series,
+                max_rsi=70.0,
+                macd_hist_values=macd_hist_series,
                 fee_rate=bt_fee_rate,
                 fee_model="intesa",
                 trade_value=bt_trade_value,

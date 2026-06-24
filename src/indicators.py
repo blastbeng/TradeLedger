@@ -24,12 +24,55 @@ def compute_rsi(closes: List[float], period: int = 14) -> Optional[float]:
     return val if not np.isnan(val) else None
 
 
-def compute_ema(data: List[float], period: int) -> List[float]:
-    """Compute Exponential Moving Average. Returns full-length list with NaN warmup."""
+def compute_ema(data: List[float], period: int) -> List[Optional[float]]:
+    """Compute Exponential Moving Average. Returns full-length list with None warmup."""
     if len(data) < period:
         return []
     result = talib.EMA(np.array(data, dtype=float), timeperiod=period)
-    return result.tolist()
+    return [None if np.isnan(v) else float(v) for v in result]
+
+
+def compute_atr_series(candles: List[List], period: int = 14) -> List[Optional[float]]:
+    """Compute ATR series (full-length list with None warmup)."""
+    if len(candles) < period + 1:
+        return []
+    highs = np.array([c[2] for c in candles], dtype=float)
+    lows = np.array([c[3] for c in candles], dtype=float)
+    closes = np.array([c[4] for c in candles], dtype=float)
+    result = talib.ATR(highs, lows, closes, timeperiod=period)
+    return [None if np.isnan(v) else float(v) for v in result]
+
+
+def compute_adx_series(candles: List[List], period: int = 14) -> List[Optional[float]]:
+    """Compute ADX series (full-length list with None warmup)."""
+    if len(candles) < period + 1:
+        return []
+    highs = np.array([c[2] for c in candles], dtype=float)
+    lows = np.array([c[3] for c in candles], dtype=float)
+    closes = np.array([c[4] for c in candles], dtype=float)
+    result = talib.ADX(highs, lows, closes, timeperiod=period)
+    return [None if np.isnan(v) else float(v) for v in result]
+
+
+def compute_rsi_series(candles: List[List], period: int = 14) -> List[Optional[float]]:
+    """Compute RSI series (full-length list with None warmup)."""
+    if len(candles) < period + 1:
+        return []
+    closes = np.array([c[4] for c in candles], dtype=float)
+    result = talib.RSI(closes, timeperiod=period)
+    return [None if np.isnan(v) else float(v) for v in result]
+
+
+def compute_macd_series(candles: List[List], fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[List[Optional[float]], List[Optional[float]], List[Optional[float]]]:
+    """Compute MACD line, signal line, and histogram series (full-length lists with None warmup)."""
+    if len(candles) < slow + signal:
+        return [], [], []
+    closes = np.array([c[4] for c in candles], dtype=float)
+    macd, macdsignal, macdhist = talib.MACD(closes, fastperiod=fast, slowperiod=slow, signalperiod=signal)
+    m = [None if np.isnan(v) else float(v) for v in macd]
+    s = [None if np.isnan(v) else float(v) for v in macdsignal]
+    h = [None if np.isnan(v) else float(v) for v in macdhist]
+    return m, s, h
 
 
 def compute_stochastic(

@@ -10,6 +10,8 @@ back to the LLM or used as a hard validation gate.
 import logging
 from typing import Dict, Any, Optional, List
 
+from src.indicators import compute_ema
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +53,9 @@ def backtest_strategy(
     cooldown_after_loss_seconds: Optional[int] = None,
     slippage_pct: float = 0.0,
     trend_filter_ema_period: int = 50,
+    rsi_values: Optional[List[Optional[float]]] = None,
+    max_rsi: float = 70.0,
+    macd_hist_values: Optional[List[Optional[float]]] = None,
 ) -> Dict[str, Any]:
     """
     Backtest a long-only strategy on historical OHLCV candles.
@@ -89,12 +94,8 @@ def backtest_strategy(
     # Compute EMA for trend filter
     ema_values = []
     if trend_filter_ema_period > 0 and len(candles) >= trend_filter_ema_period:
-        multiplier = 2 / (trend_filter_ema_period + 1)
-        ema = sum(c[4] for c in candles[:trend_filter_ema_period]) / trend_filter_ema_period
-        ema_values = [None] * (trend_filter_ema_period - 1) + [ema]
-        for idx in range(trend_filter_ema_period, len(candles)):
-            ema = (candles[idx][4] - ema) * multiplier + ema
-            ema_values.append(ema)
+        closes = [c[4] for c in candles]
+        ema_values = compute_ema(closes, trend_filter_ema_period)
 
     while i < len(candles) - 1 and len(trades) < max_trades:
         # Trend filter: only enter if close > EMA
@@ -106,6 +107,18 @@ def backtest_strategy(
         # ADX filter: only enter if trend is strong enough
         if adx_values is not None and min_adx > 0:
             if i >= len(adx_values) or adx_values[i] is None or adx_values[i] < min_adx:
+                i += 1
+                continue
+
+        # RSI filter: don't enter if overbought
+        if rsi_values is not None and max_rsi > 0:
+            if i >= len(rsi_values) or rsi_values[i] is None or rsi_values[i] > max_rsi:
+                i += 1
+                continue
+
+        # MACD filter: only enter if MACD histogram is positive (bullish momentum)
+        if macd_hist_values is not None:
+            if i >= len(macd_hist_values) or macd_hist_values[i] is None or macd_hist_values[i] <= 0:
                 i += 1
                 continue
 
