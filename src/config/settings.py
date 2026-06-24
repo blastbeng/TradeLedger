@@ -137,9 +137,8 @@ class Settings(BaseSettings):
         return v
 
     # Strategy evaluation interval multiplier (medium/long-term)
-    # The base interval is the candle timeframe; this multiplier increases it
-    # to avoid excessive LLM calls. E.g., 4x means 1h candles → 4h interval.
-    STRATEGY_INTERVAL_MULTIPLIER: int = 4
+    # 1 means evaluate every candle period (e.g., 1w → every week, 1M → every month).
+    STRATEGY_INTERVAL_MULTIPLIER: int = 1
 
     # Active period settings – during these windows, the bot evaluates more frequently
     # to catch opening/closing opportunities.

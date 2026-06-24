@@ -4225,6 +4225,8 @@ class TradingEngine:
                 fundamentals=fundamentals,
                 vwap=vwap,
                 daily_pivot_points=daily_pivot_points,
+                min_hold_time_mult=min_hold_time_mult,
+                min_stop_atr_mult=min_stop_atr_mult,
                 min_viable_trade_amount=min_viable_amount,
             )
             logger.info(f"LLM prompt for {symbol}: {len(prompt)} chars")
@@ -10287,6 +10289,15 @@ class TradingEngine:
             if raw: min_viable_amount = float(raw)
         except: pass
 
+        sim_min_hold_time_mult = 1.0
+        sim_min_stop_atr_mult = 1.0
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "trading:min_max_hold_time_mult")
+            if raw: sim_min_hold_time_mult = float(raw)
+            raw = await asyncio.to_thread(self.redis.get, "trading:min_stop_loss_atr_mult")
+            if raw: sim_min_stop_atr_mult = float(raw)
+        except: pass
+
         # --- Emulate _process_symbol context ---
         open_positions = [pos for pos in self.positions.values() if pos.get("symbol") == symbol]
         position_info = self.positions.get(symbol)
@@ -10422,7 +10433,10 @@ class TradingEngine:
             max_portfolio_exposure_pct=max_port_exp, max_portfolio_stop_risk_pct=max_port_risk,
             trade_pattern_analysis=trade_pattern_analysis, symbol_event=symbol_event,
             queued_orders=self.queued_orders, fundamentals=fundamentals, vwap=vwap,
-            daily_pivot_points=daily_pivot_points, min_viable_trade_amount=min_viable_amount,
+            daily_pivot_points=daily_pivot_points,
+            min_hold_time_mult=sim_min_hold_time_mult,
+            min_stop_atr_mult=sim_min_stop_atr_mult,
+            min_viable_trade_amount=min_viable_amount,
         )
 
         # Compute complexity and model tier for perfect emulation
