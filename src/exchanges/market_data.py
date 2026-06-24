@@ -273,7 +273,7 @@ def discover_italian_ucits_etfs() -> List[str]:
         logger.info(f"Discovered {len(base_symbols)} Italian UCITS ETFs matching keywords.")
         # Cache for 24 hours
         try:
-            redis_client.setex(cache_key, 86400, json.dumps(base_symbols))
+            redis_client.set(cache_key, json.dumps(base_symbols), ex=86400)
         except Exception:
             pass
         return base_symbols
@@ -419,7 +419,7 @@ def get_tradable_assets() -> List[str]:
     # Cache the filtered list for 24 hours
     try:
         import json
-        redis_client.setex(cache_key, 86400, json.dumps(filtered))
+        redis_client.set(cache_key, json.dumps(filtered), ex=86400)
     except Exception as e:
         logger.warning(f"Failed to cache tradable assets: {e}")
 
@@ -525,7 +525,7 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 
     # Cache the result for 60 seconds
     try:
-        redis_client.setex(cache_key, 60, json.dumps(result))
+        redis_client.set(cache_key, json.dumps(result), ex=60)
     except Exception:
         pass
 
@@ -580,7 +580,7 @@ def _get_btp_investing_id(isin: str, name: str) -> Optional[int]:
                     investing_id = results[0].get("ticker") or results[0].get("pairId")
                     if investing_id is not None:
                         investing_id = int(investing_id)
-                        redis_client.setex(cache_key, 86400, str(investing_id))
+                        redis_client.set(cache_key, str(investing_id), ex=86400)
                         return investing_id
     except Exception as e:
         logger.warning(f"Search API failed for BTP {isin} ({name}): {e}")
@@ -596,12 +596,12 @@ def _get_btp_investing_id(isin: str, name: str) -> Optional[int]:
                 if isin in a.get_text() or (name and name.lower() in a.get_text().lower()):
                     pair_id = a.get("data-pair-id")
                     if pair_id:
-                        redis_client.setex(cache_key, 86400, str(pair_id))
+                        redis_client.set(cache_key, str(pair_id), ex=86400)
                         return int(pair_id)
             # Alternative: look for any element with data-pair-id on the page
             for tag in soup.find_all(attrs={"data-pair-id": True}):
                 pair_id = tag["data-pair-id"]
-                redis_client.setex(cache_key, 86400, str(pair_id))
+                redis_client.set(cache_key, str(pair_id), ex=86400)
                 return int(pair_id)
     except Exception as e:
         logger.warning(f"Fallback scrape failed for BTP {isin}: {e}")
@@ -1047,7 +1047,7 @@ def get_multi_timeframe_bars(
             result[tf] = candles
             if candles:
                 try:
-                    redis_client.setex(cache_key, cache_ttl, json.dumps(candles))
+                    redis_client.set(cache_key, json.dumps(candles), ex=cache_ttl)
                 except Exception:
                     pass
             continue
@@ -1069,7 +1069,7 @@ def get_multi_timeframe_bars(
                 result[tf] = candles[-limit:]
                 if candles:
                     try:
-                        redis_client.setex(cache_key, cache_ttl, json.dumps(candles[-limit:]))
+                        redis_client.set(cache_key, json.dumps(candles[-limit:]), ex=cache_ttl)
                     except Exception:
                         pass
             else:
@@ -1090,7 +1090,7 @@ def get_multi_timeframe_bars(
                 result[tf] = fallback if fallback is not None else []
                 if fallback:
                     try:
-                        redis_client.setex(cache_key, cache_ttl, json.dumps(fallback))
+                        redis_client.set(cache_key, json.dumps(fallback), ex=cache_ttl)
                     except Exception:
                         pass
         except Exception as e:
@@ -1112,7 +1112,7 @@ def get_multi_timeframe_bars(
                 result[tf] = fallback if fallback is not None else []
                 if fallback:
                     try:
-                        redis_client.setex(cache_key, cache_ttl, json.dumps(fallback))
+                        redis_client.set(cache_key, json.dumps(fallback), ex=cache_ttl)
                     except Exception:
                         pass
             except Exception:
@@ -1152,7 +1152,7 @@ def get_bars_range(
         candles = _fetch_btp_candles(symbol, name, timeframe, from_date, to_date, limit)
         if candles:
             try:
-                redis_client.setex(cache_key, 300, json.dumps(candles))
+                redis_client.set(cache_key, json.dumps(candles), ex=300)
             except Exception:
                 pass
         return candles
@@ -1190,7 +1190,7 @@ def get_bars_range(
             result = candles[-limit:]
             if result:
                 try:
-                    redis_client.setex(cache_key, 300, json.dumps(result))
+                    redis_client.set(cache_key, json.dumps(result), ex=300)
                 except Exception:
                     pass
             return result
@@ -1199,7 +1199,7 @@ def get_bars_range(
         if fallback is not None:
             if fallback:
                 try:
-                    redis_client.setex(cache_key, 300, json.dumps(fallback))
+                    redis_client.set(cache_key, json.dumps(fallback), ex=300)
                 except Exception:
                     pass
             return fallback
@@ -1212,7 +1212,7 @@ def get_bars_range(
             if fallback is not None:
                 if fallback:
                     try:
-                        redis_client.setex(cache_key, 300, json.dumps(fallback))
+                        redis_client.set(cache_key, json.dumps(fallback), ex=300)
                     except Exception:
                         pass
                 return fallback
@@ -1296,7 +1296,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
             break
 
     try:
-        redis_client.setex(cache_key, 300, json.dumps(bonds))  # Cache for 5 minutes
+        redis_client.set(cache_key, json.dumps(bonds), ex=300)  # Cache for 5 minutes
     except Exception as e:
         logger.warning(f"Failed to cache BTP bonds: {e}")
 
