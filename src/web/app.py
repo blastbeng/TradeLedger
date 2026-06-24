@@ -438,6 +438,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     except Exception:
                         is_paused = False
 
+                    market_open = await engine._is_market_open()
+
                     payload = {
                         "current_symbols": current_symbols,
                         "positions": positions,
@@ -447,6 +449,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "paused": is_paused,
                         "pause_info": pause_info,
                         "queued_orders": queued_orders_payload,
+                        "market_open": market_open,
                     }
                     _ws_payload_cache = payload
                     _ws_payload_cache_time = now
