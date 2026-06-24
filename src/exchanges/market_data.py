@@ -107,21 +107,38 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
             # Flatten multi‑level column names
             if isinstance(table.columns, pd.MultiIndex):
                 table.columns = [' '.join(col).strip() for col in table.columns.values]
-            # Try to find a ticker column
+            
+            # Try to find a ticker column by name
             ticker_col = None
             for col in table.columns:
                 col_str = str(col).lower()
-                if any(kw in col_str for kw in ("ticker", "symbol", "code", "isin", "simbolo", "codice")):
+                if any(kw in col_str for kw in ("ticker", "symbol", "code", "isin", "simbolo", "codice", "yahoo", "borsa")):
                     ticker_col = col
                     break
+            
             if ticker_col is None:
                 # Last resort: look for a column whose values look like tickers
                 for col in table.columns:
-                    sample = table[col].dropna().astype(str).head(10).tolist()
-                    # Match typical ticker patterns like ENI, ENI.MI, etc. (avoid ISINs)
-                    if all(re.match(r'^[A-Z0-9]{1,6}(\.[A-Z]{2})?$', s) for s in sample):
+                    sample = table[col].dropna().astype(str).head(20).tolist()
+                    if not sample:
+                        continue
+                    
+                    ticker_like = 0
+                    non_empty = 0
+                    for s in sample:
+                        s_clean = s.strip().upper()
+                        if not s_clean:
+                            continue
+                        non_empty += 1
+                        # Match typical ticker patterns like ENI, ENI.MI, etc. (avoid ISINs)
+                        if re.match(r'^[A-Z0-9]{1,10}(\.[A-Z]{2})?$', s_clean):
+                            ticker_like += 1
+                    
+                    # If at least 60% of non-empty values look like tickers, use this column
+                    if non_empty > 0 and ticker_like >= non_empty * 0.6:
                         ticker_col = col
                         break
+            
             if ticker_col is not None:
                 tickers = table[ticker_col].dropna().astype(str).tolist()
                 base_symbols = []
@@ -130,9 +147,12 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
                     # Skip ISINs (e.g., IT0001233417)
                     if re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", t):
                         continue
+                    # Remove any text after a space or parenthesis (e.g., "ENI.MI (ENI)")
+                    t = re.split(r'[\s(]', t)[0]
                     base = t.split(".")[0] if "." in t else t
                     if re.match(r"^[A-Z0-9]+$", base):
                         base_symbols.append(base)
+                
                 if base_symbols:
                     logger.info(f"Discovered {len(base_symbols)} {index_name} tickers from {url}")
                     return base_symbols
