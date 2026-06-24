@@ -433,7 +433,7 @@
             </div>
 
             <div class="card card-full">
-                <h2>🧪 Simulation Lab <button id="btn-force-download" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">⬇️ Force Download</button></h2>
+                <h2>🧪 Simulation Lab <button id="btn-force-download" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">⬇️ Download Market Data</button></h2>
                 <div class="table-wrapper">
                     <table id="simulation-table">
                         <thead><tr><th>Ticker</th><th>Timeframe</th><th>Actions</th></tr></thead>
@@ -1229,7 +1229,7 @@
             fetch('/api/force-download', { method: 'POST' })
                 .then(res => res.json())
                 .then(data => {
-                    showToast(data.status || 'Force download triggered.');
+                    showToast(data.status || 'Market data download triggered.');
                     btn.textContent = originalText;
                     btn.disabled = false;
                 })
