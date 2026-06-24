@@ -2243,39 +2243,29 @@ class TradingEngine:
                 }
 
 
-        # Fetch OHLCV for ALL candidate pairs (Stocks, ETFs, BTPs) so indicators are available for the LLM
+        # Fetch OHLCV from database only for ALL candidate pairs.
+        # Background tasks (_download_all_assets_data_loop) keep the DB populated.
+        # This avoids blocking reevaluation on slow API calls.
         sorted_by_vol = sample_pairs
 
-        # Fetch multi-timeframe OHLCV for these stocks
         ohlcv_data = {}
         if settings.OHLCV_TIMEFRAMES:
-            async def fetch_ohlcv_for_symbol(sym):
-                async with self._exchange_semaphore:
+            async def fetch_ohlcv_from_db(sym):
+                data = {}
+                for tf in settings.OHLCV_TIMEFRAMES:
                     try:
-                        data = await asyncio.to_thread(
-                            get_multi_timeframe_bars, sym.split("/")[0], settings.OHLCV_TIMEFRAMES, limit=50
+                        db_candles = await asyncio.to_thread(
+                            get_ohlcv, sym, tf, limit=50
                         )
+                        if db_candles:
+                            data[tf] = [
+                                [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
+                                for c in db_candles
+                            ]
                     except Exception as e:
-                        logger.warning(f"OHLCV fetch failed for {sym}: {e}")
-                        data = {}
-                    # Fallback to database for any empty timeframes
-                    for tf in settings.OHLCV_TIMEFRAMES:
-                        if tf not in data or not data[tf]:
-                            try:
-                                db_candles = await asyncio.to_thread(
-                                    get_ohlcv, sym, tf, limit=50
-                                )
-                                if db_candles:
-                                    data[tf] = [
-                                        [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                                        for c in db_candles
-                                    ]
-                            except Exception as e:
-                                logger.debug(f"DB fallback for {sym} {tf} failed: {e}")
-                    return sym, data
-            shuffled_for_ohlcv = list(sorted_by_vol)
-            random.shuffle(shuffled_for_ohlcv)
-            tasks = [fetch_ohlcv_for_symbol(sym) for sym in shuffled_for_ohlcv]
+                        logger.debug(f"DB OHLCV fetch failed for {sym} {tf}: {e}")
+                return sym, data
+            tasks = [fetch_ohlcv_from_db(sym) for sym in sorted_by_vol]
             results = await asyncio.gather(*tasks)
             ohlcv_data = dict(results)
 
@@ -3905,45 +3895,39 @@ class TradingEngine:
                 )
                 return
 
-            # Fetch OHLCV for the symbol's assigned timeframe
+            # Fetch OHLCV from database first (background tasks keep it populated).
+            # Only fall back to API if DB has no data for the assigned timeframe.
             ohlcv_data = {}
             if settings.OHLCV_TIMEFRAMES:
-                try:
-                    async with self._exchange_semaphore:
-                        ohlcv_data = await asyncio.to_thread(
-                            get_multi_timeframe_bars, symbol.split("/")[0], settings.OHLCV_TIMEFRAMES, limit=100
-                        )
-                except Exception as e:
-                    logger.warning(f"OHLCV fetch failed for {symbol}: {e}")
-
-            # --- Fallback: if API returned no data for the assigned timeframe, load from DB ---
-            if assigned_tf not in ohlcv_data or not ohlcv_data[assigned_tf]:
-                logger.info(
-                    f"API OHLCV empty for {symbol} {assigned_tf}, falling back to database."
-                )
-                db_candles = await asyncio.to_thread(
-                    get_ohlcv, symbol, assigned_tf, limit=100
-                )
-                if db_candles:
-                    # Convert list of dicts to list of lists [ts, o, h, l, c, v]
-                    ohlcv_data[assigned_tf] = [
-                        [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                        for c in db_candles
-                    ]
-                    logger.info(
-                        f"Loaded {len(ohlcv_data[assigned_tf])} candles from DB for {symbol} {assigned_tf}"
-                    )
-                # Optionally, also try to fill other timeframes from DB if they are missing
                 for tf in settings.OHLCV_TIMEFRAMES:
-                    if tf == assigned_tf:
-                        continue
-                    if tf not in ohlcv_data or not ohlcv_data[tf]:
-                        tf_db = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
-                        if tf_db:
+                    try:
+                        db_candles = await asyncio.to_thread(
+                            get_ohlcv, symbol, tf, limit=100
+                        )
+                        if db_candles:
                             ohlcv_data[tf] = [
                                 [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                                for c in tf_db
+                                for c in db_candles
                             ]
+                    except Exception as e:
+                        logger.debug(f"DB OHLCV fetch failed for {symbol} {tf}: {e}")
+
+                # Fallback to API only if DB has no data for the assigned timeframe
+                if assigned_tf not in ohlcv_data or not ohlcv_data[assigned_tf]:
+                    logger.info(
+                        f"DB OHLCV empty for {symbol} {assigned_tf}, falling back to API."
+                    )
+                    try:
+                        async with self._exchange_semaphore:
+                            api_data = await asyncio.to_thread(
+                                get_multi_timeframe_bars, symbol.split("/")[0], settings.OHLCV_TIMEFRAMES, limit=100
+                            )
+                        for tf in settings.OHLCV_TIMEFRAMES:
+                            if tf not in ohlcv_data or not ohlcv_data[tf]:
+                                if tf in api_data and api_data[tf]:
+                                    ohlcv_data[tf] = api_data[tf]
+                    except Exception as e:
+                        logger.warning(f"API OHLCV fallback failed for {symbol}: {e}")
 
             # --- Skip if no meaningful market data is available ---
             # If we have no OHLCV candles at all, there is nothing for the LLM to analyse.
@@ -7943,14 +7927,11 @@ class TradingEngine:
         elif etype == "rsi_threshold":
             target_rsi = condition["rsi_below"]
             try:
-                async with self._exchange_semaphore:
-                    ohlcv = await asyncio.to_thread(
-                        get_multi_timeframe_bars, symbol.split("/")[0], [timeframe], limit=50
-                    )
+                db_candles = await asyncio.to_thread(get_ohlcv, symbol, timeframe, limit=50)
             except Exception:
                 return False
-            if timeframe in ohlcv and ohlcv[timeframe]:
-                candles = ohlcv[timeframe]
+            if db_candles:
+                candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                 rsi = compute_rsi([c[4] for c in candles])
                 return rsi is not None and rsi <= target_rsi
             return False
@@ -7964,14 +7945,11 @@ class TradingEngine:
         elif etype == "indicator_combo":
             conditions = condition["conditions"]
             try:
-                async with self._exchange_semaphore:
-                    ohlcv = await asyncio.to_thread(
-                        get_multi_timeframe_bars, symbol.split("/")[0], [timeframe], limit=50
-                    )
+                db_candles = await asyncio.to_thread(get_ohlcv, symbol, timeframe, limit=50)
             except Exception:
                 return False
-            if timeframe in ohlcv and ohlcv[timeframe]:
-                candles = ohlcv[timeframe]
+            if db_candles:
+                candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                 closes = [c[4] for c in candles]
                 for cond in conditions:
                     ind = cond["indicator"]
@@ -10251,18 +10229,27 @@ class TradingEngine:
 
         ohlcv_data = {}
         if settings.OHLCV_TIMEFRAMES:
-            try:
-                async with self._exchange_semaphore:
-                    ohlcv_data = await asyncio.to_thread(
-                        get_multi_timeframe_bars, base_symbol, settings.OHLCV_TIMEFRAMES, limit=100
-                    )
-            except Exception:
-                pass
+            # Fetch from database first (background tasks keep it populated)
             for tf in settings.OHLCV_TIMEFRAMES:
-                if tf not in ohlcv_data or not ohlcv_data[tf]:
+                try:
                     db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
                     if db_candles:
                         ohlcv_data[tf] = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+                except Exception:
+                    pass
+            # Fallback to API only if DB has no data for the assigned timeframe
+            if assigned_tf not in ohlcv_data or not ohlcv_data[assigned_tf]:
+                try:
+                    async with self._exchange_semaphore:
+                        api_data = await asyncio.to_thread(
+                            get_multi_timeframe_bars, base_symbol, settings.OHLCV_TIMEFRAMES, limit=100
+                        )
+                    for tf in settings.OHLCV_TIMEFRAMES:
+                        if tf not in ohlcv_data or not ohlcv_data[tf]:
+                            if tf in api_data and api_data[tf]:
+                                ohlcv_data[tf] = api_data[tf]
+                except Exception:
+                    pass
 
         # Fetch indicator config from position if exists
         ind_cfg = self.positions.get(symbol, {}).get('indicator_config') if symbol in self.positions else None
