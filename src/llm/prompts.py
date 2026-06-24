@@ -1495,14 +1495,27 @@ def build_final_decision_prompt(
     symbol: str,
     ticker: Dict[str, Any],
     preliminary_decision: Dict[str, Any],
-    backtest_stats: Dict[str, Any],
-    backtest_summary: str,
+    backtest_results: List[Dict[str, Any]],
     base_currency: str,
     trading_paused: bool = False,
     step1_prompt: str = "",
 ) -> str:
     """Build a prompt to ask the LLM for its final decision after reviewing backtest results."""
     current_price = ticker.get("last") if ticker else None
+
+    # Build a combined backtest results section showing ALL variants
+    backtest_sections = []
+    for i, bt_result in enumerate(backtest_results):
+        variant_params = bt_result.get("variant_params", {})
+        bt_summary = bt_result.get("summary", "No backtest summary available.")
+        bt_stats = bt_result.get("stats", {})
+        backtest_sections.append(
+            f"**Variant {i+1}:**\n"
+            f"Parameters: {json.dumps(variant_params, indent=2)}\n"
+            f"Summary: {bt_summary}\n"
+            f"Full statistics: {json.dumps(bt_stats, indent=2)}\n"
+        )
+    all_backtests_text = "\n".join(backtest_sections)
 
     prompt = f"""**Step 2: Final Trading Decision**
 
@@ -1519,17 +1532,17 @@ Base currency: {base_currency}
 - Reasoning: {preliminary_decision.get("reasoning", "")}
 - Proposed Strategy Parameters: {json.dumps(preliminary_decision.get("strategy_params", {}), indent=2)}
 
-**Local Python Backtest Results (using your proposed parameters):**
-{backtest_summary}
-Full statistics: {json.dumps(backtest_stats, indent=2)}
+**Local Python Backtest Results ({len(backtest_results)} variant(s) tested):**
+{all_backtests_text}
 
-Based on the backtest results above, make your final trading decision. 
-If the backtest shows poor performance (e.g., negative total P&L, low win rate, high drawdown), you should reconsider and likely output HOLD or adjust your parameters.
-If the backtest confirms your strategy is viable, output your final action (BUY, SELL, or HOLD).
+You have received the results of ALL {len(backtest_results)} backtest variant(s) above. 
+Compare the variants and choose the best-performing one (or combine insights from multiple variants) to inform your final decision.
+If ALL backtests show poor performance (e.g., negative total P&L, low win rate, high drawdown), you should reconsider and likely output HOLD or adjust your parameters.
+If ANY backtest variant confirms a strategy is viable, you may output your final action (BUY, SELL, or HOLD) using the best-performing variant's parameters.
 """
     prompt += (
-        f"\n**Backtest Period:** The backtest was run using {preliminary_decision.get('strategy_params', {}).get('backtest_period_days', 'all available')} "
-        f"days of historical data on the {preliminary_decision.get('timeframe', 'assigned')} timeframe.\n"
+        f"\n**Backtest Period:** The backtests were run using historical data on the {preliminary_decision.get('timeframe', 'assigned')} timeframe. "
+        f"Each variant may have used a different `backtest_period_days` value (see individual variant parameters above).\n"
     )
     prompt += (
         "**Output ONLY the raw JSON object as specified.**\n"
