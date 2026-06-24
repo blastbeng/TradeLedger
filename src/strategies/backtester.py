@@ -41,6 +41,8 @@ def backtest_strategy(
     stop_loss_atr_multiple: Optional[float] = None,
     take_profit_atr_multiple: Optional[float] = None,
     max_unrealized_loss_pct: Optional[float] = None,
+    adx_values: Optional[List[Optional[float]]] = None,
+    min_adx: float = 20.0,
     fee_rate: float = 0.0,
     fee_model: str = "flat",
     trade_value: Optional[float] = None,
@@ -98,6 +100,12 @@ def backtest_strategy(
         # Trend filter: only enter if close > EMA
         if trend_filter_ema_period > 0 and ema_values:
             if i >= len(ema_values) or ema_values[i] is None or candles[i][4] <= ema_values[i]:
+                i += 1
+                continue
+
+        # ADX filter: only enter if trend is strong enough
+        if adx_values is not None and min_adx > 0:
+            if i >= len(adx_values) or adx_values[i] is None or adx_values[i] < min_adx:
                 i += 1
                 continue
 

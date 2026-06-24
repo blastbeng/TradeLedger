@@ -10140,6 +10140,7 @@ class TradingEngine:
             bt_fee_rate = 0.006
 
         atr_series = None
+        adx_series = None
         if (bt_params.get("trailing_stop_atr_multiple") or bt_sl_atr_mult or bt_tp_atr_mult) and bt_candles and len(bt_candles) >= 15:
             try:
                 import numpy as np
@@ -10149,6 +10150,19 @@ class TradingEngine:
                 closes = np.array([c[4] for c in bt_candles], dtype=float)
                 atr_arr = talib.ATR(highs, lows, closes, timeperiod=14)
                 atr_series = [None if np.isnan(v) else float(v) for v in atr_arr]
+            except Exception:
+                pass
+
+        # Compute ADX series for the backtester's trend-strength filter
+        if bt_candles and len(bt_candles) >= 15:
+            try:
+                import numpy as np
+                import talib
+                highs = np.array([c[2] for c in bt_candles], dtype=float)
+                lows = np.array([c[3] for c in bt_candles], dtype=float)
+                closes = np.array([c[4] for c in bt_candles], dtype=float)
+                adx_arr = talib.ADX(highs, lows, closes, timeperiod=14)
+                adx_series = [None if np.isnan(v) else float(v) for v in adx_arr]
             except Exception:
                 pass
 
@@ -10170,6 +10184,8 @@ class TradingEngine:
                 trailing_stop_atr_multiple=bt_params.get("trailing_stop_atr_multiple"),
                 atr_values=atr_series,
                 max_unrealized_loss_pct=bt_params.get("max_unrealized_loss_pct"),
+                adx_values=adx_series,
+                min_adx=20.0,
                 fee_rate=bt_fee_rate,
                 fee_model="intesa",
                 trade_value=bt_trade_value,
