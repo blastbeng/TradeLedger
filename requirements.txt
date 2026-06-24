@@ -20,3 +20,4 @@ lxml>=4.9.0
 git+https://github.com/TA-Lib/ta-lib-python.git
 git+https://github.com/jerbouma/FinanceDatabase.git
 beautifulsoup4>=4.12.0
+curl_cffi>=0.6.0

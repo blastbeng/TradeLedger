@@ -15,6 +15,24 @@ from src.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
+
+def _get_yf_session():
+    """Return a curl_cffi session that impersonates Chrome for yfinance requests.
+
+    Yahoo Finance increasingly blocks requests that don't look like a real
+    browser.  curl_cffi can impersonate Chrome's TLS fingerprint, which
+    avoids 401/429 responses.
+    """
+    try:
+        from curl_cffi import requests as curl_requests
+        return curl_requests.Session(impersonate="chrome")
+    except ImportError:
+        logger.warning("curl_cffi not installed – yfinance requests may be blocked.")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to create curl_cffi session: {e}")
+        return None
+
 # Map our timeframe strings to yfinance interval strings
 TIMEFRAME_MAP = {
     "1h": "60m",
@@ -47,7 +65,7 @@ def _fetch_country(symbol: str, max_retries: int = 2) -> Optional[str]:
     import time as _time
     for attempt in range(max_retries + 1):
         try:
-            ticker = yf.Ticker(symbol)
+            ticker = yf.Ticker(symbol, session=_get_yf_session())
             info = ticker.info
             country = info.get("country")
             if country:
@@ -420,7 +438,7 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         chunk = stock_symbols[i:i+chunk_size]
         try:
             # Fetch intraday data for latest price and volume
-            intraday = yf.download(chunk, period="1d", interval="5m", progress=False, group_by='column')
+            intraday = yf.download(chunk, period="1d", interval="5m", progress=False, group_by='column', session=_get_yf_session())
             if not intraday.empty:
                 last_row = intraday.iloc[-1]
                 for sym in chunk:
@@ -443,7 +461,7 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 
         try:
             # Fetch daily data for previous close to calculate change_24h
-            daily = yf.download(chunk, period="2d", interval="1d", progress=False, group_by='column')
+            daily = yf.download(chunk, period="2d", interval="1d", progress=False, group_by='column', session=_get_yf_session())
             if not daily.empty:
                 for sym in chunk:
                     try:
@@ -723,7 +741,7 @@ def get_multi_timeframe_bars(
             result[tf] = candles
             continue
         try:
-            ticker = yf.Ticker(yf_symbol)
+            ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
             # yfinance intraday data is limited to 60 days
             # For daily and longer timeframes, use "max" to get all available history (medium/long-term)
             period = "60d" if interval in ("5m", "15m", "60m") else "max"
@@ -777,7 +795,7 @@ def get_bars_range(
     start_dt = datetime.fromtimestamp(start_ms / 1000.0, tz=timezone.utc)
     end_dt = datetime.now(timezone.utc)
     try:
-        ticker = yf.Ticker(yf_symbol)
+        ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
         hist = ticker.history(start=start_dt, end=end_dt, interval=interval)
         if not hist.empty:
             # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
