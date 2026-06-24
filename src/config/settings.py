@@ -19,19 +19,6 @@ class Settings(BaseSettings):
     # Paper trading initial balance (only used in paper mode)
     PAPER_INITIAL_BALANCE: float = 10000.0
 
-    # DEPRECATED: The LLM now always decides the position size based on all
-    # available parameters (ATR, confidence, sentiment, fees, backtest results, etc.).
-    # This setting is no longer used as a hard engine override.
-    # Use the LLM's max_risk_per_trade_pct parameter to control risk per trade.
-    RISK_PER_TRADE_PCT: float = 1.0
-
-    @field_validator("RISK_PER_TRADE_PCT")
-    @classmethod
-    def validate_risk_per_trade_pct(cls, v: float) -> float:
-        if not (0.0 < v <= 1.0):
-            raise ValueError("RISK_PER_TRADE_PCT must be between 0.0 and 1.0")
-        return v
-
     # Risk management check interval (seconds) – stop-loss/take-profit checks
     RISK_CHECK_INTERVAL_SECONDS: int = 120
 

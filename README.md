@@ -95,7 +95,6 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `LOG_LEVEL` | Logging level | `INFO` |
 | `OHLCV_TIMEFRAMES` | List of timeframes to fetch | `["1w", "1M", "1d", "1h"]` |
 | `OHLCV_RETENTION_DAYS` | Days of historical OHLCV data to keep | `30` |
-| `RISK_PER_TRADE_PCT` | Percentage of balance to risk per trade | `1.0` |
 | `NEWS_ENABLED` | Enable news fetching and sentiment | `false` |
 | `BTP_FEE_PERC` | Fee percentage for BTP trades | `0.0024` |
 | `BTP_MIN_FEE` | Minimum fee for BTP trades | `3.50` |
