@@ -493,9 +493,22 @@ class TradingEngine:
                 # Check if trading is paused
                 paused = await asyncio.to_thread(self.redis.get, "trading:paused")
                 if paused and not self._force_reeval:
-                    # Only run the pause/resume decision, skip stock selection
-                    logger.info("Trading is paused, running pause/resume decision.")
-                    await self._check_pause_resume_decision()
+                    source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
+                    source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
+                    if source == "llm":
+                        # LLM-initiated pause – ask LLM whether to resume
+                        logger.info("Trading is paused (LLM), running pause/resume decision.")
+                        await self._check_pause_resume_decision()
+                    elif source == "market_closed":
+                        # Market closed – still reevaluate symbols so they're ready when market opens
+                        logger.info("Market is closed, running symbol re-evaluation to prepare for market open.")
+                        is_forced = self._force_reeval
+                        self._force_reeval = False
+                        await self._reevaluate_symbols(force=is_forced)
+                        logger.info("Symbol re-evaluation complete.")
+                    else:
+                        # Manual pause – skip re-evaluation
+                        logger.info("Trading is manually paused, skipping re-evaluation.")
                 else:
                     logger.info("Starting symbol re-evaluation...")
                     is_forced = self._force_reeval
@@ -3294,17 +3307,20 @@ class TradingEngine:
         # The LLM may have just set pause_trading = true, so re-read Redis.
         paused_now = await asyncio.to_thread(self.redis.get, "trading:paused")
         if paused_now and paused_now == "1" and not force:
-            open_symbols = set(self.positions.keys())
-            before_count = len(self.current_symbols)
-            self.current_symbols = [c for c in self.current_symbols if c["symbol"] in open_symbols]
-            removed = before_count - len(self.current_symbols)
-            if removed > 0:
-                logger.info(
-                    "Trading paused: removed %d symbol(s) without open positions. "
-                    "Remaining: %s",
-                    removed,
-                    [c["symbol"] for c in self.current_symbols],
-                )
+            pause_source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
+            pause_source = pause_source_raw.decode() if isinstance(pause_source_raw, bytes) else (pause_source_raw or "")
+            if pause_source != "market_closed":
+                open_symbols = set(self.positions.keys())
+                before_count = len(self.current_symbols)
+                self.current_symbols = [c for c in self.current_symbols if c["symbol"] in open_symbols]
+                removed = before_count - len(self.current_symbols)
+                if removed > 0:
+                    logger.info(
+                        "Trading paused: removed %d symbol(s) without open positions. "
+                        "Remaining: %s",
+                        removed,
+                        [c["symbol"] for c in self.current_symbols],
+                    )
 
         # Update symbol tenure tracking
         now_ts = time.time()
@@ -3436,9 +3452,8 @@ class TradingEngine:
         if not self.current_symbols:
             self._symbol_reevaluation_interval = max(MIN_SYMBOL_REEVALUATION_INTERVAL, 600)  # 10 minutes
             logger.info(f"No symbols selected – next re‑evaluation in {self._symbol_reevaluation_interval}s")
-        else:
-            # Restore the default (or LLM‑defined) interval
-            self._symbol_reevaluation_interval = SYMBOL_REEVALUATION_INTERVAL
+        # else: keep the current interval (may have been set by LLM via
+        # stock_revaluation_interval_seconds, or the default SYMBOL_REEVALUATION_INTERVAL)
 
         await asyncio.to_thread(self.redis.set, last_key, now)
 
