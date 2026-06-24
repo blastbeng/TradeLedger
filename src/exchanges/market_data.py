@@ -30,6 +30,16 @@ INVESTINY_TIMEFRAME_MAP = {
     "1M": "M",
 }
 
+# Mapping of common BTP ISINs to their Investing.com numerical pairId.
+# These are used as a fast cache; if an ISIN is not found here, the dynamic
+# search API is used.  The engineer must fill in correct IDs.
+BTP_ID_MAP: Dict[str, int] = {
+    # Example entries – replace with verified IDs
+    # "IT0001086567": 172,   # BTP 10Y (generic yield, not a specific bond)
+    # "IT0005386245": 12345, # BTP 1FB25 3.85%
+    # "IT0005416570": 12346, # BTP 1MZ26 3.60%
+}
+
 def _fetch_country(symbol: str) -> Optional[str]:
     """Fetch the country property from yfinance info for a symbol."""
     try:
@@ -438,6 +448,10 @@ def _get_btp_name(isin: str) -> str:
 
 def _get_btp_investing_id(isin: str, name: str) -> Optional[int]:
     """Search and cache the Investing.com ID for a BTP using a direct HTTP call."""
+    # 1. Check static map
+    if isin in BTP_ID_MAP:
+        return BTP_ID_MAP[isin]
+
     redis_client = get_redis_client()
     cache_key = f"investing_id:{isin}"
     try:
@@ -470,59 +484,138 @@ def _get_btp_investing_id(isin: str, name: str) -> Optional[int]:
         logger.warning(f"Failed to get investing_id for BTP {isin} ({name}): {e}")
     return None
 
-def _fetch_btp_candles(isin: str, name: str, timeframe: str, from_date: datetime, to_date: datetime, limit: int) -> List[List[float]]:
+def get_btp_candles(
+    investing_id: int,
+    from_date: str,
+    to_date: str,
+    interval: str = "D",
+) -> pd.DataFrame:
+    """
+    Fetch BTP OHLCV candles from Investing.com's internal charting API.
+
+    Args:
+        investing_id: Numerical pairId on Investing.com.
+        from_date: Start date as 'DD/MM/YYYY' or 'YYYY-MM-DD'.
+        to_date: End date as 'DD/MM/YYYY' or 'YYYY-MM-DD'.
+        interval: Resolution (default 'D' for daily). Use keys from
+                  INVESTINY_TIMEFRAME_MAP (e.g., '1H', 'D', 'W', 'M').
+
+    Returns:
+        pd.DataFrame with DatetimeIndex named 'Date' and columns
+        Open, High, Low, Close, Volume.  Empty DataFrame if no data.
+    """
+    # --- Parse dates -------------------------------------------------
+    def _parse_date(s: str) -> datetime:
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        raise ValueError(f"Unsupported date format: {s}")
+
+    try:
+        start_dt = _parse_date(from_date)
+        end_dt = _parse_date(to_date)
+    except ValueError as e:
+        logger.warning(f"Date parsing error in get_btp_candles: {e}")
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+
+    # --- Map interval to Investing.com resolution --------------------
+    resolution = INVESTINY_TIMEFRAME_MAP.get(interval)
+    if not resolution:
+        logger.warning(f"Unsupported interval: {interval}")
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+
+    # --- Call the API ------------------------------------------------
+    url = "https://tvc6.investing.com/history"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    params = {
+        "symbol": investing_id,
+        "resolution": resolution,
+        "from": int(start_dt.timestamp()),
+        "to": int(end_dt.timestamp()),
+    }
+
+    try:
+        response = httpx.get(url, params=params, timeout=15.0, headers=headers)
+        if response.status_code != 200:
+            logger.warning(f"Investing.com API returned {response.status_code} for id {investing_id}")
+            return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+        data = response.json()
+    except Exception as e:
+        logger.warning(f"Failed to fetch candles for id {investing_id}: {e}")
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+
+    # --- Build DataFrame --------------------------------------------
+    timestamps = data.get("t", [])
+    opens = data.get("o", [])
+    highs = data.get("h", [])
+    lows = data.get("l", [])
+    closes = data.get("c", [])
+    volumes = data.get("v", [])
+
+    if not timestamps:
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+
+    # Convert timestamps (seconds) to datetime
+    dates = pd.to_datetime(timestamps, unit="s", utc=True)
+
+    df = pd.DataFrame({
+        "Open":   [float(o) if o is not None else None for o in opens],
+        "High":   [float(h) if h is not None else None for h in highs],
+        "Low":    [float(l) if l is not None else None for l in lows],
+        "Close":  [float(c) if c is not None else None for c in closes],
+        "Volume": [int(v)   if v is not None else 0     for v in volumes],
+    }, index=dates)
+
+    df.index.name = "Date"
+    # Drop rows where all OHLC are NaN (optional, but keeps data clean)
+    df.dropna(subset=["Open", "High", "Low", "Close"], how="all", inplace=True)
+    return df
+
+def _fetch_btp_candles(
+    isin: str, name: str, timeframe: str,
+    from_date: datetime, to_date: datetime, limit: int
+) -> List[List[float]]:
+    """Fetch BTP candles using Investing.com API, returning list of [ts_ms, o, h, l, c, v]."""
+    investing_id = _get_btp_investing_id(isin, name)
+    if not investing_id:
+        return []
+
+    # Convert datetimes to string format expected by get_btp_candles
+    from_str = from_date.strftime("%Y-%m-%d")
+    to_str   = to_date.strftime("%Y-%m-%d")
+
+    # Map our timeframe to investiny interval
+    interval = INVESTINY_TIMEFRAME_MAP.get(timeframe)
+    if not interval:
+        logger.warning(f"Unsupported timeframe for BTP: {timeframe}")
+        return []
+
+    df = get_btp_candles(investing_id, from_str, to_str, interval=interval)
+    if df.empty:
+        return []
+
+    # Convert DataFrame to list of lists
+    candles = []
+    for idx, row in df.iterrows():
+        ts_ms = int(idx.timestamp() * 1000)
+        candles.append([
+            ts_ms,
+            row["Open"],
+            row["High"],
+            row["Low"],
+            row["Close"],
+            int(row["Volume"]),
+        ])
+    return candles[-limit:]
     """Fetch BTP candles using a direct HTTP call to Investing.com."""
     investing_id = _get_btp_investing_id(isin, name)
     if not investing_id:
         return []
 
-    interval = INVESTINY_TIMEFRAME_MAP.get(timeframe)
-    if not interval:
-        logger.warning(f"Unsupported timeframe for investiny: {timeframe}")
-        return []
-
-    try:
-        # investiny uses https://tvc6.investing.com/history
-        url = "https://tvc6.investing.com/history"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        logger.info(f"Fetching BTP history for {isin} {timeframe} from Investing.com")
-        params = {
-            "symbol": investing_id,
-            "resolution": interval,
-            "from": int(from_date.timestamp()),
-            "to": int(to_date.timestamp()),
-        }
-        response = httpx.get(url, params=params, timeout=15.0, headers=headers)
-        if response.status_code != 200:
-            logger.warning(f"Failed to fetch BTP candles for {isin} {timeframe}: HTTP {response.status_code}")
-            return []
-
-        data = response.json()
-
-        candles = []
-        # The API returns arrays for 't' (timestamp), 'o', 'h', 'l', 'c', 'v'
-        timestamps = data.get("t", [])
-        opens = data.get("o", [])
-        highs = data.get("h", [])
-        lows = data.get("l", [])
-        closes = data.get("c", [])
-        volumes = data.get("v", [])
-
-        for i in range(len(timestamps)):
-            ts = int(timestamps[i]) * 1000
-            o = float(opens[i]) if i < len(opens) else 0.0
-            h = float(highs[i]) if i < len(highs) else 0.0
-            l = float(lows[i]) if i < len(lows) else 0.0
-            c = float(closes[i]) if i < len(closes) else 0.0
-            v = float(volumes[i]) if i < len(volumes) and volumes[i] else 0.0
-            candles.append([ts, o, h, l, c, v])
-
-        return candles[-limit:]
-    except Exception as e:
-        logger.warning(f"Failed to fetch BTP candles for {isin} {timeframe}: {e}")
-        return []
 
 
 def get_multi_timeframe_bars(
