@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 
 import pandas as pd
+import json
 import requests
 import yfinance as yf
 import httpx
@@ -655,11 +656,107 @@ def get_btp_candles(
     df.dropna(subset=["Open", "High", "Low", "Close"], how="all", inplace=True)
     return df
 
+def _fetch_btp_candles_from_borsaitaliana(
+    isin: str,
+    timeframe: str,
+    from_date: datetime,
+    to_date: datetime,
+    limit: int
+) -> Optional[List[List]]:
+    """
+    Fetch BTP OHLCV candles from Borsa Italiana charting API.
+    Returns list of [timestamp_ms, open, high, low, close, volume]
+    or None on failure.
+    """
+    TIMEFRAME_MAP_BI = {
+        "1d": "1d",
+        "1w": "1w",
+        "1M": "1M",
+    }
+    sample_time = TIMEFRAME_MAP_BI.get(timeframe)
+    if not sample_time:
+        return None
+
+    url = "https://charts.borsaitaliana.it/charts/services/ChartWService.asmx/GetPrices"
+    headers = {
+        "Host": "charts.borsaitaliana.it",
+        "Origin": "https://www.borsaitaliana.it",
+        "Referer": "https://www.borsaitaliana.it/",
+        "Content-Type": "application/json; charset=utf-8",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+    payload = {
+        "request": {
+            "SampleTime": sample_time,
+            "TimeFrame": "5y",
+            "RequestedDataSetType": "ohlc",
+            "ChartPriceType": "price",
+            "Key": f"{isin}.MOT",
+            "OffSet": 0,
+            "FromDate": None,
+            "ToDate": None,
+            "UseDelay": False,
+            "KeyType": "Topic",
+            "KeyType2": "Topic",
+            "Language": "it-IT",
+        }
+    }
+
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+        if response.status_code != 200:
+            return None
+        raw = response.json()
+        prices = raw.get("d", {}).get("Prices")
+        if not prices:
+            return None
+
+        candles = []
+        from_ts = from_date.timestamp() * 1000
+        to_ts = to_date.timestamp() * 1000
+
+        for p in prices:
+            ts = p.get("Time")
+            if ts is None:
+                continue
+            if ts < from_ts or ts > to_ts:
+                continue
+            candles.append([
+                ts,
+                float(p.get("Open", 0)),
+                float(p.get("High", 0)),
+                float(p.get("Low", 0)),
+                float(p.get("Close", 0)),
+                float(p.get("Volume", 0)),
+            ])
+
+        if not candles:
+            return None
+
+        # Sort by time ascending
+        candles.sort(key=lambda x: x[0])
+        # Apply limit (most recent)
+        if limit and len(candles) > limit:
+            candles = candles[-limit:]
+
+        return candles
+
+    except Exception:
+        return None
+
+
 def _fetch_btp_candles(
     isin: str, name: str, timeframe: str,
     from_date: datetime, to_date: datetime, limit: int
 ) -> List[List[float]]:
-    """Fetch BTP candles using Investing.com API, returning list of [ts_ms, o, h, l, c, v]."""
+    """Fetch BTP candles using Borsa Italiana first, falling back to Investing.com."""
+    # Try Borsa Italiana first
+    candles = _fetch_btp_candles_from_borsaitaliana(isin, timeframe, from_date, to_date, limit)
+    if candles:
+        return candles
+
+    # Fallback to Investing.com
     investing_id = _get_btp_investing_id(isin, name)
     if not investing_id:
         return []
