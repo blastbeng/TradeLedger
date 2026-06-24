@@ -464,8 +464,8 @@
                     <label for="update-interval" style="color: var(--text-secondary); font-size: 0.9rem;">🔄 Update Interval:</label>
                     <select id="update-interval" style="background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 0.9rem;">
                         <option value="3000">3s</option>
-                        <option value="5000">5s</option>
-                        <option value="10000" selected>10s</option>
+                        <option value="5000" selected>5s</option>
+                        <option value="10000">10s</option>
                         <option value="15000">15s</option>
                         <option value="30000">30s</option>
                         <option value="60000">60s</option>
@@ -886,7 +886,7 @@
         const chartTitle = document.getElementById('chart-title');
         let currentSymbol = null;
         const positionsMap = {}; // symbol -> { row, amount, entry, stopLoss, takeProfit, trailing }
-        let updateIntervalMs = 10000;  // default 10 seconds
+        let updateIntervalMs = 5000;  // default 5 seconds
         let refreshTimer = null;
 
         function updateRiskUI(risk) {
@@ -984,9 +984,16 @@
             }
         }
 
-        // Initial fetch and periodic refresh
+        let logsTimer = null;
+
+        function startLogsTimer() {
+            if (logsTimer) clearInterval(logsTimer);
+            logsTimer = setInterval(fetchLogs, updateIntervalMs);
+        }
+
+        // Initial fetch and start timer
         fetchLogs();
-        setInterval(fetchLogs, 5000);  // refresh every 5 seconds
+        startLogsTimer();
 
         // Manual refresh button
         document.getElementById('btn-refresh-logs').addEventListener('click', fetchLogs);
@@ -1079,6 +1086,19 @@
         document.getElementById('update-interval').addEventListener('change', (e) => {
             updateIntervalMs = parseInt(e.target.value, 10);
             startRefreshTimer();
+            startLogsTimer();
+            // If chart modal is open, restart its timer
+            if (currentSymbol && modal.style.display === 'flex') {
+                if (chartUpdateTimer) clearInterval(chartUpdateTimer);
+                chartUpdateTimer = setInterval(() => {
+                    if (currentSymbol && modal.style.display === 'flex') {
+                        fetchAndRenderChart(currentSymbol, timeframeSelect.value);
+                    } else {
+                        clearInterval(chartUpdateTimer);
+                        chartUpdateTimer = null;
+                    }
+                }, updateIntervalMs);
+            }
         });
 
         closeBtn.onclick = () => {
@@ -1112,7 +1132,7 @@
                     clearInterval(chartUpdateTimer);
                     chartUpdateTimer = null;
                 }
-            }, 10000); // Update every 10 seconds
+            }, updateIntervalMs);
         }
 
         async function fetchAndRenderChart(symbol, timeframe) {
