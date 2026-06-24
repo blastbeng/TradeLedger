@@ -55,7 +55,7 @@ def _get_isin_from_yfinance(symbol: str) -> Optional[str]:
         isin = ticker.isin
         if isin and len(isin) > 0:
             try:
-                redis_client.setex(cache_key, 7 * 24 * 3600, isin)
+                redis_client.set(cache_key, isin, ex=7 * 24 * 3600)
             except Exception:
                 pass
             return isin
