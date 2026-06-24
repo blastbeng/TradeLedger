@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import math
+import random
 import pandas_market_calendars as mcal
 import re
 import time
@@ -1165,7 +1166,9 @@ class TradingEngine:
                         except Exception as e:
                             logger.warning(f"Market data download failed for {symbol} {tf}: {e}")
 
-                    download_tasks = [_download_symbol_data(entry) for entry in self.current_symbols]
+                    shuffled_symbols = list(self.current_symbols)
+                    random.shuffle(shuffled_symbols)
+                    download_tasks = [_download_symbol_data(entry) for entry in shuffled_symbols]
                     await asyncio.gather(*download_tasks)
                     logger.info("Market data download cycle complete.")
                     # Clean up old OHLCV data (older than retention period)
@@ -1201,6 +1204,7 @@ class TradingEngine:
                 start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
 
                 # Download for each symbol, respecting rate limits
+                random.shuffle(all_pairs)
                 for pair in all_pairs:
                     if not self._running:
                         break
@@ -2231,7 +2235,9 @@ class TradingEngine:
                             except Exception as e:
                                 logger.debug(f"DB fallback for {sym} {tf} failed: {e}")
                     return sym, data
-            tasks = [fetch_ohlcv_for_symbol(sym) for sym in sorted_by_vol]
+            shuffled_for_ohlcv = list(sorted_by_vol)
+            random.shuffle(shuffled_for_ohlcv)
+            tasks = [fetch_ohlcv_for_symbol(sym) for sym in shuffled_for_ohlcv]
             results = await asyncio.gather(*tasks)
             ohlcv_data = dict(results)
 
