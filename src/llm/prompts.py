@@ -315,6 +315,16 @@ src/llm/prompts.py
             f"\n**Current ATR%: {atr_pct:.4%}**. "
             f"The validator enforces a minimum fixed stop-loss of {min_stop_atr_mult} × ATR% = {min_sl:.4%}. "
             f"Your fixed stop_loss_pct must be at least this value.\n"
+            f"\n**Position Sizing Guidance (you decide the final value):**\n"
+            f"  Total portfolio value: ~{portfolio_total_value:.2f} {base_currency}\n"
+            f"  Current price: {current_price:.4f}\n"
+            f"  ATR: {atr:.6f}\n"
+            f"  If you use ATR-based stop (multiplier M), risk per share = M × ATR = M × {atr:.6f}.\n"
+            f"  If you want to risk R% of portfolio: max_quantity = (portfolio_value × R%) / (M × ATR).\n"
+            f"  position_size_fraction = (max_quantity × current_price) / portfolio_value.\n"
+            f"  Example: M=2, R=1% → risk/share = {2*atr:.6f}, max_qty = {portfolio_total_value*0.01/(2*atr):.2f}, "
+            f"fraction = {(portfolio_total_value*0.01/(2*atr)*current_price)/portfolio_total_value:.4f}.\n"
+            f"  Adjust R and M based on your confidence, backtest results, fees, and market conditions.\n"
         )
 - You may include `"pause_trading"` (boolean) in your stock selection JSON to pause/resume trading. Always include a `"pause_reason"` string when setting pause_trading. You may also set `"pause_duration_seconds"` (positive integer) to auto-resume after a delay.
 - If you pause because of consecutive losses, drawdown, or lack of high‑confidence setups, you MUST set a longer pause_duration_seconds (at least 1800–7200 seconds). A very short pause will almost certainly result in the same market conditions and an immediate re‑pause.
