@@ -1264,6 +1264,8 @@ Maximum symbols to trade: {max_symbols}
     prompt += f"""
 **For the {assigned_timeframe or 'default'} timeframe, a reasonable minimum max_hold_time_seconds is {min_hold} seconds. Do not set it lower unless you have a very specific, justified reason (e.g., medium-term with a very tight stop and high confidence).**
 
+The validator enforces a hard minimum of {min_hold_time_mult} × timeframe_seconds = {int(min_hold_time_mult * tf_seconds)} seconds. Your max_hold_time_seconds must be at least this value.
+
 You are trading spot only (no shorting). Only output SELL if you currently hold the asset.
 
 **Note on BTP Bonds:** If the symbol is a BTP bond (ISIN format like IT0001234567), adjust your strategy for lower volatility: use longer max hold times, smaller take-profit targets, and ensure stop-losses are wide enough to avoid being triggered by normal bond price fluctuations. The `ticker` object includes `name`, `coupon` (annual coupon rate), and `maturity` (expiration date). Bond prices are quoted as a percentage of par value (e.g., a price of 101.68 means 101.68% of face value). Use the coupon and current price to assess the yield to maturity and decide whether the bond is a good buy. ATR and OHLCV data are available for BTPs via yfinance and should be used for technical analysis like any other asset.
