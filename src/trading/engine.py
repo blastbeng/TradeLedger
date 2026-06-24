@@ -1321,17 +1321,22 @@ class TradingEngine:
                     await asyncio.sleep(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS)
                     continue
 
-                # Download news for each symbol sequentially with a small delay
-                # to avoid hammering news sources and the CPU.
-                for pair in all_pairs:
-                    if not self._running:
-                        break
+                # Prioritize currently tracked symbols first, then the rest.
+                current_symbol_set = {entry["symbol"] for entry in self.current_symbols}
+                priority_pairs = [p for p in all_pairs if p in current_symbol_set]
+                other_pairs = [p for p in all_pairs if p not in current_symbol_set]
+                ordered_pairs = priority_pairs + other_pairs
+
+                # Download concurrently, respecting rate limits via _news_semaphore
+                async def _download_news_for_symbol(pair: str):
                     try:
                         async with self._news_semaphore:
                             await self._fetch_and_store_news_for_symbol(pair)
                     except Exception as e:
                         logger.warning(f"Full news download failed for {pair}: {e}")
-                    await asyncio.sleep(0.5)  # small delay between symbols
+
+                news_tasks = [_download_news_for_symbol(pair) for pair in ordered_pairs]
+                await asyncio.gather(*news_tasks)
 
                 logger.info("Full asset news download cycle complete.")
             except Exception as e:
