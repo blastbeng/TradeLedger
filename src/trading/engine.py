@@ -221,16 +221,17 @@ class TradingEngine:
             start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
 
             random.shuffle(all_pairs)
-            for pair in all_pairs:
-                if not self._running:
-                    break
+
+            async def _force_download_symbol(pair: str):
                 for tf in settings.OHLCV_TIMEFRAMES:
                     try:
                         await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
                         await self._fill_gaps(pair, tf)
                     except Exception as e:
                         logger.warning(f"Force download failed for {pair} {tf}: {e}")
-                    await asyncio.sleep(0.5)
+
+            download_tasks = [_force_download_symbol(pair) for pair in all_pairs]
+            await asyncio.gather(*download_tasks)
 
             await asyncio.to_thread(cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
             logger.info("Force download: complete.")
@@ -1123,12 +1124,12 @@ class TradingEngine:
 
         total_inserted = 0
         if max_candles is None:
-            max_candles = settings.BACKFILL_MAX_CANDLES_PER_CALL
+            max_candles = 10000  # Fetch all available history in one go
         while since < end_ms:
             try:
                 async with self._exchange_semaphore:
                     candles = await asyncio.to_thread(
-                        get_bars_range, symbol.split("/")[0], timeframe, start_ms=since, limit=500
+                        get_bars_range, symbol.split("/")[0], timeframe, start_ms=since, limit=10000
                     )
             except Exception as e:
                 logger.warning(f"get_bars_range failed for {symbol} {timeframe} at {since}: {e}")
@@ -1155,7 +1156,7 @@ class TradingEngine:
                 break
             since = last_ts + 1
             # Small delay to avoid rate limits
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.1)
 
         if total_inserted >= max_candles:
             logger.debug(f"Backfill partial for {symbol} {timeframe}: {total_inserted} candles inserted (limit reached)")
@@ -1275,20 +1276,19 @@ class TradingEngine:
                 now_ms = int(time.time() * 1000)
                 start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
 
-                # Download for each symbol, respecting rate limits
+                # Download concurrently, respecting rate limits via _exchange_semaphore
                 random.shuffle(all_pairs)
-                for pair in all_pairs:
-                    if not self._running:
-                        break
-                    symbol = pair
-                    # For each configured timeframe
+
+                async def _download_symbol_data(pair: str):
                     for tf in settings.OHLCV_TIMEFRAMES:
                         try:
-                            await self._backfill_ohlcv(symbol, tf, start_ms, now_ms)
-                            await self._fill_gaps(symbol, tf)
+                            await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
+                            await self._fill_gaps(pair, tf)
                         except Exception as e:
-                            logger.warning(f"Full download failed for {symbol} {tf}: {e}")
-                        await asyncio.sleep(0.5)  # small delay between calls
+                            logger.warning(f"Full download failed for {pair} {tf}: {e}")
+
+                download_tasks = [_download_symbol_data(pair) for pair in all_pairs]
+                await asyncio.gather(*download_tasks)
 
                 # Clean up old data
                 await asyncio.to_thread(cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
