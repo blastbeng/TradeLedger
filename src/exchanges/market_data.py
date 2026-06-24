@@ -448,7 +448,7 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 
             # For change_24h, fetch only 2 days of daily data (lightweight)
             if last is not None:
-                hist = ticker.history(period="2d", interval="1d", auto_adjust=False, actions=False, threads=False)
+                hist = ticker.history(period="2d", interval="1d", auto_adjust=False, actions=False)
                 if len(hist) >= 2:
                     prev_close = hist["Close"].iloc[-2]
                     if prev_close and prev_close > 0:
@@ -939,7 +939,7 @@ def get_multi_timeframe_bars(
             # yfinance intraday data is limited to 60 days
             # For daily and longer timeframes, use "max" to get all available history (medium/long-term)
             period = "60d" if interval in ("5m", "15m", "60m") else "max"
-            hist = ticker.history(period=period, interval=interval, auto_adjust=False, actions=False, threads=False)
+            hist = ticker.history(period=period, interval=interval, auto_adjust=False, actions=False)
             if not hist.empty:
                 # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
                 ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
@@ -1061,7 +1061,7 @@ def get_bars_range(
 
     try:
         ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
-        hist = ticker.history(start=start_dt, end=end_dt, interval=interval, auto_adjust=False, actions=False, threads=False)
+        hist = ticker.history(start=start_dt, end=end_dt, interval=interval, auto_adjust=False, actions=False)
         if not hist.empty:
             # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
             ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
