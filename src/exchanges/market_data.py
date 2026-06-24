@@ -433,6 +433,29 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Failed to fetch BTP quotes: {e}")
 
+    # --- Batch fetch previous close for all stock symbols ---
+    prev_closes = {}
+    if stock_symbols:
+        try:
+            batch_hist = yf.download(
+                stock_symbols,
+                period="2d",
+                interval="1d",
+                auto_adjust=False,
+                actions=False,
+                group_by="ticker",
+                session=_get_yf_session(),
+            )
+            for sym in stock_symbols:
+                if sym in batch_hist.columns.levels[1]:
+                    sym_data = batch_hist[sym]
+                    if len(sym_data) >= 2:
+                        prev_close = sym_data["Close"].iloc[-2]
+                        if prev_close and prev_close > 0:
+                            prev_closes[sym] = prev_close
+        except Exception as e:
+            logger.warning(f"Batch daily history failed: {e}")
+
     for sym in stock_symbols:
         try:
             ticker = yf.Ticker(sym, session=_get_yf_session())
@@ -446,15 +469,12 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
             result[sym]["volume"] = info.get("lastVolume")
             result[sym]["quoteVolume"] = info.get("lastVolume")
 
-            # For change_24h, fetch only 2 days of daily data (lightweight)
-            if last is not None:
-                hist = ticker.history(period="2d", interval="1d", auto_adjust=False, actions=False)
-                if len(hist) >= 2:
-                    prev_close = hist["Close"].iloc[-2]
-                    if prev_close and prev_close > 0:
-                        change = ((last - prev_close) / prev_close) * 100
-                        result[sym]["change_24h"] = change
-                        result[sym]["percentage"] = change
+            # Use the pre-fetched previous close
+            prev_close = prev_closes.get(sym)
+            if last is not None and prev_close is not None:
+                change = ((last - prev_close) / prev_close) * 100
+                result[sym]["change_24h"] = change
+                result[sym]["percentage"] = change
         except Exception:
             pass
 

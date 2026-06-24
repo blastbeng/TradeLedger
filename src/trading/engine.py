@@ -95,6 +95,8 @@ class TradingEngine:
         self.effective_max_symbols = self.max_symbols
         self.redis = get_redis_client()
         self._exchange_semaphore = asyncio.Semaphore(10)  # max 10 concurrent API calls
+        self._news_semaphore = asyncio.Semaphore(5)  # max 5 concurrent news fetches
+        self._indicator_semaphore = asyncio.Semaphore(4)  # limit concurrent indicator computations
 
         self.current_symbols: List[Dict[str, str]] = []   # each dict: {"symbol": ..., "timeframe": ...}
         self.positions: Dict[str, Dict[str, Any]] = {}  # symbol -> position info
@@ -2280,12 +2282,19 @@ class TradingEngine:
         # Compute indicators for each stock with OHLCV data, for ALL timeframes (parallelized)
         primary_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
 
-        def _compute_indicators_and_score(sym: str, tf_data: Dict[str, List[List]]) -> Tuple[str, Dict[str, Dict[str, Any]], float]:
+        async def _compute_indicators_and_score(sym: str, tf_data: Dict[str, List[List]]) -> Tuple[str, Dict[str, Dict[str, Any]], float]:
             sym_indicators = {}
             for tf in settings.OHLCV_TIMEFRAMES:
                 if tf in tf_data and tf_data[tf]:
                     candles = tf_data[tf]
-                    ind = compute_all_indicators(candles)
+                    cached_ind = await self._get_cached_indicators(sym, tf, candles)
+                    if cached_ind:
+                        ind = cached_ind
+                    else:
+                        async with self._indicator_semaphore:
+                            ind = await asyncio.to_thread(compute_all_indicators, candles)
+                        if ind:
+                            await self._cache_indicators(sym, tf, candles, ind)
                     if ind:
                         sym_indicators[tf] = ind
 
@@ -2336,7 +2345,7 @@ class TradingEngine:
             return sym, sym_indicators, trend_score
 
         indicator_tasks = [
-            asyncio.to_thread(_compute_indicators_and_score, sym, tf_data)
+            _compute_indicators_and_score(sym, tf_data)
             for sym, tf_data in ohlcv_data.items()
         ]
         indicator_results = await asyncio.gather(*indicator_tasks)
@@ -4070,7 +4079,15 @@ class TradingEngine:
                 if tf in ohlcv_data and ohlcv_data[tf]:
                     candles = ohlcv_data[tf]
                     multi_tf_raw_candles[tf] = candles
-                    ind = compute_all_indicators(candles, config=ind_cfg)
+                    # Check cache first
+                    cached_ind = await self._get_cached_indicators(symbol, tf, candles)
+                    if cached_ind:
+                        ind = cached_ind
+                    else:
+                        async with self._indicator_semaphore:
+                            ind = await asyncio.to_thread(compute_all_indicators, candles, config=ind_cfg)
+                        if ind:
+                            await self._cache_indicators(symbol, tf, candles, ind)
                     multi_tf_indicators[tf] = ind
                     if tf == assigned_tf:
                         atr = ind.get('atr')
@@ -10345,7 +10362,14 @@ class TradingEngine:
             if tf in ohlcv_data and ohlcv_data[tf]:
                 candles = ohlcv_data[tf]
                 multi_tf_raw_candles[tf] = candles
-                ind = compute_all_indicators(candles, config=ind_cfg)
+                cached_ind = await self._get_cached_indicators(symbol, tf, candles)
+                if cached_ind:
+                    ind = cached_ind
+                else:
+                    async with self._indicator_semaphore:
+                        ind = await asyncio.to_thread(compute_all_indicators, candles, config=ind_cfg)
+                    if ind:
+                        await self._cache_indicators(symbol, tf, candles, ind)
                 multi_tf_indicators[tf] = ind
                 if tf == assigned_tf:
                     atr = ind.get('atr')
