@@ -318,6 +318,33 @@ class TradingEngine:
             schedule = cal.schedule(start_date=today - timedelta(days=1),
                                     end_date=today + timedelta(days=10))
 
+            # --- Fallback when the calendar has no data for the requested range ---
+            if schedule.empty:
+                # Simple weekday + hardcoded hours check
+                if today.weekday() < 5 and market_open_today <= now_rome < market_close_today:
+                    is_open = True
+                else:
+                    is_open = False
+
+                if is_open:
+                    # Next open is tomorrow (or next weekday) at 09:00
+                    next_open = market_open_today + timedelta(days=1)
+                    while next_open.weekday() >= 5:
+                        next_open += timedelta(days=1)
+                else:
+                    if now_rome < market_open_today and today.weekday() < 5:
+                        next_open = market_open_today
+                    else:
+                        next_open = market_open_today + timedelta(days=1)
+                        while next_open.weekday() >= 5:
+                            next_open += timedelta(days=1)
+
+                clock = ClockInfo(is_open=is_open, timestamp=now_rome, next_open=next_open)
+                self._clock_cache = clock
+                self._clock_cache_time = now
+                return clock
+            # --- End fallback ---
+
             # Determine if today is a trading day (any session that covers today's date)
             today_is_trading_day = False
             next_trading_day = None
