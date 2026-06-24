@@ -147,7 +147,7 @@ class Settings(BaseSettings):
     ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS: int = 900
 
     # OHLCV timeframes for multi-timeframe analysis
-    OHLCV_TIMEFRAMES: list[str] = ["1w", "1M", "1d"]
+    OHLCV_TIMEFRAMES: list[str] = ["1w", "1M", "1d", "1h", "3M", "6M", "1Y", "3Y", "5Y"]
 
     # Market data download interval (seconds)
     MARKET_DATA_REFRESH_SECONDS: int = 900
@@ -174,7 +174,7 @@ class Settings(BaseSettings):
     def validate_ohlcv_timeframes(cls, v: list[str]) -> list[str]:
         if not isinstance(v, list) or not all(isinstance(tf, str) for tf in v):
             raise ValueError("OHLCV_TIMEFRAMES must be a list of strings")
-        allowed = {"1h", "1d", "1w", "1M"}
+        allowed = {"1h", "1d", "1w", "1M", "3M", "6M", "1Y", "3Y", "5Y"}
         invalid = set(v) - allowed
         if invalid:
             raise ValueError(f"OHLCV_TIMEFRAMES contains unsupported timeframes: {invalid}. Allowed medium/long-term timeframes: {allowed}")

@@ -1077,6 +1077,10 @@ def get_multi_timeframe_bars(
                 for idx, row in hist.iterrows():
                     ts = int(idx.timestamp() * 1000)
                     candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
+                # Aggregate if necessary
+                if tf in ("6M", "1Y", "3Y", "5Y"):
+                    candles = _aggregate_candles(candles, TIMEFRAME_MS[tf])
+
                 # Take the last `limit` candles
                 result[tf] = candles[-limit:]
                 if candles:
