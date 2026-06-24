@@ -1047,6 +1047,18 @@ def get_bars_range(
 
     start_dt = datetime.fromtimestamp(start_ms / 1000.0, tz=timezone.utc)
     end_dt = datetime.now(timezone.utc)
+
+    # Yahoo Finance only provides intraday data for the last 730 days.
+    # Clamp the start date to avoid "requested range must be within the last 730 days" errors.
+    if interval in ("5m", "15m", "60m"):
+        earliest_allowed = datetime.now(timezone.utc) - timedelta(days=730)
+        if start_dt < earliest_allowed:
+            logger.warning(
+                f"Clamping start date for {symbol} {timeframe} from {start_dt} to {earliest_allowed} "
+                f"(Yahoo intraday limit 730 days)"
+            )
+            start_dt = earliest_allowed
+
     try:
         ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
         hist = ticker.history(start=start_dt, end=end_dt, interval=interval, auto_adjust=False, actions=False, threads=False)
