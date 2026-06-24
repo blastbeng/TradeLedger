@@ -755,13 +755,33 @@ class TradingEngine:
         """Fetch news for a single symbol and store it in the database."""
         if not settings.NEWS_ENABLED:
             return
+        
+        base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+        
+        # Check if we recently fetched news and found 0 articles
+        no_news_cache_key = f"news:no_articles:{base_symbol}"
+        try:
+            cached_no_news = await asyncio.to_thread(self.redis.get, no_news_cache_key)
+            if cached_no_news:
+                logger.debug(f"Skipping news fetch for {symbol}: recently found 0 articles.")
+                return
+        except Exception:
+            pass
+
         try:
             from src.news.fetcher import fetch_news_for_symbol
-            base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
             stock_name = await self._get_stock_name(symbol)
             articles = await asyncio.to_thread(fetch_news_for_symbol, symbol, stock_name)
             if articles:
                 await asyncio.to_thread(store_news_articles, base_symbol, articles)
+            else:
+                # Cache the fact that we found 0 articles to avoid re-fetching too soon
+                try:
+                    await asyncio.to_thread(
+                        self.redis.setex, no_news_cache_key, settings.NEWS_CACHE_TTL_SECONDS, "1"
+                    )
+                except Exception:
+                    pass
         except Exception as e:
             logger.info(f"News fetch/store failed for {symbol}: {e}")
 
