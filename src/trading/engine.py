@@ -6415,24 +6415,6 @@ class TradingEngine:
         # --- Notify mode: do not execute any orders, only send notifications ---
         if settings.TRADING_MODE == "notify":
             logger.info(f"Notify mode: skipping order execution for {signal.action} {symbol}.")
-            if self.notifier and signal.action in ("BUY", "SELL"):
-                emoji = "🟢" if signal.action == "BUY" else "🔴"
-                msg = f"{emoji} SIGNAL {display_symbol}: {signal.action} (confidence: {signal.confidence:.2f})"
-                if signal.reasoning:
-                    msg += f" – {signal.reasoning[:200]}"
-                if hasattr(signal, 'backtest_summary') and signal.backtest_summary:
-                    msg += f"\n📈 Backtest: {signal.backtest_summary}"
-                await self.notifier.send_notification(
-                    msg,
-                    summary={
-                        "symbol": symbol,
-                        "action": signal.action,
-                        "confidence": signal.confidence,
-                        "reason": (signal.reasoning or "")[:200],
-                        "strategy_type": signal.strategy_type,
-                        "backtest": getattr(signal, 'backtest_summary', None),
-                    }
-                )
             return
 
         # --- Paper mode + Paused: do not execute automated BUY orders, only send notifications ---
@@ -6446,24 +6428,6 @@ class TradingEngine:
                 # Fall through to execute the SELL order
             else:
                 logger.info(f"Paper mode + Paused: skipping automated order execution for {signal.action} {symbol}.")
-                if self.notifier and signal.action in ("BUY", "SELL"):
-                    emoji = "🟢" if signal.action == "BUY" else "🔴"
-                    msg = f"{emoji} SIGNAL (PAUSED) {display_symbol}: {signal.action} (confidence: {signal.confidence:.2f})"
-                    if signal.reasoning:
-                        msg += f" – {signal.reasoning[:200]}"
-                    if hasattr(signal, 'backtest_summary') and signal.backtest_summary:
-                        msg += f"\n📈 Backtest: {signal.backtest_summary}"
-                    await self.notifier.send_notification(
-                        msg,
-                        summary={
-                            "symbol": symbol,
-                            "action": signal.action,
-                            "confidence": signal.confidence,
-                            "reason": (signal.reasoning or "")[:200],
-                            "strategy_type": signal.strategy_type,
-                            "backtest": getattr(signal, 'backtest_summary', None),
-                        }
-                    )
                 return
 
         # Prevent executing new signals if an order is already queued for this symbol
