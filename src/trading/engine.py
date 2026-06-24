@@ -4730,42 +4730,58 @@ class TradingEngine:
                 else:
                     # Fallback: use the preliminary signal's own params as a single variant
                     variants_to_test.append(preliminary_signal.strategy_params or {})
+                # Safety cap: limit to 10 variants to prevent excessive backtest time
+                MAX_BACKTEST_VARIANTS = 10
+                if len(variants_to_test) > MAX_BACKTEST_VARIANTS:
+                    logger.warning(
+                        f"LLM returned {len(variants_to_test)} backtest variants for {symbol}, "
+                        f"capping to {MAX_BACKTEST_VARIANTS}"
+                    )
+                    variants_to_test = variants_to_test[:MAX_BACKTEST_VARIANTS]
 
                 # Run backtest for each variant sequentially
                 backtest_results = []
                 for i, variant_params in enumerate(variants_to_test):
-                    variant_signal = Signal(
-                        action="BUY",
-                        confidence=preliminary_signal.confidence,
-                        reasoning=preliminary_signal.reasoning,
-                        strategy_params=variant_params,
-                    )
-                    bt_stats, bt_summary = await self._run_backtest_from_signal(
-                        symbol=symbol,
-                        signal=variant_signal,
-                        atr=atr,
-                        current_price=current_price,
-                        tf_secs=tf_seconds,
-                        assigned_tf=assigned_tf,
-                        historical_ohlcv=historical_ohlcv,
-                        raw_candles=raw_candles,
-                        base_balance=base_balance,
-                        is_btp=is_btp,
-                    )
-                    if bt_stats is not None:
+                    try:
+                        variant_signal = Signal(
+                            action="BUY",
+                            confidence=preliminary_signal.confidence,
+                            reasoning=preliminary_signal.reasoning,
+                            strategy_params=variant_params,
+                        )
+                        bt_stats, bt_summary = await self._run_backtest_from_signal(
+                            symbol=symbol,
+                            signal=variant_signal,
+                            atr=atr,
+                            current_price=current_price,
+                            tf_secs=tf_seconds,
+                            assigned_tf=assigned_tf,
+                            historical_ohlcv=historical_ohlcv,
+                            raw_candles=raw_candles,
+                            base_balance=base_balance,
+                            is_btp=is_btp,
+                        )
+                        if bt_stats is not None:
+                            backtest_results.append({
+                                "variant_params": variant_params,
+                                "summary": bt_summary,
+                                "stats": bt_stats,
+                            })
+                            logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: {bt_summary}")
+                        else:
+                            backtest_results.append({
+                                "variant_params": variant_params,
+                                "summary": bt_summary or "Insufficient data for backtest.",
+                                "stats": {},
+                            })
+                            logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: insufficient data")
+                    except Exception as e:
+                        logger.warning(f"Backtest variant {i+1} failed for {symbol}: {e}")
                         backtest_results.append({
                             "variant_params": variant_params,
-                            "summary": bt_summary,
-                            "stats": bt_stats,
-                        })
-                        logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: {bt_summary}")
-                    else:
-                        backtest_results.append({
-                            "variant_params": variant_params,
-                            "summary": bt_summary or "Insufficient data for backtest.",
+                            "summary": f"Backtest error: {e}",
                             "stats": {},
                         })
-                        logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: insufficient data")
 
                 # Build combined backtest summary for notifications
                 combined_bt_summary = " | ".join(
@@ -10741,37 +10757,53 @@ class TradingEngine:
                 variants_to_test = list(preliminary_signal.backtest_variants)
             else:
                 variants_to_test.append(preliminary_signal.strategy_params or {})
+            # Safety cap: limit to 10 variants to prevent excessive backtest time
+            MAX_BACKTEST_VARIANTS = 10
+            if len(variants_to_test) > MAX_BACKTEST_VARIANTS:
+                logger.warning(
+                    f"LLM returned {len(variants_to_test)} backtest variants for {symbol}, "
+                    f"capping to {MAX_BACKTEST_VARIANTS}"
+                )
+                variants_to_test = variants_to_test[:MAX_BACKTEST_VARIANTS]
 
             backtest_results = []
             for i, variant_params in enumerate(variants_to_test):
-                variant_signal = Signal(
-                    action="BUY",
-                    confidence=preliminary_signal.confidence,
-                    reasoning=preliminary_signal.reasoning,
-                    strategy_params=variant_params,
-                )
-                bt_stats, bt_summary = await self._run_backtest_from_signal(
-                    symbol=symbol,
-                    signal=variant_signal,
-                    atr=data["atr"],
-                    current_price=data["current_price"],
-                    tf_secs=data["tf_seconds"],
-                    assigned_tf=data["assigned_tf"],
-                    historical_ohlcv=data["historical_ohlcv"],
-                    raw_candles=data["raw_candles"],
-                    base_balance=data["base_balance"],
-                    is_btp=data["is_btp"],
-                )
-                if bt_stats is not None:
+                try:
+                    variant_signal = Signal(
+                        action="BUY",
+                        confidence=preliminary_signal.confidence,
+                        reasoning=preliminary_signal.reasoning,
+                        strategy_params=variant_params,
+                    )
+                    bt_stats, bt_summary = await self._run_backtest_from_signal(
+                        symbol=symbol,
+                        signal=variant_signal,
+                        atr=data["atr"],
+                        current_price=data["current_price"],
+                        tf_secs=data["tf_seconds"],
+                        assigned_tf=data["assigned_tf"],
+                        historical_ohlcv=data["historical_ohlcv"],
+                        raw_candles=data["raw_candles"],
+                        base_balance=data["base_balance"],
+                        is_btp=data["is_btp"],
+                    )
+                    if bt_stats is not None:
+                        backtest_results.append({
+                            "variant_params": variant_params,
+                            "summary": bt_summary,
+                            "stats": bt_stats,
+                        })
+                    else:
+                        backtest_results.append({
+                            "variant_params": variant_params,
+                            "summary": bt_summary or "Insufficient data for backtest.",
+                            "stats": {},
+                        })
+                except Exception as e:
+                    logger.warning(f"Backtest variant {i+1} failed for {symbol}: {e}")
                     backtest_results.append({
                         "variant_params": variant_params,
-                        "summary": bt_summary,
-                        "stats": bt_stats,
-                    })
-                else:
-                    backtest_results.append({
-                        "variant_params": variant_params,
-                        "summary": bt_summary or "Insufficient data for backtest.",
+                        "summary": f"Backtest error: {e}",
                         "stats": {},
                     })
 
@@ -10858,38 +10890,54 @@ class TradingEngine:
             variants_to_test = list(preliminary_signal.backtest_variants)
         else:
             variants_to_test.append(preliminary_signal.strategy_params or {})
+        # Safety cap: limit to 10 variants to prevent excessive backtest time
+        MAX_BACKTEST_VARIANTS = 10
+        if len(variants_to_test) > MAX_BACKTEST_VARIANTS:
+            logger.warning(
+                f"LLM returned {len(variants_to_test)} backtest variants for {symbol}, "
+                f"capping to {MAX_BACKTEST_VARIANTS}"
+            )
+            variants_to_test = variants_to_test[:MAX_BACKTEST_VARIANTS]
 
         # Run backtest for each variant sequentially
         backtest_results = []
         for i, variant_params in enumerate(variants_to_test):
-            variant_signal = Signal(
-                action="BUY",
-                confidence=preliminary_signal.confidence,
-                reasoning=preliminary_signal.reasoning,
-                strategy_params=variant_params,
-            )
-            bt_stats, bt_summary = await self._run_backtest_from_signal(
-                symbol=symbol,
-                signal=variant_signal,
-                atr=data["atr"],
-                current_price=data["current_price"],
-                tf_secs=data["tf_seconds"],
-                assigned_tf=data["assigned_tf"],
-                historical_ohlcv=data["historical_ohlcv"],
-                raw_candles=data["raw_candles"],
-                base_balance=data["base_balance"],
-                is_btp=data["is_btp"],
-            )
-            if bt_stats is not None:
+            try:
+                variant_signal = Signal(
+                    action="BUY",
+                    confidence=preliminary_signal.confidence,
+                    reasoning=preliminary_signal.reasoning,
+                    strategy_params=variant_params,
+                )
+                bt_stats, bt_summary = await self._run_backtest_from_signal(
+                    symbol=symbol,
+                    signal=variant_signal,
+                    atr=data["atr"],
+                    current_price=data["current_price"],
+                    tf_secs=data["tf_seconds"],
+                    assigned_tf=data["assigned_tf"],
+                    historical_ohlcv=data["historical_ohlcv"],
+                    raw_candles=data["raw_candles"],
+                    base_balance=data["base_balance"],
+                    is_btp=data["is_btp"],
+                )
+                if bt_stats is not None:
+                    backtest_results.append({
+                        "variant_params": variant_params,
+                        "summary": bt_summary,
+                        "stats": bt_stats,
+                    })
+                else:
+                    backtest_results.append({
+                        "variant_params": variant_params,
+                        "summary": bt_summary or "Insufficient data for backtest.",
+                        "stats": {},
+                    })
+            except Exception as e:
+                logger.warning(f"Backtest variant {i+1} failed for {symbol}: {e}")
                 backtest_results.append({
                     "variant_params": variant_params,
-                    "summary": bt_summary,
-                    "stats": bt_stats,
-                })
-            else:
-                backtest_results.append({
-                    "variant_params": variant_params,
-                    "summary": bt_summary or "Insufficient data for backtest.",
+                    "summary": f"Backtest error: {e}",
                     "stats": {},
                 })
 
