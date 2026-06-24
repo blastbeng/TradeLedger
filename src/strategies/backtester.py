@@ -46,6 +46,7 @@ def backtest_strategy(
     max_trades: int = 200,
     cooldown_after_loss_seconds: Optional[int] = None,
     slippage_pct: float = 0.0,
+    trend_filter_ema_period: int = 50,
 ) -> Dict[str, Any]:
     """
     Backtest a long-only strategy on historical OHLCV candles.
@@ -81,7 +82,23 @@ def backtest_strategy(
     trades = []
     i = 0
 
+    # Compute EMA for trend filter
+    ema_values = []
+    if trend_filter_ema_period > 0 and len(candles) >= trend_filter_ema_period:
+        multiplier = 2 / (trend_filter_ema_period + 1)
+        ema = sum(c[4] for c in candles[:trend_filter_ema_period]) / trend_filter_ema_period
+        ema_values = [None] * (trend_filter_ema_period - 1) + [ema]
+        for idx in range(trend_filter_ema_period, len(candles)):
+            ema = (candles[idx][4] - ema) * multiplier + ema
+            ema_values.append(ema)
+
     while i < len(candles) - 1 and len(trades) < max_trades:
+        # Trend filter: only enter if close > EMA
+        if trend_filter_ema_period > 0 and ema_values:
+            if i >= len(ema_values) or ema_values[i] is None or candles[i][4] <= ema_values[i]:
+                i += 1
+                continue
+
         entry_candle = candles[i]
         entry_price = entry_candle[4]  # close
         entry_ts = entry_candle[0]
@@ -304,10 +321,15 @@ def backtest_strategy(
         else:
             i = exit_index + 1
 
+    # Compute buy-and-hold return
+    buy_and_hold_pct = 0.0
+    if len(candles) >= 2 and candles[0][4] > 0:
+        buy_and_hold_pct = (candles[-1][4] - candles[0][4]) / candles[0][4]
+
     if not trades:
         return _empty_result()
 
-    return _compute_stats(trades)
+    return _compute_stats(trades, buy_and_hold_pct=buy_and_hold_pct)
 
 
 def _empty_result() -> Dict[str, Any]:
@@ -324,11 +346,12 @@ def _empty_result() -> Dict[str, Any]:
         "max_consecutive_losses": 0,
         "sharpe_ratio": 0.0,
         "partial_tp_count": 0,
+        "buy_and_hold_pct": 0.0,
         "insufficient_data": True,
     }
 
 
-def _compute_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _compute_stats(trades: List[Dict[str, Any]], buy_and_hold_pct: float = 0.0) -> Dict[str, Any]:
     wins = [t for t in trades if t["pnl_pct"] > 0]
     losses = [t for t in trades if t["pnl_pct"] <= 0]
 
@@ -391,6 +414,7 @@ def _compute_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
         "max_consecutive_losses": max_consec_losses,
         "sharpe_ratio": round(sharpe_ratio, 4),
         "partial_tp_count": partial_tp_count,
+        "buy_and_hold_pct": round(buy_and_hold_pct, 4),
         "insufficient_data": False,
     }
 
@@ -405,6 +429,7 @@ def format_backtest_summary(stats: Dict[str, Any]) -> str:
         f"Win rate: {stats['win_rate']*100:.1f}%, "
         f"Avg P&L: {stats['avg_pnl_pct']*100:+.2f}%, "
         f"Total P&L: {stats['total_pnl_pct']*100:+.2f}%, "
+        f"Buy & Hold: {stats.get('buy_and_hold_pct', 0)*100:+.2f}%, "
         f"Max drawdown: {stats['max_drawdown_pct']*100:.2f}%, "
         f"Profit factor: {stats['profit_factor']:.2f}, "
         f"Sharpe ratio: {stats.get('sharpe_ratio', 0.0):.2f}, "

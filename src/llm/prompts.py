@@ -1201,6 +1201,15 @@ Maximum symbols to trade: {max_symbols}
             "Based on the indicators and statistical summaries above, propose **multiple** sets of strategy parameters "
             "for backtesting. Each set is a \"backtest variant\" — a complete set of trading parameters "
             "(stop_loss_pct, take_profit_pct, max_hold_time_seconds, trailing_stop, position_size_fraction, etc.).\n"
+            "**Backtest Entry Logic:** The backtester will enter a long position at the close of every candle "
+            "**if the trend is up (close > EMA50)**. Your goal is to find parameters that would have been profitable "
+            "*given* this entry logic. This means the parameters must be able to capture trends and cut losses "
+            "quickly in choppy markets.\n"
+            "**Key Recommendations:**\n"
+            "- Prefer ATR-based stops and take-profits to adapt to volatility.\n"
+            "- Avoid very tight stops (< 1.5x ATR) as they will be triggered by normal noise.\n"
+            "- Set a reasonable `cooldown_after_loss_seconds` (e.g., 1-3 candle periods) to avoid consecutive losses.\n"
+            "- Use `trailing_stop` to lock in profits during strong trends.\n"
             "Return these as a `backtest_variants` array in your JSON output. You decide how many variants to return "
             "(minimum 1, recommended 3–5). Each variant should explore a different hypothesis:\n"
             "- e.g., tight stop vs wide stop\n"
@@ -1566,6 +1575,7 @@ You have received the results of ALL {len(backtest_results)} backtest variant(s)
 Compare the variants and choose the best-performing one (or combine insights from multiple variants) to inform your final decision.
 If ALL backtests show poor performance (e.g., negative total P&L, low win rate, high drawdown), you should reconsider and likely output HOLD or adjust your parameters.
 If ANY backtest variant confirms a strategy is viable, you may output your final action (BUY, SELL, or HOLD) using the best-performing variant's parameters.
+**Benchmark:** The backtest results include a `buy_and_hold_pct` field, which represents the return of simply buying and holding the asset over the same period. If your strategy's `total_pnl_pct` is lower than `buy_and_hold_pct`, it means your active trading strategy is worse than doing nothing. Only proceed with a BUY if your strategy is better than buy-and-hold or if it significantly reduces drawdown.
 """
     prompt += (
         f"\n**Backtest Period:** The backtests were run using historical data on the {preliminary_decision.get('timeframe', 'assigned')} timeframe. "
