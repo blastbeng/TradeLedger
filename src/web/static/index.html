@@ -590,6 +590,20 @@
                 }
             }
 
+            // Sell All button: disable when market is closed
+            const sellAllBtn = document.getElementById('btn-sell-all');
+            if (sellAllBtn) {
+                if (data.market_open === false) {
+                    sellAllBtn.disabled = true;
+                    sellAllBtn.style.opacity = '0.5';
+                    sellAllBtn.style.cursor = 'not-allowed';
+                } else {
+                    sellAllBtn.disabled = false;
+                    sellAllBtn.style.opacity = '1';
+                    sellAllBtn.style.cursor = 'pointer';
+                }
+            }
+
             // Positions – incremental update
             const posBody = document.querySelector('#positions-table tbody');
             if (data.positions) {
