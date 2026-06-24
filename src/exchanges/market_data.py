@@ -68,6 +68,56 @@ TIMEFRAME_MS = {
 }
 
 
+def _aggregate_candles(candles: List[List], target_tf: str) -> List[List]:
+    """Aggregate monthly candles into larger timeframes (6M, 1Y, 3Y, 5Y)."""
+    if not candles or target_tf not in ("6M", "1Y", "3Y", "5Y"):
+        return candles
+
+    grouped = {}
+    for c in candles:
+        ts = c[0]
+        dt = datetime.fromtimestamp(ts / 1000.0, tz=timezone.utc)
+        year = dt.year
+        month = dt.month
+
+        if target_tf == "6M":
+            period_key = (year, (month - 1) // 6)
+        elif target_tf == "1Y":
+            period_key = year
+        elif target_tf == "3Y":
+            period_key = year // 3
+        elif target_tf == "5Y":
+            period_key = year // 5
+
+        if period_key not in grouped:
+            grouped[period_key] = {
+                'timestamp': ts,
+                'open': c[1],
+                'high': c[2],
+                'low': c[3],
+                'close': c[4],
+                'volume': c[5]
+            }
+        else:
+            grouped[period_key]['high'] = max(grouped[period_key]['high'], c[2])
+            grouped[period_key]['low'] = min(grouped[period_key]['low'], c[3])
+            grouped[period_key]['close'] = c[4]
+            grouped[period_key]['volume'] += c[5]
+
+    result = []
+    for key in sorted(grouped.keys()):
+        g = grouped[key]
+        result.append([
+            g['timestamp'],
+            g['open'],
+            g['high'],
+            g['low'],
+            g['close'],
+            g['volume']
+        ])
+    return result
+
+
 # Mapping of common BTP ISINs to their Investing.com numerical pairId.
 # These are used as a fast cache; if an ISIN is not found here, the dynamic
 # search API is used.  The engineer must fill in correct IDs.
@@ -993,6 +1043,9 @@ def get_multi_timeframe_bars(
             logger.warning(f"Unsupported timeframe: {tf}")
             continue
 
+        needs_aggregation = tf in ("6M", "1Y", "3Y", "5Y")
+        fetch_interval = "1mo" if needs_aggregation else interval
+
         cache_key = f"ohlcv:{symbol}:{tf}:{limit}"
         try:
             cached = redis_client.get(cache_key)
@@ -1029,10 +1082,14 @@ def get_multi_timeframe_bars(
             continue
         try:
             ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
-            # yfinance intraday data is limited to 60 days
-            # For daily and longer timeframes, use "max" to get all available history (medium/long-term)
-            period = "60d" if interval in ("5m", "15m", "60m") else "max"
-            hist = ticker.history(period=period, interval=interval, auto_adjust=False, actions=False)
+            # yfinance intraday data limits: 60 days for 5m/15m, 730 days for 60m
+            if fetch_interval in ("5m", "15m"):
+                period = "60d"
+            elif fetch_interval == "60m":
+                period = "730d"
+            else:
+                period = "max"
+            hist = ticker.history(period=period, interval=fetch_interval, auto_adjust=False, actions=False)
             if not hist.empty:
                 # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
                 ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
@@ -1041,6 +1098,10 @@ def get_multi_timeframe_bars(
                 for idx, row in hist.iterrows():
                     ts = int(idx.timestamp() * 1000)
                     candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
+                
+                if needs_aggregation:
+                    candles = _aggregate_candles(candles, tf)
+                
                 # Take the last `limit` candles
                 result[tf] = candles[-limit:]
                 if candles:
@@ -1111,6 +1172,11 @@ def get_bars_range(
         logger.warning(f"Unsupported timeframe: {timeframe}")
         return []
 
+    # Yahoo Finance does not support 6mo, 1y, 3y, 5y intervals natively.
+    # We fetch 1mo data and aggregate it.
+    needs_aggregation = timeframe in ("6M", "1Y", "3Y", "5Y")
+    fetch_interval = "1mo" if needs_aggregation else interval
+
     redis_client = get_redis_client()
     cache_key = f"ohlcv_range:{symbol}:{timeframe}:{start_ms}:{limit}"
     try:
@@ -1154,7 +1220,7 @@ def get_bars_range(
 
     try:
         ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
-        hist = ticker.history(start=start_dt, end=end_dt, interval=interval, auto_adjust=False, actions=False)
+        hist = ticker.history(start=start_dt, end=end_dt, interval=fetch_interval, auto_adjust=False, actions=False)
         if not hist.empty:
             # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
             ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
@@ -1163,6 +1229,8 @@ def get_bars_range(
             for idx, row in hist.iterrows():
                 ts = int(idx.timestamp() * 1000)
                 candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
+            if needs_aggregation:
+                candles = _aggregate_candles(candles, timeframe)
             result = candles[-limit:]
             if result:
                 try:
