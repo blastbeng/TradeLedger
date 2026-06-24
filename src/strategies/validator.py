@@ -25,9 +25,6 @@ def validate_signal(
     if signal.action == "HOLD":
         return signal
 
-    if signal.strategy_type and signal.strategy_type not in VALID_STRATEGY_TYPES:
-        return Signal(action="HOLD", confidence=0.0, reasoning=f"Invalid strategy type: {signal.strategy_type}")
-
     # Require risk parameters for BUY/SELL
     if signal.action in ("BUY", "SELL"):
         params = signal.strategy_params or {}
