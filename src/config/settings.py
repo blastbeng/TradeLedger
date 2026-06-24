@@ -19,8 +19,11 @@ class Settings(BaseSettings):
     # Paper trading initial balance (only used in paper mode)
     PAPER_INITIAL_BALANCE: float = 10000.0
 
-    # Maximum risk per trade as a percentage of total portfolio value (e.g., 0.01 = 1%)
-    RISK_PER_TRADE_PCT: float = 0.01
+    # DEPRECATED: The LLM now always decides the position size based on all
+    # available parameters (ATR, confidence, sentiment, fees, backtest results, etc.).
+    # This setting is no longer used as a hard engine override.
+    # Use the LLM's max_risk_per_trade_pct parameter to control risk per trade.
+    RISK_PER_TRADE_PCT: float = 1.0
 
     @field_validator("RISK_PER_TRADE_PCT")
     @classmethod
