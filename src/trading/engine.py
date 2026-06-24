@@ -4720,105 +4720,60 @@ class TradingEngine:
             preliminary_signal.llm_provider = llm_provider
             preliminary_signal.llm_model = llm_model
 
-            # --- Step 2: Run backtest and ask LLM for final decision ---
+            # --- Step 2: Run backtest(s) and ask LLM for final decision ---
             # Only run backtest if preliminary action is BUY (long-only strategy)
             if preliminary_signal.action == "BUY":
-                bt_params = preliminary_signal.strategy_params or {}
-                # Compute sl_pct and tp_pct
-                bt_stop_method = bt_params.get("stop_loss_method", "fixed")
-                if bt_stop_method == "atr_multiple" and atr is not None and atr > 0 and current_price is not None and current_price > 0:
-                    bt_atr_mult = bt_params.get("stop_loss_atr_multiple", 2.0)
-                    bt_sl_pct = (bt_atr_mult * atr) / current_price
+                # Determine which variant param sets to backtest
+                variants_to_test = []
+                if preliminary_signal.backtest_variants:
+                    variants_to_test = list(preliminary_signal.backtest_variants)
                 else:
-                    bt_sl_pct = bt_params.get("stop_loss_pct", 0.02)
-                if "take_profit_atr_multiple" in bt_params and atr is not None and atr > 0 and current_price is not None and current_price > 0:
-                    bt_tp_atr_mult = bt_params.get("take_profit_atr_multiple")
-                    if bt_tp_atr_mult is not None:
-                        bt_tp_pct = (bt_tp_atr_mult * atr) / current_price
-                    else:
-                        bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
-                else:
-                    bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
-                bt_max_hold = bt_params.get("max_hold_time_seconds")
-                bt_trailing = bt_params.get("trailing_stop", False)
-                bt_trail_dist = bt_params.get("trailing_stop_distance_pct")
-                bt_trail_act = bt_params.get("trailing_stop_activation_pct")
+                    # Fallback: use the preliminary signal's own params as a single variant
+                    variants_to_test.append(preliminary_signal.strategy_params or {})
 
-                # Use LLM-specified backtest_period_days to fetch the correct amount of historical data
-                bt_period_days = bt_params.get("backtest_period_days")
-                if bt_period_days is not None:
-                    bt_period_days = max(30, min(int(bt_period_days), settings.OHLCV_RETENTION_DAYS))
-                    bt_since_ms = int(time.time() * 1000) - bt_period_days * 24 * 60 * 60 * 1000
-                    bt_limit = int((bt_period_days * 86400) / tf_secs) + 100
-                    bt_db_candles = await asyncio.to_thread(
-                        get_ohlcv, symbol, assigned_tf, since_ms=bt_since_ms, limit=bt_limit
+                # Run backtest for each variant sequentially
+                backtest_results = []
+                for i, variant_params in enumerate(variants_to_test):
+                    variant_signal = Signal(
+                        action="BUY",
+                        confidence=preliminary_signal.confidence,
+                        reasoning=preliminary_signal.reasoning,
+                        strategy_params=variant_params,
                     )
-                    if bt_db_candles:
-                        bt_candles = [
-                            [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                            for c in bt_db_candles
-                        ]
-                        logger.info(f"Backtest using {len(bt_candles)} candles ({bt_period_days} days) for {symbol}")
-                    else:
-                        bt_candles = historical_ohlcv or raw_candles
-                        logger.warning(f"No historical data for requested {bt_period_days} days, falling back to default for {symbol}")
-                else:
-                    bt_candles = historical_ohlcv or raw_candles
-                    logger.info(f"Backtest using default historical data ({len(bt_candles) if bt_candles else 0} candles) for {symbol}")
-                backtest_stats = None
-                # Compute accurate fee rate based on trade size
-                bt_position_fraction = bt_params.get("position_size_fraction", 1.0 / self.effective_max_symbols if self.effective_max_symbols > 0 else 1.0)
-                bt_trade_value = base_balance * bt_position_fraction
-                if bt_trade_value > 0:
-                    from src.exchanges.fees import calculate_transaction_costs
-                    buy_costs = calculate_transaction_costs("BUY", 100.0, bt_trade_value / 100.0, symbol=symbol)
-                    sell_costs = calculate_transaction_costs("SELL", 100.0, bt_trade_value / 100.0, symbol=symbol)
-                    total_fee_pct = (buy_costs["total_costs"] + sell_costs["total_costs"]) / bt_trade_value
-                    bt_fee_rate = total_fee_pct / 2  # per-side rate
-                else:
-                    bt_fee_rate = 0.006
-
-                # Pre-compute ATR series for Chandelier Exit simulation
-                atr_series = None
-                if bt_params.get("trailing_stop_atr_multiple") and bt_candles and len(bt_candles) >= 15:
-                    try:
-                        import numpy as np
-                        import talib
-                        highs = np.array([c[2] for c in bt_candles], dtype=float)
-                        lows = np.array([c[3] for c in bt_candles], dtype=float)
-                        closes = np.array([c[4] for c in bt_candles], dtype=float)
-                        atr_arr = talib.ATR(highs, lows, closes, timeperiod=14)
-                        atr_series = [None if np.isnan(v) else float(v) for v in atr_arr]
-                    except Exception as e:
-                        logger.warning(f"Failed to compute ATR series for backtest: {e}")
-
-                if bt_candles and len(bt_candles) >= 20:
-                    backtest_stats = backtest_strategy(
-                        candles=bt_candles,
-                        stop_loss_pct=bt_sl_pct,
-                        take_profit_pct=bt_tp_pct,
-                        max_hold_time_seconds=bt_max_hold,
-                        trailing_stop=bt_trailing,
-                        trailing_stop_distance_pct=bt_trail_dist,
-                        trailing_stop_activation_pct=bt_trail_act,
-                        partial_take_profit_levels=bt_params.get("partial_take_profit_levels"),
-                        breakeven_activation_pct=bt_params.get("breakeven_activation_pct"),
-                        trailing_take_profit=bt_params.get("trailing_take_profit", False),
-                        trailing_take_profit_distance_pct=bt_params.get("trailing_take_profit_distance_pct"),
-                        trailing_stop_atr_multiple=bt_params.get("trailing_stop_atr_multiple"),
-                        atr_values=atr_series,
-                        max_unrealized_loss_pct=bt_params.get("max_unrealized_loss_pct"),
-                        fee_rate=bt_fee_rate,
-                        fee_model="intesa",
-                        trade_value=bt_trade_value,
+                    bt_stats, bt_summary = await self._run_backtest_from_signal(
+                        symbol=symbol,
+                        signal=variant_signal,
+                        atr=atr,
+                        current_price=current_price,
+                        tf_secs=tf_seconds,
+                        assigned_tf=assigned_tf,
+                        historical_ohlcv=historical_ohlcv,
+                        raw_candles=raw_candles,
+                        base_balance=base_balance,
                         is_btp=is_btp,
-                        cooldown_after_loss_seconds=bt_params.get("cooldown_after_loss_seconds"),
-                        slippage_pct=0.001,  # 0.1% slippage simulation
                     )
-                    bt_summary = format_backtest_summary(backtest_stats)
-                    logger.info(f"Backtest for {symbol}: {bt_summary}")
+                    if bt_stats is not None:
+                        backtest_results.append({
+                            "variant_params": variant_params,
+                            "summary": bt_summary,
+                            "stats": bt_stats,
+                        })
+                        logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: {bt_summary}")
+                    else:
+                        backtest_results.append({
+                            "variant_params": variant_params,
+                            "summary": bt_summary or "Insufficient data for backtest.",
+                            "stats": {},
+                        })
+                        logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: insufficient data")
 
-                    # Build Step 2 prompt
+                # Build combined backtest summary for notifications
+                combined_bt_summary = " | ".join(
+                    f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
+                ) if backtest_results else "No backtest performed"
+
+                if backtest_results:
+                    # Build Step 2 prompt with ALL backtest results
                     step2_prompt = build_final_decision_prompt(
                         symbol=symbol,
                         ticker=ticker,
@@ -4829,8 +4784,7 @@ class TradingEngine:
                             "strategy_params": preliminary_signal.strategy_params,
                             "timeframe": assigned_tf,
                         },
-                        backtest_stats=backtest_stats,
-                        backtest_summary=bt_summary,
+                        backtest_results=backtest_results,
                         base_currency=self.base_currency,
                         trading_paused=trading_paused,
                         step1_prompt=prompt,
@@ -4895,10 +4849,10 @@ class TradingEngine:
                             signal.model_type = strategy_model_type
                             signal.llm_provider = llm_provider
                             signal.llm_model = llm_model
-                            signal.backtest_summary = bt_summary
+                            signal.backtest_summary = combined_bt_summary
                         else:
                             signal = preliminary_signal
-                            signal.backtest_summary = bt_summary
+                            signal.backtest_summary = combined_bt_summary
                         # Carry over execution-critical fields from Step 1 if not provided in Step 2
                         if signal.action == "BUY":
                             if signal.entry_condition is None and preliminary_signal.entry_condition is not None:
@@ -4926,9 +4880,9 @@ class TradingEngine:
                     except Exception as e:
                         logger.error(f"LLM Step 2 call failed for {symbol}: {e}. Using preliminary decision.")
                         signal = preliminary_signal
-                        signal.backtest_summary = bt_summary
+                        signal.backtest_summary = combined_bt_summary
                 else:
-                    logger.info(f"Insufficient data for backtest for {symbol} (need ≥20 candles). Using preliminary decision.")
+                    logger.info(f"Insufficient data for any backtest for {symbol}. Using preliminary decision.")
                     signal = preliminary_signal
             else:
                 # For SELL or HOLD, no backtest needed, use preliminary decision
