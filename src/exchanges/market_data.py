@@ -35,6 +35,34 @@ def _get_yf_session():
         logger.warning(f"Failed to create curl_cffi session: {e}")
         return None
 
+
+def _get_isin_from_yfinance(symbol: str) -> Optional[str]:
+    """Fetch the ISIN for a stock/ETF symbol from yfinance, cached in Redis for 7 days."""
+    redis_client = get_redis_client()
+    cache_key = f"isin:{symbol}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return cached
+    except Exception:
+        pass
+
+    try:
+        yf_symbol = symbol
+        if not re.match(r'^IT[A-Z0-9]{10}$', symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
+            yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
+        ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
+        isin = ticker.isin
+        if isin and len(isin) > 0:
+            try:
+                redis_client.setex(cache_key, 7 * 24 * 3600, isin)
+            except Exception:
+                pass
+            return isin
+    except Exception as e:
+        logger.debug(f"Failed to fetch ISIN for {symbol}: {e}")
+    return None
+
 # Map our timeframe strings to yfinance interval strings
 TIMEFRAME_MAP = {
     "1h": "60m",
@@ -116,6 +144,30 @@ def _aggregate_candles(candles: List[List], target_tf: str) -> List[List]:
             g['volume']
         ])
     return result
+
+
+def _get_from_date_for_timeframe(tf: str, now: datetime) -> datetime:
+    """Determine a reasonable from_date for Borsa Italiana fallback based on timeframe."""
+    if tf == "1h":
+        return now - timedelta(days=60)
+    elif tf == "1d":
+        return now - timedelta(days=365 * 2)
+    elif tf == "1w":
+        return now - timedelta(days=365 * 10)
+    elif tf == "1M":
+        return now - timedelta(days=365 * 20)
+    elif tf == "3M":
+        return now - timedelta(days=365 * 20)
+    elif tf == "6M":
+        return now - timedelta(days=365 * 30)
+    elif tf == "1Y":
+        return now - timedelta(days=365 * 30)
+    elif tf == "3Y":
+        return now - timedelta(days=365 * 30)
+    elif tf == "5Y":
+        return now - timedelta(days=365 * 30)
+    else:
+        return now - timedelta(days=365 * 10)
 
 
 # Mapping of common BTP ISINs to their Investing.com numerical pairId.
@@ -843,7 +895,8 @@ def _fetch_stock_candles_from_borsaitaliana(
     timeframe: str,
     from_date: datetime,
     to_date: datetime,
-    limit: int
+    limit: int,
+    isin: Optional[str] = None,
 ) -> Optional[List[List]]:
     """
     Fetch stock/ETF OHLCV candles from Borsa Italiana charting API.
@@ -902,8 +955,23 @@ def _fetch_stock_candles_from_borsaitaliana(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     }
 
-    # Try with .MTA first, then fallback to bare symbol
-    for key in [f"{base_symbol}.MTA", base_symbol]:
+    # Build list of keys to try: ISIN-based first, then symbol-based fallback
+    keys_to_try = []
+    if isin:
+        keys_to_try.append(f"{isin}.MTAA")
+        keys_to_try.append(f"{isin}.ETFP")
+    keys_to_try.append(f"{base_symbol}.MTA")
+    keys_to_try.append(base_symbol)
+
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_keys = []
+    for k in keys_to_try:
+        if k not in seen:
+            seen.add(k)
+            unique_keys.append(k)
+
+    for key in unique_keys:
         payload = {
             "request": {
                 "SampleTime": sample_time,
@@ -1090,6 +1158,7 @@ def get_multi_timeframe_bars(
             else:
                 period = "max"
             hist = ticker.history(period=period, interval=fetch_interval, auto_adjust=False, actions=False)
+            yf_candles = None
             if not hist.empty:
                 # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
                 ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
@@ -1102,50 +1171,40 @@ def get_multi_timeframe_bars(
                 if needs_aggregation:
                     candles = _aggregate_candles(candles, tf)
                 
-                # Take the last `limit` candles
-                result[tf] = candles[-limit:]
-                if candles:
-                    try:
-                        redis_client.set(cache_key, json.dumps(candles[-limit:]), ex=cache_ttl)
-                    except Exception:
-                        pass
-            else:
-                # yfinance returned empty – try Borsa Italiana fallback
+                yf_candles = candles[-limit:]
+            
+            # Borsa Italiana fallback if yfinance data is insufficient
+            if yf_candles is None or len(yf_candles) < 3:
+                isin = _get_isin_from_yfinance(symbol)
                 now = datetime.now(timezone.utc)
-                # Determine a reasonable from_date based on timeframe
-                if tf == "1h":
-                    from_date = now - timedelta(days=60)
-                elif tf == "1d":
-                    from_date = now - timedelta(days=365)
-                elif tf == "1w":
-                    from_date = now - timedelta(days=365*5)
-                elif tf == "1M":
-                    from_date = now - timedelta(days=365*10)
-                else:
-                    from_date = now - timedelta(days=365)
-                fallback = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit)
-                result[tf] = fallback if fallback is not None else []
-                if fallback:
-                    try:
-                        redis_client.set(cache_key, json.dumps(fallback), ex=cache_ttl)
-                    except Exception:
-                        pass
+                from_date = _get_from_date_for_timeframe(tf, now)
+                bi_candles = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit, isin=isin)
+                
+                if bi_candles is not None and len(bi_candles) > 0:
+                    if yf_candles is None or len(bi_candles) > len(yf_candles):
+                        result[tf] = bi_candles
+                        try:
+                            redis_client.set(cache_key, json.dumps(bi_candles), ex=cache_ttl)
+                        except Exception:
+                            pass
+                        continue
+            
+            if yf_candles is not None and len(yf_candles) > 0:
+                result[tf] = yf_candles
+                try:
+                    redis_client.set(cache_key, json.dumps(yf_candles), ex=cache_ttl)
+                except Exception:
+                    pass
+            else:
+                result[tf] = []
         except Exception as e:
             logger.warning(f"Failed to fetch bars for {symbol} {tf}: {e}")
             # Try Borsa Italiana fallback even on exception
             try:
+                isin = _get_isin_from_yfinance(symbol)
                 now = datetime.now(timezone.utc)
-                if tf == "1h":
-                    from_date = now - timedelta(days=60)
-                elif tf == "1d":
-                    from_date = now - timedelta(days=365)
-                elif tf == "1w":
-                    from_date = now - timedelta(days=365*5)
-                elif tf == "1M":
-                    from_date = now - timedelta(days=365*10)
-                else:
-                    from_date = now - timedelta(days=365)
-                fallback = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit)
+                from_date = _get_from_date_for_timeframe(tf, now)
+                fallback = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit, isin=isin)
                 result[tf] = fallback if fallback is not None else []
                 if fallback:
                     try:
@@ -1221,6 +1280,7 @@ def get_bars_range(
     try:
         ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
         hist = ticker.history(start=start_dt, end=end_dt, interval=fetch_interval, auto_adjust=False, actions=False)
+        yf_candles = None
         if not hist.empty:
             # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
             ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
@@ -1231,28 +1291,35 @@ def get_bars_range(
                 candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
             if needs_aggregation:
                 candles = _aggregate_candles(candles, timeframe)
-            result = candles[-limit:]
-            if result:
-                try:
-                    redis_client.set(cache_key, json.dumps(result), ex=300)
-                except Exception:
-                    pass
+            yf_candles = candles[-limit:]
+        
+        # Borsa Italiana fallback if yfinance data is insufficient
+        if yf_candles is None or len(yf_candles) < 3:
+            isin = _get_isin_from_yfinance(symbol)
+            bi_candles = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit, isin=isin)
+            if bi_candles is not None and len(bi_candles) > 0:
+                if yf_candles is None or len(bi_candles) > len(yf_candles):
+                    result = bi_candles
+                    try:
+                        redis_client.set(cache_key, json.dumps(result), ex=300)
+                    except Exception:
+                        pass
+                    return result
+        
+        if yf_candles is not None and len(yf_candles) > 0:
+            result = yf_candles
+            try:
+                redis_client.set(cache_key, json.dumps(result), ex=300)
+            except Exception:
+                pass
             return result
-        # yfinance returned empty – try Borsa Italiana fallback
-        fallback = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit)
-        if fallback is not None:
-            if fallback:
-                try:
-                    redis_client.set(cache_key, json.dumps(fallback), ex=300)
-                except Exception:
-                    pass
-            return fallback
         return []
     except Exception as e:
         logger.warning(f"Failed to fetch bars range for {symbol} {timeframe}: {e}")
         # Try Borsa Italiana fallback even on exception
         try:
-            fallback = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit)
+            isin = _get_isin_from_yfinance(symbol)
+            fallback = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit, isin=isin)
             if fallback is not None:
                 if fallback:
                     try:
