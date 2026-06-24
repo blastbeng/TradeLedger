@@ -214,7 +214,7 @@ def get_cached_news_summary(symbol: str, model_type: str = "actuator") -> dict:
 SYSTEM_PROMPT = """You are a professional stock, ETF, and BTP bond trading bot assistant focused on medium to long-term investment horizons. Your primary goal is to generate consistent profit by identifying assets with strong fundamentals, solid momentum, and favorable macro conditions over weeks to months. You must avoid large drawdowns and only trade when there is a clear edge. Your asset universe includes Italian stocks, UCITS ETFs, and Italian government bonds (BTPs).
 
 Key principles:
-- **Primary timeframes:** Focus on 1w (weekly) and 1M (monthly) charts for your main decisions. Use 1d and 1h for short‑term confirmation or finer entry/exit timing, or when weekly data is unavailable.
+- **Primary timeframe: 1M (monthly) candles.** Monthly candles are the most important timeframe for stocks, ETFs, and BTPs. The largest and most reliable profits come from long-term holdings identified on monthly charts. Use 1M as your primary decision timeframe whenever available. Use 1w (weekly) as a secondary confirmation timeframe. Use 1d and 1h only for short‑term confirmation or finer entry/exit timing, or when monthly/weekly data is unavailable. When assigning timeframes to symbols, prefer "1M" for positions you intend to hold for months to a year or more.
 - **Confidence is your directional conviction, not a trade gate.** Set confidence between 0.0 and 1.0. 0.0 → no conviction (should be HOLD). 0.5 → moderate belief. 1.0 → absolute certainty. Only output HOLD when you have no directional edge at all.
 - **You must set `position_size_fraction` yourself** to reflect your confidence, risk level, and any other factors. The engine will NOT scale the position size automatically – it will use exactly the fraction you provide. If you have low confidence, set a smaller `position_size_fraction`; if high confidence, you may set a larger one. The sum of position_size_fraction across all stocks you intend to trade must not exceed 1.0.
 - Focus on stocks with strong medium to long-term momentum, solid fundamentals, and favorable sector trends. Avoid extremely low‑volatility or chaotic markets, but do not require perfect conditions to trade.
@@ -455,7 +455,7 @@ Select between 0 and {max_symbols} assets (stocks, ETFs, or BTP bonds) to trade.
 
 Each symbol can only appear once in your selection. Choose the single best timeframe for each stock based on the multi-timeframe OHLCV data.
 
-**Prefer 1w or 1M timeframes for medium/long‑term trading.** Use 1d only if the stock shows high short‑term volatility or you need finer entry timing.
+**Prefer 1M (monthly) timeframes for long‑term trading.** Monthly candles capture the largest, most reliable trends for stocks, ETFs, and BTPs. Assign "1M" as the timeframe for most symbols, especially when you expect to hold the position for months or longer. Use "1w" as a secondary option when you need slightly faster signals. Use "1d" only if the stock shows high short‑term volatility or you need finer entry timing. The biggest profits in this asset universe come from identifying strong monthly trends and holding through them.
 
 **Output ONLY the raw JSON object as specified.**
 
@@ -916,6 +916,20 @@ Maximum symbols to trade: {max_symbols}
         )
     if assigned_timeframe:
         prompt += f"\nAssigned trading timeframe for this stock: {assigned_timeframe}. Base your decision primarily on the OHLCV data for this timeframe.\n"
+        if assigned_tf == "1M":
+            prompt += (
+                "**Monthly (1M) candles are the most important timeframe for long-term holdings.** "
+                "Monthly trends are the most reliable for stocks, ETFs, and BTPs. "
+                "Focus on the monthly OHLCV data and monthly indicators to identify the primary trend direction and strength. "
+                "The largest profits come from holding positions that are in a strong monthly uptrend. "
+                "Set max_hold_time_seconds appropriate for a monthly timeframe (e.g., 3–12 months or more).\n"
+            )
+        elif assigned_tf == "1w":
+            prompt += (
+                "Weekly (1w) candles are a strong secondary timeframe. "
+                "If monthly (1M) data is also available in the multi-timeframe section above, cross-reference it to confirm the longer-term trend. "
+                "Prefer holding positions that align with the monthly trend direction.\n"
+            )
     if market_regime:
         prompt += f"\nMarket regime: {market_regime}\n"
 
@@ -1077,11 +1091,14 @@ Maximum symbols to trade: {max_symbols}
                     )
         prompt += (
             "Use these summaries to assess momentum and trend across timeframes. "
-            "The higher timeframes (1w, 1M) show the larger trend, while 1d provides "
-            "additional context for entry and exit timing.\n"
+            "**The 1M (monthly) timeframe is the most important** — it shows the dominant long-term trend that drives the largest profits. "
+            "The 1w (weekly) timeframe provides intermediate confirmation. "
+            "The 1d (daily) timeframe provides additional context for entry and exit timing only. "
+            "Always align your trading decision with the monthly trend direction.\n"
         )
     if multi_tf_indicators:
         prompt += "\nComputed technical indicators per timeframe:\n"
+        prompt += "**Pay closest attention to the [1M] (monthly) indicators — they define the primary long-term trend.**\n"
         for tf in settings.OHLCV_TIMEFRAMES:
             if tf in multi_tf_indicators:
                 ind = multi_tf_indicators[tf]
@@ -1291,7 +1308,7 @@ Maximum symbols to trade: {max_symbols}
         )
 
     prompt += f"""
-**For the {assigned_timeframe or 'default'} timeframe, a reasonable minimum max_hold_time_seconds is {min_hold} seconds. Do not set it lower unless you have a very specific, justified reason (e.g., medium-term with a very tight stop and high confidence).**
+**For the {assigned_timeframe or 'default'} timeframe, a reasonable minimum max_hold_time_seconds is {min_hold} seconds. Do not set it lower unless you have a very specific, justified reason (e.g., medium-term with a very tight stop and high confidence). For 1M (monthly) candles, prefer max_hold_time_seconds of 2,592,000–31,536,000 seconds (1–12 months) to allow long-term trends to fully develop. The most profitable trades in stocks, ETFs, and BTPs come from holding positions for many months on monthly candles.
 
 The validator enforces a hard minimum of {min_hold_time_mult} × timeframe_seconds = {int(min_hold_time_mult * tf_seconds)} seconds. Your max_hold_time_seconds must be at least this value.
 
