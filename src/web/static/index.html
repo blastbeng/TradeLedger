@@ -872,6 +872,12 @@
                 }
             }
 
+            // Risk Metrics
+            fetch('/api/risk')
+                .then(res => res.json())
+                .then(risk => updateRiskUI(risk))
+                .catch(() => {});
+
 
         }
 
@@ -1054,10 +1060,6 @@
 
         async function refreshData() {
             await fetchPositionPrices();
-            fetch('/api/risk')
-                .then(res => res.json())
-                .then(risk => updateRiskUI(risk))
-                .catch(() => {});
             fetch('/api/history?limit=50')
                 .then(res => res.json())
                 .then(history => updateHistoryUI(history))
