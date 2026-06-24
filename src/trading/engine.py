@@ -6527,38 +6527,6 @@ class TradingEngine:
             # Desired amount based on fraction of total available quote balance
             desired_amount = quote_balance * position_fraction
 
-            # --- ATR-Based Position Sizing (Hard Override) ---
-            risk_per_share = None
-            if stop_method == "atr_multiple" and atr is not None and atr > 0:
-                atr_mult = params["stop_loss_atr_multiple"]
-                risk_per_share = atr_mult * atr
-            elif sl_pct is not None and current_price > 0:
-                risk_per_share = sl_pct * current_price
-
-            if risk_per_share is not None and risk_per_share > 0:
-                # Calculate portfolio value (cash + open positions)
-                total_portfolio_value = quote_balance
-                pos_tickers = await self._get_all_position_tickers()
-                for sym, pos in self.positions.items():
-                    try:
-                        t = pos_tickers.get(sym)
-                        if t and t.get('last'):
-                            total_portfolio_value += pos['amount'] * t['last']
-                    except Exception:
-                        pass
-
-                max_risk_amount = total_portfolio_value * settings.RISK_PER_TRADE_PCT
-                max_quantity = max_risk_amount / risk_per_share
-                atr_based_amount = max_quantity * current_price
-
-                if atr_based_amount < desired_amount:
-                    logger.info(
-                        f"ATR-based position sizing override for {symbol}: "
-                        f"reducing amount from {desired_amount:.2f} to {atr_based_amount:.2f} "
-                        f"to limit risk to {settings.RISK_PER_TRADE_PCT*100:.1f}% of portfolio."
-                    )
-                    desired_amount = atr_based_amount
-
             # Fetch all position tickers once for risk calculations
             pos_tickers = await self._get_all_position_tickers()
 
