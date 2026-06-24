@@ -42,10 +42,10 @@ TIMEFRAME_MAP = {
     "1w": "1wk",
     "1M": "1mo",
     "3M": "3mo",
-    "6M": "1mo",  # Aggregated from 1mo
-    "1Y": "1mo",  # Aggregated from 1mo
-    "3Y": "1mo",  # Aggregated from 1mo
-    "5Y": "1mo",  # Aggregated from 1mo
+    "6M": "6mo",
+    "1Y": "1y",
+    "3Y": "3y",
+    "5Y": "5y",
 }
 
 INVESTINY_TIMEFRAME_MAP = {
@@ -67,35 +67,6 @@ TIMEFRAME_MS = {
     "5Y": 157_680_000_000,
 }
 
-
-def _aggregate_candles(candles: List[List], target_tf_ms: int) -> List[List]:
-    """Aggregate a list of OHLCV candles into a larger timeframe bucket."""
-    if not candles:
-        return []
-    buckets = {}
-    for c in candles:
-        ts = c[0]
-        bucket_ts = (ts // target_tf_ms) * target_tf_ms
-        if bucket_ts not in buckets:
-            buckets[bucket_ts] = {
-                "open": c[1],
-                "high": c[2],
-                "low": c[3],
-                "close": c[4],
-                "volume": c[5],
-            }
-        else:
-            b = buckets[bucket_ts]
-            b["high"] = max(b["high"], c[2])
-            b["low"] = min(b["low"], c[3])
-            b["close"] = c[4]
-            b["volume"] += c[5]
-
-    result = []
-    for ts in sorted(buckets.keys()):
-        b = buckets[ts]
-        result.append([ts, b["open"], b["high"], b["low"], b["close"], b["volume"]])
-    return result
 
 # Mapping of common BTP ISINs to their Investing.com numerical pairId.
 # These are used as a fast cache; if an ISIN is not found here, the dynamic
@@ -804,10 +775,6 @@ def _fetch_btp_candles_from_borsaitaliana(
         if not candles:
             return None
 
-        # Aggregate if necessary
-        if timeframe not in ("1h", "1d", "1w", "1M") and timeframe in TIMEFRAME_MS:
-            candles = _aggregate_candles(candles, TIMEFRAME_MS[timeframe])
-
         # Sort by time ascending
         candles.sort(key=lambda x: x[0])
         # Apply limit (most recent)
@@ -838,8 +805,13 @@ def _fetch_stock_candles_from_borsaitaliana(
         "1d": "1d",
         "1w": "1w",
         "1M": "1M",
+        "3M": "3M",
+        "6M": "6M",
+        "1Y": "1Y",
+        "3Y": "3Y",
+        "5Y": "5Y",
     }
-    sample_time = TIMEFRAME_MAP_BI.get(timeframe, "1M")
+    sample_time = TIMEFRAME_MAP_BI.get(timeframe)
     if not sample_time:
         logger.warning(f"Unsupported timeframe for Borsa Italiana Stock: {timeframe}")
         return None
@@ -931,10 +903,6 @@ def _fetch_stock_candles_from_borsaitaliana(
             if not candles:
                 continue
 
-            # Aggregate if necessary
-            if timeframe not in TIMEFRAME_MAP_BI and timeframe in TIMEFRAME_MS:
-                candles = _aggregate_candles(candles, TIMEFRAME_MS[timeframe])
-
             # Sort by time ascending
             candles.sort(key=lambda x: x[0])
             # Apply limit (most recent)
@@ -971,12 +939,8 @@ def _fetch_btp_candles(
     # Map our timeframe to investiny interval
     interval = INVESTINY_TIMEFRAME_MAP.get(timeframe)
     if not interval:
-        # Fallback to monthly for long-term timeframes (3M, 6M, 1Y, 3Y, 5Y)
-        if timeframe in TIMEFRAME_MS:
-            interval = "M"
-        else:
-            logger.warning(f"Unsupported timeframe for BTP: {timeframe}")
-            return []
+        logger.warning(f"Unsupported timeframe for BTP: {timeframe}")
+        return []
 
     df = get_btp_candles(investing_id, from_str, to_str, interval=interval)
     if df.empty:
@@ -994,10 +958,6 @@ def _fetch_btp_candles(
             row["Close"],
             int(row["Volume"]),
         ])
-
-    # Aggregate if necessary
-    if timeframe not in INVESTINY_TIMEFRAME_MAP and timeframe in TIMEFRAME_MS:
-        candles = _aggregate_candles(candles, TIMEFRAME_MS[timeframe])
 
     return candles[-limit:]
 
@@ -1057,7 +1017,6 @@ def get_multi_timeframe_bars(
             elif inv_interval == "M":
                 from_date = now - timedelta(days=365*10)
             else:
-                # For long-term timeframes (3M, 6M, 1Y, 3Y, 5Y), fetch 10 years of monthly data to aggregate
                 from_date = now - timedelta(days=365*10)
             
             candles = _fetch_btp_candles(symbol, name, tf, from_date, now, limit)
@@ -1082,10 +1041,6 @@ def get_multi_timeframe_bars(
                 for idx, row in hist.iterrows():
                     ts = int(idx.timestamp() * 1000)
                     candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
-                # Aggregate if necessary
-                if tf in ("6M", "1Y", "3Y", "5Y"):
-                    candles = _aggregate_candles(candles, TIMEFRAME_MS[tf])
-
                 # Take the last `limit` candles
                 result[tf] = candles[-limit:]
                 if candles:
@@ -1208,10 +1163,6 @@ def get_bars_range(
             for idx, row in hist.iterrows():
                 ts = int(idx.timestamp() * 1000)
                 candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
-            # Aggregate if necessary
-            if timeframe in ("6M", "1Y", "3Y", "5Y"):
-                candles = _aggregate_candles(candles, TIMEFRAME_MS[timeframe])
-
             result = candles[-limit:]
             if result:
                 try:
