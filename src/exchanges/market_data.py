@@ -503,6 +503,12 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         except Exception:
             pass
 
+    # Cache the result for 60 seconds
+    try:
+        redis_client.setex(cache_key, 60, json.dumps(result))
+    except Exception:
+        pass
+
     return result
 
 
