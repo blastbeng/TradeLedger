@@ -891,8 +891,11 @@ class TradingEngine:
                 symbols = [entry["symbol"] for entry in self.current_symbols]
                 if symbols:
                     logger.info(f"Fast news refresh for {len(symbols)} current symbols")
+                    async def _fetch_news_with_limit(sym):
+                        async with self._news_semaphore:
+                            await self._fetch_and_store_news_for_symbol(sym)
                     await asyncio.gather(
-                        *[self._fetch_and_store_news_for_symbol(sym) for sym in symbols]
+                        *[_fetch_news_with_limit(sym) for sym in symbols]
                     )
             except Exception as e:
                 logger.error(f"Fast news refresh error: {e}")
@@ -942,11 +945,12 @@ class TradingEngine:
 
                 for sym in symbols_to_refresh:
                     try:
-                        stock_name = await self._get_stock_name(sym)
-                        articles = await asyncio.to_thread(fetch_news_for_symbol, sym, stock_name)
-                        if articles:
-                            base_symbol = sym.split("/")[0] if "/" in sym else sym
-                            await asyncio.to_thread(store_news_articles, base_symbol, articles)
+                        async with self._news_semaphore:
+                            stock_name = await self._get_stock_name(sym)
+                            articles = await asyncio.to_thread(fetch_news_for_symbol, sym, stock_name)
+                            if articles:
+                                base_symbol = sym.split("/")[0] if "/" in sym else sym
+                                await asyncio.to_thread(store_news_articles, base_symbol, articles)
                     except Exception as e:
                         logger.info(f"News refresh failed for {sym}: {e}")
                     await asyncio.sleep(0.2)
@@ -1255,7 +1259,8 @@ class TradingEngine:
                     if not self._running:
                         break
                     try:
-                        await self._fetch_and_store_news_for_symbol(pair)
+                        async with self._news_semaphore:
+                            await self._fetch_and_store_news_for_symbol(pair)
                     except Exception as e:
                         logger.warning(f"Full news download failed for {pair}: {e}")
                     await asyncio.sleep(0.5)  # small delay between symbols
@@ -7734,7 +7739,13 @@ class TradingEngine:
             [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
             for c in db_candles
         ]
-        ind = compute_all_indicators(raw_candles)
+        cached_ind = await self._get_cached_indicators(symbol, timeframe, raw_candles)
+        if cached_ind:
+            ind = cached_ind
+        else:
+            ind = compute_all_indicators(raw_candles)
+            if ind:
+                await self._cache_indicators(symbol, timeframe, raw_candles, ind)
         if not ind:
             return False
 
