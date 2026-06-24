@@ -174,18 +174,39 @@ def parse_llm_response(response_text: str) -> Signal:
 
         # --- order execution parameters ---
         order_type = params.get("order_type")
+
         stop_price = _safe_float(params.get("stop_price"))
+        if stop_price is not None:
+            params["stop_price"] = stop_price
+
         # limit_price is already in params, but we also expose it on the Signal
         limit_price = _safe_float(params.get("limit_price"))
+        if limit_price is not None:
+            params["limit_price"] = limit_price
+
         trail_offset = _safe_float(params.get("trail_offset"))
-        
+        if trail_offset is not None:
+            params["trail_offset"] = trail_offset
+
         stop_loss_order_type = params.get("stop_loss_order_type")
+
         stop_loss_stop_price = _safe_float(params.get("stop_loss_stop_price"))
+        if stop_loss_stop_price is not None:
+            params["stop_loss_stop_price"] = stop_loss_stop_price
+
         stop_loss_limit_price = _safe_float(params.get("stop_loss_limit_price"))
+        if stop_loss_limit_price is not None:
+            params["stop_loss_limit_price"] = stop_loss_limit_price
+
         stop_loss_trail_offset = _safe_float(params.get("stop_loss_trail_offset"))
-        
+        if stop_loss_trail_offset is not None:
+            params["stop_loss_trail_offset"] = stop_loss_trail_offset
+
         take_profit_order_type = params.get("take_profit_order_type")
+
         take_profit_limit_price = _safe_float(params.get("take_profit_limit_price"))
+        if take_profit_limit_price is not None:
+            params["take_profit_limit_price"] = take_profit_limit_price
 
         backtest_period_days = _safe_int(params.get("backtest_period_days"))
         if backtest_period_days is not None:
