@@ -831,6 +831,37 @@ class TradingEngine:
             logger.info(f"Volume trend computation failed for {symbol}: {e}")
             return None
 
+    async def _get_cached_indicators(
+        self, symbol: str, timeframe: str, candles: List[List]
+    ) -> Optional[Dict[str, Any]]:
+        """Return cached indicators if the latest candle timestamp matches."""
+        if not candles:
+            return None
+        latest_ts = candles[-1][0]
+        cache_key = f"indicators:{symbol}:{timeframe}:{latest_ts}"
+        try:
+            cached = await asyncio.to_thread(self.redis.get, cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
+        return None
+
+    async def _cache_indicators(
+        self, symbol: str, timeframe: str, candles: List[List], indicators: Dict[str, Any]
+    ):
+        """Store indicators in Redis with a 60-second TTL."""
+        if not candles:
+            return
+        latest_ts = candles[-1][0]
+        cache_key = f"indicators:{symbol}:{timeframe}:{latest_ts}"
+        try:
+            await asyncio.to_thread(
+                self.redis.setex, cache_key, 60, json.dumps(indicators)
+            )
+        except Exception:
+            pass
+
     async def _fetch_and_store_news_for_symbol(self, symbol: str):
         """Fetch news for a single symbol and store it in the database."""
         if not settings.NEWS_ENABLED:
