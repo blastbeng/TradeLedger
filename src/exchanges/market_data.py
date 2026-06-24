@@ -433,52 +433,30 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Failed to fetch BTP quotes: {e}")
 
-    # Batch in chunks of 10 to avoid yfinance rate limits and timeouts
-    chunk_size = 10
-    for i in range(0, len(stock_symbols), chunk_size):
-        chunk = stock_symbols[i:i+chunk_size]
+    for sym in stock_symbols:
         try:
-            # Fetch intraday data for latest price and volume
-            intraday = yf.download(chunk, period="1d", interval="5m", progress=False, group_by='column', session=_get_yf_session())
-            if not intraday.empty:
-                last_row = intraday.iloc[-1]
-                for sym in chunk:
-                    try:
-                        if len(chunk) > 1:
-                            last = last_row[("Close", sym)]
-                            volume = last_row[("Volume", sym)]
-                        else:
-                            last = last_row["Close"]
-                            volume = last_row["Volume"]
-                        if not pd.isna(last):
-                            result[sym]["last"] = float(last)
-                        if not pd.isna(volume):
-                            result[sym]["volume"] = float(volume)
-                            result[sym]["quoteVolume"] = float(volume)
-                    except Exception:
-                        pass
-        except Exception as e:
-            logger.warning(f"Batch intraday download failed for chunk {i//chunk_size}: {e}")
+            ticker = yf.Ticker(sym, session=_get_yf_session())
+            # fast_info gives last price, bid, ask, volume
+            info = ticker.fast_info
+            last = info.get("lastPrice")
+            if last is not None:
+                result[sym]["last"] = float(last)
+            result[sym]["bid"] = info.get("bid")
+            result[sym]["ask"] = info.get("ask")
+            result[sym]["volume"] = info.get("lastVolume")
+            result[sym]["quoteVolume"] = info.get("lastVolume")
 
-        try:
-            # Fetch daily data for previous close to calculate change_24h
-            daily = yf.download(chunk, period="2d", interval="1d", progress=False, group_by='column', session=_get_yf_session())
-            if not daily.empty:
-                for sym in chunk:
-                    try:
-                        if len(chunk) > 1:
-                            prev_close = daily[("Close", sym)].iloc[-2]
-                        else:
-                            prev_close = daily["Close"].iloc[-2]
-                        if not pd.isna(prev_close) and result[sym]["last"]:
-                            last = result[sym]["last"]
-                            change_24h = ((last - prev_close) / prev_close * 100) if prev_close > 0 else None
-                            result[sym]["change_24h"] = change_24h
-                            result[sym]["percentage"] = change_24h
-                    except Exception:
-                        pass
-        except Exception as e:
-            logger.warning(f"Batch daily download failed for chunk {i//chunk_size}: {e}")
+            # For change_24h, fetch only 2 days of daily data (lightweight)
+            if last is not None:
+                hist = ticker.history(period="2d", interval="1d", auto_adjust=False, actions=False, threads=False)
+                if len(hist) >= 2:
+                    prev_close = hist["Close"].iloc[-2]
+                    if prev_close and prev_close > 0:
+                        change = ((last - prev_close) / prev_close) * 100
+                        result[sym]["change_24h"] = change
+                        result[sym]["percentage"] = change
+        except Exception:
+            pass
 
     return result
 
@@ -912,12 +890,25 @@ def get_multi_timeframe_bars(
     if not re.match(r'^IT[A-Z0-9]{10}$', symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
         yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
 
+    redis_client = get_redis_client()
+    cache_ttl = 60 if any(tf in ("1h",) for tf in timeframes) else 300
+
     result = {}
     for tf in timeframes:
         interval = TIMEFRAME_MAP.get(tf)
         if not interval:
             logger.warning(f"Unsupported timeframe: {tf}")
             continue
+
+        cache_key = f"ohlcv:{symbol}:{tf}:{limit}"
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                result[tf] = json.loads(cached)
+                continue
+        except Exception:
+            pass
+
         # Use investiny for BTPs (ISINs)
         if re.match(r'^IT[A-Z0-9]{10}$', symbol):
             name = _get_btp_name(symbol)
@@ -937,13 +928,18 @@ def get_multi_timeframe_bars(
             
             candles = _fetch_btp_candles(symbol, name, tf, from_date, now, limit)
             result[tf] = candles
+            if candles:
+                try:
+                    redis_client.setex(cache_key, cache_ttl, json.dumps(candles))
+                except Exception:
+                    pass
             continue
         try:
             ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
             # yfinance intraday data is limited to 60 days
             # For daily and longer timeframes, use "max" to get all available history (medium/long-term)
             period = "60d" if interval in ("5m", "15m", "60m") else "max"
-            hist = ticker.history(period=period, interval=interval)
+            hist = ticker.history(period=period, interval=interval, auto_adjust=False, actions=False, threads=False)
             if not hist.empty:
                 # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
                 ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
@@ -954,6 +950,11 @@ def get_multi_timeframe_bars(
                     candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
                 # Take the last `limit` candles
                 result[tf] = candles[-limit:]
+                if candles:
+                    try:
+                        redis_client.setex(cache_key, cache_ttl, json.dumps(candles[-limit:]))
+                    except Exception:
+                        pass
             else:
                 # yfinance returned empty – try Borsa Italiana fallback
                 now = datetime.now(timezone.utc)
@@ -970,6 +971,11 @@ def get_multi_timeframe_bars(
                     from_date = now - timedelta(days=365)
                 fallback = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit)
                 result[tf] = fallback if fallback is not None else []
+                if fallback:
+                    try:
+                        redis_client.setex(cache_key, cache_ttl, json.dumps(fallback))
+                    except Exception:
+                        pass
         except Exception as e:
             logger.warning(f"Failed to fetch bars for {symbol} {tf}: {e}")
             # Try Borsa Italiana fallback even on exception
@@ -987,6 +993,11 @@ def get_multi_timeframe_bars(
                     from_date = now - timedelta(days=365)
                 fallback = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit)
                 result[tf] = fallback if fallback is not None else []
+                if fallback:
+                    try:
+                        redis_client.setex(cache_key, cache_ttl, json.dumps(fallback))
+                    except Exception:
+                        pass
             except Exception:
                 result[tf] = []
     return result
@@ -1007,12 +1018,26 @@ def get_bars_range(
         logger.warning(f"Unsupported timeframe: {timeframe}")
         return []
 
+    redis_client = get_redis_client()
+    cache_key = f"ohlcv_range:{symbol}:{timeframe}:{start_ms}:{limit}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
     # Use investiny for BTPs (ISINs)
     if re.match(r'^IT[A-Z0-9]{10}$', symbol):
         name = _get_btp_name(symbol)
         from_date = datetime.fromtimestamp(start_ms / 1000.0, tz=timezone.utc)
         to_date = datetime.now(timezone.utc)
         candles = _fetch_btp_candles(symbol, name, timeframe, from_date, to_date, limit)
+        if candles:
+            try:
+                redis_client.setex(cache_key, 300, json.dumps(candles))
+            except Exception:
+                pass
         return candles
 
     # Format symbol for Yahoo Finance: BTP ISINs are used as-is, stocks get TICKER_SUFFIX if missing
@@ -1024,7 +1049,7 @@ def get_bars_range(
     end_dt = datetime.now(timezone.utc)
     try:
         ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
-        hist = ticker.history(start=start_dt, end=end_dt, interval=interval)
+        hist = ticker.history(start=start_dt, end=end_dt, interval=interval, auto_adjust=False, actions=False, threads=False)
         if not hist.empty:
             # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
             ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
@@ -1033,10 +1058,21 @@ def get_bars_range(
             for idx, row in hist.iterrows():
                 ts = int(idx.timestamp() * 1000)
                 candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
-            return candles[-limit:]
+            result = candles[-limit:]
+            if result:
+                try:
+                    redis_client.setex(cache_key, 300, json.dumps(result))
+                except Exception:
+                    pass
+            return result
         # yfinance returned empty – try Borsa Italiana fallback
         fallback = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit)
         if fallback is not None:
+            if fallback:
+                try:
+                    redis_client.setex(cache_key, 300, json.dumps(fallback))
+                except Exception:
+                    pass
             return fallback
         return []
     except Exception as e:
@@ -1045,6 +1081,11 @@ def get_bars_range(
         try:
             fallback = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit)
             if fallback is not None:
+                if fallback:
+                    try:
+                        redis_client.setex(cache_key, 300, json.dumps(fallback))
+                    except Exception:
+                        pass
                 return fallback
         except Exception:
             pass
