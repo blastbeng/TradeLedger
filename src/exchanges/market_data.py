@@ -825,71 +825,6 @@ def get_btp_candles(
     df.dropna(subset=["Open", "High", "Low", "Close"], how="all", inplace=True)
     return df
 
-def _fetch_btp_candles_from_borsaitaliana(
-    isin: str,
-    timeframe: str,
-    from_date: datetime,
-    to_date: datetime,
-    limit: int
-) -> Optional[List[List]]:
-    """
-    Fetch BTP OHLCV candles from Borsa Italiana hidden JSON endpoint.
-    Returns list of [timestamp_ms, open, high, low, close, volume]
-    or None on failure.
-    """
-    url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-MOTX.html"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-MOTX.html?lang=it"
-    }
-
-    try:
-        response = requests.get(url, headers=headers, timeout=30)
-        if response.status_code != 200:
-            logger.warning(f"Borsa Italiana API returned {response.status_code} for BTP {isin} {timeframe}")
-            return None
-        
-        data = response.json()
-        if not data or not isinstance(data, list):
-            return None
-
-        candles = []
-        from_ts = from_date.timestamp() * 1000
-        to_ts = to_date.timestamp() * 1000
-
-        for row in data:
-            if not isinstance(row, list) or len(row) < 6:
-                continue
-            ts = row[0]
-            if ts is None:
-                continue
-            if ts < from_ts or ts > to_ts:
-                continue
-            candles.append([
-                int(ts),
-                float(row[1]),
-                float(row[2]),
-                float(row[3]),
-                float(row[4]),
-                float(row[5]),
-            ])
-
-        if not candles:
-            return None
-
-        # Sort by time ascending
-        candles.sort(key=lambda x: x[0])
-        # Apply limit (most recent)
-        if limit and len(candles) > limit:
-            candles = candles[-limit:]
-
-        return candles
-
-    except Exception as e:
-        logger.warning(f"Failed to fetch BTP candles from Borsa Italiana for {isin}: {e}")
-        return None
-
-
 def _fetch_stock_candles_from_borsaitaliana(
     symbol: str,
     timeframe: str,
@@ -903,6 +838,50 @@ def _fetch_stock_candles_from_borsaitaliana(
     Returns list of [timestamp_ms, open, high, low, close, volume]
     or None on failure.
     """
+    if isin:
+        urls_to_try = [
+            f"https://www.borsaitaliana.it/borsa/azioni/scheda/{isin}-MTAA.html",
+            f"https://www.borsaitaliana.it/borsa/etf/scheda/{isin}-ETFP.html?lang=it"
+        ]
+        headers_scheda = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": f"https://www.borsaitaliana.it/"
+        }
+        for url in urls_to_try:
+            try:
+                response = requests.get(url, headers=headers_scheda, timeout=30)
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        if data and isinstance(data, list):
+                            candles = []
+                            from_ts = from_date.timestamp() * 1000
+                            to_ts = to_date.timestamp() * 1000
+                            for row in data:
+                                if not isinstance(row, list) or len(row) < 6:
+                                    continue
+                                ts = row[0]
+                                if ts is None or ts < from_ts or ts > to_ts:
+                                    continue
+                                candles.append([
+                                    int(ts),
+                                    float(row[1]),
+                                    float(row[2]),
+                                    float(row[3]),
+                                    float(row[4]),
+                                    float(row[5]),
+                                ])
+                            if candles:
+                                candles.sort(key=lambda x: x[0])
+                                if limit and len(candles) > limit:
+                                    candles = candles[-limit:]
+                                return candles
+                    except ValueError:
+                        # Response is HTML, not JSON; continue to next URL or fallback
+                        pass
+            except Exception as e:
+                logger.debug(f"Scheda URL fetch failed for {isin} at {url}: {e}")
+
     TIMEFRAME_MAP_BI = {
         "1h": "1h",
         "1d": "1d",
@@ -1039,12 +1018,7 @@ def _fetch_btp_candles(
     isin: str, name: str, timeframe: str,
     from_date: datetime, to_date: datetime, limit: int
 ) -> List[List[float]]:
-    """Fetch BTP candles using Borsa Italiana first, falling back to Investing.com."""
-    # Try Borsa Italiana first
-    candles = _fetch_btp_candles_from_borsaitaliana(isin, timeframe, from_date, to_date, limit)
-    if candles:
-        return candles
-
+    """Fetch BTP candles using Investing.com."""
     # Fallback to Investing.com
     investing_id = _get_btp_investing_id(isin, name)
     if not investing_id:
