@@ -713,94 +713,45 @@ def _fetch_btp_candles_from_borsaitaliana(
     limit: int
 ) -> Optional[List[List]]:
     """
-    Fetch BTP OHLCV candles from Borsa Italiana charting API.
+    Fetch BTP OHLCV candles from Borsa Italiana hidden JSON endpoint.
     Returns list of [timestamp_ms, open, high, low, close, volume]
     or None on failure.
     """
-    TIMEFRAME_MAP_BI = {
-        "1h": "1h",
-        "1d": "1d",
-        "1w": "1w",
-        "1M": "1M",
-    }
-    sample_time = TIMEFRAME_MAP_BI.get(timeframe)
-    if not sample_time:
-        logger.warning(f"Unsupported timeframe for Borsa Italiana BTP: {timeframe}")
-        return None
-
-    # Dynamically determine the TimeFrame zoom level based on the requested date range
-    days = (to_date - from_date).days
-    if days <= 30:
-        tf_str = "1m"
-    elif days <= 90:
-        tf_str = "3m"
-    elif days <= 180:
-        tf_str = "6m"
-    elif days <= 365:
-        tf_str = "1y"
-    elif days <= 365 * 3:
-        tf_str = "3y"
-    elif days <= 365 * 5:
-        tf_str = "5y"
-    elif days <= 365 * 10:
-        tf_str = "10y"
-    else:
-        tf_str = "max"
-
-    url = "https://charts.borsaitaliana.it/charts/services/ChartWService.asmx/GetPrices"
+    url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-MOTX"
     headers = {
-        "Host": "charts.borsaitaliana.it",
-        "Origin": "https://www.borsaitaliana.it",
-        "Referer": "https://www.borsaitaliana.it/",
-        "Content-Type": "application/json; charset=utf-8",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    }
-    payload = {
-        "request": {
-            "SampleTime": sample_time,
-            "TimeFrame": tf_str,
-            "RequestedDataSetType": "ohlc",
-            "ChartPriceType": "price",
-            "Key": f"{isin}.MOT",
-            "OffSet": 0,
-            "FromDate": None,
-            "ToDate": None,
-            "UseDelay": False,
-            "KeyType": "Topic",
-            "KeyType2": "Topic",
-            "Language": "it-IT",
-        }
+        "Referer": f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-MOTX.html?lang=it"
     }
 
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+        response = requests.get(url, headers=headers, timeout=30)
         if response.status_code != 200:
             logger.warning(f"Borsa Italiana API returned {response.status_code} for BTP {isin} {timeframe}")
             return None
-        raw = response.json()
-        prices = raw.get("d", {}).get("Prices")
-        if not prices:
-            logger.debug(f"Borsa Italiana returned no prices for BTP {isin} {timeframe}: {raw}")
+        
+        data = response.json()
+        if not data or not isinstance(data, list):
             return None
 
         candles = []
         from_ts = from_date.timestamp() * 1000
         to_ts = to_date.timestamp() * 1000
 
-        for p in prices:
-            ts = p.get("Time")
+        for row in data:
+            if not isinstance(row, list) or len(row) < 6:
+                continue
+            ts = row[0]
             if ts is None:
                 continue
             if ts < from_ts or ts > to_ts:
                 continue
             candles.append([
-                ts,
-                float(p.get("Open", 0)),
-                float(p.get("High", 0)),
-                float(p.get("Low", 0)),
-                float(p.get("Close", 0)),
-                float(p.get("Volume", 0)),
+                int(ts),
+                float(row[1]),
+                float(row[2]),
+                float(row[3]),
+                float(row[4]),
+                float(row[5]),
             ])
 
         if not candles:
@@ -814,7 +765,8 @@ def _fetch_btp_candles_from_borsaitaliana(
 
         return candles
 
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to fetch BTP candles from Borsa Italiana for {isin}: {e}")
         return None
 
 
