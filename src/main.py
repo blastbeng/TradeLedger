@@ -40,6 +40,40 @@ if not check_redis_connection():
     logging.critical("Redis is not reachable. Exiting.")
     sys.exit(1)
 
+# --- Redis log handler for the web dashboard ---
+import logging.handlers
+import json as _json
+from datetime import datetime, timezone
+
+class RedisLogHandler(logging.Handler):
+    """Push log records to a Redis list for the web dashboard."""
+    def __init__(self, max_entries=200):
+        super().__init__()
+        self.max_entries = max_entries
+        self.setLevel(logging.INFO)   # only INFO and above to keep the list manageable
+
+    def emit(self, record):
+        try:
+            redis_client = get_redis_client()
+            entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "level": record.levelname,
+                "logger": record.name,
+                "message": self.format(record),
+            }
+            redis_client.lpush("logs:recent", _json.dumps(entry))
+            redis_client.ltrim("logs:recent", 0, self.max_entries - 1)
+        except Exception:
+            # Never let a logging handler break the application
+            pass
+
+# Create and attach the handler
+redis_log_handler = RedisLogHandler(max_entries=200)
+# Use a simple format: time - logger - level - message
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+redis_log_handler.setFormatter(formatter)
+logging.getLogger().addHandler(redis_log_handler)
+
 def _seed_telegram_chat_id():
     """If TELEGRAM_CHAT_ID is set in env and no chat_id is stored, store it."""
     if settings.TELEGRAM_CHAT_ID:

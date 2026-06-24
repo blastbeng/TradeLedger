@@ -157,6 +157,22 @@ async def messages():
             pass
     return messages
 
+@app.get("/api/logs")
+async def logs(limit: int = 200):
+    """Return the most recent log entries from Redis."""
+    redis = get_redis_client()
+    try:
+        raw = await asyncio.to_thread(redis.lrange, "logs:recent", 0, limit - 1)
+        entries = []
+        for item in raw:
+            try:
+                entries.append(json.loads(item))
+            except Exception:
+                pass
+        return entries
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/history")
 async def history(limit: int = 50):
     engine = get_engine()

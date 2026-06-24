@@ -340,6 +340,13 @@
                 <div id="messages" style="max-height: 400px; overflow-y: auto; font-size: 0.9rem;"></div>
             </div>
 
+            <div class="card card-full">
+                <h2>📋 Logs <button id="btn-refresh-logs" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Refresh</button></h2>
+                <div id="logs-content" style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; white-space: pre-wrap; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; color: var(--text-secondary);">
+                    Loading...
+                </div>
+            </div>
+
             <div class="card col-3">
                 <h2>📈 Tracked Tickers</h2>
                 <button id="btn-force-reeval" style="margin-bottom:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Force Re-eval</button>
@@ -952,6 +959,37 @@
                 console.error('Failed to fetch messages', e);
             }
         }
+
+        // --- Logs card ---
+        async function fetchLogs() {
+            const container = document.getElementById('logs-content');
+            try {
+                const resp = await fetch('/api/logs?limit=200');
+                if (!resp.ok) throw new Error('Failed to fetch logs');
+                const entries = await resp.json();
+                if (entries.length === 0) {
+                    container.textContent = 'No log entries yet.';
+                    return;
+                }
+                let html = '';
+                for (const entry of entries) {
+                    const levelColor = entry.level === 'ERROR' ? 'var(--red)' :
+                                       entry.level === 'WARNING' ? '#d29922' :
+                                       entry.level === 'INFO' ? 'var(--text-secondary)' : 'var(--text)';
+                    html += `<span style="color: ${levelColor};">[${entry.timestamp}] ${entry.level} ${entry.logger}: ${entry.message}</span>\n`;
+                }
+                container.innerHTML = html;
+            } catch (e) {
+                container.textContent = 'Failed to load logs.';
+            }
+        }
+
+        // Initial fetch and periodic refresh
+        fetchLogs();
+        setInterval(fetchLogs, 5000);  // refresh every 5 seconds
+
+        // Manual refresh button
+        document.getElementById('btn-refresh-logs').addEventListener('click', fetchLogs);
 
         async function refreshData() {
             await fetchPositionPrices();
