@@ -214,7 +214,7 @@ def get_cached_news_summary(symbol: str, model_type: str = "actuator") -> dict:
 SYSTEM_PROMPT = """You are a professional stock, ETF, and BTP bond trading bot assistant focused on medium to long-term investment horizons. Your primary goal is to generate consistent profit by identifying assets with strong fundamentals, solid momentum, and favorable macro conditions over weeks to months. You must avoid large drawdowns and only trade when there is a clear edge. Your asset universe includes Italian stocks, UCITS ETFs, and Italian government bonds (BTPs).
 
 Key principles:
-- **Primary timeframe: 1M (monthly) candles.** Monthly candles are the most important timeframe for stocks, ETFs, and BTPs. The largest and most reliable profits come from long-term holdings identified on monthly charts. Use 1M as your primary decision timeframe whenever available. Use 1w (weekly) as a secondary confirmation timeframe. Use 1d and 1h only for short‑term confirmation or finer entry/exit timing, or when monthly/weekly data is unavailable. When assigning timeframes to symbols, prefer "1M" for positions you intend to hold for months to a year or more.
+- **Primary timeframes: Long-term candles (1Y, 3Y, 5Y, 6M, 3M, 1M).** The longest available timeframes are the most important for stocks, ETFs, and BTPs. The largest and most reliable profits come from long-term holdings identified on yearly or monthly charts. Use 1Y, 3Y, 5Y, 6M, 3M, or 1M as your primary decision timeframe whenever available. Use 1w (weekly) as a secondary confirmation timeframe. Use 1d and 1h only for short‑term confirmation or finer entry/exit timing, or when long-term data is unavailable. When assigning timeframes to symbols, prefer "1Y", "3Y", or "5Y" for positions you intend to hold for years, and "6M", "3M", or "1M" for months.
 - **Confidence is your directional conviction, not a trade gate.** Set confidence between 0.0 and 1.0. 0.0 → no conviction (should be HOLD). 0.5 → moderate belief. 1.0 → absolute certainty. Only output HOLD when you have no directional edge at all.
 - **You must set `position_size_fraction` yourself** to reflect your confidence, risk level, and any other factors. The engine will NOT scale the position size automatically – it will use exactly the fraction you provide. If you have low confidence, set a smaller `position_size_fraction`; if high confidence, you may set a larger one. The sum of position_size_fraction across all stocks you intend to trade must not exceed 1.0.
 - Focus on stocks with strong medium to long-term momentum, solid fundamentals, and favorable sector trends. Avoid extremely low‑volatility or chaotic markets, but do not require perfect conditions to trade.
@@ -487,7 +487,7 @@ Select between 0 and {max_symbols} assets (stocks, ETFs, or BTP bonds) to trade.
 
 Each symbol can only appear once in your selection. Choose the single best timeframe for each stock based on the multi-timeframe OHLCV data.
 
-**Prefer long-term timeframes (1M, 3M, 6M, 1Y, 3Y, 5Y) for long‑term trading.** Long-term candles capture the largest, most reliable trends for stocks, ETFs, and BTPs. Assign "1M", "3M", "6M", "1Y", "3Y", or "5Y" as the timeframe for most symbols, especially when you expect to hold the position for months or years. Use "1w" as a secondary option when you need slightly faster signals. Use "1d" only if the stock shows high short‑term volatility or you need finer entry timing. The biggest profits in this asset universe come from identifying strong long-term trends and holding through them.
+**Prefer the longest available timeframes (1Y, 3Y, 5Y, 6M, 3M, 1M) for long‑term trading.** These long-term candles capture the largest, most reliable trends for stocks, ETFs, and BTPs. Assign "1Y", "3Y", "5Y", "6M", "3M", or "1M" as the timeframe for most symbols, especially when you expect to hold the position for months or years. Use "1w" as a secondary option when you need slightly faster signals. Use "1d" only if the stock shows high short‑term volatility or you need finer entry timing. The biggest profits in this asset universe come from identifying strong long-term trends and holding through them.
 
 **Output ONLY the raw JSON object as specified.**
 
@@ -1123,14 +1123,14 @@ Maximum symbols to trade: {max_symbols}
                     )
         prompt += (
             "Use these summaries to assess momentum and trend across timeframes. "
-            "**The 1M (monthly) timeframe is the most important** — it shows the dominant long-term trend that drives the largest profits. "
+            "**The longest available timeframes (1Y, 3Y, 5Y, 6M, 3M, 1M) are the most important** — they show the dominant long-term trends that drive the largest profits. "
             "The 1w (weekly) timeframe provides intermediate confirmation. "
             "The 1d (daily) timeframe provides additional context for entry and exit timing only. "
-            "Always align your trading decision with the monthly trend direction.\n"
+            "Always align your trading decision with the longest-term trend direction.\n"
         )
     if multi_tf_indicators:
         prompt += "\nComputed technical indicators per timeframe:\n"
-        prompt += "**Pay closest attention to the [1M] (monthly) indicators — they define the primary long-term trend.**\n"
+        prompt += "**Pay closest attention to the longest-term timeframes (e.g., [5Y], [3Y], [1Y], [6M], [3M], [1M]) — they define the primary long-term trend.**\n"
         for tf in settings.OHLCV_TIMEFRAMES:
             if tf in multi_tf_indicators:
                 ind = multi_tf_indicators[tf]
