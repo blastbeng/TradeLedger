@@ -38,6 +38,8 @@ def backtest_strategy(
     trailing_take_profit_distance_pct: Optional[float] = None,
     trailing_stop_atr_multiple: Optional[float] = None,
     atr_values: Optional[List[Optional[float]]] = None,
+    stop_loss_atr_multiple: Optional[float] = None,
+    take_profit_atr_multiple: Optional[float] = None,
     max_unrealized_loss_pct: Optional[float] = None,
     fee_rate: float = 0.0,
     fee_model: str = "flat",
@@ -107,8 +109,17 @@ def backtest_strategy(
             i += 1
             continue
 
-        stop_loss_price = entry_price * (1 - stop_loss_pct)
-        take_profit_price = entry_price * (1 + take_profit_pct)
+        # Dynamic ATR-based stop-loss
+        if stop_loss_atr_multiple is not None and atr_values is not None and i < len(atr_values) and atr_values[i] is not None and atr_values[i] > 0:
+            stop_loss_price = entry_price - (atr_values[i] * stop_loss_atr_multiple)
+        else:
+            stop_loss_price = entry_price * (1 - stop_loss_pct)
+
+        # Dynamic ATR-based take-profit
+        if take_profit_atr_multiple is not None and atr_values is not None and i < len(atr_values) and atr_values[i] is not None and atr_values[i] > 0:
+            take_profit_price = entry_price + (atr_values[i] * take_profit_atr_multiple)
+        else:
+            take_profit_price = entry_price * (1 + take_profit_pct)
 
         # Trailing stop state
         highest_price = entry_price

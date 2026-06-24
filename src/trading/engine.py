@@ -10101,20 +10101,10 @@ class TradingEngine:
     ) -> Tuple[Optional[Dict[str, Any]], str]:
         """Run a backtest using the parameters from a signal. Returns (stats, summary)."""
         bt_params = signal.strategy_params or {}
-        bt_stop_method = bt_params.get("stop_loss_method", "fixed")
-        if bt_stop_method == "atr_multiple" and atr is not None and atr > 0 and current_price is not None and current_price > 0:
-            bt_atr_mult = bt_params.get("stop_loss_atr_multiple", 2.0)
-            bt_sl_pct = (bt_atr_mult * atr) / current_price
-        else:
-            bt_sl_pct = bt_params.get("stop_loss_pct", 0.02)
-        if "take_profit_atr_multiple" in bt_params and atr is not None and atr > 0 and current_price is not None and current_price > 0:
-            bt_tp_atr_mult = bt_params.get("take_profit_atr_multiple")
-            if bt_tp_atr_mult is not None:
-                bt_tp_pct = (bt_tp_atr_mult * atr) / current_price
-            else:
-                bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
-        else:
-            bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
+        bt_sl_pct = bt_params.get("stop_loss_pct", 0.02)
+        bt_tp_pct = bt_params.get("take_profit_pct", 0.05)
+        bt_sl_atr_mult = bt_params.get("stop_loss_atr_multiple")
+        bt_tp_atr_mult = bt_params.get("take_profit_atr_multiple")
         bt_max_hold = bt_params.get("max_hold_time_seconds")
         bt_trailing = bt_params.get("trailing_stop", False)
         bt_trail_dist = bt_params.get("trailing_stop_distance_pct")
@@ -10150,7 +10140,7 @@ class TradingEngine:
             bt_fee_rate = 0.006
 
         atr_series = None
-        if bt_params.get("trailing_stop_atr_multiple") and bt_candles and len(bt_candles) >= 15:
+        if (bt_params.get("trailing_stop_atr_multiple") or bt_sl_atr_mult or bt_tp_atr_mult) and bt_candles and len(bt_candles) >= 15:
             try:
                 import numpy as np
                 import talib
@@ -10167,6 +10157,8 @@ class TradingEngine:
                 candles=bt_candles,
                 stop_loss_pct=bt_sl_pct,
                 take_profit_pct=bt_tp_pct,
+                stop_loss_atr_multiple=bt_sl_atr_mult,
+                take_profit_atr_multiple=bt_tp_atr_mult,
                 max_hold_time_seconds=bt_max_hold,
                 trailing_stop=bt_trailing,
                 trailing_stop_distance_pct=bt_trail_dist,
