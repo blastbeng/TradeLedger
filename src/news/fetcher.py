@@ -306,7 +306,7 @@ def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List[Dict[
 
     # Cache
     try:
-        redis_client.setex(cache_key, settings.NEWS_CACHE_TTL_SECONDS, json.dumps(unique))
+        redis_client.set(cache_key, json.dumps(unique), ex=settings.NEWS_CACHE_TTL_SECONDS)
     except Exception as e:
         logger.warning(f"Failed to cache news for {base_symbol}: {e}")
 

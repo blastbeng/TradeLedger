@@ -207,7 +207,7 @@ def get_cached_news_summary(symbol: str, model_type: str = "actuator") -> dict:
             result = {"summary": "Could not generate summary.", "provider": "", "model": ""}
 
     ttl = settings.NEWS_CACHE_TTL_SECONDS
-    redis_client.setex(cache_key, ttl, json.dumps(result))
+    redis_client.set(cache_key, json.dumps(result), ex=ttl)
     return result
 
 

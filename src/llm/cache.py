@@ -166,7 +166,7 @@ def get_cached_llm_response(
         "model": used_model,
     })
     try:
-        redis_client.setex(cache_key, ttl, cache_data)
+        redis_client.set(cache_key, cache_data, ex=ttl)
         logger.debug("LLM cache miss – stored response for key %s (provider=%s, model=%s)", cache_key[:32], used_provider, used_model)
     except Exception as e:
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")

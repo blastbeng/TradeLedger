@@ -76,7 +76,7 @@ def get_yahoo_quote(symbol: str) -> Optional[Dict[str, Any]]:
         }
         # Cache the result
         ttl = settings.YAHOO_FINANCE_CACHE_SECONDS
-        redis_client.setex(cache_key, ttl, json.dumps(result))
+        redis_client.set(cache_key, json.dumps(result), ex=ttl)
         return result
     except Exception as e:
         logger.warning(f"Yahoo Finance quote failed for {base}: {e}")
@@ -124,7 +124,7 @@ def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
         }
         # Cache for 24 hours
         try:
-            redis_client.setex(cache_key, 86400, json.dumps(result))
+            redis_client.set(cache_key, json.dumps(result), ex=86400)
         except Exception:
             pass
         return result
