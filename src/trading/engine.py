@@ -202,6 +202,41 @@ class TradingEngine:
             self._force_reeval = True
         self._reeval_trigger.set()
 
+    async def force_download_all_assets(self):
+        """Immediately download OHLCV data for all tradable assets (stocks, ETFs, BTPs)."""
+        logger.info("Force download: starting immediate OHLCV download for all assets...")
+        try:
+            plain_assets = await self._get_tradable_assets()
+            stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+
+            btp_bonds = await asyncio.to_thread(discover_btp_bonds)
+            btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
+
+            all_pairs = stock_pairs + btp_pairs
+            if not all_pairs:
+                logger.warning("Force download: no tradable assets found.")
+                return
+
+            now_ms = int(time.time() * 1000)
+            start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+
+            random.shuffle(all_pairs)
+            for pair in all_pairs:
+                if not self._running:
+                    break
+                for tf in settings.OHLCV_TIMEFRAMES:
+                    try:
+                        await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
+                        await self._fill_gaps(pair, tf)
+                    except Exception as e:
+                        logger.warning(f"Force download failed for {pair} {tf}: {e}")
+                    await asyncio.sleep(0.5)
+
+            await asyncio.to_thread(cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
+            logger.info("Force download: complete.")
+        except Exception as e:
+            logger.error(f"Force download error: {e}", exc_info=True)
+
     async def _get_tradable_assets(self) -> List[str]:
         """Return tradable assets, cached for 5 minutes to reduce API calls."""
         now = time.time()

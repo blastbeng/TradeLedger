@@ -257,6 +257,12 @@ async def force_reeval():
     engine.trigger_symbol_reevaluation(force=True)
     return {"status": "Forced re-evaluation triggered"}
 
+@app.post("/api/force-download")
+async def force_download():
+    engine = get_engine()
+    asyncio.create_task(engine.force_download_all_assets())
+    return {"status": "Force download of all asset OHLCV data triggered"}
+
 @app.post("/api/restart")
 def restart():
     """
