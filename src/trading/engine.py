@@ -10105,13 +10105,10 @@ class TradingEngine:
         return None
 
     async def _remove_symbol_if_paused(self, symbol: str):
-        """If trading is paused, remove the symbol from current_symbols to prevent new signals."""
+        """Clear pending entries for a symbol. Symbols are kept in current_symbols even when paused
+        so the bot continues to generate and notify signals."""
         # Always clear any pending entry for this symbol
         self._pending_entries.pop(symbol, None)
-        paused_raw = await asyncio.to_thread(self.redis.get, "trading:paused")
-        if paused_raw and paused_raw == "1":
-            self.current_symbols = [c for c in self.current_symbols if c["symbol"] != symbol]
-            logger.info(f"Trading paused: removed {symbol} from current_symbols after position closed.")
 
     def _get_tickers_for_symbols_sync(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         """Fetch latest quotes for a list of symbols synchronously, batching missing ones."""
