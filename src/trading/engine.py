@@ -10162,6 +10162,19 @@ class TradingEngine:
             except Exception:
                 pass
 
+        # Fetch LLM-configured thresholds for backtest filters
+        bt_min_adx = 20.0
+        bt_max_rsi = 70.0
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "trading:regime_adx_moderate")
+            if raw:
+                bt_min_adx = float(raw)
+            raw = await asyncio.to_thread(self.redis.get, "trading:skip_eval_rsi_overbought")
+            if raw:
+                bt_max_rsi = float(raw)
+        except Exception:
+            pass
+
         if bt_candles and len(bt_candles) >= 20:
             backtest_stats = backtest_strategy(
                 candles=bt_candles,
@@ -10181,9 +10194,9 @@ class TradingEngine:
                 atr_values=atr_series,
                 max_unrealized_loss_pct=bt_params.get("max_unrealized_loss_pct"),
                 adx_values=adx_series,
-                min_adx=20.0,
+                min_adx=bt_min_adx,
                 rsi_values=rsi_series,
-                max_rsi=70.0,
+                max_rsi=bt_max_rsi,
                 macd_hist_values=macd_hist_series,
                 fee_rate=bt_fee_rate,
                 fee_model="intesa",
