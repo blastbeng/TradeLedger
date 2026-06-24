@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range, discover_btp_bonds, discover_italian_ucits_etfs
+from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range, discover_btp_bonds, discover_italian_ucits_etfs, _get_yf_session
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
 from src.trading.paper_trader import PaperTrader
 from src.llm.cache import get_cached_llm_response, compute_market_hash
@@ -1014,7 +1014,7 @@ class TradingEngine:
 
         try:
             import yfinance as yf
-            ticker = yf.Ticker(base)
+            ticker = yf.Ticker(base, session=_get_yf_session())
             info = ticker.info
             name = info.get("longName") or info.get("shortName") or base
         except Exception:

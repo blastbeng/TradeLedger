@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 import yfinance as yf
 
 from src.config.settings import settings
+from src.exchanges.market_data import _get_yf_session
 from src.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ def get_yahoo_quote(symbol: str) -> Optional[Dict[str, Any]]:
         pass
 
     try:
-        ticker = yf.Ticker(base)
+        ticker = yf.Ticker(base, session=_get_yf_session())
         last = None
         bid = None
         ask = None
@@ -91,7 +92,7 @@ def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
     base = base.lstrip('$')
 
     try:
-        ticker = yf.Ticker(base)
+        ticker = yf.Ticker(base, session=_get_yf_session())
         info = ticker.info
         return {
             "pe_ratio": info.get("trailingPE"),
