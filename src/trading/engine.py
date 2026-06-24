@@ -1752,13 +1752,11 @@ class TradingEngine:
 
                 for symbol_entry in self.current_symbols:
                     symbol = symbol_entry["symbol"]
-                    default_interval = self._timeframe_to_seconds(symbol_entry["timeframe"])
-                    # Apply multiplier for medium/long-term trading to reduce LLM calls
-                    default_interval = default_interval * settings.STRATEGY_INTERVAL_MULTIPLIER
-                    # Cap at 1 day to ensure positions are still checked at least daily
-                    default_interval = min(default_interval, 86400)
-                    # Use shorter interval during active periods (market open/close)
-                    if is_active_period:
+                    tf_seconds = self._timeframe_to_seconds(symbol_entry["timeframe"])
+                    default_interval = tf_seconds * settings.STRATEGY_INTERVAL_MULTIPLIER
+                    # For daily or shorter timeframes, use a shorter interval during active periods.
+                    # Weekly/monthly timeframes keep their full multiplied interval.
+                    if is_active_period and tf_seconds <= 86400:
                         default_interval = min(default_interval, settings.ACTIVE_PERIOD_INTERVAL_SECONDS)
                     interval = self._strategy_intervals.get(symbol, default_interval)
                     last_eval = self._last_strategy_eval.get(symbol, 0)

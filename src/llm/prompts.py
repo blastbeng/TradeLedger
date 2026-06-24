@@ -214,6 +214,7 @@ def get_cached_news_summary(symbol: str, model_type: str = "actuator") -> dict:
 SYSTEM_PROMPT = """You are a professional stock, ETF, and BTP bond trading bot assistant focused on medium to long-term investment horizons. Your primary goal is to generate consistent profit by identifying assets with strong fundamentals, solid momentum, and favorable macro conditions over weeks to months. You must avoid large drawdowns and only trade when there is a clear edge. Your asset universe includes Italian stocks, UCITS ETFs, and Italian government bonds (BTPs).
 
 Key principles:
+- **Primary timeframes:** Focus on 1w (weekly) and 1M (monthly) charts for your main decisions. Use 1d only for short‑term confirmation or when weekly data is unavailable.
 - **Confidence is your directional conviction, not a trade gate.** Set confidence between 0.0 and 1.0. 0.0 → no conviction (should be HOLD). 0.5 → moderate belief. 1.0 → absolute certainty. Only output HOLD when you have no directional edge at all.
 - **You must set `position_size_fraction` yourself** to reflect your confidence, risk level, and any other factors. The engine will NOT scale the position size automatically – it will use exactly the fraction you provide. If you have low confidence, set a smaller `position_size_fraction`; if high confidence, you may set a larger one. The sum of position_size_fraction across all stocks you intend to trade must not exceed 1.0.
 - Focus on stocks with strong medium to long-term momentum, solid fundamentals, and favorable sector trends. Avoid extremely low‑volatility or chaotic markets, but do not require perfect conditions to trade.
@@ -443,6 +444,8 @@ Select between 0 and {max_symbols} assets (stocks, ETFs, or BTP bonds) to trade.
 **Important:** Unless the market is in a clear crisis (e.g., breadth < 20%, account in deep drawdown), you MUST select at least 1–2 stocks with **small position sizes** (position_size_fraction ≤ 0.15) and **tight stops**. Doing nothing guarantees zero profit; a cautious small trade at least gives a chance. Only select 0 stocks if conditions are truly hostile. If there are multiple good setups, select up to {max_symbols} stocks to diversify your portfolio and capture more opportunities. Do not artificially limit yourself to 1-2 stocks if the market offers more valid setups.
 
 Each symbol can only appear once in your selection. Choose the single best timeframe for each stock based on the multi-timeframe OHLCV data.
+
+**Prefer 1w or 1M timeframes for medium/long‑term trading.** Use 1d only if the stock shows high short‑term volatility or you need finer entry timing.
 
 **Output ONLY the raw JSON object as specified.**
 
