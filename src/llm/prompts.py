@@ -731,6 +731,8 @@ def build_strategy_prompt(
     fundamentals: Optional[Dict[str, Any]] = None,
     vwap: Optional[float] = None,
     daily_pivot_points: Optional[Dict[str, float]] = None,
+    min_hold_time_mult: float = 1.0,
+    min_stop_atr_mult: float = 1.0,
     min_viable_trade_amount: float = 0.0,
 ) -> str:
     """Build a prompt to generate a trading strategy for a specific stock/ETF."""
