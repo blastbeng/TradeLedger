@@ -1205,9 +1205,9 @@ def get_bars_range(
                 candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
             # Aggregate if necessary
             if timeframe in ("6M", "1Y", "3Y", "5Y"):
-                result = _aggregate_candles(result, TIMEFRAME_MS[timeframe])
+                candles = _aggregate_candles(candles, TIMEFRAME_MS[timeframe])
 
-            result = result[-limit:]
+            result = candles[-limit:]
             if result:
                 try:
                     redis_client.set(cache_key, json.dumps(result), ex=300)
