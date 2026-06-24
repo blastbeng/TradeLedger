@@ -149,15 +149,15 @@ def _aggregate_candles(candles: List[List], target_tf: str) -> List[List]:
 def _get_from_date_for_timeframe(tf: str, now: datetime) -> datetime:
     """Determine a reasonable from_date for Borsa Italiana fallback based on timeframe."""
     if tf == "1h":
-        return now - timedelta(days=60)
+        return now - timedelta(days=730)       # 2 years (yfinance intraday limit)
     elif tf == "1d":
-        return now - timedelta(days=365 * 2)
+        return now - timedelta(days=365 * 10)  # 10 years
     elif tf == "1w":
-        return now - timedelta(days=365 * 10)
+        return now - timedelta(days=365 * 20)  # 20 years
     elif tf == "1M":
-        return now - timedelta(days=365 * 20)
+        return now - timedelta(days=365 * 30)  # 30 years
     elif tf == "3M":
-        return now - timedelta(days=365 * 20)
+        return now - timedelta(days=365 * 30)
     elif tf == "6M":
         return now - timedelta(days=365 * 30)
     elif tf == "1Y":
