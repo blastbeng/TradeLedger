@@ -3237,7 +3237,9 @@ class TradingEngine:
                     if vol < settings.FALLBACK_MIN_24H_VOLUME:
                         continue
                 min_cost = market_limits.get(sym, {}).get('min_cost', 0)
-                if per_symbol_budget >= min_cost:
+                # Use total base_balance, not per_symbol_budget, since the LLM
+                # allocates capital dynamically (not equal split)
+                if base_balance >= min_cost:
                     if self._is_excluded(sym, default_tf):
                         continue
                     fallback_symbols.append({"symbol": sym, "timeframe": default_tf})
