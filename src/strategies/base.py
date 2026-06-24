@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 
 @dataclass
@@ -47,6 +47,7 @@ class Signal:
     take_profit_order_type: Optional[str] = None
     take_profit_limit_price: Optional[float] = None
     backtest_period_days: Optional[int] = None  # LLM-specified backtest lookback period in days
+    backtest_variants: Optional[List[Dict[str, Any]]] = None  # LLM-provided array of backtest variant param sets
 
 
 class Strategy:
