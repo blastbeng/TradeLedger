@@ -713,7 +713,7 @@ class TradingEngine:
                 # Only send updates if we are currently paused due to market_closed
                 source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
                 source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
-                if source == "market_closed":
+                if source == "market_closed" and not is_open:
                     now_ts = time.time()
                     # Recompute remaining seconds from the live clock (or fallback)
                     if clock is not None:
