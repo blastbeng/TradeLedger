@@ -103,16 +103,24 @@ def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
     try:
         ticker = yf.Ticker(base, session=_get_yf_session())
         info = ticker.info
+        def _safe_float(val):
+            if val is None:
+                return None
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return None
+
         result = {
-            "pe_ratio": info.get("trailingPE"),
-            "forward_pe": info.get("forwardPE"),
-            "market_cap": info.get("marketCap"),
-            "dividend_yield": info.get("dividendYield"),
+            "pe_ratio": _safe_float(info.get("trailingPE")),
+            "forward_pe": _safe_float(info.get("forwardPE")),
+            "market_cap": _safe_float(info.get("marketCap")),
+            "dividend_yield": _safe_float(info.get("dividendYield")),
             "sector": info.get("sector"),
             "industry": info.get("industry"),
-            "price_to_book": info.get("priceToBook"),
-            "profit_margins": info.get("profitMargins"),
-            "return_on_equity": info.get("returnOnEquity"),
+            "price_to_book": _safe_float(info.get("priceToBook")),
+            "profit_margins": _safe_float(info.get("profitMargins")),
+            "return_on_equity": _safe_float(info.get("returnOnEquity")),
         }
         # Cache for 24 hours
         try:
