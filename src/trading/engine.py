@@ -228,6 +228,7 @@ class TradingEngine:
             random.shuffle(all_pairs)
 
             async def _force_download_symbol(pair: str):
+                # Download timeframes in the exact order defined in OHLCV_TIMEFRAMES (longest to shortest)
                 for tf in settings.OHLCV_TIMEFRAMES:
                     try:
                         await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
@@ -1280,6 +1281,7 @@ class TradingEngine:
                 random.shuffle(all_pairs)
 
                 async def _download_symbol_data(pair: str):
+                    # Download timeframes in the exact order defined in OHLCV_TIMEFRAMES (longest to shortest)
                     for tf in settings.OHLCV_TIMEFRAMES:
                         try:
                             await self._backfill_ohlcv(pair, tf, start_ms, now_ms)

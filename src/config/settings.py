@@ -147,7 +147,8 @@ class Settings(BaseSettings):
     ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS: int = 900
 
     # OHLCV timeframes for multi-timeframe analysis
-    OHLCV_TIMEFRAMES: list[str] = ["1w", "1M", "1d", "1h", "3M", "6M", "1Y", "3Y", "5Y"]
+    # Default order is longest to shortest to ensure larger timeframes are fetched first
+    OHLCV_TIMEFRAMES: list[str] = ["5Y", "3Y", "1Y", "6M", "3M", "1M", "1w", "1d", "1h"]
 
     # Market data download interval (seconds)
     MARKET_DATA_REFRESH_SECONDS: int = 900
