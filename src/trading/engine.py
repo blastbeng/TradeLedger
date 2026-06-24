@@ -10976,9 +10976,9 @@ class TradingEngine:
                 "backtest_summary": combined_bt_summary,
             }
 
-        # Validate Step 2 response
+        # Parse Step 2 response to get the final action
         try:
-            create_strategy_from_llm(step2_response)
+            final_strategy = create_strategy_from_llm(step2_response)
         except ValueError:
             # Retry with correction prompt
             logger.warning(f"Simulation Step 2 parse failed for {symbol}. Retrying.")
@@ -10999,6 +10999,7 @@ class TradingEngine:
                     timeout=settings.LLM_TIMEOUT
                 )
                 step2_response = retry_result["response"]
+                final_strategy = create_strategy_from_llm(step2_response)
             except Exception as e2:
                 return {
                     "step1_response": step1_response,
@@ -11008,10 +11009,12 @@ class TradingEngine:
                     "backtest_summary": combined_bt_summary,
                 }
 
+        final_signal = final_strategy.generate_signal({})
+
         return {
             "step1_response": step1_response,
             "step2_response": step2_response,
-            "action": preliminary_signal.action,
+            "action": final_signal.action,
             "backtest_summary": combined_bt_summary,
             "backtest_results": backtest_results,
         }
