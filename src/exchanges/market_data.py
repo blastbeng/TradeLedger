@@ -76,13 +76,6 @@ TIMEFRAME_MAP = {
     "5Y": "5y",
 }
 
-INVESTINY_TIMEFRAME_MAP = {
-    "1h": "1H",
-    "1d": "D",
-    "1w": "W",
-    "1M": "M",
-}
-
 TIMEFRAME_MS = {
     "1h": 3600_000,
     "1d": 86_400_000,
@@ -169,14 +162,6 @@ def _get_from_date_for_timeframe(tf: str, now: datetime) -> datetime:
     else:
         return now - timedelta(days=365 * 10)
 
-
-# Mapping of common BTP ISINs to their Investing.com numerical pairId.
-# These are used as a fast cache; if an ISIN is not found here, the dynamic
-# search API is used.  The engineer must fill in correct IDs.
-BTP_ID_MAP: Dict[str, int] = {
-    "IT0001086567": 172,   # BTP 10Y (generic yield)
-    # Add more entries as needed
-}
 
 def _fetch_country(symbol: str, max_retries: int = 2) -> Optional[str]:
     """Fetch the country property from yfinance info for a symbol, with retries.
@@ -663,269 +648,6 @@ def _get_btp_name(isin: str) -> str:
         pass
     return isin
 
-def _get_btp_investing_id(isin: str, name: str) -> Optional[int]:
-    """Search and cache the Investing.com ID for a BTP using a direct HTTP call."""
-    # 1. Check static map
-    if isin in BTP_ID_MAP:
-        return BTP_ID_MAP[isin]
-
-    redis_client = get_redis_client()
-    cache_key = f"investing_id:{isin}"
-    try:
-        cached = redis_client.get(cache_key)
-        if cached:
-            return int(cached)
-    except Exception:
-        pass
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://www.investing.com/",
-        "Origin": "https://www.investing.com",
-    }
-
-    # --- Search API ---
-    try:
-        url = "https://tvc6.investing.com/search"
-        logger.info(f"Searching Investing.com ID for BTP {isin} ({name})")
-
-        for query in [isin, name]:
-            params = {"query": query, "limit": 1, "type": ""}
-            response = httpx.get(url, params=params, timeout=10.0, headers=headers)
-            if response.status_code == 200:
-                results = response.json()
-                logger.debug(f"Search response for '{query}': {results}")
-                if results:
-                    # The API may return 'ticker' or 'pairId'
-                    investing_id = results[0].get("ticker") or results[0].get("pairId")
-                    if investing_id is not None:
-                        investing_id = int(investing_id)
-                        redis_client.set(cache_key, str(investing_id), ex=86400)
-                        return investing_id
-    except Exception as e:
-        logger.warning(f"Search API failed for BTP {isin} ({name}): {e}")
-
-    # --- Fallback: scrape the bond page for data-pair-id ---
-    try:
-        search_url = f"https://www.investing.com/search/?q={isin}"
-        resp = httpx.get(search_url, headers=headers, timeout=15.0, follow_redirects=True)
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
-            # Look for a link that contains the ISIN and has a data-pair-id attribute
-            for a in soup.find_all("a", href=True):
-                if isin in a.get_text() or (name and name.lower() in a.get_text().lower()):
-                    pair_id = a.get("data-pair-id")
-                    if pair_id:
-                        redis_client.set(cache_key, str(pair_id), ex=86400)
-                        return int(pair_id)
-            # Alternative: look for any element with data-pair-id on the page
-            for tag in soup.find_all(attrs={"data-pair-id": True}):
-                pair_id = tag["data-pair-id"]
-                redis_client.set(cache_key, str(pair_id), ex=86400)
-                return int(pair_id)
-    except Exception as e:
-        logger.warning(f"Fallback scrape failed for BTP {isin}: {e}")
-
-    return None
-
-def get_btp_candles(
-    investing_id: int,
-    from_date: str,
-    to_date: str,
-    interval: str = "D",
-) -> pd.DataFrame:
-    """
-    Fetch BTP OHLCV candles from Investing.com's internal charting API.
-
-    Args:
-        investing_id: Numerical pairId on Investing.com.
-        from_date: Start date as 'DD/MM/YYYY' or 'YYYY-MM-DD'.
-        to_date: End date as 'DD/MM/YYYY' or 'YYYY-MM-DD'.
-        interval: Resolution (default 'D' for daily). Use keys from
-                  INVESTINY_TIMEFRAME_MAP (e.g., '1H', 'D', 'W', 'M').
-
-    Returns:
-        pd.DataFrame with DatetimeIndex named 'Date' and columns
-        Open, High, Low, Close, Volume.  Empty DataFrame if no data.
-    """
-    # --- Parse dates -------------------------------------------------
-    def _parse_date(s: str) -> datetime:
-        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
-            try:
-                return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
-            except ValueError:
-                continue
-        raise ValueError(f"Unsupported date format: {s}")
-
-    try:
-        start_dt = _parse_date(from_date)
-        end_dt = _parse_date(to_date)
-    except ValueError as e:
-        logger.warning(f"Date parsing error in get_btp_candles: {e}")
-        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
-
-    # --- Map interval to Investing.com resolution --------------------
-    resolution = INVESTINY_TIMEFRAME_MAP.get(interval)
-    if not resolution:
-        logger.warning(f"Unsupported interval: {interval}")
-        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
-
-    # --- Call the API ------------------------------------------------
-    url = "https://tvc6.investing.com/history"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    params = {
-        "symbol": investing_id,
-        "resolution": resolution,
-        "from": int(start_dt.timestamp()),
-        "to": int(end_dt.timestamp()),
-    }
-
-    try:
-        response = httpx.get(url, params=params, timeout=15.0, headers=headers)
-        if response.status_code != 200:
-            logger.warning(f"Investing.com API returned {response.status_code} for id {investing_id}")
-            return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
-        data = response.json()
-        if data.get("s") != "ok":
-            logger.warning(
-                f"Investing.com history API returned status '{data.get('s')}' for id {investing_id}. "
-                f"Response: {data}"
-            )
-            return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
-    except Exception as e:
-        logger.warning(f"Failed to fetch candles for id {investing_id}: {e}")
-        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
-
-    # --- Build DataFrame --------------------------------------------
-    timestamps = data.get("t", [])
-    opens = data.get("o", [])
-    highs = data.get("h", [])
-    lows = data.get("l", [])
-    closes = data.get("c", [])
-    volumes = data.get("v", [])
-
-    if not timestamps:
-        return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
-
-    # Convert timestamps (seconds) to datetime
-    dates = pd.to_datetime(timestamps, unit="s", utc=True)
-
-    df = pd.DataFrame({
-        "Open":   [float(o) if o is not None else None for o in opens],
-        "High":   [float(h) if h is not None else None for h in highs],
-        "Low":    [float(l) if l is not None else None for l in lows],
-        "Close":  [float(c) if c is not None else None for c in closes],
-        "Volume": [int(v)   if v is not None else 0     for v in volumes],
-    }, index=dates)
-
-    df.index.name = "Date"
-    # Drop rows where all OHLC are NaN (optional, but keeps data clean)
-    df.dropna(subset=["Open", "High", "Low", "Close"], how="all", inplace=True)
-    return df
-
-def _fetch_stock_candles_from_borsaitaliana(
-    symbol: str,
-    timeframe: str,
-    from_date: datetime,
-    to_date: datetime,
-    limit: int,
-    isin: Optional[str] = None,
-) -> Optional[List[List]]:
-    """
-    Fetch stock/ETF OHLCV candles from Borsa Italiana charting API.
-    Returns list of [timestamp_ms, open, high, low, close, volume]
-    or None on failure.
-    """
-    if isin:
-        urls_to_try = [
-            f"https://www.borsaitaliana.it/borsa/azioni/scheda/{isin}-MTAA.html",
-            f"https://www.borsaitaliana.it/borsa/etf/scheda/{isin}-ETFP.html?lang=it"
-        ]
-        headers_scheda = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": f"https://www.borsaitaliana.it/"
-        }
-        for url in urls_to_try:
-            try:
-                response = requests.get(url, headers=headers_scheda, timeout=30)
-                if response.status_code == 200:
-                    try:
-                        data = response.json()
-                        if data and isinstance(data, list):
-                            candles = []
-                            from_ts = from_date.timestamp() * 1000
-                            to_ts = to_date.timestamp() * 1000
-                            for row in data:
-                                if not isinstance(row, list) or len(row) < 6:
-                                    continue
-                                ts = row[0]
-                                if ts is None or ts < from_ts or ts > to_ts:
-                                    continue
-                                candles.append([
-                                    int(ts),
-                                    float(row[1]),
-                                    float(row[2]),
-                                    float(row[3]),
-                                    float(row[4]),
-                                    float(row[5]),
-                                ])
-                            if candles:
-                                candles.sort(key=lambda x: x[0])
-                                if limit and len(candles) > limit:
-                                    candles = candles[-limit:]
-                                return candles
-                    except ValueError:
-                        # Response is HTML, not JSON; continue to next URL or fallback
-                        pass
-            except Exception as e:
-                logger.debug(f"Scheda URL fetch failed for {isin} at {url}: {e}")
-
-    return None
-
-
-def _fetch_btp_candles(
-    isin: str, name: str, timeframe: str,
-    from_date: datetime, to_date: datetime, limit: int
-) -> List[List[float]]:
-    """Fetch BTP candles using Investing.com."""
-    # Fallback to Investing.com
-    investing_id = _get_btp_investing_id(isin, name)
-    if not investing_id:
-        return []
-
-    # Convert datetimes to string format expected by get_btp_candles
-    from_str = from_date.strftime("%Y-%m-%d")
-    to_str   = to_date.strftime("%Y-%m-%d")
-
-    # Map our timeframe to investiny interval
-    interval = INVESTINY_TIMEFRAME_MAP.get(timeframe)
-    if not interval:
-        logger.warning(f"Unsupported timeframe for BTP: {timeframe}")
-        return []
-
-    df = get_btp_candles(investing_id, from_str, to_str, interval=interval)
-    if df.empty:
-        return []
-
-    # Convert DataFrame to list of lists
-    candles = []
-    for idx, row in df.iterrows():
-        ts_ms = int(idx.timestamp() * 1000)
-        candles.append([
-            ts_ms,
-            row["Open"],
-            row["High"],
-            row["Low"],
-            row["Close"],
-            int(row["Volume"]),
-        ])
-
-    return candles[-limit:]
-
-
-
 def get_multi_timeframe_bars(
     symbol: str = "", timeframes: List[str] = None, limit: int = 24
 ) -> Dict[str, List[List[float]]]:
@@ -968,31 +690,6 @@ def get_multi_timeframe_bars(
         except Exception:
             pass
 
-        # Use investiny for BTPs (ISINs)
-        if re.match(r'^IT[A-Z0-9]{10}$', symbol):
-            name = _get_btp_name(symbol)
-            logger.info(f"Fetching BTP candles for {symbol} ({name}) timeframe {tf}")
-            now = datetime.now(timezone.utc)
-            inv_interval = INVESTINY_TIMEFRAME_MAP.get(tf)
-            if inv_interval == "1H":
-                from_date = now - timedelta(days=60)
-            elif inv_interval == "D":
-                from_date = now - timedelta(days=365)
-            elif inv_interval == "W":
-                from_date = now - timedelta(days=365*5)
-            elif inv_interval == "M":
-                from_date = now - timedelta(days=365*10)
-            else:
-                from_date = now - timedelta(days=365*10)
-            
-            candles = _fetch_btp_candles(symbol, name, tf, from_date, now, limit)
-            result[tf] = candles
-            if candles:
-                try:
-                    redis_client.set(cache_key, json.dumps(candles), ex=cache_ttl)
-                except Exception:
-                    pass
-            continue
         try:
             ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
             # yfinance intraday data limits: 60 days for 5m/15m, 730 days for 60m
@@ -1017,29 +714,11 @@ def get_multi_timeframe_bars(
                     candles = _aggregate_candles(candles, tf)
                 
                 yf_candles = candles[-limit:]
+            else:
+                yf_candles = []
             
-            # ALWAYS call Borsa Italiana fallback after yfinance (for stocks and ETFs)
-            isin = _get_isin_from_yfinance(symbol)
-            now = datetime.now(timezone.utc)
-            from_date = _get_from_date_for_timeframe(tf, now)
-            bi_candles = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit, isin=isin)
-            
-            # Merge yfinance and Borsa Italiana candles (deduplicate by timestamp, prefer yfinance)
-            merged_candles = []
-            if yf_candles is not None:
-                merged_candles.extend(yf_candles)
-            if bi_candles is not None and len(bi_candles) > 0:
-                merged_candles.extend(bi_candles)
-            
-            if merged_candles:
-                seen_ts = set()
-                deduped = []
-                for c in merged_candles:
-                    if c[0] not in seen_ts:
-                        seen_ts.add(c[0])
-                        deduped.append(c)
-                deduped.sort(key=lambda x: x[0])
-                result[tf] = deduped[-limit:]
+            if yf_candles:
+                result[tf] = yf_candles
                 try:
                     redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
                 except Exception:
@@ -1048,20 +727,7 @@ def get_multi_timeframe_bars(
                 result[tf] = []
         except Exception as e:
             logger.warning(f"Failed to fetch bars for {symbol} {tf}: {e}")
-            # Try Borsa Italiana fallback even on exception
-            try:
-                isin = _get_isin_from_yfinance(symbol)
-                now = datetime.now(timezone.utc)
-                from_date = _get_from_date_for_timeframe(tf, now)
-                fallback = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit, isin=isin)
-                result[tf] = fallback if fallback is not None else []
-                if fallback:
-                    try:
-                        redis_client.set(cache_key, json.dumps(fallback), ex=cache_ttl)
-                    except Exception:
-                        pass
-            except Exception:
-                result[tf] = []
+            result[tf] = []
     return result
 
 
@@ -1093,19 +759,6 @@ def get_bars_range(
             return json.loads(cached)
     except Exception:
         pass
-
-    # Use investiny for BTPs (ISINs)
-    if re.match(r'^IT[A-Z0-9]{10}$', symbol):
-        name = _get_btp_name(symbol)
-        from_date = datetime.fromtimestamp(start_ms / 1000.0, tz=timezone.utc)
-        to_date = datetime.now(timezone.utc)
-        candles = _fetch_btp_candles(symbol, name, timeframe, from_date, to_date, limit)
-        if candles:
-            try:
-                redis_client.set(cache_key, json.dumps(candles), ex=300)
-            except Exception:
-                pass
-        return candles
 
     # Format symbol for Yahoo Finance: BTP ISINs are used as-is, stocks get TICKER_SUFFIX if missing
     yf_symbol = symbol
@@ -1141,27 +794,11 @@ def get_bars_range(
             if needs_aggregation:
                 candles = _aggregate_candles(candles, timeframe)
             yf_candles = candles[-limit:]
+        else:
+            yf_candles = []
         
-        # ALWAYS call Borsa Italiana fallback after yfinance (for stocks and ETFs)
-        isin = _get_isin_from_yfinance(symbol)
-        bi_candles = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit, isin=isin)
-        
-        # Merge yfinance and Borsa Italiana candles (deduplicate by timestamp, prefer yfinance)
-        merged_candles = []
-        if yf_candles is not None:
-            merged_candles.extend(yf_candles)
-        if bi_candles is not None and len(bi_candles) > 0:
-            merged_candles.extend(bi_candles)
-        
-        if merged_candles:
-            seen_ts = set()
-            deduped = []
-            for c in merged_candles:
-                if c[0] not in seen_ts:
-                    seen_ts.add(c[0])
-                    deduped.append(c)
-            deduped.sort(key=lambda x: x[0])
-            result = deduped[-limit:]
+        if yf_candles:
+            result = yf_candles
             try:
                 redis_client.set(cache_key, json.dumps(result), ex=300)
             except Exception:
@@ -1170,19 +807,6 @@ def get_bars_range(
         return []
     except Exception as e:
         logger.warning(f"Failed to fetch bars range for {symbol} {timeframe}: {e}")
-        # Try Borsa Italiana fallback even on exception
-        try:
-            isin = _get_isin_from_yfinance(symbol)
-            fallback = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit, isin=isin)
-            if fallback is not None:
-                if fallback:
-                    try:
-                        redis_client.set(cache_key, json.dumps(fallback), ex=300)
-                    except Exception:
-                        pass
-                return fallback
-        except Exception:
-            pass
         return []
 
 
