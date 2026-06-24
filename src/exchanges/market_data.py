@@ -1173,26 +1173,30 @@ def get_multi_timeframe_bars(
                 
                 yf_candles = candles[-limit:]
             
-            # Borsa Italiana fallback if yfinance data is insufficient
-            if yf_candles is None or len(yf_candles) < 3:
-                isin = _get_isin_from_yfinance(symbol)
-                now = datetime.now(timezone.utc)
-                from_date = _get_from_date_for_timeframe(tf, now)
-                bi_candles = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit, isin=isin)
-                
-                if bi_candles is not None and len(bi_candles) > 0:
-                    if yf_candles is None or len(bi_candles) > len(yf_candles):
-                        result[tf] = bi_candles
-                        try:
-                            redis_client.set(cache_key, json.dumps(bi_candles), ex=cache_ttl)
-                        except Exception:
-                            pass
-                        continue
+            # ALWAYS call Borsa Italiana fallback after yfinance (for stocks and ETFs)
+            isin = _get_isin_from_yfinance(symbol)
+            now = datetime.now(timezone.utc)
+            from_date = _get_from_date_for_timeframe(tf, now)
+            bi_candles = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit, isin=isin)
             
-            if yf_candles is not None and len(yf_candles) > 0:
-                result[tf] = yf_candles
+            # Merge yfinance and Borsa Italiana candles (deduplicate by timestamp, prefer yfinance)
+            merged_candles = []
+            if yf_candles is not None:
+                merged_candles.extend(yf_candles)
+            if bi_candles is not None and len(bi_candles) > 0:
+                merged_candles.extend(bi_candles)
+            
+            if merged_candles:
+                seen_ts = set()
+                deduped = []
+                for c in merged_candles:
+                    if c[0] not in seen_ts:
+                        seen_ts.add(c[0])
+                        deduped.append(c)
+                deduped.sort(key=lambda x: x[0])
+                result[tf] = deduped[-limit:]
                 try:
-                    redis_client.set(cache_key, json.dumps(yf_candles), ex=cache_ttl)
+                    redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
                 except Exception:
                     pass
             else:
@@ -1293,21 +1297,26 @@ def get_bars_range(
                 candles = _aggregate_candles(candles, timeframe)
             yf_candles = candles[-limit:]
         
-        # Borsa Italiana fallback if yfinance data is insufficient
-        if yf_candles is None or len(yf_candles) < 3:
-            isin = _get_isin_from_yfinance(symbol)
-            bi_candles = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit, isin=isin)
-            if bi_candles is not None and len(bi_candles) > 0:
-                if yf_candles is None or len(bi_candles) > len(yf_candles):
-                    result = bi_candles
-                    try:
-                        redis_client.set(cache_key, json.dumps(result), ex=300)
-                    except Exception:
-                        pass
-                    return result
+        # ALWAYS call Borsa Italiana fallback after yfinance (for stocks and ETFs)
+        isin = _get_isin_from_yfinance(symbol)
+        bi_candles = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit, isin=isin)
         
-        if yf_candles is not None and len(yf_candles) > 0:
-            result = yf_candles
+        # Merge yfinance and Borsa Italiana candles (deduplicate by timestamp, prefer yfinance)
+        merged_candles = []
+        if yf_candles is not None:
+            merged_candles.extend(yf_candles)
+        if bi_candles is not None and len(bi_candles) > 0:
+            merged_candles.extend(bi_candles)
+        
+        if merged_candles:
+            seen_ts = set()
+            deduped = []
+            for c in merged_candles:
+                if c[0] not in seen_ts:
+                    seen_ts.add(c[0])
+                    deduped.append(c)
+            deduped.sort(key=lambda x: x[0])
+            result = deduped[-limit:]
             try:
                 redis_client.set(cache_key, json.dumps(result), ex=300)
             except Exception:
