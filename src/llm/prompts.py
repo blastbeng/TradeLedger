@@ -1307,28 +1307,38 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         if fundamentals.get("industry"):
             prompt += f"  Industry: {fundamentals['industry']}\n"
         if fundamentals.get("market_cap") is not None:
-            mc = fundamentals["market_cap"]
-            if mc >= 1e12:
-                mc_str = f"{mc/1e12:.2f}T"
-            elif mc >= 1e9:
-                mc_str = f"{mc/1e9:.2f}B"
-            elif mc >= 1e6:
-                mc_str = f"{mc/1e6:.2f}M"
-            else:
-                mc_str = str(mc)
-            prompt += f"  Market Cap: {mc_str}\n"
+            try:
+                mc = float(fundamentals["market_cap"])
+                if mc >= 1e12:
+                    mc_str = f"{mc/1e12:.2f}T"
+                elif mc >= 1e9:
+                    mc_str = f"{mc/1e9:.2f}B"
+                elif mc >= 1e6:
+                    mc_str = f"{mc/1e6:.2f}M"
+                else:
+                    mc_str = str(mc)
+                prompt += f"  Market Cap: {mc_str}\n"
+            except (TypeError, ValueError):
+                pass
+
+        def _safe_fmt(val, mult=1.0, suffix="", fmt=".2f"):
+            try:
+                return f"{float(val) * mult:{fmt}}{suffix}"
+            except (TypeError, ValueError):
+                return "N/A"
+
         if fundamentals.get("pe_ratio") is not None:
-            prompt += f"  P/E Ratio (trailing): {fundamentals['pe_ratio']:.2f}\n"
+            prompt += f"  P/E Ratio (trailing): {_safe_fmt(fundamentals['pe_ratio'])}\n"
         if fundamentals.get("forward_pe") is not None:
-            prompt += f"  Forward P/E: {fundamentals['forward_pe']:.2f}\n"
+            prompt += f"  Forward P/E: {_safe_fmt(fundamentals['forward_pe'])}\n"
         if fundamentals.get("dividend_yield") is not None:
-            prompt += f"  Dividend Yield: {fundamentals['dividend_yield']*100:.2f}%\n"
+            prompt += f"  Dividend Yield: {_safe_fmt(fundamentals['dividend_yield'], mult=100, suffix='%')}\n"
         if fundamentals.get("price_to_book") is not None:
-            prompt += f"  Price/Book: {fundamentals['price_to_book']:.2f}\n"
+            prompt += f"  Price/Book: {_safe_fmt(fundamentals['price_to_book'])}\n"
         if fundamentals.get("profit_margins") is not None:
-            prompt += f"  Profit Margins: {fundamentals['profit_margins']*100:.2f}%\n"
+            prompt += f"  Profit Margins: {_safe_fmt(fundamentals['profit_margins'], mult=100, suffix='%')}\n"
         if fundamentals.get("return_on_equity") is not None:
-            prompt += f"  Return on Equity: {fundamentals['return_on_equity']*100:.2f}%\n"
+            prompt += f"  Return on Equity: {_safe_fmt(fundamentals['return_on_equity'], mult=100, suffix='%')}\n"
         prompt += "Use this fundamental data to assess valuation and long-term viability. For medium/long-term trades, prefer stocks with reasonable P/E ratios, strong profit margins, and solid return on equity. Avoid stocks that appear significantly overvalued unless there is a strong growth catalyst.\n"
     prompt += (
         "\n**Entry Condition (REQUIRED for every BUY):**\n"
