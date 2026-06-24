@@ -41,6 +41,11 @@ TIMEFRAME_MAP = {
     "1d": "1d",
     "1w": "1wk",
     "1M": "1mo",
+    "3M": "3mo",
+    "6M": "1mo",  # Aggregated from 1mo
+    "1Y": "1mo",  # Aggregated from 1mo
+    "3Y": "1mo",  # Aggregated from 1mo
+    "5Y": "1mo",  # Aggregated from 1mo
 }
 
 INVESTINY_TIMEFRAME_MAP = {
@@ -49,6 +54,48 @@ INVESTINY_TIMEFRAME_MAP = {
     "1w": "W",
     "1M": "M",
 }
+
+TIMEFRAME_MS = {
+    "1h": 3600_000,
+    "1d": 86_400_000,
+    "1w": 604_800_000,
+    "1M": 2_592_000_000,
+    "3M": 7_776_000_000,
+    "6M": 15_552_000_000,
+    "1Y": 31_536_000_000,
+    "3Y": 94_608_000_000,
+    "5Y": 157_680_000_000,
+}
+
+
+def _aggregate_candles(candles: List[List], target_tf_ms: int) -> List[List]:
+    """Aggregate a list of OHLCV candles into a larger timeframe bucket."""
+    if not candles:
+        return []
+    buckets = {}
+    for c in candles:
+        ts = c[0]
+        bucket_ts = (ts // target_tf_ms) * target_tf_ms
+        if bucket_ts not in buckets:
+            buckets[bucket_ts] = {
+                "open": c[1],
+                "high": c[2],
+                "low": c[3],
+                "close": c[4],
+                "volume": c[5],
+            }
+        else:
+            b = buckets[bucket_ts]
+            b["high"] = max(b["high"], c[2])
+            b["low"] = min(b["low"], c[3])
+            b["close"] = c[4]
+            b["volume"] += c[5]
+
+    result = []
+    for ts in sorted(buckets.keys()):
+        b = buckets[ts]
+        result.append([ts, b["open"], b["high"], b["low"], b["close"], b["volume"]])
+    return result
 
 # Mapping of common BTP ISINs to their Investing.com numerical pairId.
 # These are used as a fast cache; if an ISIN is not found here, the dynamic
@@ -757,6 +804,10 @@ def _fetch_btp_candles_from_borsaitaliana(
         if not candles:
             return None
 
+        # Aggregate if necessary
+        if timeframe not in ("1h", "1d", "1w", "1M") and timeframe in TIMEFRAME_MS:
+            candles = _aggregate_candles(candles, TIMEFRAME_MS[timeframe])
+
         # Sort by time ascending
         candles.sort(key=lambda x: x[0])
         # Apply limit (most recent)
@@ -788,7 +839,7 @@ def _fetch_stock_candles_from_borsaitaliana(
         "1w": "1w",
         "1M": "1M",
     }
-    sample_time = TIMEFRAME_MAP_BI.get(timeframe)
+    sample_time = TIMEFRAME_MAP_BI.get(timeframe, "1M")
     if not sample_time:
         logger.warning(f"Unsupported timeframe for Borsa Italiana Stock: {timeframe}")
         return None
@@ -880,6 +931,10 @@ def _fetch_stock_candles_from_borsaitaliana(
             if not candles:
                 continue
 
+            # Aggregate if necessary
+            if timeframe not in TIMEFRAME_MAP_BI and timeframe in TIMEFRAME_MS:
+                candles = _aggregate_candles(candles, TIMEFRAME_MS[timeframe])
+
             # Sort by time ascending
             candles.sort(key=lambda x: x[0])
             # Apply limit (most recent)
@@ -935,6 +990,11 @@ def _fetch_btp_candles(
             row["Close"],
             int(row["Volume"]),
         ])
+
+    # Aggregate if necessary
+    if timeframe not in INVESTINY_TIMEFRAME_MAP and timeframe in TIMEFRAME_MS:
+        candles = _aggregate_candles(candles, TIMEFRAME_MS[timeframe])
+
     return candles[-limit:]
 
 
@@ -1139,7 +1199,11 @@ def get_bars_range(
             for idx, row in hist.iterrows():
                 ts = int(idx.timestamp() * 1000)
                 candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
-            result = candles[-limit:]
+            # Aggregate if necessary
+            if timeframe in ("6M", "1Y", "3Y", "5Y"):
+                result = _aggregate_candles(result, TIMEFRAME_MS[timeframe])
+
+            result = result[-limit:]
             if result:
                 try:
                     redis_client.set(cache_key, json.dumps(result), ex=300)

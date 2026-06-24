@@ -1047,8 +1047,9 @@ class TradingEngine:
             'd': 86_400_000,
             'w': 604_800_000,
             'M': 2_592_000_000,  # approximate (30 days)
+            'Y': 31_536_000_000, # approximate (365 days)
         }
-        match = re.match(r'^(\d+)([mhdwM])$', timeframe)
+        match = re.match(r'^(\d+)([mhdwMY])$', timeframe)
         if not match:
             return 3_600_000  # default to 1h
         amount = int(match.group(1))
