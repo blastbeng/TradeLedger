@@ -718,13 +718,34 @@ def _fetch_btp_candles_from_borsaitaliana(
     or None on failure.
     """
     TIMEFRAME_MAP_BI = {
+        "1h": "1h",
         "1d": "1d",
         "1w": "1w",
         "1M": "1M",
     }
     sample_time = TIMEFRAME_MAP_BI.get(timeframe)
     if not sample_time:
+        logger.warning(f"Unsupported timeframe for Borsa Italiana BTP: {timeframe}")
         return None
+
+    # Dynamically determine the TimeFrame zoom level based on the requested date range
+    days = (to_date - from_date).days
+    if days <= 30:
+        tf_str = "1m"
+    elif days <= 90:
+        tf_str = "3m"
+    elif days <= 180:
+        tf_str = "6m"
+    elif days <= 365:
+        tf_str = "1y"
+    elif days <= 365 * 3:
+        tf_str = "3y"
+    elif days <= 365 * 5:
+        tf_str = "5y"
+    elif days <= 365 * 10:
+        tf_str = "10y"
+    else:
+        tf_str = "max"
 
     url = "https://charts.borsaitaliana.it/charts/services/ChartWService.asmx/GetPrices"
     headers = {
@@ -738,13 +759,13 @@ def _fetch_btp_candles_from_borsaitaliana(
     payload = {
         "request": {
             "SampleTime": sample_time,
-            "TimeFrame": "5y",
+            "TimeFrame": tf_str,
             "RequestedDataSetType": "ohlc",
             "ChartPriceType": "price",
             "Key": f"{isin}.MOT",
             "OffSet": 0,
-            "FromDate": None,
-            "ToDate": None,
+            "FromDate": from_date.strftime("%Y-%m-%d"),
+            "ToDate": to_date.strftime("%Y-%m-%d"),
             "UseDelay": False,
             "KeyType": "Topic",
             "KeyType2": "Topic",
@@ -755,10 +776,12 @@ def _fetch_btp_candles_from_borsaitaliana(
     try:
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
         if response.status_code != 200:
+            logger.warning(f"Borsa Italiana API returned {response.status_code} for BTP {isin} {timeframe}")
             return None
         raw = response.json()
         prices = raw.get("d", {}).get("Prices")
         if not prices:
+            logger.debug(f"Borsa Italiana returned no prices for BTP {isin} {timeframe}: {raw}")
             return None
 
         candles = []
@@ -808,12 +831,14 @@ def _fetch_stock_candles_from_borsaitaliana(
     or None on failure.
     """
     TIMEFRAME_MAP_BI = {
+        "1h": "1h",
         "1d": "1d",
         "1w": "1w",
         "1M": "1M",
     }
     sample_time = TIMEFRAME_MAP_BI.get(timeframe)
     if not sample_time:
+        logger.warning(f"Unsupported timeframe for Borsa Italiana Stock: {timeframe}")
         return None
 
     # Strip any known suffix to get the base ticker (e.g., "MTS.MI" -> "MTS")
@@ -822,6 +847,25 @@ def _fetch_stock_candles_from_borsaitaliana(
         if base_symbol.endswith(suffix):
             base_symbol = base_symbol[:-len(suffix)]
             break
+
+    # Dynamically determine the TimeFrame zoom level based on the requested date range
+    days = (to_date - from_date).days
+    if days <= 30:
+        tf_str = "1m"
+    elif days <= 90:
+        tf_str = "3m"
+    elif days <= 180:
+        tf_str = "6m"
+    elif days <= 365:
+        tf_str = "1y"
+    elif days <= 365 * 3:
+        tf_str = "3y"
+    elif days <= 365 * 5:
+        tf_str = "5y"
+    elif days <= 365 * 10:
+        tf_str = "10y"
+    else:
+        tf_str = "max"
 
     url = "https://charts.borsaitaliana.it/charts/services/ChartWService.asmx/GetPrices"
     headers = {
@@ -838,13 +882,13 @@ def _fetch_stock_candles_from_borsaitaliana(
         payload = {
             "request": {
                 "SampleTime": sample_time,
-                "TimeFrame": "5y",
+                "TimeFrame": tf_str,
                 "RequestedDataSetType": "ohlc",
                 "ChartPriceType": "price",
                 "Key": key,
                 "OffSet": 0,
-                "FromDate": None,
-                "ToDate": None,
+                "FromDate": from_date.strftime("%Y-%m-%d"),
+                "ToDate": to_date.strftime("%Y-%m-%d"),
                 "UseDelay": False,
                 "KeyType": "Topic",
                 "KeyType2": "Topic",
@@ -854,10 +898,12 @@ def _fetch_stock_candles_from_borsaitaliana(
         try:
             response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
             if response.status_code != 200:
+                logger.debug(f"Borsa Italiana API returned {response.status_code} for {key} {timeframe}")
                 continue
             raw = response.json()
             prices = raw.get("d", {}).get("Prices")
             if not prices:
+                logger.debug(f"Borsa Italiana returned no prices for {key} {timeframe}: {raw}")
                 continue
 
             candles = []
