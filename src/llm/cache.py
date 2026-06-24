@@ -52,6 +52,7 @@ def get_cached_llm_response(
     else:
         key_data = json.dumps(
             {"prompt": prompt, "system": system_prompt, "model_type": model_type,
+             "provider": provider, "model": model,
              "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE},
             sort_keys=True
         )
@@ -64,7 +65,6 @@ def get_cached_llm_response(
             try:
                 data = json.loads(cached)
                 if isinstance(data, dict) and "response" in data:
-                    logger.info("LLM cache hit for key %s", cache_key[:32])
                     logger.info("LLM cache hit: key=%.32s, model_type=%s", cache_key, model_type)
                     return data
             except (json.JSONDecodeError, TypeError):
