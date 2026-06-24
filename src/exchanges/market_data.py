@@ -302,7 +302,12 @@ def get_tradable_assets() -> List[str]:
         return []
 
     suffix = settings.TICKER_SUFFIX
-    candidates = [f"{sym}{suffix}" for sym in base_symbols]
+    candidates = []
+    for sym in base_symbols:
+        if re.match(r'^IT[A-Z0-9]{10}$', sym):
+            candidates.append(sym)          # BTP ISIN – no suffix
+        else:
+            candidates.append(f"{sym}{suffix}")
 
     # Check Redis cache
     redis_client = get_redis_client()
