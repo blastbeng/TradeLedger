@@ -574,6 +574,22 @@
                 symbolsDiv.textContent = 'None';
             }
 
+            // Manual trade form: disable when market is closed in notify mode
+            const manualTradeForm = document.getElementById('manual-trade-form');
+            const manualTradeCard = document.getElementById('manual-trade-card');
+            if (manualTradeForm && manualTradeCard) {
+                const isNotifyMode = document.getElementById('mode-badge')?.textContent === 'NOTIFY';
+                if (isNotifyMode && data.market_open === false) {
+                    manualTradeForm.querySelectorAll('input, select, button').forEach(el => el.disabled = true);
+                    manualTradeCard.style.opacity = '0.5';
+                    manualTradeCard.style.pointerEvents = 'none';
+                } else {
+                    manualTradeForm.querySelectorAll('input, select, button').forEach(el => el.disabled = false);
+                    manualTradeCard.style.opacity = '1';
+                    manualTradeCard.style.pointerEvents = 'auto';
+                }
+            }
+
             // Positions – incremental update
             const posBody = document.querySelector('#positions-table tbody');
             if (data.positions) {

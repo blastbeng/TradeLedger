@@ -73,6 +73,7 @@ async def status():
     engine = get_engine()
     redis = get_redis_client()
     paused = redis.get("trading:paused") == "1"
+    market_open = await engine._is_market_open()
 
     current_symbols = []
     for entry in engine.current_symbols:
@@ -96,6 +97,7 @@ async def status():
         "positions": positions,
         "balances": balances,
         "paused": paused,
+        "market_open": market_open,
         "queued_orders": queued_orders_payload,
     }
 
