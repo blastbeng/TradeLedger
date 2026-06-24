@@ -916,7 +916,7 @@ Maximum symbols to trade: {max_symbols}
         )
     if assigned_timeframe:
         prompt += f"\nAssigned trading timeframe for this stock: {assigned_timeframe}. Base your decision primarily on the OHLCV data for this timeframe.\n"
-        if assigned_tf == "1M":
+        if assigned_timeframe == "1M":
             prompt += (
                 "**Monthly (1M) candles are the most important timeframe for long-term holdings.** "
                 "Monthly trends are the most reliable for stocks, ETFs, and BTPs. "
@@ -924,7 +924,7 @@ Maximum symbols to trade: {max_symbols}
                 "The largest profits come from holding positions that are in a strong monthly uptrend. "
                 "Set max_hold_time_seconds appropriate for a monthly timeframe (e.g., 3–12 months or more).\n"
             )
-        elif assigned_tf == "1w":
+        elif assigned_timeframe == "1w":
             prompt += (
                 "Weekly (1w) candles are a strong secondary timeframe. "
                 "If monthly (1M) data is also available in the multi-timeframe section above, cross-reference it to confirm the longer-term trend. "
