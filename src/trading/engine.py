@@ -491,31 +491,12 @@ class TradingEngine:
                 continue
             self._reevaluate_running = True
             try:
-                # Check if trading is paused
-                paused = await asyncio.to_thread(self.redis.get, "trading:paused")
-                if paused and not self._force_reeval:
-                    source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
-                    source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
-                    if source == "llm":
-                        # LLM-initiated pause – ask LLM whether to resume
-                        logger.info("Trading is paused (LLM), running pause/resume decision.")
-                        await self._check_pause_resume_decision()
-                    elif source == "market_closed":
-                        # Market closed – still reevaluate symbols so they're ready when market opens
-                        logger.info("Market is closed, running symbol re-evaluation to prepare for market open.")
-                        is_forced = self._force_reeval
-                        self._force_reeval = False
-                        await self._reevaluate_symbols(force=is_forced)
-                        logger.info("Symbol re-evaluation complete.")
-                    else:
-                        # Manual pause – skip re-evaluation
-                        logger.info("Trading is manually paused, skipping re-evaluation.")
-                else:
-                    logger.info("Starting symbol re-evaluation...")
-                    is_forced = self._force_reeval
-                    self._force_reeval = False
-                    await self._reevaluate_symbols(force=is_forced)
-                    logger.info("Symbol re-evaluation complete.")
+                # Always run re-evaluation, even if paused, to keep generating signals
+                logger.info("Starting symbol re-evaluation...")
+                is_forced = self._force_reeval
+                self._force_reeval = False
+                await self._reevaluate_symbols(force=is_forced)
+                logger.info("Symbol re-evaluation complete.")
             except Exception as e:
                 logger.error(f"Stock re-evaluation error: {e}", exc_info=True)
                 if self.notifier:
