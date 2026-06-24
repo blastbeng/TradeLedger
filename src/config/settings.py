@@ -156,6 +156,11 @@ class Settings(BaseSettings):
     # Market data download interval (seconds)
     MARKET_DATA_REFRESH_SECONDS: int = 900
 
+    # Full asset OHLCV download interval (seconds) – how often to backfill
+    # OHLCV data for ALL tradable assets (stocks, ETFs, BTPs), not just the
+    # currently selected symbols.
+    FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS: int = 21600  # 6 hours
+
     # OHLCV download staggering (delay between symbols)
     OHLCV_DOWNLOAD_SYMBOL_DELAY_SECONDS: float = 2.0
 

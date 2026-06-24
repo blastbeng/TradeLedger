@@ -1177,6 +1177,51 @@ class TradingEngine:
 
             await asyncio.sleep(settings.MARKET_DATA_REFRESH_SECONDS)
 
+    async def _download_all_assets_data_loop(self):
+        """Periodically download OHLCV for ALL tradable assets (stocks, ETFs, BTPs)."""
+        await asyncio.sleep(120)  # initial delay to let the engine settle
+        while self._running:
+            try:
+                logger.info("Starting full asset OHLCV download cycle...")
+                # 1. Get all stock + ETF symbols
+                plain_assets = await self._get_tradable_assets()
+                stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+
+                # 2. Get all BTP symbols
+                btp_bonds = await asyncio.to_thread(discover_btp_bonds)
+                btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
+
+                all_pairs = stock_pairs + btp_pairs
+                if not all_pairs:
+                    logger.info("No tradable assets found; skipping full download.")
+                    await asyncio.sleep(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS)
+                    continue
+
+                now_ms = int(time.time() * 1000)
+                start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+
+                # Download for each symbol, respecting rate limits
+                for pair in all_pairs:
+                    if not self._running:
+                        break
+                    symbol = pair
+                    # For each configured timeframe
+                    for tf in settings.OHLCV_TIMEFRAMES:
+                        try:
+                            await self._backfill_ohlcv(symbol, tf, start_ms, now_ms)
+                            await self._fill_gaps(symbol, tf)
+                        except Exception as e:
+                            logger.warning(f"Full download failed for {symbol} {tf}: {e}")
+                        await asyncio.sleep(0.5)  # small delay between calls
+
+                # Clean up old data
+                await asyncio.to_thread(cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
+                logger.info("Full asset OHLCV download cycle complete.")
+            except Exception as e:
+                logger.error(f"Full asset download loop error: {e}", exc_info=True)
+
+            # Wait before next full download
+            await asyncio.sleep(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS)
 
     def _ensure_cost_basis(self):
         """If positions lack cost_basis, compute it from amount and price (backward compat)."""
@@ -1796,6 +1841,7 @@ class TradingEngine:
         self._background_tasks.append(asyncio.create_task(self._refresh_news_cache()))
         self._background_tasks.append(asyncio.create_task(self._refresh_current_symbols_news_fast()))
         self._background_tasks.append(asyncio.create_task(self._download_market_data_loop()))
+        self._background_tasks.append(asyncio.create_task(self._download_all_assets_data_loop()))
         self._background_tasks.append(asyncio.create_task(self._risk_management_loop()))
         self._background_tasks.append(asyncio.create_task(self._periodic_reconcile()))
         self._background_tasks.append(asyncio.create_task(self._periodic_reevaluate()))
