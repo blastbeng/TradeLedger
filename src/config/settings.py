@@ -161,6 +161,11 @@ class Settings(BaseSettings):
     # currently selected symbols.
     FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS: int = 21600  # 6 hours
 
+    # Full asset news download interval (seconds) – how often to pre‑fetch news
+    # for ALL tradable assets (stocks, ETFs, BTPs), not just the currently
+    # selected symbols.
+    FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS: int = 10800  # 3 hours
+
     # OHLCV download staggering (delay between symbols)
     OHLCV_DOWNLOAD_SYMBOL_DELAY_SECONDS: float = 2.0
 

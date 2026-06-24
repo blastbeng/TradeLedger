@@ -1223,6 +1223,45 @@ class TradingEngine:
             # Wait before next full download
             await asyncio.sleep(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS)
 
+    async def _download_all_news_loop(self):
+        """Periodically pre‑fetch news for ALL tradable assets (stocks, ETFs, BTPs)."""
+        if not settings.NEWS_ENABLED:
+            return
+        await asyncio.sleep(180)  # initial delay to let the engine settle
+        while self._running:
+            try:
+                logger.info("Starting full asset news download cycle...")
+                # 1. Get all stock + ETF symbols
+                plain_assets = await self._get_tradable_assets()
+                stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+
+                # 2. Get all BTP symbols
+                btp_bonds = await asyncio.to_thread(discover_btp_bonds)
+                btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
+
+                all_pairs = stock_pairs + btp_pairs
+                if not all_pairs:
+                    logger.info("No tradable assets found; skipping full news download.")
+                    await asyncio.sleep(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS)
+                    continue
+
+                # Download news for each symbol sequentially with a small delay
+                # to avoid hammering news sources and the CPU.
+                for pair in all_pairs:
+                    if not self._running:
+                        break
+                    try:
+                        await self._fetch_and_store_news_for_symbol(pair)
+                    except Exception as e:
+                        logger.warning(f"Full news download failed for {pair}: {e}")
+                    await asyncio.sleep(0.5)  # small delay between symbols
+
+                logger.info("Full asset news download cycle complete.")
+            except Exception as e:
+                logger.error(f"Full asset news download loop error: {e}", exc_info=True)
+
+            await asyncio.sleep(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS)
+
     def _ensure_cost_basis(self):
         """If positions lack cost_basis, compute it from amount and price (backward compat)."""
         for sym, pos in self.positions.items():
@@ -1842,6 +1881,7 @@ class TradingEngine:
         self._background_tasks.append(asyncio.create_task(self._refresh_current_symbols_news_fast()))
         self._background_tasks.append(asyncio.create_task(self._download_market_data_loop()))
         self._background_tasks.append(asyncio.create_task(self._download_all_assets_data_loop()))
+        self._background_tasks.append(asyncio.create_task(self._download_all_news_loop()))
         self._background_tasks.append(asyncio.create_task(self._risk_management_loop()))
         self._background_tasks.append(asyncio.create_task(self._periodic_reconcile()))
         self._background_tasks.append(asyncio.create_task(self._periodic_reevaluate()))
@@ -2122,25 +2162,6 @@ class TradingEngine:
                 if base and agg:
                     news_sentiment[base] = agg
 
-            # Fetch news for BTPs and ETFs concurrently (they may not have high volume, so background refresh won't cover them)
-            async def fetch_and_store_news(sym):
-                try:
-                    await self._fetch_and_store_news_for_symbol(sym)
-                    # Re-read sentiment after fetching
-                    base = sym.split("/")[0]
-                    agg = await self._get_cached_sentiment(sym)
-                    if agg:
-                        return base, agg
-                except Exception as e:
-                    logger.debug(f"News fetch failed for {sym}: {e}")
-                return None, None
-
-            news_fetch_symbols = [sym for sym in btp_pairs + etf_pairs if sym in sample_pairs]
-            news_fetch_tasks = [fetch_and_store_news(sym) for sym in news_fetch_symbols]
-            news_fetch_results = await asyncio.gather(*news_fetch_tasks)
-            for base, agg in news_fetch_results:
-                if base and agg:
-                    news_sentiment[base] = agg
 
         # Sentiment trend (delta from previous cycle)
         sentiment_trend: Dict[str, Optional[float]] = {}
