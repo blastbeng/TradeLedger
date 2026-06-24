@@ -898,12 +898,12 @@ def _fetch_stock_candles_from_borsaitaliana(
         try:
             response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
             if response.status_code != 200:
-                logger.debug(f"Borsa Italiana API returned {response.status_code} for {key} {timeframe}")
+                logger.warning(f"Borsa Italiana API returned {response.status_code} for {key} {timeframe}")
                 continue
             raw = response.json()
             prices = raw.get("d", {}).get("Prices")
             if not prices:
-                logger.debug(f"Borsa Italiana returned no prices for {key} {timeframe}: {raw}")
+                logger.warning(f"Borsa Italiana returned no prices for {key} {timeframe}: {raw}")
                 continue
 
             candles = []
