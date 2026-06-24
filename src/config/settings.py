@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     # Enable FinanceDatabase ticker discovery
     FINANCEDATABASE_TICKER_DISCOVERY_ENABLED: bool = True
 
+    # When True, symbols for which yfinance cannot determine the country are
+    # dropped from the tradable assets list.  When False (default), such
+    # symbols are kept because they were already discovered from Italian
+    # sources (Wikipedia, FinanceDatabase, news feeds, etc.).
+    COUNTRY_FILTER_STRICT: bool = False
+
     # Minimum composite score for a symbol to be used in the volume‑based fallback.
     # Symbols below this score are skipped even if they have high volume.
     FALLBACK_MIN_COMPOSITE_SCORE: float = 0.1

@@ -38,15 +38,29 @@ BTP_ID_MAP: Dict[str, int] = {
     # Add more entries as needed
 }
 
-def _fetch_country(symbol: str) -> Optional[str]:
-    """Fetch the country property from yfinance info for a symbol."""
-    try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info
-        return info.get("country")
-    except Exception as e:
-        logger.debug(f"Failed to fetch country for {symbol}: {e}")
-        return None
+def _fetch_country(symbol: str, max_retries: int = 2) -> Optional[str]:
+    """Fetch the country property from yfinance info for a symbol, with retries.
+
+    Returns the country string on success, or None if yfinance could not
+    provide the information after all retries.
+    """
+    import time as _time
+    for attempt in range(max_retries + 1):
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+            country = info.get("country")
+            if country:
+                return country
+            # country is None or empty – retry if attempts remain
+            if attempt < max_retries:
+                _time.sleep(0.5 * (2 ** attempt))
+                continue
+        except Exception as e:
+            logger.debug(f"Failed to fetch country for {symbol} (attempt {attempt + 1}/{max_retries + 1}): {e}")
+            if attempt < max_retries:
+                _time.sleep(0.5 * (2 ** attempt))
+    return None
 
 
 def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
@@ -322,6 +336,7 @@ def get_tradable_assets() -> List[str]:
 
     # Filter candidates by country using yfinance
     target_country = settings.TARGET_COUNTRY.lower()
+    strict = settings.COUNTRY_FILTER_STRICT
     filtered = []
     for symbol in candidates:
         # BTP ISINs start with IT and are Italian bonds, skip yfinance country check
@@ -329,9 +344,20 @@ def get_tradable_assets() -> List[str]:
             if target_country == "italy":
                 filtered.append(symbol)
             continue
-        
+
         country = _fetch_country(symbol)
-        if country is not None and country.lower() == target_country:
+        if country is None:
+            # yfinance failed to return country info.
+            # In lenient mode (default), keep the symbol because it was
+            # discovered from Italian sources (Wikipedia FTSE MIB,
+            # FinanceDatabase country=Italy, news feeds, etc.).
+            # In strict mode, drop it.
+            if strict:
+                logger.debug(f"Symbol {symbol} skipped (country unknown, strict mode)")
+            else:
+                filtered.append(symbol)
+                logger.debug(f"Symbol {symbol} kept (country unknown, assumed from Italian source)")
+        elif country.lower() == target_country:
             filtered.append(symbol)
         else:
             logger.debug(f"Symbol {symbol} skipped (country={country}, target={target_country})")
