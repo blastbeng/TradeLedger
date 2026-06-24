@@ -34,10 +34,8 @@ INVESTINY_TIMEFRAME_MAP = {
 # These are used as a fast cache; if an ISIN is not found here, the dynamic
 # search API is used.  The engineer must fill in correct IDs.
 BTP_ID_MAP: Dict[str, int] = {
-    # Example entries – replace with verified IDs
-    # "IT0001086567": 172,   # BTP 10Y (generic yield, not a specific bond)
-    # "IT0005386245": 12345, # BTP 1FB25 3.85%
-    # "IT0005416570": 12346, # BTP 1MZ26 3.60%
+    "IT0001086567": 172,   # BTP 10Y (generic yield)
+    # Add more entries as needed
 }
 
 def _fetch_country(symbol: str) -> Optional[str]:
@@ -611,10 +609,6 @@ def _fetch_btp_candles(
             int(row["Volume"]),
         ])
     return candles[-limit:]
-    """Fetch BTP candles using a direct HTTP call to Investing.com."""
-    investing_id = _get_btp_investing_id(isin, name)
-    if not investing_id:
-        return []
 
 
 
