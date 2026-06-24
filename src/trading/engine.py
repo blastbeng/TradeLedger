@@ -4214,6 +4214,24 @@ class TradingEngine:
                 pass
 
             partial_tp_executed_levels = self.positions[symbol].get("partial_tp_levels_triggered", []) if symbol in self.positions else []
+
+            # Read LLM-configured validator multipliers from Redis
+            min_stop_atr_mult = 1.0
+            min_hold_time_mult = 1.0
+            global_min_rr = None
+            try:
+                raw = await asyncio.to_thread(self.redis.get, "trading:min_stop_loss_atr_mult")
+                if raw:
+                    min_stop_atr_mult = float(raw)
+                raw = await asyncio.to_thread(self.redis.get, "trading:min_max_hold_time_mult")
+                if raw:
+                    min_hold_time_mult = float(raw)
+                raw = await asyncio.to_thread(self.redis.get, "trading:min_risk_reward_ratio")
+                if raw:
+                    global_min_rr = float(raw)
+            except Exception:
+                pass
+
             prompt = build_strategy_prompt(
                 symbol=symbol,
                 ticker=ticker,
@@ -4822,22 +4840,6 @@ class TradingEngine:
                 signal = preliminary_signal
 
             current_price = ticker['last']
-            # Read LLM-configured validator multipliers from Redis
-            min_stop_atr_mult = 1.0
-            min_hold_time_mult = 1.0
-            global_min_rr = None
-            try:
-                raw = await asyncio.to_thread(self.redis.get, "trading:min_stop_loss_atr_mult")
-                if raw:
-                    min_stop_atr_mult = float(raw)
-                raw = await asyncio.to_thread(self.redis.get, "trading:min_max_hold_time_mult")
-                if raw:
-                    min_hold_time_mult = float(raw)
-                raw = await asyncio.to_thread(self.redis.get, "trading:min_risk_reward_ratio")
-                if raw:
-                    global_min_rr = float(raw)
-            except Exception:
-                pass
 
             validated = validate_signal(
                 signal,
