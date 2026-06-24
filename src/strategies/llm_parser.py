@@ -63,14 +63,27 @@ def parse_llm_response(response_text: str) -> Signal:
         # We merge root-level parameters with strategy.parameters, preferring strategy.parameters.
         params = {}
         known_params = [
-            "stop_loss_pct", "take_profit_pct", "position_size_fraction", "trailing_stop",
-            "max_hold_time_seconds", "stop_loss_method", "stop_loss_atr_multiple",
-            "trailing_stop_distance_pct", "trailing_stop_activation_pct", "cooldown_after_loss_seconds",
+            "stop_loss_pct", "take_profit_pct", "take_profit_atr_multiple",
+            "position_size_fraction", "trailing_stop", "max_hold_time_seconds",
+            "stop_loss_method", "stop_loss_atr_multiple",
+            "trailing_stop_distance_pct", "trailing_stop_atr_multiple",
+            "trailing_stop_activation_pct", "cooldown_after_loss_seconds",
             "portfolio_risk_adjustment_factor",
-            "max_risk_per_trade_pct", "min_profit_per_trade", "min_risk_reward_ratio",
+            "max_risk_per_trade_pct", "max_portfolio_risk_pct",
+            "min_profit_per_trade", "min_risk_reward_ratio",
             "min_confidence", "news_sentiment_exit_threshold",
             "strategy_interval_seconds", "limit_price", "time_in_force",
-            "backtest_period_days",
+            "backtest_period_days", "order_fill_timeout_seconds",
+            "trailing_take_profit", "trailing_take_profit_distance_pct",
+            "breakeven_activation_pct",
+            "partial_take_profit_levels", "partial_take_profit_pct",
+            "partial_take_profit_fraction",
+            "max_unrealized_loss_pct",
+            "position_size_multiplier",
+            "order_type", "stop_price", "trail_offset",
+            "stop_loss_order_type", "stop_loss_stop_price",
+            "stop_loss_limit_price", "stop_loss_trail_offset",
+            "take_profit_order_type", "take_profit_limit_price",
         ]
         for k in known_params:
             if k in data:
@@ -160,19 +173,19 @@ def parse_llm_response(response_text: str) -> Signal:
                     entry_condition = entry_condition_raw
 
         # --- order execution parameters ---
-        order_type = data.get("order_type")
-        stop_price = _safe_float(data.get("stop_price"))
+        order_type = params.get("order_type")
+        stop_price = _safe_float(params.get("stop_price"))
         # limit_price is already in params, but we also expose it on the Signal
         limit_price = _safe_float(params.get("limit_price"))
-        trail_offset = _safe_float(data.get("trail_offset"))
+        trail_offset = _safe_float(params.get("trail_offset"))
         
-        stop_loss_order_type = data.get("stop_loss_order_type")
-        stop_loss_stop_price = _safe_float(data.get("stop_loss_stop_price"))
-        stop_loss_limit_price = _safe_float(data.get("stop_loss_limit_price"))
-        stop_loss_trail_offset = _safe_float(data.get("stop_loss_trail_offset"))
+        stop_loss_order_type = params.get("stop_loss_order_type")
+        stop_loss_stop_price = _safe_float(params.get("stop_loss_stop_price"))
+        stop_loss_limit_price = _safe_float(params.get("stop_loss_limit_price"))
+        stop_loss_trail_offset = _safe_float(params.get("stop_loss_trail_offset"))
         
-        take_profit_order_type = data.get("take_profit_order_type")
-        take_profit_limit_price = _safe_float(data.get("take_profit_limit_price"))
+        take_profit_order_type = params.get("take_profit_order_type")
+        take_profit_limit_price = _safe_float(params.get("take_profit_limit_price"))
 
         backtest_period_days = _safe_int(params.get("backtest_period_days"))
         if backtest_period_days is not None:
