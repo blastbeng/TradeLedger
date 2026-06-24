@@ -490,27 +490,54 @@ def _get_btp_investing_id(isin: str, name: str) -> Optional[int]:
     except Exception:
         pass
 
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://www.investing.com/",
+        "Origin": "https://www.investing.com",
+    }
+
+    # --- Search API ---
     try:
-        # investiny uses https://tvc6.investing.com/search
         url = "https://tvc6.investing.com/search"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
         logger.info(f"Searching Investing.com ID for BTP {isin} ({name})")
 
-        # Try searching by ISIN first, then by name
         for query in [isin, name]:
             params = {"query": query, "limit": 1, "type": ""}
             response = httpx.get(url, params=params, timeout=10.0, headers=headers)
             if response.status_code == 200:
                 results = response.json()
+                logger.debug(f"Search response for '{query}': {results}")
                 if results:
-                    # investiny returns a list of dicts with 'ticker' as the ID
-                    investing_id = int(results[0]["ticker"])
-                    redis_client.setex(cache_key, 86400, str(investing_id))
-                    return investing_id
+                    # The API may return 'ticker' or 'pairId'
+                    investing_id = results[0].get("ticker") or results[0].get("pairId")
+                    if investing_id is not None:
+                        investing_id = int(investing_id)
+                        redis_client.setex(cache_key, 86400, str(investing_id))
+                        return investing_id
     except Exception as e:
-        logger.warning(f"Failed to get investing_id for BTP {isin} ({name}): {e}")
+        logger.warning(f"Search API failed for BTP {isin} ({name}): {e}")
+
+    # --- Fallback: scrape the bond page for data-pair-id ---
+    try:
+        search_url = f"https://www.investing.com/search/?q={isin}"
+        resp = httpx.get(search_url, headers=headers, timeout=15.0, follow_redirects=True)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            # Look for a link that contains the ISIN and has a data-pair-id attribute
+            for a in soup.find_all("a", href=True):
+                if isin in a.get_text() or (name and name.lower() in a.get_text().lower()):
+                    pair_id = a.get("data-pair-id")
+                    if pair_id:
+                        redis_client.setex(cache_key, 86400, str(pair_id))
+                        return int(pair_id)
+            # Alternative: look for any element with data-pair-id on the page
+            for tag in soup.find_all(attrs={"data-pair-id": True}):
+                pair_id = tag["data-pair-id"]
+                redis_client.setex(cache_key, 86400, str(pair_id))
+                return int(pair_id)
+    except Exception as e:
+        logger.warning(f"Fallback scrape failed for BTP {isin}: {e}")
+
     return None
 
 def get_btp_candles(
@@ -573,6 +600,12 @@ def get_btp_candles(
             logger.warning(f"Investing.com API returned {response.status_code} for id {investing_id}")
             return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
         data = response.json()
+        if data.get("s") != "ok":
+            logger.warning(
+                f"Investing.com history API returned status '{data.get('s')}' for id {investing_id}. "
+                f"Response: {data}"
+            )
+            return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
     except Exception as e:
         logger.warning(f"Failed to fetch candles for id {investing_id}: {e}")
         return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
