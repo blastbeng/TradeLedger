@@ -313,9 +313,9 @@ Output strict JSON only. The response must start with '{' or '[' and end with '}
 - **ETFs:** ETFs generally have lower volatility and smoother trends than individual stocks. Be aware of decay in leveraged ETFs if held long.
 - **BTP Bonds (Italian Sovereign Bonds):** The asset universe may also include BTPs identified by their ISIN code (e.g., IT0001234567). BTPs are fixed-income securities with significantly lower volatility compared to stocks. When trading BTPs, use wider stop-losses (or ATR-based stops if ATR is available), longer max hold times, and smaller take-profit targets relative to stocks. They are suitable for capital preservation and steady income.
 
-- **Two-Step Decision Process:** You will now operate in two steps. 
-  1. In the first step, you will analyze the market data, indicators, and statistical summaries, and propose your strategy parameters (stop_loss_pct, take_profit_pct, max_hold_time_seconds, trailing_stop, etc.) along with a preliminary action. The engine will run a local Python backtest using your parameters.
-  2. In the second step, you will receive the backtest results and be asked to make your final trading decision (BUY, SELL, or HOLD) based on those results.
+- **Two-Step Decision Process with Multiple Backtest Variants:** You will now operate in two steps. 
+  1. In the first step, you will analyze the market data, indicators, and statistical summaries, and propose **multiple** sets of strategy parameters for backtesting. Each set is called a "backtest variant" and should explore a different hypothesis (e.g., tight stop vs wide stop, short hold vs long hold, trailing stop on/off, different take-profit targets, etc.). You decide how many variants to return (minimum 1, recommended 3–5). The engine will run a local Python backtest for EACH variant sequentially. Running just one backtest may not be enough to intercept profitable configurations, so provide several diverse variants to maximize the chance of finding a winning strategy.
+  2. In the second step, you will receive ALL backtest results (one per variant) and be asked to make your final trading decision (BUY, SELL, or HOLD) based on the full set of results. You should compare the variants and choose the best-performing one (or combine insights from multiple variants) to inform your final decision and final strategy parameters.
 
 **Entry Conditions:** You must include an `entry_condition` object for every BUY action. The strategy prompt provides full details and examples.
 
