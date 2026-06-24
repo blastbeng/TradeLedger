@@ -2415,78 +2415,19 @@ class TradingEngine:
                 'min_amount': min_amount,
             }
 
-        # Compute effective max symbols based on budget and minimum trade costs
-        min_costs = [lim['min_cost'] for lim in market_limits.values() if lim['min_cost'] > 0]
-        if min_costs:
-            min_min_cost = min(min_costs)
-            max_affordable = int(base_balance // min_min_cost) if min_min_cost > 0 else self.max_symbols
-        else:
-            max_affordable = self.max_symbols
-        self.effective_max_symbols = max(1, min(self.max_symbols, max_affordable)) if max_affordable > 0 else 0
-
-        if self.effective_max_symbols == 0:
-            logger.warning("Insufficient balance to trade any symbol. Clearing symbol list.")
-            self.current_symbols = []
-            await asyncio.to_thread(self.redis.set, last_key, now)
-            if self.notifier:
-                await self.notifier.send_notification(
-                    f"⚠️ Insufficient {self.base_currency} balance ({base_balance:.2f}) to trade any symbol. "
-                    f"Min cost required: {min_min_cost:.2f}. Depositing funds or resetting paper balance will fix this.",
-                    summary={
-                        "action": "HOLD",
-                        "reason": "Insufficient balance",
-                        "base_balance": base_balance,
-                        "min_cost": min_min_cost,
-                    }
-                )
-            return
+        # effective_max_symbols is set by the LLM's max_stocks field.
+        # Do NOT zero it out based on per-symbol budget calculations.
+        # The LLM decides how many symbols to trade and how to allocate capital dynamically.
+        self.effective_max_symbols = self.max_symbols
 
         # Recompute per-symbol budget with the effective max
         per_symbol_budget = base_balance / self.effective_max_symbols
 
-        # --- Minimum viable trade amount check ---
-        min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
-        try:
-            raw = await asyncio.to_thread(self.redis.get, "trading:min_viable_trade_amount")
-            if raw:
-                min_viable_amount = float(raw)
-        except Exception:
-            pass
-
-        if min_viable_amount > 0 and base_balance > 0:
-            max_by_viable = int(base_balance // min_viable_amount)
-            if max_by_viable < self.effective_max_symbols:
-                old_eff = self.effective_max_symbols
-                if max_by_viable > 0:
-                    self.effective_max_symbols = max_by_viable
-                    per_symbol_budget = base_balance / self.effective_max_symbols
-                    logger.info(
-                        f"Adjusted effective_max_symbols from {old_eff} to {self.effective_max_symbols} "
-                        f"based on min viable trade amount {min_viable_amount:.2f} "
-                        f"(per-symbol budget now {per_symbol_budget:.2f})"
-                    )
-                else:
-                    self.effective_max_symbols = 0
-                    logger.warning(
-                        f"Balance {base_balance:.2f} {self.base_currency} is below minimum viable trade amount "
-                        f"{min_viable_amount:.2f}. Cannot trade profitably."
-                    )
-                    self.current_symbols = []
-                    await asyncio.to_thread(self.redis.set, last_key, now)
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"⚠️ Balance {base_balance:.2f} {self.base_currency} is below the minimum viable trade amount "
-                            f"({min_viable_amount:.2f} {self.base_currency}). "
-                            f"Round-trip fees would consume too much of each trade. "
-                            f"Deposit more funds or reduce MIN_VIABLE_TRADE_AMOUNT to allow smaller trades.",
-                            summary={
-                                "action": "HOLD",
-                                "reason": "Balance below minimum viable trade amount",
-                                "base_balance": base_balance,
-                                "min_viable_amount": min_viable_amount,
-                            }
-                        )
-                    return
+        # No hardcoded minimum viable trade amount gate.
+        # The LLM decides position sizes dynamically based on all available parameters.
+        # The only hard limits are exchange minimums (min_order_size, min_order_cost),
+        # which are checked at order execution time.
+        min_viable_amount = 0.0
 
         # Compute pairwise correlation matrix from OHLCV close prices (run in thread to avoid blocking)
         def _compute_correlation_matrix():
@@ -6908,33 +6849,9 @@ class TradingEngine:
                     )
                 return
 
-            # --- Minimum viable trade amount check ---
-            min_viable = settings.MIN_VIABLE_TRADE_AMOUNT
-            try:
-                raw = await asyncio.to_thread(self.redis.get, "trading:min_viable_trade_amount")
-                if raw:
-                    min_viable = float(raw)
-            except Exception:
-                pass
-            if min_viable > 0 and amount < min_viable:
-                logger.info(
-                    f"Skipping BUY {symbol}: trade amount {amount:.2f} {quote} "
-                    f"below minimum viable {min_viable:.2f} {quote}"
-                )
-                if self.notifier:
-                    await self.notifier.send_notification(
-                        f"⚠️ Skipping BUY {display_symbol}: amount {amount:.2f} {quote} "
-                        f"below minimum viable trade amount {min_viable:.2f} {quote} "
-                        f"(fees would consume too much of the trade value)",
-                        summary={
-                            "symbol": symbol,
-                            "action": "SKIP",
-                            "reason": "Below minimum viable trade amount",
-                            "amount": amount,
-                            "min_viable": min_viable,
-                        }
-                    )
-                return
+            # No hardcoded minimum viable trade amount gate.
+            # The LLM decides the trade amount dynamically.
+            # Only exchange minimums (checked below) are hard limits.
 
             # Check minimum order size and adjust upward if needed
             try:

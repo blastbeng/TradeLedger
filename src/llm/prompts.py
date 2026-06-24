@@ -390,23 +390,31 @@ def build_stock_selection_prompt(
     prompt = f"""Current base currency: {base_currency}
 Your available {base_currency} balance: {base_balance:.2f}
 Maximum number of stocks to trade: {max_symbols}
-Budget per stock: {per_symbol_budget:.2f} {base_currency}
-Minimum viable trade amount: {min_viable_trade_amount:.2f} {base_currency}
+Reference equal-share budget per stock (suggestion only — you decide actual allocations): {per_symbol_budget:.2f} {base_currency}
 Available timeframes: {json.dumps(available_timeframes)}
 Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols) if current_symbols else "None"}"""
 
-    if min_viable_trade_amount > 0:
-        prompt += (
-            f"\n**CRITICAL — Fee Structure & Minimum Viable Trade Amount:**\n"
-            f"With Intesa Sanpaolo Investo fees (0.24% commission with €3.50 minimum + €2.50 fixed per order "
-            f"+ 0.12% Tobin tax on BUY only), the round-trip cost for a {min_viable_trade_amount:.0f} {base_currency} trade "
-            f"is approximately {((max(3.50, min_viable_trade_amount * 0.0024) + 2.50 + min_viable_trade_amount * 0.0012 + max(3.50, min_viable_trade_amount * 0.0024) + 2.50) / min_viable_trade_amount * 100):.1f}% of trade value.\n"
-            f"Trades below this amount have fees that consume too large a percentage, making profit nearly impossible.\n"
-            f"**You MUST select at most `max_stocks` symbols such that `base_balance / max_stocks >= {min_viable_trade_amount:.2f}`.** "
-            f"If the budget per stock would be below {min_viable_trade_amount:.2f} {base_currency}, select FEWER stocks to concentrate capital. "
-            f"If even 1 stock cannot meet this threshold (base_balance < {min_viable_trade_amount:.2f}), select 0 stocks and explain that the balance is insufficient for profitable trading.\n"
-            f"You may override `min_viable_trade_amount` in your JSON response to increase or decrease it based on your assessment of current fee/market conditions.\n"
-        )
+    prompt += (
+        f"\n**Capital Allocation — Fully Dynamic:**\n"
+        f"Your total available capital is {base_balance:.2f} {base_currency}.\n"
+        f"The 'Budget per stock' figure above is ONLY a reference (equal split). "
+        f"You are NOT required to allocate equally. You MUST decide the actual `position_size_fraction` "
+        f"for each stock dynamically based on your confidence, the quality of the setup, volatility, "
+        f"and all other parameters provided.\n"
+        f"Key rules:\n"
+        f"- The sum of `position_size_fraction` across ALL stocks you select must NOT exceed 1.0 "
+        f"(i.e., total allocated capital must not exceed your available {base_currency} balance).\n"
+        f"- Each trade amount is UNIQUE — do not default to equal splits. "
+        f"Allocate more to high-conviction setups and less to speculative ones.\n"
+        f"- Even with a large number of symbols and a low portfolio value, you should still attempt trades. "
+        f"Use small `position_size_fraction` values (e.g., 0.01–0.05) if needed. "
+        f"A small trade with tight risk management is better than no trade at all.\n"
+        f"- If allocating capital to one high-conviction trade leaves no room for others, that is acceptable. "
+        f"Prioritize quality over quantity. You may concentrate capital on your best 1–3 setups.\n"
+        f"- The only hard floor is the exchange minimum order size (shown as `min_trade_cost` per symbol). "
+        f"Your `position_size_fraction × total_balance` must be ≥ that symbol's `min_trade_cost`.\n"
+        f"- If your available balance cannot meet the exchange minimum for any symbol, select 0 stocks.\n"
+    )
 
     # --- Open positions summary ---
     if open_positions:
@@ -820,10 +828,12 @@ Maximum symbols to trade: {max_symbols}
             "you may need to set a higher fraction to compensate, or accept the reduced size.\n"
         )
     prompt += (
-        f"**position_size_fraction** now represents a fraction of your **total {base_currency} balance** (0.1 to 1.0). "
-        f"You may allocate more than the equal share for high‑confidence/high‑profit opportunities, and less for riskier ones. "
-        f"**Important:** The sum of position_size_fraction across all stocks you intend to trade must not exceed 1.0, "
-        f"so that you leave enough capital for other stocks. Plan your allocations accordingly.\n"
+        f"**position_size_fraction** represents a fraction of your **total {base_currency} balance** (0.01 to 1.0). "
+        f"You decide the exact fraction dynamically — there is no equal-split requirement. "
+        f"Allocate more to high-conviction setups and less to speculative ones. "
+        f"**Important:** The sum of position_size_fraction across all stocks you intend to trade must not exceed 1.0 "
+        f"(total allocated capital must not exceed your available {base_currency} balance). "
+        f"Even with many symbols and limited capital, use small fractions (0.01–0.05) rather than skipping trades entirely.\n"
     )
     prompt += (
         "If you are uncertain about a trade, prefer a **small position** "
@@ -977,13 +987,19 @@ Maximum symbols to trade: {max_symbols}
                 f"**Your `take_profit_pct` MUST be strictly greater than {break_even_pct*100:.2f}% to be profitable.**\n"
                 f"Set your `take_profit_pct` comfortably above this break-even percentage.\n"
             )
-    if min_viable_trade_amount > 0:
-        prompt += (
-            f"\n**Minimum Viable Trade Amount:** {min_viable_trade_amount:.2f} {base_currency}\n"
-            f"Your `position_size_fraction` must result in a trade value of AT LEAST {min_viable_trade_amount:.2f} {base_currency}. "
-            f"If the available balance × your `position_size_fraction` is below this amount, the trade will be skipped because fees would consume too much of the trade value. "
-            f"Adjust your `position_size_fraction` accordingly — use a larger fraction to ensure the trade meets this minimum.\n"
-        )
+    prompt += (
+        f"\n**Capital Allocation — Fully Dynamic:**\n"
+        f"Your total available {base_currency} balance is {base_balance:.2f}.\n"
+        f"The 'Suggested equal share per symbol' is ONLY a reference. You decide the actual `position_size_fraction`.\n"
+        f"- Set `position_size_fraction` based on your confidence, the quality of this setup, volatility (ATR), "
+        f"portfolio exposure, drawdown, and all other parameters. Each trade amount should be UNIQUE.\n"
+        f"- Even a very small `position_size_fraction` (e.g., 0.01–0.05) is valid if your conviction is low or "
+        f"capital is limited. Do NOT output HOLD just because the equal-share budget seems small.\n"
+        f"- The sum of `position_size_fraction` across all stocks must not exceed 1.0 (total available balance).\n"
+        f"- The only hard floor is the exchange minimum order size: your `position_size_fraction × total_balance` "
+        f"must be ≥ the minimum order cost for this symbol (shown above as min_order_cost).\n"
+        f"- If the remaining balance is too small to meet the exchange minimum, reduce your fraction or output HOLD.\n"
+    )
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)
