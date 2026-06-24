@@ -746,6 +746,107 @@ def _fetch_btp_candles_from_borsaitaliana(
         return None
 
 
+def _fetch_stock_candles_from_borsaitaliana(
+    symbol: str,
+    timeframe: str,
+    from_date: datetime,
+    to_date: datetime,
+    limit: int
+) -> Optional[List[List]]:
+    """
+    Fetch stock/ETF OHLCV candles from Borsa Italiana charting API.
+    Returns list of [timestamp_ms, open, high, low, close, volume]
+    or None on failure.
+    """
+    TIMEFRAME_MAP_BI = {
+        "1d": "1d",
+        "1w": "1w",
+        "1M": "1M",
+    }
+    sample_time = TIMEFRAME_MAP_BI.get(timeframe)
+    if not sample_time:
+        return None
+
+    # Strip any known suffix to get the base ticker (e.g., "MTS.MI" -> "MTS")
+    base_symbol = symbol
+    for suffix in [".MI", ".mi"]:
+        if base_symbol.endswith(suffix):
+            base_symbol = base_symbol[:-len(suffix)]
+            break
+
+    url = "https://charts.borsaitaliana.it/charts/services/ChartWService.asmx/GetPrices"
+    headers = {
+        "Host": "charts.borsaitaliana.it",
+        "Origin": "https://www.borsaitaliana.it",
+        "Referer": "https://www.borsaitaliana.it/",
+        "Content-Type": "application/json; charset=utf-8",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+
+    # Try with .MTA first, then fallback to bare symbol
+    for key in [f"{base_symbol}.MTA", base_symbol]:
+        payload = {
+            "request": {
+                "SampleTime": sample_time,
+                "TimeFrame": "5y",
+                "RequestedDataSetType": "ohlc",
+                "ChartPriceType": "price",
+                "Key": key,
+                "OffSet": 0,
+                "FromDate": None,
+                "ToDate": None,
+                "UseDelay": False,
+                "KeyType": "Topic",
+                "KeyType2": "Topic",
+                "Language": "it-IT",
+            }
+        }
+        try:
+            response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+            if response.status_code != 200:
+                continue
+            raw = response.json()
+            prices = raw.get("d", {}).get("Prices")
+            if not prices:
+                continue
+
+            candles = []
+            from_ts = from_date.timestamp() * 1000
+            to_ts = to_date.timestamp() * 1000
+
+            for p in prices:
+                ts = p.get("Time")
+                if ts is None:
+                    continue
+                if ts < from_ts or ts > to_ts:
+                    continue
+                candles.append([
+                    ts,
+                    float(p.get("Open", 0)),
+                    float(p.get("High", 0)),
+                    float(p.get("Low", 0)),
+                    float(p.get("Close", 0)),
+                    float(p.get("Volume", 0)),
+                ])
+
+            if not candles:
+                continue
+
+            # Sort by time ascending
+            candles.sort(key=lambda x: x[0])
+            # Apply limit (most recent)
+            if limit and len(candles) > limit:
+                candles = candles[-limit:]
+
+            return candles
+
+        except Exception:
+            continue
+
+    return None
+
+
 def _fetch_btp_candles(
     isin: str, name: str, timeframe: str,
     from_date: datetime, to_date: datetime, limit: int
@@ -854,10 +955,40 @@ def get_multi_timeframe_bars(
                 # Take the last `limit` candles
                 result[tf] = candles[-limit:]
             else:
-                result[tf] = []
+                # yfinance returned empty – try Borsa Italiana fallback
+                now = datetime.now(timezone.utc)
+                # Determine a reasonable from_date based on timeframe
+                if tf == "1h":
+                    from_date = now - timedelta(days=60)
+                elif tf == "1d":
+                    from_date = now - timedelta(days=365)
+                elif tf == "1w":
+                    from_date = now - timedelta(days=365*5)
+                elif tf == "1M":
+                    from_date = now - timedelta(days=365*10)
+                else:
+                    from_date = now - timedelta(days=365)
+                fallback = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit)
+                result[tf] = fallback if fallback is not None else []
         except Exception as e:
             logger.warning(f"Failed to fetch bars for {symbol} {tf}: {e}")
-            result[tf] = []
+            # Try Borsa Italiana fallback even on exception
+            try:
+                now = datetime.now(timezone.utc)
+                if tf == "1h":
+                    from_date = now - timedelta(days=60)
+                elif tf == "1d":
+                    from_date = now - timedelta(days=365)
+                elif tf == "1w":
+                    from_date = now - timedelta(days=365*5)
+                elif tf == "1M":
+                    from_date = now - timedelta(days=365*10)
+                else:
+                    from_date = now - timedelta(days=365)
+                fallback = _fetch_stock_candles_from_borsaitaliana(symbol, tf, from_date, now, limit)
+                result[tf] = fallback if fallback is not None else []
+            except Exception:
+                result[tf] = []
     return result
 
 
@@ -903,9 +1034,20 @@ def get_bars_range(
                 ts = int(idx.timestamp() * 1000)
                 candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
             return candles[-limit:]
+        # yfinance returned empty – try Borsa Italiana fallback
+        fallback = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit)
+        if fallback is not None:
+            return fallback
         return []
     except Exception as e:
         logger.warning(f"Failed to fetch bars range for {symbol} {timeframe}: {e}")
+        # Try Borsa Italiana fallback even on exception
+        try:
+            fallback = _fetch_stock_candles_from_borsaitaliana(symbol, timeframe, start_dt, end_dt, limit)
+            if fallback is not None:
+                return fallback
+        except Exception:
+            pass
         return []
 
 
