@@ -246,6 +246,11 @@ async def get_manual_trades():
         t["display_symbol"] = t["symbol"]
     return manual
 
+@app.get("/api/signals")
+async def signals(limit: int = 20):
+    engine = get_engine()
+    return await run_in_threadpool(engine.get_recent_signals, limit)
+
 @app.post("/api/reload")
 async def reload():
     await run_in_threadpool(settings.reload)

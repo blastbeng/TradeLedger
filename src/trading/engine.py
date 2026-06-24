@@ -137,6 +137,7 @@ class TradingEngine:
         self._last_state_save = 0
         self._last_eval_snapshot: Dict[str, Dict[str, float]] = {}  # symbol -> indicator snapshot
         self._last_decisions: Dict[str, Dict[str, Any]] = {}  # symbol -> last LLM decision
+        self.recent_signals: List[Dict[str, Any]] = []
         self._pending_entries: Dict[str, Dict[str, Any]] = {}  # symbol -> pending entry condition info
 
         # Re-entrancy guards for periodic tasks
@@ -4961,6 +4962,22 @@ class TradingEngine:
                 "position_size_fraction": params.get("position_size_fraction") if (params := signal.strategy_params) else None,
                 "stop_loss_method": params.get("stop_loss_method") if (params := signal.strategy_params) else None,
             }
+            # Record signal for the web dashboard
+            self.recent_signals.append({
+                "symbol": symbol,
+                "display_symbol": display_symbol,
+                "action": validated.action,
+                "confidence": validated.confidence,
+                "reasoning": (validated.reasoning or "")[:200],
+                "strategy_type": signal.strategy_type,
+                "model_type": getattr(validated, 'model_type', None),
+                "llm_provider": llm_provider,
+                "llm_model": llm_model,
+                "timestamp": time.time(),
+            })
+            # Keep only the last 50 signals
+            if len(self.recent_signals) > 50:
+                self.recent_signals = self.recent_signals[-50:]
             params = signal.strategy_params or {}
             # --- Format symbol for notification ---
             stock_name = await self._get_stock_name(symbol)
@@ -5607,6 +5624,10 @@ class TradingEngine:
             "queued_sell_base_total": queued_sell_base_total,
             "queued_sell_value": queued_sell_value,
         }
+
+    def get_recent_signals(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Return the most recent LLM signals for the web dashboard."""
+        return self.recent_signals[-limit:]
 
     def get_open_trades(self) -> List[Dict[str, Any]]:
         """Return current open positions as trade-like dicts with unrealized P&L."""
