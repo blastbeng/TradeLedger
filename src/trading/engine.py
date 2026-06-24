@@ -6443,6 +6443,31 @@ class TradingEngine:
                 )
             return
 
+        # --- Paper mode + Paused: do not execute automated orders, only send notifications ---
+        # Manual overrides (exit_reason starts with "manual") are still allowed.
+        paused = await asyncio.to_thread(self.redis.get, "trading:paused")
+        if settings.TRADING_MODE == "paper" and paused and not (exit_reason and exit_reason.startswith("manual")):
+            logger.info(f"Paper mode + Paused: skipping automated order execution for {signal.action} {symbol}.")
+            if self.notifier and signal.action in ("BUY", "SELL"):
+                emoji = "🟢" if signal.action == "BUY" else "🔴"
+                msg = f"{emoji} SIGNAL (PAUSED) {display_symbol}: {signal.action} (confidence: {signal.confidence:.2f})"
+                if signal.reasoning:
+                    msg += f" – {signal.reasoning[:200]}"
+                if hasattr(signal, 'backtest_summary') and signal.backtest_summary:
+                    msg += f"\n📈 Backtest: {signal.backtest_summary}"
+                await self.notifier.send_notification(
+                    msg,
+                    summary={
+                        "symbol": symbol,
+                        "action": signal.action,
+                        "confidence": signal.confidence,
+                        "reason": (signal.reasoning or "")[:200],
+                        "strategy_type": signal.strategy_type,
+                        "backtest": getattr(signal, 'backtest_summary', None),
+                    }
+                )
+            return
+
         # Prevent executing new signals if an order is already queued for this symbol
         # (unless it's a manual override)
         if any(q['symbol'] == symbol for q in self.queued_orders) and not (exit_reason and exit_reason.startswith("manual")):
