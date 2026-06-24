@@ -213,6 +213,16 @@ def parse_llm_response(response_text: str) -> Signal:
             backtest_period_days = max(30, min(backtest_period_days, settings.OHLCV_RETENTION_DAYS))
             params["backtest_period_days"] = backtest_period_days
 
+        # --- Extract backtest_variants array (Step 1 LLM output) ---
+        backtest_variants = data.get("backtest_variants")
+        if not isinstance(backtest_variants, list):
+            backtest_variants = None
+        else:
+            # Validate each variant is a dict; drop invalid entries
+            backtest_variants = [v for v in backtest_variants if isinstance(v, dict)]
+            if not backtest_variants:
+                backtest_variants = None
+
         return Signal(
             action=action,
             confidence=confidence,
@@ -248,6 +258,7 @@ def parse_llm_response(response_text: str) -> Signal:
             take_profit_order_type=take_profit_order_type,
             take_profit_limit_price=take_profit_limit_price,
             backtest_period_days=backtest_period_days,
+            backtest_variants=backtest_variants,
         )
     except (json.JSONDecodeError, ValueError, TypeError) as e:
         raise ValueError(f"Failed to parse LLM response as valid JSON: {e}") from e
