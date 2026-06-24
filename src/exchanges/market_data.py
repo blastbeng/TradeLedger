@@ -971,8 +971,12 @@ def _fetch_btp_candles(
     # Map our timeframe to investiny interval
     interval = INVESTINY_TIMEFRAME_MAP.get(timeframe)
     if not interval:
-        logger.warning(f"Unsupported timeframe for BTP: {timeframe}")
-        return []
+        # Fallback to monthly for long-term timeframes (3M, 6M, 1Y, 3Y, 5Y)
+        if timeframe in TIMEFRAME_MS:
+            interval = "M"
+        else:
+            logger.warning(f"Unsupported timeframe for BTP: {timeframe}")
+            return []
 
     df = get_btp_candles(investing_id, from_str, to_str, interval=interval)
     if df.empty:
@@ -1053,7 +1057,8 @@ def get_multi_timeframe_bars(
             elif inv_interval == "M":
                 from_date = now - timedelta(days=365*10)
             else:
-                from_date = now - timedelta(days=365)
+                # For long-term timeframes (3M, 6M, 1Y, 3Y, 5Y), fetch 10 years of monthly data to aggregate
+                from_date = now - timedelta(days=365*10)
             
             candles = _fetch_btp_candles(symbol, name, tf, from_date, now, limit)
             result[tf] = candles

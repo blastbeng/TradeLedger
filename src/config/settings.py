@@ -181,8 +181,8 @@ class Settings(BaseSettings):
         return v
 
     # Number of days of OHLCV data to retain and use for backtest / LLM analysis.
-    # For medium/long-term trading (1d, 1w, 1M), we need at least 1-2 years of data.
-    OHLCV_RETENTION_DAYS: int = 730
+    # For long-term trading (1d, 1w, 1M, 3M, 6M, 1Y, 3Y, 5Y), we need at least 5-10 years of data.
+    OHLCV_RETENTION_DAYS: int = 3650
 
     @field_validator("OHLCV_RETENTION_DAYS")
     @classmethod
