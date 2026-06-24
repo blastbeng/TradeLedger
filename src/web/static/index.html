@@ -437,7 +437,8 @@
                     <button id="btn-force-download" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">⬇️ Download Market Data</button>
                     <button id="btn-run-all-sim" style="margin-left:8px; background:#a371f7; color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🤖 Run All Decisions</button>
                 </h2>
-                <div class="table-wrapper">
+                <input type="text" id="sim-search" placeholder="🔍 Search ticker by name or code..." style="width: 100%; padding: 8px; margin-bottom: 8px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem;">
+                <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
                     <table id="simulation-table">
                         <thead><tr><th>Ticker</th><th>Timeframe</th><th>Last Price</th><th>Last Decision</th><th>Actions</th></tr></thead>
                         <tbody></tbody>
@@ -1266,6 +1267,21 @@
             btn.textContent = originalText;
             btn.disabled = false;
             showToast('All simulations completed.');
+        });
+        document.getElementById('sim-search').addEventListener('input', (e) => {
+            const filter = e.target.value.toLowerCase();
+            const rows = document.querySelectorAll('#simulation-table tbody tr');
+            rows.forEach(row => {
+                const tickerCell = row.cells[0];
+                if (tickerCell) {
+                    const txtValue = tickerCell.textContent || tickerCell.innerText;
+                    if (txtValue.toLowerCase().includes(filter)) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
+                }
+            });
         });
         document.getElementById('btn-refresh-news').addEventListener('click', () => {
             const newsDiv = document.getElementById('news');
