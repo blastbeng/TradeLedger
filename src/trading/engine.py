@@ -10141,19 +10141,6 @@ class TradingEngine:
 
         atr_series = None
         adx_series = None
-        if (bt_params.get("trailing_stop_atr_multiple") or bt_sl_atr_mult or bt_tp_atr_mult) and bt_candles and len(bt_candles) >= 15:
-            try:
-                import numpy as np
-                import talib
-                highs = np.array([c[2] for c in bt_candles], dtype=float)
-                lows = np.array([c[3] for c in bt_candles], dtype=float)
-                closes = np.array([c[4] for c in bt_candles], dtype=float)
-                atr_arr = talib.ATR(highs, lows, closes, timeperiod=14)
-                atr_series = [None if np.isnan(v) else float(v) for v in atr_arr]
-            except Exception:
-                pass
-
-        # Compute ADX series for the backtester's trend-strength filter
         if bt_candles and len(bt_candles) >= 15:
             try:
                 import numpy as np
@@ -10161,6 +10148,13 @@ class TradingEngine:
                 highs = np.array([c[2] for c in bt_candles], dtype=float)
                 lows = np.array([c[3] for c in bt_candles], dtype=float)
                 closes = np.array([c[4] for c in bt_candles], dtype=float)
+
+                # Compute ATR series (needed for dynamic ATR stops or trailing stops)
+                if bt_params.get("trailing_stop_atr_multiple") or bt_sl_atr_mult or bt_tp_atr_mult:
+                    atr_arr = talib.ATR(highs, lows, closes, timeperiod=14)
+                    atr_series = [None if np.isnan(v) else float(v) for v in atr_arr]
+
+                # Compute ADX series (always needed for the backtester's trend-strength filter)
                 adx_arr = talib.ADX(highs, lows, closes, timeperiod=14)
                 adx_series = [None if np.isnan(v) else float(v) for v in adx_arr]
             except Exception:
