@@ -341,7 +341,7 @@
             </div>
 
             <div class="card col-3">
-                <h2>📈 Tracked Tickers</h2>
+                <h2>📈 Tracked Tickers <span id="symbols-count" style="font-size: 0.9rem; color: var(--text-secondary);"></span></h2>
                 <button id="btn-force-reeval" style="margin-bottom:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Force Re-eval</button>
                 <div id="symbols" style="max-height: 125px; overflow-y: auto;">-</div>
             </div>
@@ -557,8 +557,10 @@
 
             // Symbols
             const symbolsDiv = document.getElementById('symbols');
+            const symbolsCountSpan = document.getElementById('symbols-count');
             symbolsDiv.innerHTML = '';
             if (data.current_symbols && data.current_symbols.length > 0) {
+                symbolsCountSpan.textContent = `(${data.current_symbols.length})`;
                 data.current_symbols.forEach(entry => {
                     const span = document.createElement('span');
                     span.textContent = `📈 ${entry.display || entry.symbol + ' (' + entry.timeframe + ')'}`;
@@ -568,6 +570,7 @@
                     symbolsDiv.appendChild(span);
                 });
             } else {
+                symbolsCountSpan.textContent = '(0)';
                 symbolsDiv.textContent = 'None';
             }
 
