@@ -1953,24 +1953,23 @@ class TradingEngine:
             return
         sample_pairs = valid_sample_pairs
 
-        # --- Yahoo Finance fallback for missing bid/ask in stock selection ---
+        # --- Yahoo Finance fallback for missing quotes (last, bid, ask) ---
         if settings.YAHOO_FINANCE_ENABLED:
-            missing_bid_ask = [
+            missing_quotes = [
                 sym for sym in sample_pairs
-                if tickers.get(sym, {}).get('bid') is None or tickers.get(sym, {}).get('ask') is None
+                if tickers.get(sym, {}).get('last') is None or tickers.get(sym, {}).get('bid') is None or tickers.get(sym, {}).get('ask') is None
             ]
             # Limit to 20 symbols per cycle to stay under Yahoo's rate limits
-            for sym in missing_bid_ask[:20]:
+            for sym in missing_quotes[:20]:
                 yahoo = await asyncio.to_thread(get_yahoo_quote, sym.split("/")[0])
                 if yahoo:
                     t = tickers.setdefault(sym, {})
+                    if t.get('last') is None:
+                        t['last'] = yahoo.get('last')
                     if t.get('bid') is None:
                         t['bid'] = yahoo.get('bid')
                     if t.get('ask') is None:
                         t['ask'] = yahoo.get('ask')
-                    # Keep yfinance's 'last' if present
-                    if t.get('last') is None:
-                        t['last'] = yahoo.get('last')
 
         # --- Sort candidate pool by 24h volume (preserve BTPs and ETFs) ---
         def _volume(sym):

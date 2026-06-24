@@ -211,7 +211,7 @@ def get_cached_news_summary(symbol: str, model_type: str = "actuator") -> dict:
     return result
 
 
-SYSTEM_PROMPT = """You are a professional stock and ETF trading bot assistant focused on medium to long-term investment horizons. Your primary goal is to generate consistent profit by identifying stocks with strong fundamentals, solid momentum, and favorable macro conditions over weeks to months. You must avoid large drawdowns and only trade when there is a clear edge.
+SYSTEM_PROMPT = """You are a professional stock, ETF, and BTP bond trading bot assistant focused on medium to long-term investment horizons. Your primary goal is to generate consistent profit by identifying assets with strong fundamentals, solid momentum, and favorable macro conditions over weeks to months. You must avoid large drawdowns and only trade when there is a clear edge. Your asset universe includes Italian stocks, UCITS ETFs, and Italian government bonds (BTPs).
 
 Key principles:
 - **Confidence is your directional conviction, not a trade gate.** Set confidence between 0.0 and 1.0. 0.0 → no conviction (should be HOLD). 0.5 → moderate belief. 1.0 → absolute certainty. Only output HOLD when you have no directional edge at all.
@@ -534,7 +534,7 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
             f"{json.dumps(historical_ohlcv_summary, indent=2)}\n"
         )
     if symbol_indicators:
-        prompt += "\nTechnical indicators for candidate stocks:\n"
+        prompt += "\nTechnical indicators for candidate assets (stocks, ETFs, BTPs):\n"
         for sym, tf_indicators in symbol_indicators.items():
             lines = [f"{sym}:"]
             for tf, ind in tf_indicators.items():
