@@ -246,6 +246,17 @@ def init_db():
                 """,
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_market_data_symbol_tf_ts ON market_data(symbol, timeframe, timestamp)",
                 "CREATE INDEX IF NOT EXISTS idx_market_data_timestamp ON market_data(timestamp)",
+                """
+                CREATE TABLE IF NOT EXISTS indicators (
+                    id SERIAL PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    timestamp BIGINT NOT NULL,
+                    indicators_json TEXT NOT NULL,
+                    computed_at DOUBLE PRECISION NOT NULL,
+                    UNIQUE(symbol, timeframe)
+                )
+                """,
             ]
             for stmt in statements:
                 conn.execute(stmt)
@@ -315,6 +326,16 @@ def init_db():
 
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_market_data_symbol_tf_ts ON market_data(symbol, timeframe, timestamp);
                 CREATE INDEX IF NOT EXISTS idx_market_data_timestamp ON market_data(timestamp);
+
+                CREATE TABLE IF NOT EXISTS indicators (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    indicators_json TEXT NOT NULL,
+                    computed_at REAL NOT NULL,
+                    UNIQUE(symbol, timeframe)
+                );
             """)
         conn.commit()
     finally:
@@ -737,6 +758,45 @@ def get_latest_ohlcv_timestamp(symbol: str, timeframe: str) -> Optional[int]:
         row = conn.execute(sql, (symbol, timeframe)).fetchone()
         if row and row["ts"] is not None:
             return row["ts"]
+        return None
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def save_indicators(symbol: str, timeframe: str, timestamp: int, indicators: Dict[str, Any]):
+    """Save computed indicators for a symbol/timeframe (upsert — one row per symbol/timeframe)."""
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                "INSERT INTO indicators (symbol, timeframe, timestamp, indicators_json, computed_at) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (symbol, timeframe) DO UPDATE SET "
+                "timestamp = EXCLUDED.timestamp, indicators_json = EXCLUDED.indicators_json, "
+                "computed_at = EXCLUDED.computed_at"
+            )
+        else:
+            sql = _adapt_sql(
+                "INSERT OR REPLACE INTO indicators (symbol, timeframe, timestamp, indicators_json, computed_at) "
+                "VALUES (%s, %s, %s, %s, %s)"
+            )
+        conn.execute(sql, (symbol, timeframe, timestamp, json.dumps(indicators), time.time()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_indicators(symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
+    """Retrieve the latest computed indicators for a symbol/timeframe from DB, or None if not found."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            "SELECT indicators_json FROM indicators WHERE symbol = %s AND timeframe = %s"
+        )
+        row = conn.execute(sql, (symbol, timeframe)).fetchone()
+        if row:
+            return json.loads(row["indicators_json"])
         return None
     finally:
         conn.close()

@@ -63,7 +63,7 @@ from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
 from src.strategies.backtester import backtest_strategy, format_backtest_summary
 from src.utils.redis_client import get_redis_client
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +255,11 @@ class TradingEngine:
                     try:
                         await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
                         await self._fill_gaps(pair, tf)
+                        # Compute and store indicators after candles are downloaded
+                        db_candles = await asyncio.to_thread(get_ohlcv, pair, tf, limit=200)
+                        if db_candles:
+                            raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+                            await self._compute_and_store_indicators(pair, tf, raw_candles)
                     except Exception as e:
                         logger.warning(f"Force download failed for {pair} {tf}: {e}")
 
@@ -779,21 +784,8 @@ class TradingEngine:
                         symbol = entry["symbol"]
                         tf = entry["timeframe"]
                         try:
-                            db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=50)
-                            if not db_candles or len(db_candles) < 26:
-                                continue
-                            raw_candles = [
-                                [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                                for c in db_candles
-                            ]
-                            cached_ind = await self._get_cached_indicators(symbol, tf, raw_candles)
-                            if cached_ind:
-                                ind = cached_ind
-                            else:
-                                async with self._indicator_semaphore:
-                                    ind = await asyncio.to_thread(compute_all_indicators, raw_candles)
-                                if ind:
-                                    await self._cache_indicators(symbol, tf, raw_candles, ind)
+                            # Fetch pre-computed indicators from DB
+                            ind = await asyncio.to_thread(get_indicators, symbol, tf)
                             if not ind:
                                 continue
 
@@ -1073,36 +1065,20 @@ class TradingEngine:
             logger.info(f"Volume trend computation failed for {symbol}: {e}")
             return None
 
-    async def _get_cached_indicators(
-        self, symbol: str, timeframe: str, candles: List[List]
-    ) -> Optional[Dict[str, Any]]:
-        """Return cached indicators if the latest candle timestamp matches."""
-        if not candles:
-            return None
-        latest_ts = candles[-1][0]
-        cache_key = f"indicators:{symbol}:{timeframe}:{latest_ts}"
-        try:
-            cached = await asyncio.to_thread(self.redis.get, cache_key)
-            if cached:
-                return json.loads(cached)
-        except Exception:
-            pass
-        return None
-
-    async def _cache_indicators(
-        self, symbol: str, timeframe: str, candles: List[List], indicators: Dict[str, Any]
-    ):
-        """Store indicators in Redis with a 60-second TTL."""
-        if not candles:
+    async def _compute_and_store_indicators(self, symbol: str, timeframe: str, candles: List[List]):
+        """Compute indicators for a symbol/timeframe using TA-Lib and store in DB."""
+        if not candles or len(candles) < 2:
             return
-        latest_ts = candles[-1][0]
-        cache_key = f"indicators:{symbol}:{timeframe}:{latest_ts}"
         try:
-            await asyncio.to_thread(
-                self.redis.setex, cache_key, 60, json.dumps(indicators)
-            )
-        except Exception:
-            pass
+            async with self._indicator_semaphore:
+                ind = await asyncio.to_thread(compute_all_indicators, candles)
+            if ind:
+                latest_ts = candles[-1][0]
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(self._db_executor, save_indicators, symbol, timeframe, latest_ts, ind)
+                logger.debug(f"Indicators computed and stored for {symbol} {timeframe}")
+        except Exception as e:
+            logger.warning(f"Failed to compute/store indicators for {symbol} {timeframe}: {e}")
 
     async def _fetch_and_store_news_for_symbol(self, symbol: str):
         """Fetch news for a single symbol and store it in the database."""
@@ -1418,6 +1394,11 @@ class TradingEngine:
         try:
             await self._backfill_ohlcv(symbol, timeframe, start_ms, now_ms)
             await self._fill_gaps(symbol, timeframe)
+            # Compute and store indicators after backfill
+            db_candles = await asyncio.to_thread(get_ohlcv, symbol, timeframe, limit=200)
+            if db_candles:
+                raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+                await self._compute_and_store_indicators(symbol, timeframe, raw_candles)
         except Exception as e:
             logger.error(f"Initial backfill failed for {symbol} {timeframe}: {e}")
         logger.debug(f"Immediate backfill complete for {symbol} ({timeframe})")
@@ -1447,6 +1428,11 @@ class TradingEngine:
                         try:
                             await self._backfill_ohlcv(symbol, tf, start_ms, now_ms)
                             await self._fill_gaps(symbol, tf)
+                            # Compute and store indicators after candles are downloaded
+                            db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=200)
+                            if db_candles:
+                                raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+                                await self._compute_and_store_indicators(symbol, tf, raw_candles)
                         except Exception as e:
                             logger.warning(f"Market data download failed for {symbol} {tf}: {e}")
 
@@ -1498,6 +1484,11 @@ class TradingEngine:
                         try:
                             await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
                             await self._fill_gaps(pair, tf)
+                            # Compute and store indicators after candles are downloaded
+                            db_candles = await asyncio.to_thread(get_ohlcv, pair, tf, limit=200)
+                            if db_candles:
+                                raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+                                await self._compute_and_store_indicators(pair, tf, raw_candles)
                         except Exception as e:
                             logger.warning(f"Full download failed for {pair} {tf}: {e}")
 
@@ -2623,21 +2614,12 @@ class TradingEngine:
         # Compute indicators for each stock with OHLCV data, for ALL timeframes (parallelized)
         primary_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
 
-        async def _compute_indicators_and_score(sym: str, tf_data: Dict[str, List[List]]) -> Tuple[str, Dict[str, Dict[str, Any]], float]:
+        async def _compute_indicators_and_score(sym: str) -> Tuple[str, Dict[str, Dict[str, Any]], float]:
             sym_indicators = {}
             for tf in settings.OHLCV_TIMEFRAMES:
-                if tf in tf_data and tf_data[tf]:
-                    candles = tf_data[tf]
-                    cached_ind = await self._get_cached_indicators(sym, tf, candles)
-                    if cached_ind:
-                        ind = cached_ind
-                    else:
-                        async with self._indicator_semaphore:
-                            ind = await asyncio.to_thread(compute_all_indicators, candles)
-                        if ind:
-                            await self._cache_indicators(sym, tf, candles, ind)
-                    if ind:
-                        sym_indicators[tf] = ind
+                ind = await asyncio.to_thread(get_indicators, sym, tf)
+                if ind:
+                    sym_indicators[tf] = ind
 
             # Compute trend quality score
             trend_score = 0.0
@@ -2686,8 +2668,8 @@ class TradingEngine:
             return sym, sym_indicators, trend_score
 
         indicator_tasks = [
-            _compute_indicators_and_score(sym, tf_data)
-            for sym, tf_data in ohlcv_data.items()
+            _compute_indicators_and_score(sym)
+            for sym in sorted_by_vol
         ]
         indicator_results = await asyncio.gather(*indicator_tasks)
 
@@ -4339,50 +4321,42 @@ class TradingEngine:
                 if tf in ohlcv_data and ohlcv_data[tf]:
                     candles = ohlcv_data[tf]
                     multi_tf_raw_candles[tf] = candles
-                    # Check cache first
-                    cached_ind = await self._get_cached_indicators(symbol, tf, candles)
-                    if cached_ind:
-                        ind = cached_ind
-                    else:
-                        async with self._indicator_semaphore:
-                            ind = await asyncio.to_thread(compute_all_indicators, candles, config=ind_cfg)
-                        if ind:
-                            await self._cache_indicators(symbol, tf, candles, ind)
-                    multi_tf_indicators[tf] = ind
-                    if tf == assigned_tf:
-                        atr = ind.get('atr')
-                        rsi = ind.get('rsi')
-                        macd = ind.get('macd')
-                        macd_signal = ind.get('macd_signal')
-                        macd_hist = ind.get('macd_hist')
-                        bb_upper = ind.get('bb_upper')
-                        bb_middle = ind.get('bb_middle')
-                        bb_lower = ind.get('bb_lower')
-                        ema_9 = ind.get('ema_9')
-                        ema_21 = ind.get('ema_21')
-                        stochastic_k = ind.get('stochastic_k')
-                        stochastic_d = ind.get('stochastic_d')
-                        adx = ind.get('adx')
-                        plus_di = ind.get('plus_di')
-                        minus_di = ind.get('minus_di')
-                        obv = ind.get('obv')
-                        mfi = ind.get('mfi')
-                        cci = ind.get('cci')
-                        williams_r = ind.get('williams_r')
-                        ichimoku = ind.get('ichimoku')
-                        donchian_channels = ind.get('donchian_channels')
-                        parabolic_sar = ind.get('parabolic_sar')
-                        keltner_channels = ind.get('keltner_channels')
-                        # Compute rolling VWAP for the assigned timeframe
-                        vwap = compute_vwap(candles)
+                    # Fetch pre-computed indicators from DB
+                    ind = await asyncio.to_thread(get_indicators, symbol, tf)
+                    if ind:
+                        multi_tf_indicators[tf] = ind
+                        if tf == assigned_tf:
+                            atr = ind.get('atr')
+                            rsi = ind.get('rsi')
+                            macd = ind.get('macd')
+                            macd_signal = ind.get('macd_signal')
+                            macd_hist = ind.get('macd_hist')
+                            bb_upper = ind.get('bb_upper')
+                            bb_middle = ind.get('bb_middle')
+                            bb_lower = ind.get('bb_lower')
+                            ema_9 = ind.get('ema_9')
+                            ema_21 = ind.get('ema_21')
+                            stochastic_k = ind.get('stochastic_k')
+                            stochastic_d = ind.get('stochastic_d')
+                            adx = ind.get('adx')
+                            plus_di = ind.get('plus_di')
+                            minus_di = ind.get('minus_di')
+                            obv = ind.get('obv')
+                            mfi = ind.get('mfi')
+                            cci = ind.get('cci')
+                            williams_r = ind.get('williams_r')
+                            ichimoku = ind.get('ichimoku')
+                            donchian_channels = ind.get('donchian_channels')
+                            parabolic_sar = ind.get('parabolic_sar')
+                            keltner_channels = ind.get('keltner_channels')
+                            vwap = compute_vwap(candles)
 
-            # Compute ATR for each timeframe (volatility term structure)
             atr_multi_tf: Dict[str, float] = {}
             for tf in settings.OHLCV_TIMEFRAMES:
-                if tf in multi_tf_raw_candles:
-                    tf_atr = compute_atr(multi_tf_raw_candles[tf])
-                    if tf_atr is not None and tf_atr > 0:
-                        atr_multi_tf[tf] = tf_atr
+                ind = multi_tf_indicators.get(tf, {})
+                tf_atr = ind.get('atr')
+                if tf_atr is not None and tf_atr > 0:
+                    atr_multi_tf[tf] = tf_atr
 
             # Compute daily pivot points from the 1d timeframe (if available)
             if "1d" in multi_tf_raw_candles and len(multi_tf_raw_candles["1d"]) >= 2:
@@ -8005,25 +7979,16 @@ class TradingEngine:
     async def _detect_entry_signal(self, symbol: str, timeframe: str) -> bool:
         """Return True if a favourable entry condition is detected for the symbol.
         Uses recent OHLCV data from the database and compares with previous state."""
+        # Fetch pre-computed indicators from DB
+        ind = await asyncio.to_thread(get_indicators, symbol, timeframe)
+        if not ind:
+            return False
+
+        # Still need candles for volume EMA computation
         db_candles = await asyncio.to_thread(
             get_ohlcv, symbol, timeframe, limit=50
         )
         if len(db_candles) < 26:
-            return False
-
-        # Convert list of dicts to list of lists for compute_all_indicators
-        raw_candles = [
-            [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-            for c in db_candles
-        ]
-        cached_ind = await self._get_cached_indicators(symbol, timeframe, raw_candles)
-        if cached_ind:
-            ind = cached_ind
-        else:
-            ind = await asyncio.to_thread(compute_all_indicators, raw_candles)
-            if ind:
-                await self._cache_indicators(symbol, timeframe, raw_candles, ind)
-        if not ind:
             return False
 
         closes = [c["close"] for c in db_candles]
@@ -10605,46 +10570,41 @@ class TradingEngine:
             if tf in ohlcv_data and ohlcv_data[tf]:
                 candles = ohlcv_data[tf]
                 multi_tf_raw_candles[tf] = candles
-                cached_ind = await self._get_cached_indicators(symbol, tf, candles)
-                if cached_ind:
-                    ind = cached_ind
-                else:
-                    async with self._indicator_semaphore:
-                        ind = await asyncio.to_thread(compute_all_indicators, candles, config=ind_cfg)
-                    if ind:
-                        await self._cache_indicators(symbol, tf, candles, ind)
-                multi_tf_indicators[tf] = ind
-                if tf == assigned_tf:
-                    atr = ind.get('atr')
-                    rsi = ind.get('rsi')
-                    macd = ind.get('macd')
-                    macd_signal = ind.get('macd_signal')
-                    macd_hist = ind.get('macd_hist')
-                    bb_upper = ind.get('bb_upper')
-                    bb_middle = ind.get('bb_middle')
-                    bb_lower = ind.get('bb_lower')
-                    ema_9 = ind.get('ema_9')
-                    ema_21 = ind.get('ema_21')
-                    stochastic_k = ind.get('stochastic_k')
-                    stochastic_d = ind.get('stochastic_d')
-                    adx = ind.get('adx')
-                    plus_di = ind.get('plus_di')
-                    minus_di = ind.get('minus_di')
-                    obv = ind.get('obv')
-                    mfi = ind.get('mfi')
-                    cci = ind.get('cci')
-                    williams_r = ind.get('williams_r')
-                    ichimoku = ind.get('ichimoku')
-                    donchian_channels = ind.get('donchian_channels')
-                    parabolic_sar = ind.get('parabolic_sar')
-                    keltner_channels = ind.get('keltner_channels')
-                    vwap = compute_vwap(candles)
+                # Fetch pre-computed indicators from DB
+                ind = await asyncio.to_thread(get_indicators, symbol, tf)
+                if ind:
+                    multi_tf_indicators[tf] = ind
+                    if tf == assigned_tf:
+                        atr = ind.get('atr')
+                        rsi = ind.get('rsi')
+                        macd = ind.get('macd')
+                        macd_signal = ind.get('macd_signal')
+                        macd_hist = ind.get('macd_hist')
+                        bb_upper = ind.get('bb_upper')
+                        bb_middle = ind.get('bb_middle')
+                        bb_lower = ind.get('bb_lower')
+                        ema_9 = ind.get('ema_9')
+                        ema_21 = ind.get('ema_21')
+                        stochastic_k = ind.get('stochastic_k')
+                        stochastic_d = ind.get('stochastic_d')
+                        adx = ind.get('adx')
+                        plus_di = ind.get('plus_di')
+                        minus_di = ind.get('minus_di')
+                        obv = ind.get('obv')
+                        mfi = ind.get('mfi')
+                        cci = ind.get('cci')
+                        williams_r = ind.get('williams_r')
+                        ichimoku = ind.get('ichimoku')
+                        donchian_channels = ind.get('donchian_channels')
+                        parabolic_sar = ind.get('parabolic_sar')
+                        keltner_channels = ind.get('keltner_channels')
+                        vwap = compute_vwap(candles)
 
         for tf in settings.OHLCV_TIMEFRAMES:
-            if tf in multi_tf_raw_candles:
-                tf_atr = compute_atr(multi_tf_raw_candles[tf])
-                if tf_atr is not None and tf_atr > 0:
-                    atr_multi_tf[tf] = tf_atr
+            ind = multi_tf_indicators.get(tf, {})
+            tf_atr = ind.get('atr')
+            if tf_atr is not None and tf_atr > 0:
+                atr_multi_tf[tf] = tf_atr
 
         if "1d" in multi_tf_raw_candles and len(multi_tf_raw_candles["1d"]) >= 2:
             daily_candles = multi_tf_raw_candles["1d"]
