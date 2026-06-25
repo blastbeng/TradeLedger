@@ -1402,7 +1402,7 @@
                 const tickersMap = await resp.json();
                 for (const sym of symbols) {
                     const row = document.getElementById(`sim-row-${sym}`);
-                    if (row && tickersMap[sym] && tickersMap[sym].last !== undefined) {
+                    if (row && tickersMap[sym] && tickersMap[sym].last != null) {
                         row.cells[2].textContent = tickersMap[sym].last.toFixed(4);
                     } else if (row) {
                         row.cells[2].textContent = 'N/A';
