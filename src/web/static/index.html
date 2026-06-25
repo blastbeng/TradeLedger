@@ -389,7 +389,7 @@
                 <h2>📡 Latest LLM Signals</h2>
                 <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
                     <table id="signals-table">
-                        <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Confidence</th><th>Reasoning</th><th>Model</th></tr></thead>
+                        <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Amount</th><th>Confidence</th><th>Reasoning</th><th>Model</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -1021,6 +1021,13 @@
                         const actionCell = row.insertCell();
                         actionCell.textContent = s.action;
                         actionCell.className = s.action === 'BUY' ? 'green' : s.action === 'SELL' ? 'red' : '';
+                        const amountCell = row.insertCell();
+                        if (s.trade_amount != null && s.trade_amount > 0) {
+                            const cur = s.base_currency || 'EUR';
+                            amountCell.textContent = s.trade_amount.toFixed(2) + ' ' + cur;
+                        } else {
+                            amountCell.textContent = '—';
+                        }
                         row.insertCell().textContent = (s.confidence ?? 0).toFixed(2);
                         row.insertCell().textContent = s.reasoning || '';
                         row.insertCell().textContent = s.model_type || '—';
@@ -1028,7 +1035,7 @@
                 } else {
                     const row = body.insertRow();
                     const cell = row.insertCell();
-                    cell.colSpan = 6;
+                    cell.colSpan = 7;
                     cell.textContent = '📭 No signals yet';
                     cell.style.textAlign = 'center';
                     cell.style.color = 'var(--text-secondary)';

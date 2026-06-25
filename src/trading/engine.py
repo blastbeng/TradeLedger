@@ -5347,6 +5347,17 @@ class TradingEngine:
                 "position_size_fraction": params.get("position_size_fraction") if (params := signal.strategy_params) else None,
                 "stop_loss_method": params.get("stop_loss_method") if (params := signal.strategy_params) else None,
             }
+            # Compute trade amount for display in the signals card
+            _params = signal.strategy_params or {}
+            _psf = _params.get("position_size_fraction")
+            if validated.action == "BUY" and _psf is not None:
+                _trade_amount = base_balance * float(_psf)
+            elif validated.action == "SELL" and symbol in self.positions:
+                _pos = self.positions[symbol]
+                _trade_amount = _pos.get("amount", 0) * current_price
+            else:
+                _trade_amount = 0.0
+
             # Record signal for the web dashboard
             self.recent_signals.append({
                 "symbol": symbol,
@@ -5358,6 +5369,8 @@ class TradingEngine:
                 "model_type": getattr(validated, 'model_type', None),
                 "llm_provider": llm_provider,
                 "llm_model": llm_model,
+                "trade_amount": round(_trade_amount, 2),
+                "base_currency": self.base_currency,
                 "timestamp": time.time(),
             })
             # Keep only the last 50 signals
