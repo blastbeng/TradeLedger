@@ -280,7 +280,7 @@ async def update_interval(data: dict):
 @app.post("/api/force-reeval")
 async def force_reeval():
     engine = get_engine()
-    engine.trigger_symbol_reevaluation(force=True, manual=True)
+    engine.trigger_symbol_reevaluation(force=True)
     return {"status": "Forced re-evaluation triggered"}
 
 @app.post("/api/force-download")
