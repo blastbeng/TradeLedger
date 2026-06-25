@@ -7914,7 +7914,7 @@ class TradingEngine:
         if cached_ind:
             ind = cached_ind
         else:
-            ind = compute_all_indicators(raw_candles)
+            ind = await asyncio.to_thread(compute_all_indicators, raw_candles)
             if ind:
                 await self._cache_indicators(symbol, timeframe, raw_candles, ind)
         if not ind:
@@ -10364,19 +10364,27 @@ class TradingEngine:
         rsi_series = None
         macd_hist_series = None
         if bt_candles and len(bt_candles) >= 15:
-            try:
-                # Compute ATR series (needed for dynamic ATR stops or trailing stops)
-                if bt_params.get("trailing_stop_atr_multiple") or bt_sl_atr_mult or bt_tp_atr_mult:
-                    atr_series = compute_atr_series(bt_candles, period=14)
+            def _compute_bt_indicator_series():
+                _atr_series = None
+                _adx_series = None
+                _rsi_series = None
+                _macd_hist_series = None
+                try:
+                    # Compute ATR series (needed for dynamic ATR stops or trailing stops)
+                    if bt_params.get("trailing_stop_atr_multiple") or bt_sl_atr_mult or bt_tp_atr_mult:
+                        _atr_series = compute_atr_series(bt_candles, period=14)
 
-                # Compute ADX series (always needed for the backtester's trend-strength filter)
-                adx_series = compute_adx_series(bt_candles, period=14)
+                    # Compute ADX series (always needed for the backtester's trend-strength filter)
+                    _adx_series = compute_adx_series(bt_candles, period=14)
 
-                # Compute RSI and MACD series for additional backtest filters
-                rsi_series = compute_rsi_series(bt_candles, period=14)
-                _, _, macd_hist_series = compute_macd_series(bt_candles)
-            except Exception:
-                pass
+                    # Compute RSI and MACD series for additional backtest filters
+                    _rsi_series = compute_rsi_series(bt_candles, period=14)
+                    _, _, _macd_hist_series = compute_macd_series(bt_candles)
+                except Exception:
+                    pass
+                return _atr_series, _adx_series, _rsi_series, _macd_hist_series
+
+            atr_series, adx_series, rsi_series, macd_hist_series = await asyncio.to_thread(_compute_bt_indicator_series)
 
         # Fetch LLM-configured thresholds for backtest filters
         bt_min_adx = 20.0
@@ -10392,7 +10400,8 @@ class TradingEngine:
             pass
 
         if bt_candles and len(bt_candles) >= 20:
-            backtest_stats = backtest_strategy(
+            backtest_stats = await asyncio.to_thread(
+                backtest_strategy,
                 candles=bt_candles,
                 stop_loss_pct=bt_sl_pct,
                 take_profit_pct=bt_tp_pct,
