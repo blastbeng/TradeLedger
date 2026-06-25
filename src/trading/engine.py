@@ -29,21 +29,7 @@ from src.llm.prompts import (
 
 COMPACTED_SYSTEM_PROMPT = compact_prompt(SYSTEM_PROMPT)
 from src.indicators import (
-    compute_atr,
-    compute_rsi,
-    compute_macd,
-    compute_bollinger_bands,
     compute_ema,
-    compute_stochastic,
-    compute_adx,
-    compute_obv,
-    compute_mfi,
-    compute_cci,
-    compute_williams_r,
-    compute_ichimoku,
-    compute_parabolic_sar,
-    compute_keltner_channels,
-    compute_donchian_channels,
     compute_all_indicators,
     compute_vwap,
     compute_pivot_points,
@@ -6337,10 +6323,9 @@ class TradingEngine:
                                 tf = pos.get("timeframe")
                                 if tf:
                                     try:
-                                        db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=50)
-                                        if db_candles and len(db_candles) >= 15:
-                                            raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
-                                            pos["_current_atr"] = compute_atr(raw_candles)
+                                        ind = await asyncio.to_thread(get_indicators, symbol, tf)
+                                        if ind and ind.get("atr") and ind["atr"] > 0:
+                                            pos["_current_atr"] = ind["atr"]
                                             pos["_atr_fetched_at"] = time.time()
                                     except Exception as e:
                                         logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {e}")
@@ -8219,13 +8204,9 @@ class TradingEngine:
 
         elif etype == "rsi_threshold":
             target_rsi = condition["rsi_below"]
-            try:
-                db_candles = await asyncio.to_thread(get_ohlcv, symbol, timeframe, limit=50)
-            except Exception:
-                return False
-            if db_candles:
-                candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
-                rsi = compute_rsi([c[4] for c in candles])
+            ind = await asyncio.to_thread(get_indicators, symbol, timeframe)
+            if ind:
+                rsi = ind.get("rsi")
                 return rsi is not None and rsi <= target_rsi
             return False
 
@@ -8237,28 +8218,26 @@ class TradingEngine:
 
         elif etype == "indicator_combo":
             conditions = condition["conditions"]
-            try:
-                db_candles = await asyncio.to_thread(get_ohlcv, symbol, timeframe, limit=50)
-            except Exception:
+            ind = await asyncio.to_thread(get_indicators, symbol, timeframe)
+            if not ind:
                 return False
-            if db_candles:
-                candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
-                closes = [c[4] for c in candles]
-                for cond in conditions:
-                    ind = cond["indicator"]
-                    thresh = cond["threshold"]
-                    direction = cond["direction"]
-                    if ind == "rsi":
-                        rsi_val = compute_rsi(closes)
-                        if rsi_val is None or (direction == "below" and rsi_val > thresh) or (direction == "above" and rsi_val < thresh):
-                            return False
-                    elif ind == "macd_hist":
-                        macd_vals = compute_macd(closes)
-                        macd_hist_val = macd_vals[2] if macd_vals and macd_vals[2] is not None else None
-                        if macd_hist_val is None or (direction == "below" and macd_hist_val > thresh) or (direction == "above" and macd_hist_val < thresh):
-                            return False
-                return True
-            return False
+            for cond in conditions:
+                indicator_name = cond["indicator"]
+                thresh = cond["threshold"]
+                direction = cond["direction"]
+                if indicator_name == "rsi":
+                    val = ind.get("rsi")
+                elif indicator_name == "macd_hist":
+                    val = ind.get("macd_hist")
+                else:
+                    return False  # unsupported indicator for combo conditions
+                if val is None:
+                    return False
+                if direction == "below" and val > thresh:
+                    return False
+                if direction == "above" and val < thresh:
+                    return False
+            return True
 
         return False
 
