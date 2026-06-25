@@ -155,6 +155,7 @@ class TradingEngine:
         self._news_fast_running = False
         self._market_data_running = False
         self._full_breadth_running = False
+        self._full_download_running = False
 
         # Market-closed periodic notification tracking
         self._last_market_closed_notify_time: float = 0.0
@@ -214,6 +215,7 @@ class TradingEngine:
 
     async def force_download_all_assets(self):
         """Immediately download OHLCV data for all tradable assets (stocks, ETFs, BTPs)."""
+        self._full_download_running = True
         logger.info("Force download: starting immediate OHLCV download for all assets...")
         try:
             plain_assets = await self._get_tradable_assets()
@@ -248,6 +250,8 @@ class TradingEngine:
             logger.info("Force download: complete.")
         except Exception as e:
             logger.error(f"Force download error: {e}", exc_info=True)
+        finally:
+            self._full_download_running = False
 
     async def _get_tradable_assets(self) -> List[str]:
         """Return tradable assets, cached for 5 minutes to reduce API calls."""
@@ -1415,6 +1419,7 @@ class TradingEngine:
         """Periodically download OHLCV for ALL tradable assets (stocks, ETFs, BTPs)."""
         await asyncio.sleep(120)  # initial delay to let the engine settle
         while self._running:
+            self._full_download_running = True
             try:
                 logger.info("Starting full asset OHLCV download cycle...")
                 # 1. Get all stock + ETF symbols
@@ -1454,9 +1459,26 @@ class TradingEngine:
                 logger.info("Full asset OHLCV download cycle complete.")
             except Exception as e:
                 logger.error(f"Full asset download loop error: {e}", exc_info=True)
+            finally:
+                self._full_download_running = False
 
             # Wait before next full download
             await asyncio.sleep(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS)
+
+    async def _cleanup_yf_cache_loop(self):
+        """Periodically delete the yfinance cache directory if no downloads are running."""
+        import shutil
+        import os
+        cache_dir = os.path.join(settings.DATA_DIR, ".cache")
+        while self._running:
+            await asyncio.sleep(3600)  # check every hour
+            if not self._market_data_running and not self._full_download_running:
+                try:
+                    if os.path.exists(cache_dir):
+                        shutil.rmtree(cache_dir)
+                        logger.info(f"Deleted yfinance cache directory: {cache_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete yfinance cache directory: {e}")
 
     async def _download_all_news_loop(self):
         """Periodically pre‑fetch news for ALL tradable assets (stocks, ETFs, BTPs)."""
@@ -2122,6 +2144,7 @@ class TradingEngine:
         self._background_tasks.append(asyncio.create_task(self._refresh_current_symbols_news_fast()))
         self._background_tasks.append(asyncio.create_task(self._download_market_data_loop()))
         self._background_tasks.append(asyncio.create_task(self._download_all_assets_data_loop()))
+        self._background_tasks.append(asyncio.create_task(self._cleanup_yf_cache_loop()))
         self._background_tasks.append(asyncio.create_task(self._download_all_news_loop()))
         self._background_tasks.append(asyncio.create_task(self._risk_management_loop()))
         self._background_tasks.append(asyncio.create_task(self._periodic_reconcile()))
