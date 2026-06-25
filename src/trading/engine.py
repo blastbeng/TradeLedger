@@ -3701,9 +3701,14 @@ class TradingEngine:
 
                 # If LLM explicitly chose zero symbols, respect that and don't fall back to volume-based selection
                 if not deduped or self.effective_max_symbols == 0:
-                    self.current_symbols = []
-                    self.effective_max_symbols = 0
-                    logger.info("LLM selected 0 symbols – pausing trading until next evaluation.")
+                    if old_symbols:
+                        logger.info("LLM selected 0 symbols. Keeping previously tracked symbols for signal generation.")
+                        self.current_symbols = old_symbols
+                        self.effective_max_symbols = max(len(old_symbols), 1)
+                    else:
+                        self.current_symbols = []
+                        self.effective_max_symbols = 0
+                        logger.info("LLM selected 0 symbols – pausing trading until next evaluation.")
 
             except json.JSONDecodeError:
                 logger.error("Failed to parse symbol selection response.")
@@ -3732,13 +3737,18 @@ class TradingEngine:
                     fallback_symbols.append({"symbol": sym, "timeframe": default_tf})
                 if len(fallback_symbols) >= self.effective_max_symbols:
                     break
-            existing_symbols = {c['symbol']: c for c in self.current_symbols}
-            for entry in fallback_symbols:
-                if entry['symbol'] in existing_symbols and 'entry_time' in existing_symbols[entry['symbol']]:
-                    entry['entry_time'] = existing_symbols[entry['symbol']]['entry_time']
-                else:
-                    entry['entry_time'] = time.time()
-            self.current_symbols = fallback_symbols
+            if fallback_symbols:
+                existing_symbols = {c['symbol']: c for c in self.current_symbols}
+                for entry in fallback_symbols:
+                    if entry['symbol'] in existing_symbols and 'entry_time' in existing_symbols[entry['symbol']]:
+                        entry['entry_time'] = existing_symbols[entry['symbol']]['entry_time']
+                    else:
+                        entry['entry_time'] = time.time()
+                self.current_symbols = fallback_symbols
+            elif old_symbols:
+                logger.warning("Fallback found no symbols. Keeping previously tracked symbols.")
+                self.current_symbols = old_symbols
+                self.effective_max_symbols = max(len(old_symbols), 1)
 
         # Ensure all open positions remain in current_symbols so they continue to be managed by the LLM strategy
         for symbol, pos in self.positions.items():
