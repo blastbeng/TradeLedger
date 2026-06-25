@@ -102,7 +102,7 @@ class TradingEngine:
         self._exchange_semaphore = asyncio.Semaphore(10)  # max 10 concurrent API calls
         self._news_semaphore = asyncio.Semaphore(5)  # max 5 concurrent news fetches
         self._indicator_semaphore = asyncio.Semaphore(4)  # limit concurrent indicator computations
-        self._download_semaphore = asyncio.Semaphore(5)  # max 5 concurrent background OHLCV backfills
+        self._download_semaphore = asyncio.Semaphore(2)  # max 2 concurrent background OHLCV backfills
 
         self.current_symbols: List[Dict[str, str]] = []   # each dict: {"symbol": ..., "timeframe": ...}
         self.positions: Dict[str, Dict[str, Any]] = {}  # symbol -> position info
@@ -1409,8 +1409,9 @@ class TradingEngine:
 
                     shuffled_symbols = list(self.current_symbols)
                     random.shuffle(shuffled_symbols)
-                    download_tasks = [_download_symbol_data(entry) for entry in shuffled_symbols]
-                    await asyncio.gather(*download_tasks)
+                    for entry in shuffled_symbols:
+                        await _download_symbol_data(entry)
+                        await asyncio.sleep(0.5)
                     logger.info("Market data download cycle complete.")
                     # Clean up old OHLCV data (older than retention period)
                     await asyncio.to_thread(cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
@@ -1449,7 +1450,6 @@ class TradingEngine:
                 random.shuffle(all_pairs)
 
                 async def _download_symbol_data(pair: str):
-                    # Download timeframes in the exact order defined in OHLCV_TIMEFRAMES (longest to shortest)
                     for tf in settings.OHLCV_TIMEFRAMES:
                         try:
                             await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
@@ -1457,8 +1457,9 @@ class TradingEngine:
                         except Exception as e:
                             logger.warning(f"Full download failed for {pair} {tf}: {e}")
 
-                download_tasks = [_download_symbol_data(pair) for pair in all_pairs]
-                await asyncio.gather(*download_tasks)
+                for pair in all_pairs:
+                    await _download_symbol_data(pair)
+                    await asyncio.sleep(0.5)   # small delay to reduce DB write pressure
 
                 # Clean up old data
                 await asyncio.to_thread(cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
