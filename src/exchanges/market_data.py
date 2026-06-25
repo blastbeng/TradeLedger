@@ -1,6 +1,8 @@
+import asyncio
 import collections
 import hashlib
 import logging
+import random
 import re
 import threading
 import time
@@ -142,13 +144,101 @@ def _get_yf_session():
         return None
 
 
+class DynamicProxyRotator:
+    def __init__(self):
+        self.proxy_source_url = "https://free-proxy-list.net"
+        self.test_url = "http://httpbin.org"
+        self.valid_proxies = []
+        self._last_refresh = 0.0
+
+    def fetch_raw_proxies(self):
+        """Scrapes the latest free proxies from the web."""
+        try:
+            response = requests.get(self.proxy_source_url, timeout=10)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            proxies = []
+            
+            table = soup.find('div', class_='table-responsive')
+            if not table:
+                return []
+                
+            for row in table.find('tbody').find_all('tr'):
+                cols = row.find_all('td')
+                if cols:
+                    ip = cols[0].text.strip()
+                    port = cols[1].text.strip()
+                    proxies.append(f"http://{ip}:{port}")
+            return proxies
+        except Exception as e:
+            logger.warning(f"Error fetching raw proxies: {e}")
+            return []
+
+    async def _validate_single_proxy(self, client, proxy):
+        """Asynchronously tests a single proxy's viability."""
+        try:
+            response = await client.get(self.test_url, proxy=proxy, timeout=3.0)
+            if response.status_code == 200:
+                self.valid_proxies.append(proxy)
+        except Exception:
+            pass
+
+    async def refresh_proxy_pool(self):
+        """Fetches and tests all proxies, rebuilding the valid pool."""
+        raw_proxies = self.fetch_raw_proxies()
+        logger.info(f"Fetched {len(raw_proxies)} raw proxies. Validating speed and uptime...")
+        
+        self.valid_proxies = []
+        async with httpx.AsyncClient() as client:
+            tasks = [self._validate_single_proxy(client, proxy) for proxy in raw_proxies]
+            await asyncio.gather(*tasks)
+            
+        self._last_refresh = time.time()
+        logger.info(f"Pool updated! {len(self.valid_proxies)} proxies are ready to use.")
+
+    def get_proxy(self):
+        """Returns a random valid proxy from the active pool."""
+        if not self.valid_proxies:
+            return None
+        return random.choice(self.valid_proxies)
+
+_dynamic_rotator = DynamicProxyRotator()
+
+
 def _get_proxies() -> Optional[Dict[str, str]]:
     """Return a random proxy dict for httpx if enabled, else None."""
-    if settings.YF_PROXY_ENABLED and settings.YF_PROXIES:
-        import random
+    if not settings.YF_PROXY_ENABLED:
+        return None
+
+    # Trigger background refresh if pool is empty or stale (every 30 mins)
+    if not _dynamic_rotator.valid_proxies or (time.time() - _dynamic_rotator._last_refresh > 1800):
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(_dynamic_rotator.refresh_proxy_pool())
+        except RuntimeError:
+            pass  # No event loop running
+
+    # Randomly decide to use YF_PROXIES or dynamic rotator
+    use_dynamic = False
+    if _dynamic_rotator.valid_proxies:
+        if settings.YF_PROXIES:
+            use_dynamic = random.choice([True, False])
+        else:
+            use_dynamic = True
+    elif not settings.YF_PROXIES:
+        return None
+
+    if use_dynamic:
+        proxy = _dynamic_rotator.get_proxy()
+        if proxy:
+            logger.debug(f"Using dynamic proxy: {proxy}")
+            return {"http://": proxy, "https://": proxy}
+    
+    if settings.YF_PROXIES:
         proxy = random.choice(settings.YF_PROXIES)
-        logger.debug(f"Using proxy: {proxy}")
+        logger.debug(f"Using static proxy: {proxy}")
         return {"http://": proxy, "https://": proxy}
+    
     return None
 
 
