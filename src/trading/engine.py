@@ -497,7 +497,7 @@ class TradingEngine:
         while self._running:
             if self._reevaluate_running:
                 logger.warning("Symbol re-evaluation still running; skipping this cycle.")
-                await asyncio.sleep(self._symbol_reevaluation_interval)
+                await asyncio.sleep(10)
                 continue
             self._reevaluate_running = True
             try:
