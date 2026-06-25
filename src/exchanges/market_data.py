@@ -1,3 +1,4 @@
+import collections
 import hashlib
 import logging
 import re
@@ -54,6 +55,41 @@ def _reset_yf_circuit():
     with _yf_lock:
         _yf_error_count = 0
 
+
+class YFinanceRateLimiter:
+    """Sliding window rate limiter for yfinance requests."""
+    def __init__(self, max_requests: int, window_seconds: int):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._timestamps: collections.deque = collections.deque()
+        self._lock = threading.Lock()
+
+    def acquire(self):
+        if not settings.YF_RATE_LIMIT_ENABLED or self.max_requests <= 0:
+            return
+        with self._lock:
+            now = time.time()
+            # Remove timestamps outside the window
+            while self._timestamps and self._timestamps[0] <= now - self.window_seconds:
+                self._timestamps.popleft()
+            if len(self._timestamps) >= self.max_requests:
+                # Calculate sleep time until the oldest request exits the window
+                sleep_time = self.window_seconds - (now - self._timestamps[0])
+                if sleep_time > 0:
+                    logger.debug(f"yfinance rate limit reached, sleeping for {sleep_time:.2f}s")
+                    time.sleep(sleep_time)
+                # Clean up again after sleeping
+                now = time.time()
+                while self._timestamps and self._timestamps[0] <= now - self.window_seconds:
+                    self._timestamps.popleft()
+            self._timestamps.append(time.time())
+
+
+_yf_rate_limiter = YFinanceRateLimiter(
+    max_requests=settings.YF_RATE_LIMIT_MAX_REQUESTS,
+    window_seconds=settings.YF_RATE_LIMIT_WINDOW_SECONDS,
+)
+
 class YFinance401Filter(logging.Filter):
     def filter(self, record):
         msg = record.getMessage()
@@ -73,6 +109,7 @@ class YFinanceSessionWrapper:
     def request(self, *args, **kwargs):
         if _check_yf_circuit():
             raise ConnectionError("yfinance circuit breaker is open")
+        _yf_rate_limiter.acquire()
         response = self._session.request(*args, **kwargs)
         if response.status_code == 401:
             _record_yf_error()
@@ -93,7 +130,17 @@ def _get_yf_session():
     """
     try:
         from curl_cffi import requests as curl_requests
-        return YFinanceSessionWrapper(curl_requests.Session(impersonate="chrome"))
+
+        proxies = None
+        if settings.YF_PROXY_ENABLED and settings.YF_PROXIES:
+            import random
+            proxy = random.choice(settings.YF_PROXIES)
+            proxies = {"http": proxy, "https": proxy}
+            logger.debug(f"Using proxy for yfinance: {proxy}")
+
+        return YFinanceSessionWrapper(
+            curl_requests.Session(impersonate="chrome", proxies=proxies)
+        )
     except ImportError:
         logger.warning("curl_cffi not installed – yfinance requests may be blocked.")
         return None

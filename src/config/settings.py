@@ -196,6 +196,13 @@ class Settings(BaseSettings):
     YAHOO_FINANCE_ENABLED: bool = True
     YAHOO_FINANCE_CACHE_SECONDS: int = 60
 
+    # yfinance rate limiting and proxy settings
+    YF_RATE_LIMIT_ENABLED: bool = True
+    YF_RATE_LIMIT_MAX_REQUESTS: int = 30
+    YF_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    YF_PROXY_ENABLED: bool = False
+    YF_PROXIES: list[str] = []
+
 
 
 
