@@ -686,9 +686,9 @@ class TradingEngine:
                                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                                 prev_key = f"sentiment:reeval_baseline:{base_symbol}"
                                 prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
+                                current_compound = agg.get("avg_compound", 0)
                                 if prev_raw:
                                     prev_compound = float(prev_raw)
-                                    current_compound = agg.get("avg_compound", 0)
                                     if abs(current_compound - prev_compound) > 0.3:
                                         logger.info(f"Significant sentiment shift for {symbol}, triggering re-evaluation")
                                         should_trigger = True
