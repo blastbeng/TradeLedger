@@ -178,17 +178,20 @@ def init_db():
     conn = get_connection()
     try:
         if _backend == "postgresql":
-            conn.execute("""
+            statements = [
+                """
                 CREATE TABLE IF NOT EXISTS trading_state (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
-                );
-
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS telegram_state (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
-                );
-
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS trade_history (
                     id SERIAL PRIMARY KEY,
                     order_id TEXT,
@@ -207,12 +210,12 @@ def init_db():
                     note TEXT,
                     status TEXT,
                     timestamp BIGINT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_trade_history_symbol ON trade_history(symbol);
-                CREATE INDEX IF NOT EXISTS idx_trade_history_timestamp ON trade_history(timestamp);
-                CREATE INDEX IF NOT EXISTS idx_trade_history_symbol_timeframe ON trade_history(symbol, timeframe);
-
+                )
+                """,
+                "CREATE INDEX IF NOT EXISTS idx_trade_history_symbol ON trade_history(symbol)",
+                "CREATE INDEX IF NOT EXISTS idx_trade_history_timestamp ON trade_history(timestamp)",
+                "CREATE INDEX IF NOT EXISTS idx_trade_history_symbol_timeframe ON trade_history(symbol, timeframe)",
+                """
                 CREATE TABLE IF NOT EXISTS news_articles (
                     id SERIAL PRIMARY KEY,
                     symbol TEXT NOT NULL,
@@ -224,11 +227,11 @@ def init_db():
                     sentiment_label TEXT,
                     sentiment_compound REAL,
                     fetched_at DOUBLE PRECISION NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_news_symbol ON news_articles(symbol);
-                CREATE INDEX IF NOT EXISTS idx_news_fetched_at ON news_articles(fetched_at);
-
+                )
+                """,
+                "CREATE INDEX IF NOT EXISTS idx_news_symbol ON news_articles(symbol)",
+                "CREATE INDEX IF NOT EXISTS idx_news_fetched_at ON news_articles(fetched_at)",
+                """
                 CREATE TABLE IF NOT EXISTS market_data (
                     id SERIAL PRIMARY KEY,
                     symbol TEXT NOT NULL,
@@ -239,11 +242,13 @@ def init_db():
                     low REAL NOT NULL,
                     close REAL NOT NULL,
                     volume REAL NOT NULL
-                );
-
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_market_data_symbol_tf_ts ON market_data(symbol, timeframe, timestamp);
-                CREATE INDEX IF NOT EXISTS idx_market_data_timestamp ON market_data(timestamp);
-            """)
+                )
+                """,
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_market_data_symbol_tf_ts ON market_data(symbol, timeframe, timestamp)",
+                "CREATE INDEX IF NOT EXISTS idx_market_data_timestamp ON market_data(timestamp)",
+            ]
+            for stmt in statements:
+                conn.execute(stmt)
         else:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS trading_state (
@@ -735,3 +740,12 @@ def get_latest_ohlcv_timestamp(symbol: str, timeframe: str) -> Optional[int]:
         return None
     finally:
         conn.close()
+
+
+def close_pool():
+    """Close the PostgreSQL connection pool if it exists."""
+    global _pg_pool
+    if _pg_pool is not None:
+        _pg_pool.closeall()
+        _pg_pool = None
+        logger.info("PostgreSQL connection pool closed.")

@@ -486,6 +486,9 @@ class TradingEngine:
         self._running = False
         self._db_executor.shutdown(wait=True)
         logger.info("Database write executor shut down.")
+        # Close the PostgreSQL connection pool if it was used
+        from src.database import close_pool
+        close_pool()
         logger.info("Trading engine stopped.")
 
     async def _periodic_reconcile(self):
