@@ -1201,9 +1201,18 @@ def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict
 
 def get_latest_close_prices(symbols: List[str]) -> Dict[str, float]:
     """Get the latest close price for multiple symbols from the market_data table.
-    Used as a fallback when yfinance quotes are unavailable."""
+    Used as a fallback when yfinance quotes are unavailable.
+
+    The market_data table stores symbols as full pairs (e.g., 'ENI.MI/EUR'),
+    but get_quotes passes base symbols (e.g., 'ENI.MI'). This function
+    queries all 1d candles and filters by the base part in Python to
+    handle the format mismatch.
+    """
     if not symbols:
         return {}
+    # Normalize input symbols to base form (strip /currency suffix)
+    base_symbols = set(s.split('/')[0] for s in symbols)
+
     conn = get_connection()
     try:
         if _backend == "postgresql":
@@ -1211,32 +1220,34 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, float]:
                 """
                 SELECT DISTINCT ON (symbol) symbol, close
                 FROM market_data
-                WHERE symbol = ANY(%s) AND timeframe = '1d'
+                WHERE timeframe = '1d'
                 ORDER BY symbol, timestamp DESC
                 """
             )
-            rows = conn.execute(sql, (symbols,)).fetchall()
+            rows = conn.execute(sql).fetchall()
         else:
-            placeholders = ",".join(["?" for _ in symbols])
             sql = _adapt_sql(
-                f"""
+                """
                 SELECT m.symbol, m.close
                 FROM market_data m
                 INNER JOIN (
                     SELECT symbol, MAX(timestamp) as max_ts
                     FROM market_data
-                    WHERE symbol IN ({placeholders}) AND timeframe = '1d'
+                    WHERE timeframe = '1d'
                     GROUP BY symbol
                 ) latest ON m.symbol = latest.symbol AND m.timestamp = latest.max_ts
                 WHERE m.timeframe = '1d'
                 """
             )
-            rows = conn.execute(sql, symbols).fetchall()
+            rows = conn.execute(sql).fetchall()
 
         result = {}
         for row in rows:
-            if row["close"] is not None and row["close"] > 0:
-                result[row["symbol"]] = float(row["close"])
+            db_symbol = row["symbol"]
+            # Strip /currency suffix to get base symbol for matching
+            db_base = db_symbol.split('/')[0]
+            if db_base in base_symbols and row["close"] is not None and row["close"] > 0:
+                result[db_base] = float(row["close"])
         return result
     finally:
         conn.close()
