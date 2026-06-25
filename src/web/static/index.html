@@ -512,6 +512,15 @@
         </div>
     </div>
 
+    <!-- Signal Detail Modal -->
+    <div id="signal-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:1000; justify-content:center; align-items:center;">
+        <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius); padding:24px; width:90%; max-width:600px; max-height:80vh; overflow-y:auto; position:relative;">
+            <button id="close-signal-modal" style="position:absolute; top:12px; right:16px; background:none; border:none; color:var(--text); font-size:1.5rem; cursor:pointer;">&times;</button>
+            <h2 id="signal-modal-title" style="margin-bottom:16px; color:var(--accent);"></h2>
+            <div id="signal-modal-body" style="font-size:0.95rem; line-height:1.6; white-space:pre-wrap;"></div>
+        </div>
+    </div>
+
     <script>
         const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
         let ws;
@@ -1015,6 +1024,7 @@
                 if (filtered.length > 0) {
                     [...filtered].reverse().forEach(s => {
                         const row = body.insertRow();
+                        row.style.cursor = 'pointer';
                         const time = new Date(s.timestamp * 1000).toLocaleString();
                         row.insertCell().textContent = time;
                         row.insertCell().textContent = s.display_symbol || s.symbol;
@@ -1029,8 +1039,36 @@
                             amountCell.textContent = '—';
                         }
                         row.insertCell().textContent = (s.confidence ?? 0).toFixed(2);
-                        row.insertCell().textContent = s.reasoning || '';
+                        const reasoningCell = row.insertCell();
+                        const fullReasoning = s.reasoning || '';
+                        const maxLen = 120;
+                        if (fullReasoning.length > maxLen) {
+                            reasoningCell.textContent = fullReasoning.substring(0, maxLen) + '...';
+                        } else {
+                            reasoningCell.textContent = fullReasoning;
+                        }
                         row.insertCell().textContent = s.model_type || '—';
+                        row.onclick = () => {
+                            const sm = document.getElementById('signal-modal');
+                            const smTitle = document.getElementById('signal-modal-title');
+                            const smBody = document.getElementById('signal-modal-body');
+                            const actionLabel = s.action === 'BUY' ? '🟢 BUY' : s.action === 'SELL' ? '🔴 SELL' : '⏸️ HOLD';
+                            const cur = s.base_currency || 'EUR';
+                            const amtStr = (s.trade_amount != null && s.trade_amount > 0)
+                                ? s.trade_amount.toFixed(2) + ' ' + cur : '—';
+                            smTitle.textContent = `${s.display_symbol || s.symbol} — ${actionLabel}`;
+                            smBody.innerHTML =
+                                `<strong>Time:</strong> ${time}\n` +
+                                `<strong>Ticker:</strong> ${s.display_symbol || s.symbol}\n` +
+                                `<strong>Action:</strong> ${actionLabel}\n` +
+                                `<strong>Amount:</strong> ${amtStr}\n` +
+                                `<strong>Confidence:</strong> ${(s.confidence ?? 0).toFixed(2)}\n` +
+                                `<strong>Model:</strong> ${s.model_type || '—'}\n` +
+                                `<strong>Provider:</strong> ${s.llm_provider || '—'}\n` +
+                                `<strong>Model Name:</strong> ${s.llm_model || '—'}\n` +
+                                `\n<strong>Reasoning:</strong>\n${fullReasoning}`;
+                            sm.style.display = 'flex';
+                        };
                     });
                 } else {
                     const row = body.insertRow();
@@ -1218,6 +1256,17 @@
             if (chartUpdateTimer) {
                 clearInterval(chartUpdateTimer);
                 chartUpdateTimer = null;
+            }
+        };
+
+        const signalModal = document.getElementById('signal-modal');
+        const closeSignalBtn = document.getElementById('close-signal-modal');
+        closeSignalBtn.onclick = () => {
+            signalModal.style.display = 'none';
+        };
+        signalModal.onclick = (e) => {
+            if (e.target === signalModal) {
+                signalModal.style.display = 'none';
             }
         };
 
