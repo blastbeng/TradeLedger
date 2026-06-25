@@ -2271,6 +2271,7 @@ class TradingEngine:
                                     summary={"symbol": symbol_entry["symbol"], "action": "SKIP", "reason": "Processing timeout"}
                                 )
                         self._last_strategy_eval[symbol] = now
+                        await asyncio.sleep(0.2)   # small delay to reduce contention
 
                 # Save state periodically (every 30 seconds)
                 if now - self._last_state_save > 30:
@@ -2429,9 +2430,19 @@ class TradingEngine:
 
         # Parallelize get_quotes by splitting into chunks of 50
         plain_sample = [s.split("/")[0] for s in stock_sample]
-        chunk_size = 50
+        chunk_size = 20
         chunks = [plain_sample[i:i + chunk_size] for i in range(0, len(plain_sample), chunk_size)]
-        quote_tasks = [asyncio.to_thread(get_quotes, chunk) for chunk in chunks]
+        async def _fetch_quotes_with_limit(chunk):
+            async with self._exchange_semaphore:
+                try:
+                    return await asyncio.wait_for(
+                        asyncio.to_thread(get_quotes, chunk),
+                        timeout=30.0  # 30 seconds per chunk
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"Quote fetch timed out for chunk of {len(chunk)} symbols")
+                    return {}
+        quote_tasks = [_fetch_quotes_with_limit(chunk) for chunk in chunks]
         quote_results = await asyncio.gather(*quote_tasks)
         raw_quotes = {}
         for res in quote_results:
@@ -4140,7 +4151,14 @@ class TradingEngine:
         try:
             async with self._exchange_semaphore:
                 base = symbol.split("/")[0]
-                quotes = await asyncio.to_thread(get_quotes, [base])
+                try:
+                    quotes = await asyncio.wait_for(
+                        asyncio.to_thread(get_quotes, [base]),
+                        timeout=15.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"Quote fetch timed out for {symbol}")
+                    quotes = {}
                 ticker = quotes.get(base)
             if ticker is None:
                 logger.warning(f"No ticker data for {symbol}, skipping.")
