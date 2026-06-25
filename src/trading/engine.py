@@ -89,7 +89,7 @@ class TradingEngine:
         self._exchange_semaphore = asyncio.Semaphore(10)  # max 10 concurrent API calls
         self._news_semaphore = asyncio.Semaphore(5)  # max 5 concurrent news fetches
         self._indicator_semaphore = asyncio.Semaphore(4)  # limit concurrent indicator computations
-        self._download_semaphore = asyncio.Semaphore(2)  # max 2 concurrent background OHLCV backfills
+        self._download_semaphore = asyncio.Semaphore(5)  # max 5 concurrent background OHLCV backfills
 
         # Dedicated thread pool for database writes – prevents write contention
         # from starving the default asyncio thread pool used by the web server,
@@ -1331,7 +1331,7 @@ class TradingEngine:
                 break
             since = last_ts + 1
             # Small delay to avoid rate limits
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
 
         if total_inserted >= max_candles:
             logger.debug(f"Backfill partial for {symbol} {timeframe}: {total_inserted} candles inserted (limit reached)")
@@ -1426,9 +1426,8 @@ class TradingEngine:
 
                     shuffled_symbols = list(self.current_symbols)
                     random.shuffle(shuffled_symbols)
-                    for entry in shuffled_symbols:
-                        await _download_symbol_data(entry)
-                        await asyncio.sleep(0.5)
+                    download_tasks = [_download_symbol_data(entry) for entry in shuffled_symbols]
+                    await asyncio.gather(*download_tasks)
                     logger.info("Market data download cycle complete.")
                     # Clean up old OHLCV data (older than retention period)
                     loop = asyncio.get_running_loop()
@@ -1480,9 +1479,8 @@ class TradingEngine:
                         except Exception as e:
                             logger.warning(f"Full download failed for {pair} {tf}: {e}")
 
-                for pair in all_pairs:
-                    await _download_symbol_data(pair)
-                    await asyncio.sleep(0.5)   # small delay to reduce DB write pressure
+                download_tasks = [_download_symbol_data(pair) for pair in all_pairs]
+                await asyncio.gather(*download_tasks)
 
                 # Clean up old data
                 loop = asyncio.get_running_loop()

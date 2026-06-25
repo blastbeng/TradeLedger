@@ -127,7 +127,7 @@ def _get_yf_session():
                     raise ConnectionError("yfinance circuit breaker is open")
                 _yf_rate_limiter.acquire()
                 # Enforce a timeout to prevent indefinite hangs
-                kwargs.setdefault('timeout', 15.0)
+                kwargs.setdefault('timeout', 10.0)
                 response = super().request(*args, **kwargs)
                 if response.status_code == 401:
                     _record_yf_error()
@@ -315,7 +315,7 @@ def get_borsa_italiana_candles(
     }
 
     try:
-        response = httpx.get(url, headers=headers, timeout=15.0, follow_redirects=True, proxies=_get_proxies())
+        response = httpx.get(url, headers=headers, timeout=10.0, follow_redirects=True, proxies=_get_proxies())
         response.raise_for_status()
 
         # The API returns JSON wrapped in HTML <pre> tags
