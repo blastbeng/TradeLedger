@@ -1644,11 +1644,11 @@ class TradingEngine:
 
                     # Fetch in chunks to avoid overloading yfinance
                     # Smaller chunks + longer timeout for background task (not time-critical)
-                    chunk_size = 10
+                    chunk_size = 5
                     chunks = [plain_assets[i:i + chunk_size] for i in range(0, len(plain_assets), chunk_size)]
                     async def _fetch_chunk(chunk):
                         async with asyncio.Semaphore(3):
-                            return await self._get_quotes_async(chunk, timeout=180.0)
+                            return await self._get_quotes_async(chunk, timeout=300.0)
                     await asyncio.gather(*[_fetch_chunk(chunk) for chunk in chunks])
             except Exception as e:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
@@ -2604,10 +2604,10 @@ class TradingEngine:
 
         # Parallelize get_quotes by splitting into chunks of 50
         plain_sample = [s.split("/")[0] for s in stock_sample]
-        chunk_size = 10
+        chunk_size = 5
         chunks = [plain_sample[i:i + chunk_size] for i in range(0, len(plain_sample), chunk_size)]
         async def _fetch_quotes_with_limit(chunk):
-            return await self._get_quotes_async(chunk, timeout=90.0)
+            return await self._get_quotes_async(chunk, timeout=180.0)
         quote_tasks = [_fetch_quotes_with_limit(chunk) for chunk in chunks]
         quote_results = await asyncio.gather(*quote_tasks)
         raw_quotes = {}

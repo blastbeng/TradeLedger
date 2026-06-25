@@ -127,7 +127,7 @@ def _get_yf_session():
                     raise ConnectionError("yfinance circuit breaker is open")
                 _yf_rate_limiter.acquire()
                 # Enforce a timeout to prevent indefinite hangs
-                kwargs.setdefault('timeout', 7.0)
+                kwargs.setdefault('timeout', 15.0)
                 response = super().request(*args, **kwargs)
                 if response.status_code == 401:
                     _record_yf_error()
@@ -954,6 +954,14 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     # Bid/ask are fetched on-demand by _process_symbol via get_yahoo_quote.
     if stock_symbols and not _check_yf_circuit():
         try:
+            # Log proxy status for debugging
+            if settings.YF_PROXY_ENABLED:
+                if settings.YF_PROXIES:
+                    logger.debug(f"get_quotes: YF_PROXY_ENABLED with {len(settings.YF_PROXIES)} static proxies")
+                else:
+                    logger.debug("get_quotes: YF_PROXY_ENABLED with dynamic proxy rotator")
+            else:
+                logger.debug("get_quotes: YF_PROXY not enabled")
             batch_hist = yf.download(
                 stock_symbols,
                 period="2d",
