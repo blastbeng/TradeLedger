@@ -68,8 +68,9 @@ logger = logging.getLogger(__name__)
 
 SYMBOL_REEVALUATION_INTERVAL = 14400  # seconds (4 hours) – medium/long-term
 DEFAULT_STRATEGY_INTERVAL = 3600   # fallback when no timeframe or no symbols (1 hour)
-MIN_SYMBOL_REEVALUATION_INTERVAL = 600  # seconds (10 minutes) – prevents rapid toggling
+MIN_SYMBOL_REEVALUATION_INTERVAL = 3600  # 1 hour – prevents rapid toggling
 MIN_LLM_PAUSE_DURATION = 1800  # seconds (30 min) – LLM cannot resume before this
+TRIGGERED_REEVALUATION_COOLDOWN = 1800  # 30 min – minimum between condition-triggered re-evaluations
 MAX_STOP_LOSS_REVIEWS = 10   # force-sell after this many consecutive stop-loss reviews
 MAX_TAKE_PROFIT_REVIEWS = 10   # force-sell after this many consecutive take-profit reviews
 
@@ -763,6 +764,9 @@ class TradingEngine:
                                 summary={"action": "INFO", "reason": "Market opening soon"}
                             )
                         self._market_opening_soon_notified = True
+                        # Trigger pre-market re-evaluation so we're prepared with fresh signals
+                        self._force_reeval = True
+                        self._reeval_trigger.set()
                 else:
                     # Market open – always resume trading and trigger re-evaluation
                     paused = await asyncio.to_thread(self.redis.get, "trading:paused")
@@ -1971,6 +1975,7 @@ class TradingEngine:
         self._background_tasks.append(asyncio.create_task(self._periodic_reevaluate()))
         self._background_tasks.append(asyncio.create_task(self._periodic_pause_check()))
         self._background_tasks.append(asyncio.create_task(self._periodic_full_market_breadth()))
+        self._background_tasks.append(asyncio.create_task(self._periodic_market_condition_check()))
         self._background_tasks.append(asyncio.create_task(self._check_pending_entries()))
         self._background_tasks.append(asyncio.create_task(self._cleanup_orphaned_orders()))
         self._background_tasks.append(asyncio.create_task(self._process_queued_orders()))
@@ -3076,12 +3081,12 @@ class TradingEngine:
                 # Optional: LLM can set the global symbol re-evaluation interval
                 new_interval = parsed.get("stock_revaluation_interval_seconds")
                 if new_interval is not None:
-                    if isinstance(new_interval, (int, float)) and new_interval >= 60:
+                    if isinstance(new_interval, (int, float)) and new_interval >= 3600:
                         clamped = max(new_interval, MIN_SYMBOL_REEVALUATION_INTERVAL)
                         self._symbol_reevaluation_interval = clamped
                         logger.info(f"LLM set symbol re-evaluation interval to {clamped}s (requested {new_interval}s)")
                     else:
-                        logger.warning(f"Invalid stock_revaluation_interval_seconds: {new_interval}")
+                        logger.warning(f"Invalid stock_revaluation_interval_seconds: {new_interval} (must be >= 3600)")
 
                 # Optional: LLM can request to pause/resume trading
                 pause_trading = parsed.get("pause_trading")
@@ -3427,7 +3432,7 @@ class TradingEngine:
 
         # If no symbols were selected, shorten the re‑evaluation interval to retry sooner.
         if not self.current_symbols:
-            self._symbol_reevaluation_interval = max(MIN_SYMBOL_REEVALUATION_INTERVAL, 600)  # 10 minutes
+            self._symbol_reevaluation_interval = max(self._symbol_reevaluation_interval, MIN_SYMBOL_REEVALUATION_INTERVAL)
             logger.info(f"No symbols selected – next re‑evaluation in {self._symbol_reevaluation_interval}s")
         # else: keep the current interval (may have been set by LLM via
         # stock_revaluation_interval_seconds, or the default SYMBOL_REEVALUATION_INTERVAL)
