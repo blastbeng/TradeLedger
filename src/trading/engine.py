@@ -825,9 +825,9 @@ class TradingEngine:
                                     if db_candles:
                                         current_close = db_candles[-1]["close"]
                                         if current_close > bb_upper or current_close < bb_lower:
-                                        logger.info(f"Bollinger Band squeeze breakout for {symbol}, triggering re-evaluation")
-                                        should_trigger = True
-                                        break
+                                            logger.info(f"Bollinger Band squeeze breakout for {symbol}, triggering re-evaluation")
+                                            should_trigger = True
+                                            break
                         except Exception:
                             continue
 
