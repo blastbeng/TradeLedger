@@ -37,18 +37,175 @@ def _get_yf_session():
         return None
 
 
+def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
+    """Fetch the ISIN code for a symbol using yfinance, cached in Redis for 7 days."""
+    redis_client = get_redis_client()
+    cache_key = f"isin:{base_symbol}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return cached
+    except Exception:
+        pass
+
+    suffix = settings.TICKER_SUFFIX
+    yf_symbol = f"{base_symbol}{suffix}" if suffix and not base_symbol.endswith(suffix) else base_symbol
+    try:
+        ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
+        isin = ticker.isin
+        if isin:
+            try:
+                redis_client.set(cache_key, isin, ex=7 * 24 * 3600)
+            except Exception:
+                pass
+            return isin
+    except Exception as e:
+        logger.debug(f"Failed to fetch ISIN for {base_symbol}: {e}")
+    return None
+
+
 def get_borsa_italiana_candles(
     symbol: str,
     timeframe: str,
     limit: int = 500,
     start_ms: int = None,
 ) -> Optional[List[List]]:
-    """Download OHLCV candles from borsaitaliana.it.
+    """Download OHLCV candles from borsaitaliana.it grafici API as the primary source.
 
-    TODO: Not yet implemented. The actual AJAX endpoint for historical OHLCV
-    data has not been identified. Returns None (falls back to yfinance).
+    Fetches daily candles from the borsaitaliana chart API and resamples
+    them to the requested timeframe using pandas.
+
+    Returns list of [timestamp_ms, open, high, low, close, volume].
+    Returns None if the download fails or the timeframe is not supported
+    (e.g., 1h intraday is not available from borsaitaliana).
     """
-    return None
+    # 1h and other intraday timeframes are not available from borsaitaliana
+    if timeframe not in BORSA_TIMEFRAME_MAP:
+        return None
+
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+
+    # For BTPs, the symbol IS the ISIN
+    if re.match(r'^IT[A-Z0-9]{10}$', base):
+        isin = base
+    else:
+        isin = _get_isin_from_yfinance(base)
+        if not isin:
+            logger.debug(f"Could not get ISIN for {symbol}, skipping borsaitaliana")
+            return None
+
+    # The API always returns daily candles for the requested period.
+    # We always fetch 5Y to get maximum available data, then resample.
+    api_period = "5Y"
+
+    # The exchange code is always XMIL for the grafici API
+    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/history/period?period={api_period}&adjustment=true&add-last-price=true"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
+    }
+
+    try:
+        response = httpx.get(url, headers=headers, timeout=15.0, follow_redirects=True)
+        response.raise_for_status()
+
+        # The API returns JSON wrapped in HTML <pre> tags
+        text = response.text
+        try:
+            data = response.json()
+        except (json.JSONDecodeError, ValueError):
+            # Extract JSON from HTML <pre> tags
+            match = re.search(r'<pre>(.*?)</pre>', text, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    logger.debug(f"Could not parse JSON from borsaitaliana response for {symbol}")
+                    return None
+            else:
+                logger.debug(f"No JSON data found in borsaitaliana response for {symbol}")
+                return None
+
+        # Extract the history data
+        history = data.get("history", {})
+        history_dt = history.get("historyDt", [])
+
+        if not history_dt:
+            logger.debug(f"Empty history from borsaitaliana for {symbol} {timeframe}")
+            return None
+
+        # Build candle list from the API response
+        # Date format is "YYYYMMDD" string
+        rows = []
+        for item in history_dt:
+            dt_str = item.get("dt", "")
+            if not dt_str or len(dt_str) != 8:
+                continue
+            try:
+                dt = datetime.strptime(dt_str, "%Y%m%d")
+                ts = int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+                rows.append([
+                    ts,
+                    float(item["openPx"]),
+                    float(item["highPx"]),
+                    float(item["lowPx"]),
+                    float(item["closePx"]),
+                    float(item.get("qty", 0) or 0),
+                ])
+            except (ValueError, KeyError) as e:
+                logger.debug(f"Failed to parse borsaitaliana candle for {symbol}: {e}")
+                continue
+
+        if not rows:
+            return None
+
+        # Sort by timestamp
+        rows.sort(key=lambda c: c[0])
+
+        # Filter by start_ms if provided
+        if start_ms is not None:
+            rows = [c for c in rows if c[0] >= start_ms]
+
+        # Resample to requested timeframe if needed (not 1d)
+        pandas_freq = BORSA_TIMEFRAME_MAP.get(timeframe)
+        if pandas_freq is not None:
+            df = pd.DataFrame(rows, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+            df['Date'] = pd.to_datetime(df['Timestamp'], unit='ms')
+            df.set_index('Date', inplace=True)
+            ohlcv_rules = {
+                'Open': 'first',
+                'High': 'max',
+                'Low': 'min',
+                'Close': 'last',
+                'Volume': 'sum'
+            }
+            df = df.resample(pandas_freq).agg(ohlcv_rules)
+            df.dropna(subset=['Open'], inplace=True)
+            df.reset_index(inplace=True)
+            rows = []
+            for _, row in df.iterrows():
+                ts = int(row['Date'].timestamp() * 1000)
+                vol = float(row['Volume']) if pd.notna(row['Volume']) else 0.0
+                rows.append([ts, float(row['Open']), float(row['High']), float(row['Low']), float(row['Close']), vol])
+
+        # Sort again after resampling
+        rows.sort(key=lambda c: c[0])
+
+        # Apply limit
+        if limit and len(rows) > limit:
+            rows = rows[-limit:]
+
+        if rows:
+            logger.info(f"Downloaded {len(rows)} candles from borsaitaliana for {symbol} {timeframe}")
+            return rows
+
+        return None
+
+    except Exception as e:
+        logger.debug(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {e}")
+        return None
 
 # Map our timeframe strings to yfinance interval strings
 TIMEFRAME_MAP = {
@@ -73,6 +230,18 @@ TIMEFRAME_MS = {
     "1Y": 31_536_000_000,
     "3Y": 94_608_000_000,
     "5Y": 157_680_000_000,
+}
+
+# Borsa Italiana timeframe conversion map (daily data → resampled via pandas)
+BORSA_TIMEFRAME_MAP = {
+    "1d": None,       # Daily native (no conversion needed)
+    "1w": "W",         # Weekly
+    "1M": "ME",        # Month End
+    "3M": "3ME",       # Quarterly
+    "6M": "6ME",       # Semi-annual
+    "1Y": "YE",        # Year End
+    "3Y": "3YE",       # 3-Year
+    "5Y": "5YE",       # 5-Year
 }
 
 def _aggregate_candles(candles: List[List], target_tf: str) -> List[List]:
