@@ -49,7 +49,7 @@ from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
 from src.strategies.backtester import backtest_strategy, format_backtest_summary
 from src.utils.redis_client import get_redis_client
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols
 
 logger = logging.getLogger(__name__)
 
@@ -2593,23 +2593,15 @@ class TradingEngine:
         # Pass ALL discovered stocks, ETFs, and BTPs to the LLM
         sample_pairs = stock_sample_sorted + etf_sample_sorted + btp_sample_sorted
 
-        logger.info("Re-evaluation step 6/12: Fetching news sentiment for %d symbols...", len(sample_pairs))
-        # Fetch news sentiment for all candidate stocks concurrently
+        logger.info("Re-evaluation step 6/12: Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
         news_sentiment = {}
         if settings.NEWS_ENABLED:
-            async def fetch_sentiment_for_symbol(sym):
-                try:
-                    agg = await self._get_cached_sentiment(sym)
-                    if agg:
-                        return sym.split("/")[0] if "/" in sym else sym, agg
-                except Exception as e:
-                    logger.info(f"Could not fetch news sentiment for {sym}: {e}")
-                return None, None
-
-            sentiment_tasks = [fetch_sentiment_for_symbol(sym) for sym in sample_pairs]
-            sentiment_results = await asyncio.gather(*sentiment_tasks)
-            for base, agg in sentiment_results:
-                if base and agg:
+            batch_sentiment = await asyncio.to_thread(
+                get_aggregate_sentiment_for_symbols, sample_pairs, settings.NEWS_CACHE_TTL_SECONDS
+            )
+            for sym, agg in batch_sentiment.items():
+                if agg:
+                    base = sym.split("/")[0] if "/" in sym else sym
                     news_sentiment[base] = agg
 
 
@@ -2743,40 +2735,13 @@ class TradingEngine:
             if sym not in symbol_trend_scores:
                 symbol_trend_scores[sym] = 0.0
 
-        logger.info("Re-evaluation step 9/12: Fetching historical OHLCV summaries...")
-        # Fetch historical OHLCV from database for longer-term trend analysis (up to 30 days)
+        logger.info("Re-evaluation step 9/12: Batch-fetching historical OHLCV summaries...")
         historical_ohlcv_summary = {}
         if settings.OHLCV_TIMEFRAMES:
             since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
-
-            async def _fetch_historical_summary(sym):
-                sym_summary = {}
-                for tf in settings.OHLCV_TIMEFRAMES:
-                    try:
-                        db_candles = await asyncio.to_thread(
-                            get_ohlcv, sym, tf, since_ms=since_ms, limit=500
-                        )
-                        if db_candles and len(db_candles) >= 2:
-                            open_price = db_candles[0]["open"]
-                            close_price = db_candles[-1]["close"]
-                            high = max(c["high"] for c in db_candles)
-                            low = min(c["low"] for c in db_candles)
-                            volume = sum(c["volume"] for c in db_candles)
-                            change_pct = ((close_price - open_price) / open_price) * 100 if open_price else 0
-                            sym_summary[tf] = {
-                                "candles": len(db_candles),
-                                "change_pct": round(change_pct, 2),
-                                "high": high,
-                                "low": low,
-                                "volume": volume,
-                            }
-                    except Exception as e:
-                        logger.info(f"Failed to fetch historical OHLCV for {sym} {tf}: {e}")
-                return sym, sym_summary
-
-            tasks = [_fetch_historical_summary(sym) for sym in sorted_by_vol]
-            results = await asyncio.gather(*tasks)
-            historical_ohlcv_summary = {sym: summary for sym, summary in results if summary}
+            historical_ohlcv_summary = await asyncio.to_thread(
+                get_ohlcv_summary_for_symbols, sorted_by_vol, settings.OHLCV_TIMEFRAMES, since_ms
+            )
 
         # Use asset info for minimum order size constraints
         market_limits = {}

@@ -732,6 +732,70 @@ def get_aggregate_sentiment_from_db(symbol: str, max_age_seconds: int = 900) -> 
     }
 
 
+def get_aggregate_sentiment_for_symbols(symbols: List[str], max_age_seconds: int = 900) -> Dict[str, Optional[Dict[str, Any]]]:
+    """Return aggregate sentiment for multiple symbols from the database in a single query."""
+    if not symbols:
+        return {}
+    normalized = [_normalize_symbol(s) for s in symbols]
+    conn = get_connection()
+    try:
+        cutoff = time.time() - max_age_seconds
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                """
+                SELECT symbol, sentiment_label, sentiment_compound
+                FROM news_articles
+                WHERE symbol = ANY(%s) AND fetched_at >= %s
+                """
+            )
+            rows = conn.execute(sql, (normalized, cutoff)).fetchall()
+        else:
+            placeholders = ",".join(["?" for _ in normalized])
+            sql = _adapt_sql(
+                f"""
+                SELECT symbol, sentiment_label, sentiment_compound
+                FROM news_articles
+                WHERE symbol IN ({placeholders}) AND fetched_at >= %s
+                """
+            )
+            rows = conn.execute(sql, normalized + [cutoff]).fetchall()
+
+        result: Dict[str, Optional[Dict[str, Any]]] = {s: None for s in symbols}
+        articles_by_symbol: Dict[str, list] = {}
+        for row in rows:
+            sym = row["symbol"]
+            if sym not in articles_by_symbol:
+                articles_by_symbol[sym] = []
+            articles_by_symbol[sym].append({
+                "label": row["sentiment_label"],
+                "compound": row["sentiment_compound"],
+            })
+
+        for orig_sym in symbols:
+            norm_sym = _normalize_symbol(orig_sym)
+            articles = articles_by_symbol.get(norm_sym, [])
+            if not articles:
+                continue
+            compounds = [a["compound"] for a in articles if a["compound"] is not None]
+            if not compounds:
+                continue
+            avg_compound = sum(compounds) / len(compounds)
+            labels = [a["label"] for a in articles if a["label"] is not None]
+            pos = labels.count("positive")
+            neg = labels.count("negative")
+            neu = labels.count("neutral")
+            result[orig_sym] = {
+                "avg_compound": round(avg_compound, 4),
+                "positive": pos,
+                "negative": neg,
+                "neutral": neu,
+                "total_articles": len(articles),
+            }
+        return result
+    finally:
+        conn.close()
+
+
 @retry_on_db_lock()
 def cleanup_old_news(retention_seconds: int):
     """Delete news articles older than retention_seconds."""
@@ -817,6 +881,73 @@ def get_ohlcv(symbol: str, timeframe: str, since_ms: int = None, limit: int = 50
         ]
         if since_ms is None:
             result.reverse()  # reverse DESC → chronological (oldest first)
+        return result
+    finally:
+        conn.close()
+
+
+def get_ohlcv_summary_for_symbols(symbols: List[str], timeframes: List[str], since_ms: int) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Retrieve OHLCV summary (change_pct, high, low, volume, candle_count) for multiple symbols and timeframes.
+    Returns a dict: {symbol: {timeframe: summary_dict}}
+    """
+    if not symbols or not timeframes:
+        return {}
+    conn = get_connection()
+    try:
+        result: Dict[str, Dict[str, Dict[str, Any]]] = {s: {} for s in symbols}
+        normalized_symbols = [_normalize_symbol(s) for s in symbols]
+
+        for tf in timeframes:
+            if _backend == "postgresql":
+                sql = _adapt_sql(
+                    """
+                    SELECT m.symbol,
+                           (SELECT open FROM market_data WHERE symbol = m.symbol AND timeframe = %s AND timestamp = MIN(m.timestamp)) as open_price,
+                           MAX(m.high) as high,
+                           MIN(m.low) as low,
+                           (SELECT close FROM market_data WHERE symbol = m.symbol AND timeframe = %s AND timestamp = MAX(m.timestamp)) as close_price,
+                           SUM(m.volume) as volume,
+                           COUNT(*) as candle_count
+                    FROM market_data m
+                    WHERE m.timeframe = %s AND m.timestamp >= %s AND m.symbol = ANY(%s)
+                    GROUP BY m.symbol
+                    """
+                )
+                rows = conn.execute(sql, (tf, tf, tf, since_ms, normalized_symbols)).fetchall()
+            else:
+                placeholders = ",".join(["?" for _ in normalized_symbols])
+                sql = _adapt_sql(
+                    f"""
+                    SELECT m.symbol,
+                           (SELECT open FROM market_data WHERE symbol = m.symbol AND timeframe = %s AND timestamp = MIN(m.timestamp)) as open_price,
+                           MAX(m.high) as high,
+                           MIN(m.low) as low,
+                           (SELECT close FROM market_data WHERE symbol = m.symbol AND timeframe = %s AND timestamp = MAX(m.timestamp)) as close_price,
+                           SUM(m.volume) as volume,
+                           COUNT(*) as candle_count
+                    FROM market_data m
+                    WHERE m.timeframe = %s AND m.timestamp >= %s AND m.symbol IN ({placeholders})
+                    GROUP BY m.symbol
+                    """
+                )
+                rows = conn.execute(sql, [tf, tf, tf, since_ms] + normalized_symbols).fetchall()
+
+            for row in rows:
+                sym = row["symbol"]
+                for orig_sym in symbols:
+                    if _normalize_symbol(orig_sym) == sym:
+                        open_price = row["open_price"]
+                        close_price = row["close_price"]
+                        if open_price and close_price and row["candle_count"] >= 2:
+                            change_pct = ((close_price - open_price) / open_price) * 100 if open_price else 0
+                            result[orig_sym][tf] = {
+                                "candles": row["candle_count"],
+                                "change_pct": round(change_pct, 2),
+                                "high": row["high"],
+                                "low": row["low"],
+                                "volume": row["volume"],
+                            }
+                        break
         return result
     finally:
         conn.close()
