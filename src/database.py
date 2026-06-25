@@ -1198,9 +1198,13 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, float]:
     """Get the latest close price for multiple symbols from the market_data table.
     Used as a fallback when yfinance quotes are unavailable.
 
+    Queries the most recent candle across ALL timeframes (not just '1d')
+    to ensure a price is available even if only long-term timeframes
+    (5Y, 1Y, 1w, etc.) have been downloaded by background tasks.
+
     The market_data table stores symbols as full pairs (e.g., 'ENI.MI/EUR'),
     but get_quotes passes base symbols (e.g., 'ENI.MI'). This function
-    queries all 1d candles and filters by the base part in Python to
+    queries all candles and filters by the base part in Python to
     handle the format mismatch.
     """
     if not symbols:
@@ -1215,7 +1219,6 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, float]:
                 """
                 SELECT DISTINCT ON (symbol) symbol, close
                 FROM market_data
-                WHERE timeframe = '1d'
                 ORDER BY symbol, timestamp DESC
                 """
             )
@@ -1228,10 +1231,8 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, float]:
                 INNER JOIN (
                     SELECT symbol, MAX(timestamp) as max_ts
                     FROM market_data
-                    WHERE timeframe = '1d'
                     GROUP BY symbol
                 ) latest ON m.symbol = latest.symbol AND m.timestamp = latest.max_ts
-                WHERE m.timeframe = '1d'
                 """
             )
             rows = conn.execute(sql).fetchall()

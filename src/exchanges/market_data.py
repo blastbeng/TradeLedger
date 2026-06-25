@@ -1071,11 +1071,16 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     # Summary log
     valid_count = sum(1 for sym in missing_symbols if result[sym].get("last") is not None)
     if valid_count == 0 and missing_symbols:
-        logger.warning(
-            f"get_quotes: 0/{len(missing_symbols)} symbols got valid prices. "
-            f"Circuit breaker open: {_check_yf_circuit()}. "
-            f"Check yfinance connectivity and proxy settings."
-        )
+        if _check_yf_circuit():
+            logger.debug(
+                f"get_quotes: 0/{len(missing_symbols)} symbols got valid prices "
+                f"(circuit breaker open)."
+            )
+        else:
+            logger.warning(
+                f"get_quotes: 0/{len(missing_symbols)} symbols got valid prices. "
+                f"Check yfinance connectivity and proxy settings."
+            )
     else:
         logger.debug(f"get_quotes: {valid_count}/{len(missing_symbols)} symbols got valid prices")
 
