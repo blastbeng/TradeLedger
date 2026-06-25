@@ -34,6 +34,9 @@ services:
       POSTGRES_DB: ${DB_NAME:-trade_ledger}
       POSTGRES_USER: ${DB_USER:-trade_ledger}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-}
+      TZ: Europe/Rome
+      PUID: 1000
+      PGID: 1000
     volumes:
       - ./postgresql/data:/var/lib/postgresql/data
     healthcheck:
