@@ -224,3 +224,6 @@ data/notifications.jsonl
 postgresql/*
 postgresql/data
 postgresql/data/*
+redis/*
+redis/data
+redis/data/*
