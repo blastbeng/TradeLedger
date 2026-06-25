@@ -122,10 +122,10 @@ def get_borsa_italiana_candles(
                 try:
                     data = json.loads(match.group(1))
                 except json.JSONDecodeError:
-                    logger.debug(f"Could not parse JSON from borsaitaliana response for {symbol}")
+                    logger.error(f"Could not parse JSON from borsaitaliana response for {symbol}")
                     return None
             else:
-                logger.debug(f"No JSON data found in borsaitaliana response for {symbol}")
+                logger.error(f"No JSON data found in borsaitaliana response for {symbol}")
                 return None
 
         # Extract the history data
@@ -133,7 +133,7 @@ def get_borsa_italiana_candles(
         history_dt = history.get("historyDt", [])
 
         if not history_dt:
-            logger.debug(f"Empty history from borsaitaliana for {symbol} {timeframe}")
+            logger.warning(f"Empty history from borsaitaliana for {symbol} {timeframe}")
             return None
 
         # Build candle list from the API response
@@ -155,7 +155,7 @@ def get_borsa_italiana_candles(
                     float(item.get("qty", 0) or 0),
                 ])
             except (ValueError, KeyError) as e:
-                logger.debug(f"Failed to parse borsaitaliana candle for {symbol}: {e}")
+                logger.error(f"Failed to parse borsaitaliana candle for {symbol}: {e}")
                 continue
 
         if not rows:
