@@ -257,6 +257,22 @@ def init_db():
                     UNIQUE(symbol, timeframe)
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS quotes (
+                    symbol TEXT PRIMARY KEY,
+                    last REAL,
+                    bid REAL,
+                    ask REAL,
+                    volume REAL,
+                    change_24h REAL,
+                    percentage REAL,
+                    quoteVolume REAL,
+                    name TEXT,
+                    coupon REAL,
+                    maturity TEXT,
+                    updated_at DOUBLE PRECISION NOT NULL
+                )
+                """,
             ]
             for stmt in statements:
                 conn.execute(stmt)
@@ -335,6 +351,21 @@ def init_db():
                     indicators_json TEXT NOT NULL,
                     computed_at REAL NOT NULL,
                     UNIQUE(symbol, timeframe)
+                );
+
+                CREATE TABLE IF NOT EXISTS quotes (
+                    symbol TEXT PRIMARY KEY,
+                    last REAL,
+                    bid REAL,
+                    ask REAL,
+                    volume REAL,
+                    change_24h REAL,
+                    percentage REAL,
+                    quoteVolume REAL,
+                    name TEXT,
+                    coupon REAL,
+                    maturity TEXT,
+                    updated_at REAL NOT NULL
                 );
             """)
         conn.commit()
@@ -1074,6 +1105,95 @@ def get_indicators_for_symbols(symbols: List[str], timeframes: List[str]) -> Dic
             tf = row["timeframe"]
             if sym in result:
                 result[sym][tf] = json.loads(row["indicators_json"])
+        return result
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def save_quotes_batch(quotes: Dict[str, Dict[str, Any]]):
+    """Save or update multiple quotes in the database."""
+    if not quotes:
+        return
+    conn = get_connection()
+    try:
+        now = time.time()
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                """
+                INSERT INTO quotes (symbol, last, bid, ask, volume, change_24h, percentage, quoteVolume, name, coupon, maturity, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (symbol) DO UPDATE SET
+                    last = EXCLUDED.last, bid = EXCLUDED.bid, ask = EXCLUDED.ask,
+                    volume = EXCLUDED.volume, change_24h = EXCLUDED.change_24h,
+                    percentage = EXCLUDED.percentage, quoteVolume = EXCLUDED.quoteVolume,
+                    name = EXCLUDED.name, coupon = EXCLUDED.coupon, maturity = EXCLUDED.maturity,
+                    updated_at = EXCLUDED.updated_at
+                """
+            )
+        else:
+            sql = _adapt_sql(
+                """
+                INSERT OR REPLACE INTO quotes (symbol, last, bid, ask, volume, change_24h, percentage, quoteVolume, name, coupon, maturity, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+            )
+        rows = []
+        for sym, q in quotes.items():
+            if q.get("last") is not None:
+                rows.append((
+                    sym, q.get("last"), q.get("bid"), q.get("ask"),
+                    q.get("volume"), q.get("change_24h"), q.get("percentage"),
+                    q.get("quoteVolume"), q.get("name"), q.get("coupon"),
+                    q.get("maturity"), now
+                ))
+        if rows:
+            conn.executemany(sql, rows)
+            conn.commit()
+            logger.debug(f"Saved {len(rows)} quotes to database")
+    finally:
+        conn.close()
+
+
+def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict[str, Dict[str, Any]]:
+    """Retrieve quotes from the database. Returns only quotes newer than max_age_seconds."""
+    if not symbols:
+        return {}
+    conn = get_connection()
+    try:
+        cutoff = time.time() - max_age_seconds
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                """
+                SELECT symbol, last, bid, ask, volume, change_24h, percentage, quoteVolume, name, coupon, maturity
+                FROM quotes WHERE symbol = ANY(%s) AND updated_at >= %s
+                """
+            )
+            rows = conn.execute(sql, (symbols, cutoff)).fetchall()
+        else:
+            placeholders = ",".join(["?" for _ in symbols])
+            sql = _adapt_sql(
+                f"""
+                SELECT symbol, last, bid, ask, volume, change_24h, percentage, quoteVolume, name, coupon, maturity
+                FROM quotes WHERE symbol IN ({placeholders}) AND updated_at >= %s
+                """
+            )
+            rows = conn.execute(sql, symbols + [cutoff]).fetchall()
+
+        result = {}
+        for row in rows:
+            result[row["symbol"]] = {
+                "last": row["last"],
+                "bid": row["bid"],
+                "ask": row["ask"],
+                "volume": row["volume"],
+                "change_24h": row["change_24h"],
+                "percentage": row["percentage"],
+                "quoteVolume": row["quoteVolume"],
+                "name": row["name"],
+                "coupon": row["coupon"],
+                "maturity": row["maturity"],
+            }
         return result
     finally:
         conn.close()

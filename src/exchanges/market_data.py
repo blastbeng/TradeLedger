@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
+from src.database import save_quotes_batch, get_quotes_from_db
 
 logger = logging.getLogger(__name__)
 
@@ -922,7 +923,27 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     if not missing_symbols:
         return result
 
-    # Initialize result with None for all missing symbols
+    # Check database for quotes not in Redis cache (up to 24 hours old)
+    try:
+        db_quotes = get_quotes_from_db(missing_symbols, max_age_seconds=86400)
+        for sym in list(missing_symbols):
+            if sym in db_quotes:
+                result[sym] = db_quotes[sym]
+                missing_symbols.remove(sym)
+                # Refresh Redis cache from DB data
+                try:
+                    redis_client.set(f"quote:{sym}", json.dumps(db_quotes[sym]), ex=300)
+                except Exception:
+                    pass
+        if db_quotes:
+            logger.debug(f"Loaded {len(db_quotes)} quotes from database (Redis miss fallback)")
+    except Exception as e:
+        logger.warning(f"DB quote fetch failed: {e}")
+
+    if not missing_symbols:
+        return result
+
+    # Initialize result with None for all still-missing symbols
     for sym in missing_symbols:
         result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
 
@@ -1001,13 +1022,22 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Batch download failed: {e}")
 
-    # Cache the result per-symbol for 60 seconds
+    # Cache the result per-symbol in Redis (5 minutes) and save to database
+    quotes_to_save = {}
     for sym in missing_symbols:
         if result[sym].get("last") is not None:
             try:
-                redis_client.set(f"quote:{sym}", json.dumps(result[sym]), ex=60)
+                redis_client.set(f"quote:{sym}", json.dumps(result[sym]), ex=300)
             except Exception:
                 pass
+            quotes_to_save[sym] = result[sym]
+
+    # Save to database for persistence (survives Redis flushes and yfinance outages)
+    if quotes_to_save:
+        try:
+            save_quotes_batch(quotes_to_save)
+        except Exception as e:
+            logger.warning(f"Failed to save quotes to database: {e}")
 
     return result
 
