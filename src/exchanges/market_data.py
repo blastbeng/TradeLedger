@@ -37,80 +37,17 @@ def _get_yf_session():
         return None
 
 
-_etf_symbols_cache: set = None
-_etf_symbols_cache_time: float = 0.0
-
-
-def _is_etf_symbol(base: str) -> bool:
-    """Check if a base symbol is an ETF (cached for 1 hour)."""
-    global _etf_symbols_cache, _etf_symbols_cache_time
-    now = time.time()
-    if _etf_symbols_cache is None or (now - _etf_symbols_cache_time) > 3600:
-        try:
-            etfs = discover_italian_ucits_etfs()
-            _etf_symbols_cache = {e.split("/")[0] if "/" in e else e for e in etfs}
-        except Exception:
-            _etf_symbols_cache = set()
-        _etf_symbols_cache_time = now
-    return base in _etf_symbols_cache
-
-
-def _determine_instrument_type(symbol: str) -> str:
-    """Determine if a symbol is a stock, ETF, or BTP.
-
-    Returns: 'stock', 'etf', or 'btp'
-    """
-    base = symbol.split("/")[0] if "/" in symbol else symbol
-    if re.match(r'^IT[A-Z0-9]{10}$', base):
-        return "btp"
-    if _is_etf_symbol(base):
-        return "etf"
-    return "stock"
-
-
 def get_borsa_italiana_candles(
     symbol: str,
     timeframe: str,
     limit: int = 500,
     start_ms: int = None,
 ) -> Optional[List[List]]:
-    """Download OHLCV candles from borsaitaliana.it as the primary source.
+    """Download OHLCV candles from borsaitaliana.it.
 
-    TODO: The actual AJAX endpoint for historical OHLCV data has not yet been
-    identified. The dati-completi / dettaglio pages are pure HTML with no
-    embedded OHLCV JSON, and the chart widget loads data via a separate XHR
-    call that has not been found. Until the real endpoint is identified (via
-    browser DevTools on the grafico.html page), this function returns None
-    and the system falls back to yfinance.
+    TODO: Not yet implemented. The actual AJAX endpoint for historical OHLCV
+    data has not been identified. Returns None (falls back to yfinance).
     """
-    return None
-
-
-def _get_isin_from_yfinance(symbol: str) -> Optional[str]:
-    """Fetch the ISIN for a stock/ETF symbol from yfinance, cached in Redis for 7 days."""
-    redis_client = get_redis_client()
-    cache_key = f"isin:{symbol}"
-    try:
-        cached = redis_client.get(cache_key)
-        if cached:
-            return cached
-    except Exception:
-        pass
-
-    try:
-        yf_symbol = symbol
-        if not re.match(r'^IT[A-Z0-9]{10}$', symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
-            yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
-        ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
-        isin = ticker.isin
-        if isin and len(isin) > 0:
-            try:
-                redis_client.set(cache_key, isin, ex=7 * 24 * 3600)
-            except Exception:
-                pass
-            return isin
-    except Exception as e:
-        logger.debug(f"Failed to fetch ISIN for {symbol}: {e}")
     return None
 
 # Map our timeframe strings to yfinance interval strings
@@ -137,19 +74,6 @@ TIMEFRAME_MS = {
     "3Y": 94_608_000_000,
     "5Y": 157_680_000_000,
 }
-
-# Borsa Italiana timeframe conversion map (daily data → resampled via pandas)
-BORSA_TIMEFRAME_MAP = {
-    "1d": None,       # Daily native (no conversion needed)
-    "1w": "W",         # Weekly
-    "1M": "ME",        # Month End
-    "3M": "3ME",       # Quarterly
-    "6M": "6ME",       # Semi-annual
-    "1Y": "YE",        # Year End
-    "3Y": "3YE",       # 3-Year
-    "5Y": "5YE",       # 5-Year
-}
-
 
 def _aggregate_candles(candles: List[List], target_tf: str) -> List[List]:
     """Aggregate monthly candles into larger timeframes (6M, 1Y, 3Y, 5Y)."""
