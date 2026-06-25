@@ -2443,21 +2443,21 @@ class TradingEngine:
         # Fetch tickers for a subset to keep prompt size manageable
         # Apply sentiment filter if configured
         if settings.SYMBOL_SELECTION_MIN_SENTIMENT > -1.0 and settings.NEWS_ENABLED:
-            # Pre-fetch sentiment for all available pairs to filter
             candidate_pairs = available_pairs
-            filtered_pairs = []
-            for sym in candidate_pairs:
+            async def _fetch_sentiment_filter(sym):
                 try:
                     base_symbol = sym.split("/")[0] if "/" in sym else sym
                     agg = await asyncio.to_thread(get_aggregate_sentiment_from_db, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
                     if agg and agg["avg_compound"] >= settings.SYMBOL_SELECTION_MIN_SENTIMENT:
-                        filtered_pairs.append(sym)
+                        return sym
                     elif not agg:
-                        # No sentiment data – include by default (or you can skip)
-                        filtered_pairs.append(sym)
+                        return sym
+                    return None
                 except Exception:
-                    filtered_pairs.append(sym)  # include if error
-            sample_pairs = filtered_pairs
+                    return sym
+            sentiment_filter_tasks = [_fetch_sentiment_filter(sym) for sym in candidate_pairs]
+            sentiment_filter_results = await asyncio.gather(*sentiment_filter_tasks)
+            sample_pairs = [sym for sym in sentiment_filter_results if sym is not None]
         else:
             sample_pairs = available_pairs
 
@@ -2487,10 +2487,10 @@ class TradingEngine:
 
         # Parallelize get_quotes by splitting into chunks of 50
         plain_sample = [s.split("/")[0] for s in stock_sample]
-        chunk_size = 20
+        chunk_size = 50
         chunks = [plain_sample[i:i + chunk_size] for i in range(0, len(plain_sample), chunk_size)]
         async def _fetch_quotes_with_limit(chunk):
-            async with self._exchange_semaphore:
+            async with asyncio.Semaphore(20):
                 try:
                     return await asyncio.wait_for(
                         asyncio.to_thread(get_quotes, chunk),

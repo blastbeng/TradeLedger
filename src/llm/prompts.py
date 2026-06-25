@@ -368,6 +368,17 @@ def build_stock_selection_prompt(
 ) -> str:
     """Build a prompt to ask the LLM which stocks/ETFs to trade."""
     # Summarize tickers and limits for the prompt
+    # --- Batch-fetch sentiment for all symbols to avoid sequential DB queries ---
+    batch_sentiment: Dict[str, Optional[Dict[str, Any]]] = {}
+    if settings.NEWS_ENABLED:
+        for symbol in available_symbols:
+            try:
+                agg = get_aggregate_sentiment_from_db(symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
+                if agg:
+                    batch_sentiment[symbol] = agg
+            except Exception:
+                pass
+
     ticker_summary = {}
     for symbol in available_symbols:
         if symbol in tickers:
@@ -383,7 +394,7 @@ def build_stock_selection_prompt(
                 "maturity": t.get("maturity"),
             }
             if settings.NEWS_ENABLED:
-                agg = get_aggregate_sentiment_from_db(symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
+                agg = batch_sentiment.get(symbol)
                 if agg:
                     ticker_summary[symbol]["sentiment"] = agg
 
