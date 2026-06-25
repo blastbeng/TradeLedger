@@ -1632,8 +1632,9 @@ class TradingEngine:
             try:
                 plain_assets = await self._get_tradable_assets()
                 if plain_assets:
-                    # Limit to top MAX_SYMBOLS * 5 by DB volume to avoid excessive API calls
-                    _quote_fetch_limit = max(settings.LLM_STOCK_SELECTION_TOP_N, settings.MAX_SYMBOLS * 5)
+                    # Limit to SYMBOL_SELECTION_CANDIDATE_LIMIT by DB volume
+                    # The DB fallback provides instant prices for all symbols
+                    _quote_fetch_limit = settings.SYMBOL_SELECTION_CANDIDATE_LIMIT
                     sample_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
                     if len(sample_pairs) > _quote_fetch_limit:
                         pre_rank_since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
@@ -2589,9 +2590,9 @@ class TradingEngine:
         ]
 
         # --- Pre-rank candidates by DB volume to limit expensive quote fetching ---
-        # Limit to 5x MAX_SYMBOLS (or LLM_STOCK_SELECTION_TOP_N, whichever is larger)
-        # to avoid fetching quotes for hundreds of symbols when we only need a few.
-        _quote_fetch_limit = max(settings.LLM_STOCK_SELECTION_TOP_N, settings.MAX_SYMBOLS * 5)
+        # Use the full candidate limit (200) since the DB fallback (get_latest_close_prices)
+        # provides instant prices from the market_data table without yfinance calls.
+        _quote_fetch_limit = settings.SYMBOL_SELECTION_CANDIDATE_LIMIT
         if settings.OHLCV_TIMEFRAMES and len(sample_pairs) > _quote_fetch_limit:
             pre_rank_since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000  # last 7 days
             pre_rank_summary = await asyncio.to_thread(
@@ -2685,9 +2686,9 @@ class TradingEngine:
         # Pass ALL discovered stocks, ETFs, and BTPs to the LLM
         sample_pairs = stock_sample_sorted + etf_sample_sorted + btp_sample_sorted
         # Limit the number of symbols for expensive OHLCV/indicator fetches
-        # Only the top 50 by volume get full OHLCV/indicator analysis;
+        # Top 100 by volume get full OHLCV/indicator analysis;
         # the rest will have composite_score=0 and won't make it to the LLM prompt
-        _max_ohlcv_symbols = 50
+        _max_ohlcv_symbols = 100
 
         logger.info("Re-evaluation step 6/12: Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
         news_sentiment = {}
