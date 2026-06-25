@@ -1252,10 +1252,12 @@ class TradingEngine:
             pass
 
         try:
-            import yfinance as yf
-            ticker = yf.Ticker(base, session=_get_yf_session())
-            info = ticker.info
-            name = info.get("longName") or info.get("shortName") or base
+            def _fetch_yf_name():
+                import yfinance as yf
+                ticker = yf.Ticker(base, session=_get_yf_session())
+                info = ticker.info
+                return info.get("longName") or info.get("shortName") or base
+            name = await asyncio.to_thread(_fetch_yf_name)
         except Exception:
             name = base
 
@@ -2748,8 +2750,8 @@ class TradingEngine:
 
         correlation_matrix = await asyncio.to_thread(_compute_correlation_matrix)
 
-        perf = self._compute_performance_metrics()
-        trade_pattern_analysis = self._compute_trade_pattern_analysis()
+        perf = await asyncio.to_thread(self._compute_performance_metrics)
+        trade_pattern_analysis = await asyncio.to_thread(self._compute_trade_pattern_analysis)
 
         # --- Composite opportunity score (trend + sentiment) ---
         composite_scores: Dict[str, float] = {}
@@ -3735,7 +3737,7 @@ class TradingEngine:
                 keep_count = 0
 
             # Build a richer prompt with performance context
-            perf = self._compute_performance_metrics()
+            perf = await asyncio.to_thread(self._compute_performance_metrics)
             daily_pnl = perf["equity_curve"].get("daily_pnl", 0.0)
             total_pnl = perf["equity_curve"].get("total_pnl", 0.0)
             consecutive_losses = perf["equity_curve"].get("consecutive_losses", 0)
@@ -4207,8 +4209,8 @@ class TradingEngine:
             # Compute per-symbol budget for this symbol
             per_symbol_budget = base_balance / self.effective_max_symbols if self.effective_max_symbols > 0 else 0.0
 
-            perf = self._compute_performance_metrics()
-            trade_pattern_analysis = self._compute_trade_pattern_analysis()
+            perf = await asyncio.to_thread(self._compute_performance_metrics)
+            trade_pattern_analysis = await asyncio.to_thread(self._compute_trade_pattern_analysis)
 
             # --- Detect upcoming corporate events for this symbol ---
             symbol_event = None
@@ -5851,13 +5853,13 @@ class TradingEngine:
 
     async def get_pause_status(self) -> Dict[str, Any]:
         """Return the current trading pause status, reason, remaining duration, and a formatted countdown."""
-        paused_raw = self.redis.get("trading:paused")
+        paused_raw = await asyncio.to_thread(self.redis.get, "trading:paused")
         is_paused = paused_raw is not None and paused_raw == "1"
 
-        reason_raw = self.redis.get("trading:pause_reason")
+        reason_raw = await asyncio.to_thread(self.redis.get, "trading:pause_reason")
         reason = reason_raw.decode() if isinstance(reason_raw, bytes) else (reason_raw or "")
 
-        source_raw = self.redis.get("trading:pause_source")
+        source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
         source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
 
         remaining_seconds = None
@@ -5890,7 +5892,7 @@ class TradingEngine:
                                 countdown_str = f"{remaining_seconds}s"
                 else:
                     # Fallback to the stored next_open if the clock is unavailable
-                    next_open_raw = self.redis.get("trading:market_next_open")
+                    next_open_raw = await asyncio.to_thread(self.redis.get, "trading:market_next_open")
                     if next_open_raw:
                         try:
                             next_open_str = next_open_raw.decode() if isinstance(next_open_raw, bytes) else next_open_raw
@@ -5914,8 +5916,8 @@ class TradingEngine:
                             pass
             else:
                 # LLM or manual pause with duration
-                pause_start_raw = self.redis.get("trading:pause_start")
-                pause_duration_raw = self.redis.get("trading:pause_duration")
+                pause_start_raw = await asyncio.to_thread(self.redis.get, "trading:pause_start")
+                pause_duration_raw = await asyncio.to_thread(self.redis.get, "trading:pause_duration")
                 if pause_start_raw and pause_duration_raw:
                     try:
                         pause_start = float(pause_start_raw)
@@ -10564,8 +10566,8 @@ class TradingEngine:
         except Exception:
             pass
 
-        perf = self._compute_performance_metrics()
-        trade_pattern_analysis = self._compute_trade_pattern_analysis()
+        perf = await asyncio.to_thread(self._compute_performance_metrics)
+        trade_pattern_analysis = await asyncio.to_thread(self._compute_trade_pattern_analysis)
         symbol_event = None
         if settings.NEWS_ENABLED and detect_upcoming_events is not None:
             try:
