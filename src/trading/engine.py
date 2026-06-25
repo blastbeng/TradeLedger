@@ -323,7 +323,7 @@ class TradingEngine:
             missing.append(sym.split("/")[0])
         if missing:
             try:
-                raw = await self._get_quotes_async(missing, timeout=60.0)
+                raw = await self._get_quotes_batched(missing, timeout_per_chunk=180.0)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
@@ -374,6 +374,22 @@ class TradingEngine:
         except Exception as e:
             logger.warning(f"Quote fetch failed for {len(symbols)} symbols: {e}")
             return {}
+
+    async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 180.0, chunk_size: int = 5) -> Dict[str, Dict[str, Any]]:
+        """Fetch quotes for a large list of symbols by chunking into small batches.
+        Prevents timeouts from yf.download with too many symbols at once."""
+        if not symbols:
+            return {}
+        if len(symbols) <= chunk_size:
+            return await self._get_quotes_async(symbols, timeout=timeout_per_chunk)
+        chunks = [symbols[i:i + chunk_size] for i in range(0, len(symbols), chunk_size)]
+        async def _fetch_chunk(chunk):
+            return await self._get_quotes_async(chunk, timeout=timeout_per_chunk)
+        results = await asyncio.gather(*[_fetch_chunk(chunk) for chunk in chunks])
+        merged = {}
+        for r in results:
+            merged.update(r)
+        return merged
 
     async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Return aggregate news sentiment, cached for 60 seconds to reduce DB load."""
@@ -708,7 +724,7 @@ class TradingEngine:
                     # Limit to 200 pairs to avoid thread pool exhaustion
                     breadth_pairs = available_pairs[:200]
                     plain_breadth = [s.split("/")[0] for s in breadth_pairs]
-                    raw_breadth = await self._get_quotes_async(plain_breadth, timeout=60.0)
+                    raw_breadth = await self._get_quotes_batched(plain_breadth, timeout_per_chunk=180.0)
                     breadth_tickers = {pair: raw_breadth.get(pair.split("/")[0], {}) for pair in breadth_pairs}
                     positive_count = sum(
                         1 for sym in breadth_pairs
@@ -783,7 +799,7 @@ class TradingEngine:
                         plain_assets = await self._get_tradable_assets()
                         sample_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets[:50]]
                         plain_sample = [s.split("/")[0] for s in sample_pairs]
-                        quotes = await self._get_quotes_async(plain_sample, timeout=60.0)
+                        quotes = await self._get_quotes_batched(plain_sample, timeout_per_chunk=180.0)
                         large_movers = sum(
                             1 for q in quotes.values()
                             if abs(q.get("percentage") or 0) > 5.0
@@ -1201,7 +1217,7 @@ class TradingEngine:
                     # (limit to 200 to avoid excessive API calls)
                     sample_for_vol = available_pairs[:200]
                     plain_sample = [s.split("/")[0] for s in sample_for_vol]
-                    raw_quotes = await self._get_quotes_async(plain_sample, timeout=60.0)
+                    raw_quotes = await self._get_quotes_batched(plain_sample, timeout_per_chunk=180.0)
                     tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_for_vol}
                     def _vol(sym):
                         t = tickers.get(sym, {})
@@ -6419,7 +6435,7 @@ class TradingEngine:
             missing_risk.append(sym.split("/")[0])
         if missing_risk:
             try:
-                raw = await self._get_quotes_async(missing_risk, timeout=60.0)
+                raw = await self._get_quotes_batched(missing_risk, timeout_per_chunk=180.0)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
