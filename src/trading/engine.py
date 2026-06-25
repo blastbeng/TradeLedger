@@ -2149,14 +2149,59 @@ class TradingEngine:
                         if 0 < minutes_to_close < settings.MARKET_CLOSE_ACTIVE_MINUTES:
                             is_active_period = True
 
+                # --- Dynamic evaluation interval based on market conditions ---
+                # Default: 1 hour (3600s)
+                base_interval = 3600
+
+                # Check for high market activity or significant news to evaluate more frequently (15 mins)
+                is_highly_active = False
+                has_significant_news = False
+
+                # 1. Check full market breadth for extreme moves
+                full_market_breadth = None
+                try:
+                    full_breadth_raw = await asyncio.to_thread(self.redis.get, "market:breadth:full")
+                    if full_breadth_raw:
+                        full_market_breadth = json.loads(full_breadth_raw)
+                except Exception:
+                    pass
+
+                if full_market_breadth:
+                    pos_pct = full_market_breadth.get("positive_pct", 50)
+                    # Extreme breadth (>80% or <20%) indicates strong directional movement
+                    if pos_pct > 80 or pos_pct < 20:
+                        is_highly_active = True
+
+                # 2. Check for significant news sentiment shifts on tracked symbols
+                if settings.NEWS_ENABLED and not is_highly_active:
+                    for entry in self.current_symbols:
+                        symbol = entry["symbol"]
+                        try:
+                            agg = await self._get_cached_sentiment(symbol)
+                            if agg:
+                                base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+                                prev_key = f"sentiment:reeval_baseline:{base_symbol}"
+                                prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
+                                current_compound = agg.get("avg_compound", 0)
+                                if prev_raw:
+                                    prev_compound = float(prev_raw)
+                                    if abs(current_compound - prev_compound) > 0.3:
+                                        has_significant_news = True
+                                        break
+                        except Exception:
+                            continue
+
+                if is_active_period or is_highly_active or has_significant_news:
+                    base_interval = 900  # 15 minutes
+                elif full_market_breadth and 40 <= full_market_breadth.get("positive_pct", 50) <= 60:
+                    # Unfavorable/quiet market: moderate breadth, no extreme moves
+                    # Evaluate less frequently (2 hours)
+                    base_interval = 7200
+
                 for symbol_entry in self.current_symbols:
                     symbol = symbol_entry["symbol"]
-                    tf_seconds = self._timeframe_to_seconds(symbol_entry["timeframe"])
-                    default_interval = tf_seconds * settings.STRATEGY_INTERVAL_MULTIPLIER
-                    # For daily or shorter timeframes, use a shorter interval during active periods.
-                    # Weekly/monthly timeframes keep their full multiplied interval.
-                    if is_active_period and tf_seconds <= 86400:
-                        default_interval = min(default_interval, settings.ACTIVE_PERIOD_INTERVAL_SECONDS)
+                    # Use the dynamically computed base_interval, but allow LLM to override per-symbol
+                    default_interval = base_interval
                     interval = self._strategy_intervals.get(symbol, default_interval)
                     last_eval = self._last_strategy_eval.get(symbol, 0)
                     if now - last_eval >= interval:
