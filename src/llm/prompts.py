@@ -371,13 +371,8 @@ def build_stock_selection_prompt(
     # --- Batch-fetch sentiment for all symbols to avoid sequential DB queries ---
     batch_sentiment: Dict[str, Optional[Dict[str, Any]]] = {}
     if settings.NEWS_ENABLED:
-        for symbol in available_symbols:
-            try:
-                agg = get_aggregate_sentiment_from_db(symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
-                if agg:
-                    batch_sentiment[symbol] = agg
-            except Exception:
-                pass
+        from src.database import get_aggregate_sentiment_for_symbols
+        batch_sentiment = get_aggregate_sentiment_for_symbols(available_symbols, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
 
     ticker_summary = {}
     for symbol in available_symbols:

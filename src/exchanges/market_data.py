@@ -913,10 +913,6 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     btp_symbols = [s for s in missing_symbols if re.match(r'^IT[A-Z0-9]{10}$', s)]
     stock_symbols = [s for s in missing_symbols if s not in btp_symbols]
 
-    # Initialize result with None for all symbols
-    for sym in symbols:
-        result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
-
     # Fetch BTP quotes from Borsa Italiana cache
     if btp_symbols:
         try:

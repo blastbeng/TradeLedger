@@ -901,36 +901,58 @@ def get_ohlcv_summary_for_symbols(symbols: List[str], timeframes: List[str], sin
             if _backend == "postgresql":
                 sql = _adapt_sql(
                     """
-                    SELECT m.symbol,
-                           (SELECT open FROM market_data WHERE symbol = m.symbol AND timeframe = %s AND timestamp = MIN(m.timestamp)) as open_price,
-                           MAX(m.high) as high,
-                           MIN(m.low) as low,
-                           (SELECT close FROM market_data WHERE symbol = m.symbol AND timeframe = %s AND timestamp = MAX(m.timestamp)) as close_price,
-                           SUM(m.volume) as volume,
-                           COUNT(*) as candle_count
-                    FROM market_data m
-                    WHERE m.timeframe = %s AND m.timestamp >= %s AND m.symbol = ANY(%s)
-                    GROUP BY m.symbol
+                    WITH bounds AS (
+                        SELECT symbol, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
+                        FROM market_data
+                        WHERE timeframe = %s AND timestamp >= %s AND symbol = ANY(%s)
+                        GROUP BY symbol
+                    ),
+                    aggs AS (
+                        SELECT symbol, MAX(high) as high, MIN(low) as low, SUM(volume) as volume, COUNT(*) as candle_count
+                        FROM market_data
+                        WHERE timeframe = %s AND timestamp >= %s AND symbol = ANY(%s)
+                        GROUP BY symbol
+                    )
+                    SELECT a.symbol,
+                           (SELECT open FROM market_data WHERE symbol = a.symbol AND timeframe = %s AND timestamp = b.min_ts) as open_price,
+                           a.high,
+                           a.low,
+                           (SELECT close FROM market_data WHERE symbol = a.symbol AND timeframe = %s AND timestamp = b.max_ts) as close_price,
+                           a.volume,
+                           a.candle_count
+                    FROM aggs a
+                    JOIN bounds b ON a.symbol = b.symbol
                     """
                 )
-                rows = conn.execute(sql, (tf, tf, tf, since_ms, normalized_symbols)).fetchall()
+                rows = conn.execute(sql, (tf, since_ms, normalized_symbols, tf, since_ms, normalized_symbols, tf, tf)).fetchall()
             else:
                 placeholders = ",".join(["?" for _ in normalized_symbols])
                 sql = _adapt_sql(
                     f"""
-                    SELECT m.symbol,
-                           (SELECT open FROM market_data WHERE symbol = m.symbol AND timeframe = %s AND timestamp = MIN(m.timestamp)) as open_price,
-                           MAX(m.high) as high,
-                           MIN(m.low) as low,
-                           (SELECT close FROM market_data WHERE symbol = m.symbol AND timeframe = %s AND timestamp = MAX(m.timestamp)) as close_price,
-                           SUM(m.volume) as volume,
-                           COUNT(*) as candle_count
-                    FROM market_data m
-                    WHERE m.timeframe = %s AND m.timestamp >= %s AND m.symbol IN ({placeholders})
-                    GROUP BY m.symbol
+                    WITH bounds AS (
+                        SELECT symbol, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
+                        FROM market_data
+                        WHERE timeframe = ? AND timestamp >= ? AND symbol IN ({placeholders})
+                        GROUP BY symbol
+                    ),
+                    aggs AS (
+                        SELECT symbol, MAX(high) as high, MIN(low) as low, SUM(volume) as volume, COUNT(*) as candle_count
+                        FROM market_data
+                        WHERE timeframe = ? AND timestamp >= ? AND symbol IN ({placeholders})
+                        GROUP BY symbol
+                    )
+                    SELECT a.symbol,
+                           (SELECT open FROM market_data WHERE symbol = a.symbol AND timeframe = ? AND timestamp = b.min_ts) as open_price,
+                           a.high,
+                           a.low,
+                           (SELECT close FROM market_data WHERE symbol = a.symbol AND timeframe = ? AND timestamp = b.max_ts) as close_price,
+                           a.volume,
+                           a.candle_count
+                    FROM aggs a
+                    JOIN bounds b ON a.symbol = b.symbol
                     """
                 )
-                rows = conn.execute(sql, [tf, tf, tf, since_ms] + normalized_symbols).fetchall()
+                rows = conn.execute(sql, [tf, since_ms] + normalized_symbols + [tf, since_ms] + normalized_symbols + [tf, tf]).fetchall()
 
             for row in rows:
                 sym = row["symbol"]
