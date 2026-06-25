@@ -1624,6 +1624,38 @@ class TradingEngine:
                 self._quotes_fetch_running = False
             await asyncio.sleep(60)
 
+    async def _refresh_ticker_discovery_loop(self):
+        """Periodically discover tickers from news RSS feeds and trending stocks.
+        Caches results in Redis so re-evaluation never blocks on slow HTTP calls."""
+        await asyncio.sleep(120)  # initial delay
+        while self._running:
+            try:
+                plain_assets = await self._get_tradable_assets()
+                available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+
+                if settings.NEWS_ENABLED and settings.NEWS_TICKER_DISCOVERY_ENABLED and discover_tickers_from_news is not None:
+                    logger.info("Background: refreshing RSS ticker discovery...")
+                    await asyncio.to_thread(
+                        discover_tickers_from_news,
+                        existing_pairs=available_pairs,
+                        cache_only=False,
+                    )
+
+                if settings.NEWS_ENABLED and settings.NEWS_SYMBOL_DISCOVERY_ENABLED and discover_trending_stocks is not None:
+                    logger.info("Background: refreshing trending stock discovery...")
+                    await asyncio.to_thread(
+                        discover_trending_stocks,
+                        self.base_currency,
+                        available_pairs,
+                        max_symbols=settings.NEWS_SYMBOL_DISCOVERY_MAX_SYMBOLS,
+                        min_sentiment=settings.NEWS_SYMBOL_DISCOVERY_MIN_SENTIMENT,
+                        min_articles=settings.NEWS_SYMBOL_DISCOVERY_MIN_ARTICLES,
+                        cache_only=False,
+                    )
+            except Exception as e:
+                logger.error(f"Ticker discovery refresh error: {e}", exc_info=True)
+            await asyncio.sleep(1800)  # every 30 minutes
+
     def _ensure_cost_basis(self):
         """If positions lack cost_basis, compute it from amount and price (backward compat)."""
         for sym, pos in self.positions.items():
@@ -2257,6 +2289,7 @@ class TradingEngine:
         self._background_tasks.append(asyncio.create_task(self._monitor_entry_signals_loop()))
         self._background_tasks.append(asyncio.create_task(self._market_clock_monitor()))
         self._background_tasks.append(asyncio.create_task(self._refresh_all_quotes_loop()))
+        self._background_tasks.append(asyncio.create_task(self._refresh_ticker_discovery_loop()))
 
         while self._running:
             try:
@@ -2432,6 +2465,7 @@ class TradingEngine:
                 rss_discovered = await asyncio.to_thread(
                     discover_tickers_from_news,
                     existing_pairs=available_pairs,
+                    cache_only=True,
                 )
                 # Convert discovered base symbols to full pairs and add to the front
                 for base in rss_discovered:
@@ -2457,6 +2491,7 @@ class TradingEngine:
                     max_symbols=settings.NEWS_SYMBOL_DISCOVERY_MAX_SYMBOLS,
                     min_sentiment=settings.NEWS_SYMBOL_DISCOVERY_MIN_SENTIMENT,
                     min_articles=settings.NEWS_SYMBOL_DISCOVERY_MIN_ARTICLES,
+                    cache_only=True,
                 )
                 # Add discovered symbols to the front of the list so they are included in the sample
                 for pair in discovered:

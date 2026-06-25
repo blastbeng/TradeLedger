@@ -324,12 +324,27 @@ def discover_trending_stocks(
     max_symbols: int = 5,
     min_sentiment: float = 0.3,
     min_articles: int = 3,
+    cache_only: bool = False,
 ) -> List[str]:
     """
     Discover trending stocks not already in existing_pairs by looking at
     top daily gainers among tradable assets and filtering by positive news sentiment.
     """
     if not settings.NEWS_ENABLED or not settings.NEWS_SYMBOL_DISCOVERY_ENABLED:
+        return []
+
+    redis_client = get_redis_client()
+    cache_key = "news:trending_stocks_raw"
+
+    if cache_only:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                discovered = json.loads(cached)
+                existing_symbols = {pair.split("/")[0].lower() for pair in existing_pairs}
+                return [d for d in discovered if d.split("/")[0].lower() not in existing_symbols][:max_symbols]
+        except Exception:
+            pass
         return []
 
     from src.exchanges.market_data import get_quotes
@@ -374,6 +389,11 @@ def discover_trending_stocks(
     discovered = [pair for pair, _ in candidates[:max_symbols]]
     if discovered:
         logger.info(f"News-driven stock discovery found: {discovered}")
+        # Cache the raw discovered list in Redis for 1 hour
+        try:
+            redis_client.set(cache_key, json.dumps(discovered), ex=3600)
+        except Exception as e:
+            logger.warning(f"Failed to cache trending stocks: {e}")
     return discovered
 
 
@@ -963,7 +983,7 @@ def _fetch_banca_d_italia_btp_news(symbol: str, name: Optional[str] = None) -> L
     return articles
 
 
-def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None) -> List[str]:
+def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache_only: bool = False) -> List[str]:
     """Scan configured RSS feeds for potential stock tickers.
 
     Looks for words ending with the configured TICKER_SUFFIX (e.g., ``.MI``)
@@ -998,6 +1018,10 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None) -> Li
             discovered = set(json.loads(cached_raw))
         except Exception:
             discovered = set()
+    elif cache_only:
+        # Re-evaluation: never fetch RSS feeds, just return empty if not cached.
+        # The background task (_refresh_ticker_discovery_loop) populates the cache.
+        return []
     else:
         # Escape the suffix for regex (e.g., ".MI" -> "\.MI")
         pattern = re.compile(rf"\b([A-Z0-9]+{re.escape(suffix)})\b")
