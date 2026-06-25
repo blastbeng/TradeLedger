@@ -107,6 +107,11 @@ def _seed_telegram_chat_id():
 
 async def main():
     init_db()
+    # Pre-create yfinance cache directory to avoid race condition errors
+    # when multiple threads try to create it simultaneously.
+    import os
+    yf_cache_dir = os.path.join(settings.DATA_DIR, ".cache", "py-yfinance")
+    os.makedirs(yf_cache_dir, exist_ok=True)
     _seed_telegram_chat_id()
     test_rss_feeds()
     engine = TradingEngine()
