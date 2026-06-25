@@ -17,6 +17,13 @@ services:
       timeout: 5s
       retries: 5
 
+  tor:
+    image: dperson/torproxy
+    container_name: trade-ledger-tor
+    restart: no
+    ports:
+      - "8118:8118"
+
   bot:
     build: .
     container_name: trade-ledger
@@ -31,10 +38,14 @@ services:
       - PGID=1000
       - TZ=Europe/Rome
       - HOME=/app/data
+      - YF_PROXY_ENABLED=true
+      - YF_PROXIES=["http://tor:8118"]
     user: "${PUID:-1000}:${PGID:-1000}"
     depends_on:
       redis:
         condition: service_healthy
+      tor:
+        condition: service_started
     volumes:
       - ./src:/app/src   # for development hot-reload (optional)
       - ./data:/app/data
