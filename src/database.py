@@ -650,6 +650,65 @@ def get_news_for_symbol(symbol: str, max_age_seconds: int = 900) -> List[Dict[st
         conn.close()
 
 
+def get_news_for_symbols(symbols: List[str], max_age_seconds: int = 900) -> Dict[str, List[Dict[str, Any]]]:
+    """Retrieve recent news articles for multiple symbols from the database in a single query.
+    Returns a dict mapping symbol -> list of articles.
+    """
+    if not symbols:
+        return {}
+    normalized = [_normalize_symbol(s) for s in symbols]
+    conn = get_connection()
+    try:
+        cutoff = time.time() - max_age_seconds
+        if _backend == "postgresql":
+            # PostgreSQL supports ANY() for IN clauses with large lists
+            sql = _adapt_sql(
+                """
+                SELECT symbol, title, source, url, published_at, summary,
+                       sentiment_label, sentiment_compound
+                FROM news_articles
+                WHERE symbol = ANY(%s) AND fetched_at >= %s
+                ORDER BY fetched_at DESC
+                """
+            )
+            rows = conn.execute(sql, (normalized, cutoff)).fetchall()
+        else:
+            # SQLite: use IN clause with placeholders
+            placeholders = ",".join(["?" for _ in normalized])
+            sql = _adapt_sql(
+                f"""
+                SELECT symbol, title, source, url, published_at, summary,
+                       sentiment_label, sentiment_compound
+                FROM news_articles
+                WHERE symbol IN ({placeholders}) AND fetched_at >= %s
+                ORDER BY fetched_at DESC
+                """
+            )
+            rows = conn.execute(sql, normalized + [cutoff]).fetchall()
+
+        result: Dict[str, List[Dict[str, Any]]] = {s: [] for s in symbols}
+        for row in rows:
+            sym = row["symbol"]
+            # Map back to the original symbol format
+            for orig_sym in symbols:
+                if _normalize_symbol(orig_sym) == sym:
+                    result[orig_sym].append({
+                        "title": row["title"],
+                        "source": row["source"],
+                        "url": row["url"],
+                        "published_at": row["published_at"],
+                        "summary": row["summary"],
+                        "sentiment": {
+                            "label": row["sentiment_label"],
+                            "compound": row["sentiment_compound"],
+                        },
+                    })
+                    break
+        return result
+    finally:
+        conn.close()
+
+
 def get_aggregate_sentiment_from_db(symbol: str, max_age_seconds: int = 900) -> Optional[Dict[str, Any]]:
     """Return aggregate sentiment for a symbol from the database."""
     symbol = _normalize_symbol(symbol)

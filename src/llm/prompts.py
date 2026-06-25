@@ -4,7 +4,7 @@ import re
 import time
 from typing import List, Dict, Any, Optional, Tuple
 from src.config.settings import settings
-from src.database import get_news_for_symbol, get_aggregate_sentiment_from_db
+from src.database import get_news_for_symbol, get_aggregate_sentiment_from_db, get_news_for_symbols
 from src.utils.redis_client import get_redis_client
 from src.llm.cache import get_cached_llm_response
 from src.exchanges.market_data import TIMEFRAME_MAP
@@ -403,8 +403,9 @@ def build_stock_selection_prompt(
     if settings.NEWS_ENABLED:
         news_lines = []
         symbols_to_check = available_symbols
+        batch_news = get_news_for_symbols(symbols_to_check, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
         for sym in symbols_to_check:
-            articles = get_news_for_symbol(sym, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
+            articles = batch_news.get(sym, [])
             if articles:
                 formatted = _format_news_for_prompt(articles)
                 news_lines.append(f"**{sym}**\n{formatted}")
