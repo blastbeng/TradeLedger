@@ -49,7 +49,7 @@ from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
 from src.strategies.backtester import backtest_strategy, format_backtest_summary
 from src.utils.redis_client import get_redis_client
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols
 
 logger = logging.getLogger(__name__)
 
@@ -2678,18 +2678,15 @@ class TradingEngine:
             results = await asyncio.gather(*tasks)
             ohlcv_data = dict(results)
 
-        logger.info("Re-evaluation step 8/12: Computing indicators for %d symbols...", len(ohlcv_data))
-        # Compute indicators for each stock with OHLCV data, for ALL timeframes (parallelized)
+        logger.info("Re-evaluation step 8/12: Batch-fetching indicators for %d symbols...", len(sorted_by_vol))
         primary_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
 
-        async def _compute_indicators_and_score(sym: str) -> Tuple[str, Dict[str, Dict[str, Any]], float]:
-            sym_indicators = {}
-            for tf in settings.OHLCV_TIMEFRAMES:
-                ind = await asyncio.to_thread(get_indicators, sym, tf)
-                if ind:
-                    sym_indicators[tf] = ind
+        # Batch-fetch all indicators in a single DB query
+        batch_indicators = await asyncio.to_thread(
+            get_indicators_for_symbols, sorted_by_vol, settings.OHLCV_TIMEFRAMES
+        )
 
-            # Compute trend quality score
+        def _compute_trend_score(sym: str, sym_indicators: Dict[str, Dict[str, Any]]) -> float:
             trend_score = 0.0
             try:
                 ind = sym_indicators.get(primary_tf, {})
@@ -2732,20 +2729,14 @@ class TradingEngine:
                     trend_score = round(score / components, 3)
             except Exception:
                 pass
-
-            return sym, sym_indicators, trend_score
-
-        indicator_tasks = [
-            _compute_indicators_and_score(sym)
-            for sym in sorted_by_vol
-        ]
-        indicator_results = await asyncio.gather(*indicator_tasks)
+            return trend_score
 
         symbol_indicators = {}
         symbol_trend_scores: Dict[str, float] = {}
-        for sym, inds, score in indicator_results:
-            symbol_indicators[sym] = inds
-            symbol_trend_scores[sym] = score
+        for sym in sorted_by_vol:
+            sym_inds = batch_indicators.get(sym, {})
+            symbol_indicators[sym] = sym_inds
+            symbol_trend_scores[sym] = _compute_trend_score(sym, sym_inds)
 
         # Ensure all sample_pairs have a trend score even if OHLCV was missing
         for sym in sample_pairs:
@@ -2866,7 +2857,23 @@ class TradingEngine:
             return corr_matrix
 
         logger.info("Re-evaluation step 10/12: Computing correlation matrix and performance metrics...")
-        correlation_matrix = await asyncio.to_thread(_compute_correlation_matrix)
+        # Cache correlation matrix in Redis for 30 minutes (it changes slowly)
+        corr_cache_key = "reeval:correlation_matrix"
+        correlation_matrix = None
+        try:
+            cached_corr = await asyncio.to_thread(self.redis.get, corr_cache_key)
+            if cached_corr:
+                correlation_matrix = json.loads(cached_corr)
+        except Exception:
+            pass
+        if correlation_matrix is None:
+            correlation_matrix = await asyncio.to_thread(_compute_correlation_matrix)
+            try:
+                await asyncio.to_thread(
+                    self.redis.setex, corr_cache_key, 1800, json.dumps(correlation_matrix)
+                )
+            except Exception:
+                pass
 
         perf = await asyncio.to_thread(self._compute_performance_metrics)
         trade_pattern_analysis = await asyncio.to_thread(self._compute_trade_pattern_analysis)
@@ -3692,11 +3699,11 @@ class TradingEngine:
                 logger.info(f"Triggering immediate news fetch for newly selected symbol {sym}")
                 asyncio.create_task(self._fetch_and_store_news_for_symbol(sym))
 
-        # Build formatted symbol labels with stock names
-        symbol_labels = []
-        for c in self.current_symbols:
+        # Build formatted symbol labels with stock names (parallelized)
+        async def _fetch_label(c):
             name = await self._get_stock_name(c['symbol'])
-            symbol_labels.append(self._format_symbol_display(c['symbol'], name, c['timeframe']))
+            return self._format_symbol_display(c['symbol'], name, c['timeframe'])
+        symbol_labels = await asyncio.gather(*[_fetch_label(c) for c in self.current_symbols])
         logger.info(f"Selected symbols: {symbol_labels}")
 
         # Build a pause/resume message if the LLM provided a decision

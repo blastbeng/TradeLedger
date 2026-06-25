@@ -876,6 +876,56 @@ def get_indicators(symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
         conn.close()
 
 
+def get_indicators_for_symbols(symbols: List[str], timeframes: List[str]) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Retrieve the latest computed indicators for multiple symbols and timeframes in a single query.
+    Returns a dict: {symbol: {timeframe: indicators_dict}}
+    """
+    if not symbols or not timeframes:
+        return {}
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            # Build pairs for ANY() clause
+            pairs = []
+            for sym in symbols:
+                for tf in timeframes:
+                    pairs.append((sym, tf))
+            sql = _adapt_sql(
+                """
+                SELECT symbol, timeframe, indicators_json
+                FROM indicators
+                WHERE (symbol, timeframe) = ANY(%s)
+                """
+            )
+            rows = conn.execute(sql, (pairs,)).fetchall()
+        else:
+            # SQLite: build IN clause with placeholders for (symbol, timeframe) pairs
+            pairs = []
+            for sym in symbols:
+                for tf in timeframes:
+                    pairs.append(sym)
+                    pairs.append(tf)
+            placeholders = ",".join(["(?,?)" for _ in range(len(symbols) * len(timeframes))])
+            sql = _adapt_sql(
+                f"""
+                SELECT symbol, timeframe, indicators_json
+                FROM indicators
+                WHERE (symbol, timeframe) IN ({placeholders})
+                """
+            )
+            rows = conn.execute(sql, pairs).fetchall()
+
+        result: Dict[str, Dict[str, Dict[str, Any]]] = {s: {} for s in symbols}
+        for row in rows:
+            sym = row["symbol"]
+            tf = row["timeframe"]
+            if sym in result:
+                result[sym][tf] = json.loads(row["indicators_json"])
+        return result
+    finally:
+        conn.close()
+
+
 def close_pool():
     """Close the PostgreSQL connection pool if it exists."""
     global _pg_pool
