@@ -526,7 +526,7 @@ You may optionally include the following fields:
 - "stock_revaluation_interval_seconds" (integer >= 3600, i.e., at least 1 hour) to change how often the bot re-evaluates the stock list. The bot also re-evaluates automatically before market open and when unusual market conditions are detected (significant news, extreme indicators, unusually active market).
 - "pause_trading" (boolean): true to pause trading, false to resume. Always include "pause_reason" (string) when setting pause_trading. You may also set "pause_duration_seconds" (positive integer) to auto-resume after a delay.
 
-Example: {{"stocks": [{{"symbol": "ENI.MI/EUR", "timeframe": "1w", "sector": "Energy", "max_tenure_hours": 168}}, {{"symbol": "ENEL.MI/EUR", "timeframe": "1M", "sector": "Utilities"}}, {{"symbol": "STM.MI/EUR", "timeframe": "1w", "sector": "Technology"}}], "max_stocks": 3, "max_positions_per_sector": 2, "skip_eval_price_change_atr_mult": 0.5, "skip_eval_rsi_change": 5.0, "skip_eval_rsi_oversold": 30.0, "skip_eval_rsi_overbought": 70.0, "skip_eval_macd_hist_change": 0.0005, "regime_adx_strong": 40.0, "regime_adx_moderate": 25.0, "regime_volatility_high_pct": 80.0, "regime_volatility_low_pct": 20.0, "regime_bb_squeeze_width": 0.02, "regime_bb_expansion_width": 0.08, "min_stop_loss_atr_mult": 1.5, "min_max_hold_time_mult": 1.5, "max_stop_loss_reviews": 3, "max_take_profit_reviews": 3, "min_llm_pause_duration_seconds": 3600, "pause_max_consecutive_keep": 3, "pause_force_resume_risk_multiplier": 0.3, "max_partial_tp_reviews": 3, "max_dust_sweep_reviews": 3, "reasoning": "ENI shows strong uptrend on 1w with high volume; ENEL has bullish MACD crossover on 1w.", "stock_revaluation_interval_seconds": 300, "max_portfolio_exposure_pct": 0.8, "max_portfolio_stop_risk_pct": 0.1, "min_risk_reward_ratio": 1.5, "limit_price_max_distance_pct": 0.05, "pause_trading": false, "pause_reason": "Market conditions are favorable"}}
+Example: {{"stocks": [{{"symbol": "ENI.MI/EUR", "timeframe": "1Y", "sector": "Energy", "max_tenure_hours": 8760}}, {{"symbol": "ENEL.MI/EUR", "timeframe": "6M", "sector": "Utilities"}}, {{"symbol": "STM.MI/EUR", "timeframe": "3Y", "sector": "Technology"}}], "max_stocks": 3, "max_positions_per_sector": 2, "skip_eval_price_change_atr_mult": 0.5, "skip_eval_rsi_change": 5.0, "skip_eval_rsi_oversold": 30.0, "skip_eval_rsi_overbought": 70.0, "skip_eval_macd_hist_change": 0.0005, "regime_adx_strong": 40.0, "regime_adx_moderate": 25.0, "regime_volatility_high_pct": 80.0, "regime_volatility_low_pct": 20.0, "regime_bb_squeeze_width": 0.02, "regime_bb_expansion_width": 0.08, "min_stop_loss_atr_mult": 1.5, "min_max_hold_time_mult": 1.5, "max_stop_loss_reviews": 3, "max_take_profit_reviews": 3, "min_llm_pause_duration_seconds": 3600, "pause_max_consecutive_keep": 3, "pause_force_resume_risk_multiplier": 0.3, "max_partial_tp_reviews": 3, "max_dust_sweep_reviews": 3, "reasoning": "ENI shows strong uptrend on 1Y with high volume; ENEL has bullish MACD crossover on 6M.", "stock_revaluation_interval_seconds": 300, "max_portfolio_exposure_pct": 0.8, "max_portfolio_stop_risk_pct": 0.1, "min_risk_reward_ratio": 1.5, "limit_price_max_distance_pct": 0.05, "pause_trading": false, "pause_reason": "Market conditions are favorable"}}
 
 Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_risk_pct` to at least **0.1** unless you have a very strong reason to be more conservative. Higher limits allow the bot to take more positions simultaneously and capture more opportunities. Do not unnecessarily restrict capital deployment."""
     # --- Enhanced pause/resume guidance ---
@@ -781,7 +781,13 @@ def build_strategy_prompt(
         logger.warning(f"Assigned timeframe {assigned_timeframe} is not supported by yfinance. Falling back to default.")
         assigned_timeframe = "1d" if "1d" in TIMEFRAME_MAP else list(TIMEFRAME_MAP.keys())[0]
     tf_seconds = _timeframe_to_seconds(assigned_timeframe) if assigned_timeframe else 86400
-    min_hold = 2 * tf_seconds
+    # Cap min_hold for very long timeframes to avoid absurd values (e.g., 10 years for 5Y)
+    if assigned_timeframe in ("3Y", "5Y"):
+        min_hold = 94_608_000  # ~3 years cap for 3Y/5Y candles
+    elif assigned_timeframe in ("1Y", "6M"):
+        min_hold = 31_536_000  # ~1 year cap for 1Y/6M candles
+    else:
+        min_hold = 2 * tf_seconds
     prompt = f"""Symbol: {symbol}
 Current ticker: {json.dumps(ticker)}
 Current balances: {json.dumps(balance)}
@@ -1354,10 +1360,18 @@ Maximum symbols to trade: {max_symbols}
             "Factor this assessment into your confidence, position size, and reasoning.\n"
         )
 
+    # Cap the validator minimum for long timeframes to avoid rejecting reasonable hold times
+    if assigned_timeframe in ("3Y", "5Y"):
+        validator_min = 31_536_000  # ~1 year minimum for 3Y/5Y
+    elif assigned_timeframe in ("1Y", "6M"):
+        validator_min = min(int(min_hold_time_mult * tf_seconds), 31_536_000)  # cap at ~1 year
+    else:
+        validator_min = int(min_hold_time_mult * tf_seconds)
+
     prompt += f"""
 **For the {assigned_timeframe or 'default'} timeframe, a reasonable minimum max_hold_time_seconds is {min_hold} seconds. Do not set it lower unless you have a very specific, justified reason (e.g., medium-term with a very tight stop and high confidence). For long-term candles (1M, 3M, 6M, 1Y, 3Y, 5Y), prefer max_hold_time_seconds of 2,592,000–94,608,000 seconds (1–36 months or more) to allow long-term trends to fully develop. The most profitable trades in stocks, ETFs, and BTPs come from holding positions for many months or years on long-term candles.
 
-The validator enforces a hard minimum of {min_hold_time_mult} × timeframe_seconds = {int(min_hold_time_mult * tf_seconds)} seconds. Your max_hold_time_seconds must be at least this value.
+The validator enforces a hard minimum of {validator_min} seconds for this timeframe. Your max_hold_time_seconds must be at least this value.
 
 You are trading spot only (no shorting). Only output SELL if you currently hold the asset.
 
