@@ -6944,7 +6944,7 @@ class TradingEngine:
 
             # Fetch current price early for position sizing and stop calculations
             base = symbol.split("/")[0]
-            quotes = await self._get_quotes_async([base], timeout=15.0)
+            quotes = await self._get_quotes_async([base], timeout=30.0)
             ticker = quotes.get(base)
             current_price = ticker['last'] if ticker else None
             if current_price is None or current_price <= 0:
@@ -9880,7 +9880,7 @@ class TradingEngine:
                             # Fetch current price
                             try:
                                 base = queued["symbol"].split("/")[0]
-                                quotes = await self._get_quotes_async([base], timeout=15.0)
+                                quotes = await self._get_quotes_async([base], timeout=30.0)
                                 ticker = quotes.get(base)
                             except Exception:
                                 pass
