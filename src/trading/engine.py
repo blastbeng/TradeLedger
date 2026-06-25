@@ -6,6 +6,7 @@ import random
 import pandas_market_calendars as mcal
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
@@ -103,6 +104,11 @@ class TradingEngine:
         self._news_semaphore = asyncio.Semaphore(5)  # max 5 concurrent news fetches
         self._indicator_semaphore = asyncio.Semaphore(4)  # limit concurrent indicator computations
         self._download_semaphore = asyncio.Semaphore(2)  # max 2 concurrent background OHLCV backfills
+
+        # Dedicated thread pool for database writes – prevents write contention
+        # from starving the default asyncio thread pool used by the web server,
+        # Telegram bot, and all other to_thread calls.
+        self._db_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="dbwriter")
 
         self.current_symbols: List[Dict[str, str]] = []   # each dict: {"symbol": ..., "timeframe": ...}
         self.positions: Dict[str, Dict[str, Any]] = {}  # symbol -> position info
@@ -247,7 +253,8 @@ class TradingEngine:
             download_tasks = [_force_download_symbol(pair) for pair in all_pairs]
             await asyncio.gather(*download_tasks)
 
-            await asyncio.to_thread(cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(self._db_executor, cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
             logger.info("Force download: complete.")
         except Exception as e:
             logger.error(f"Force download error: {e}", exc_info=True)
@@ -477,6 +484,8 @@ class TradingEngine:
         """Gracefully stop the engine and all background tasks."""
         logger.info("Stopping trading engine...")
         self._running = False
+        self._db_executor.shutdown(wait=True)
+        logger.info("Database write executor shut down.")
         logger.info("Trading engine stopped.")
 
     async def _periodic_reconcile(self):
@@ -1306,7 +1315,8 @@ class TradingEngine:
             if not candles:
                 break
 
-            await asyncio.to_thread(insert_ohlcv_batch, symbol, timeframe, candles)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(self._db_executor, insert_ohlcv_batch, symbol, timeframe, candles)
             batch_count = len(candles)
             total_inserted += batch_count
             logger.debug(f"Backfill batch: {symbol} {timeframe} fetched {batch_count} candles from {since}")
@@ -1414,7 +1424,8 @@ class TradingEngine:
                         await asyncio.sleep(0.5)
                     logger.info("Market data download cycle complete.")
                     # Clean up old OHLCV data (older than retention period)
-                    await asyncio.to_thread(cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(self._db_executor, cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
             except Exception as e:
                 logger.error(f"Market data download loop error: {e}", exc_info=True)
             finally:
@@ -1462,7 +1473,8 @@ class TradingEngine:
                     await asyncio.sleep(0.5)   # small delay to reduce DB write pressure
 
                 # Clean up old data
-                await asyncio.to_thread(cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(self._db_executor, cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
                 logger.info("Full asset OHLCV download cycle complete.")
             except Exception as e:
                 logger.error(f"Full asset download loop error: {e}", exc_info=True)
