@@ -653,6 +653,120 @@ class TradingEngine:
                 self._full_breadth_running = False
             await asyncio.sleep(600)  # every 10 minutes
 
+    async def _periodic_market_condition_check(self):
+        """Check for market conditions that warrant more frequent symbol re-evaluation.
+
+        Triggers re-evaluation when:
+        - Significant news sentiment shifts are detected on tracked symbols
+        - Unusually active market (many stocks with large daily price movements)
+        - Extreme indicator values or Bollinger Band squeeze breakouts on tracked symbols
+        """
+        await asyncio.sleep(120)  # initial delay
+        while self._running:
+            try:
+                # Respect a cooldown so we don't re-evaluate too frequently
+                last_triggered_key = "trading:last_triggered_reeval"
+                last_triggered = await asyncio.to_thread(self.redis.get, last_triggered_key)
+                if last_triggered:
+                    elapsed = time.time() - float(last_triggered)
+                    if elapsed < TRIGGERED_REEVALUATION_COOLDOWN:
+                        await asyncio.sleep(300)
+                        continue
+
+                should_trigger = False
+
+                # 1. Significant news sentiment shift on tracked symbols
+                if settings.NEWS_ENABLED and self.current_symbols:
+                    for entry in self.current_symbols:
+                        symbol = entry["symbol"]
+                        try:
+                            agg = await self._get_cached_sentiment(symbol)
+                            if agg:
+                                base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+                                prev_key = f"sentiment:prev:{base_symbol}"
+                                prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
+                                if prev_raw:
+                                    prev_compound = float(prev_raw)
+                                    current_compound = agg.get("avg_compound", 0)
+                                    if abs(current_compound - prev_compound) > 0.3:
+                                        logger.info(f"Significant sentiment shift for {symbol}, triggering re-evaluation")
+                                        should_trigger = True
+                                        break
+                        except Exception:
+                            continue
+
+                # 2. Unusually active market (many stocks with >5% daily change)
+                if not should_trigger:
+                    try:
+                        plain_assets = await self._get_tradable_assets()
+                        sample_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets[:50]]
+                        plain_sample = [s.split("/")[0] for s in sample_pairs]
+                        quotes = await asyncio.to_thread(get_quotes, plain_sample)
+                        large_movers = sum(
+                            1 for q in quotes.values()
+                            if abs(q.get("percentage") or 0) > 5.0
+                        )
+                        if large_movers >= 5:
+                            logger.info(f"Unusually active market: {large_movers} stocks with >5% daily change, triggering re-evaluation")
+                            should_trigger = True
+                    except Exception:
+                        pass
+
+                # 3. Extreme indicator values or BB squeeze breakout on tracked symbols
+                if not should_trigger:
+                    for entry in self.current_symbols:
+                        symbol = entry["symbol"]
+                        tf = entry["timeframe"]
+                        try:
+                            db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=50)
+                            if not db_candles or len(db_candles) < 26:
+                                continue
+                            raw_candles = [
+                                [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
+                                for c in db_candles
+                            ]
+                            cached_ind = await self._get_cached_indicators(symbol, tf, raw_candles)
+                            if cached_ind:
+                                ind = cached_ind
+                            else:
+                                async with self._indicator_semaphore:
+                                    ind = await asyncio.to_thread(compute_all_indicators, raw_candles)
+                                if ind:
+                                    await self._cache_indicators(symbol, tf, raw_candles, ind)
+                            if not ind:
+                                continue
+
+                            # Extreme RSI (< 20 or > 80)
+                            rsi = ind.get("rsi")
+                            if rsi is not None and (rsi < 20 or rsi > 80):
+                                logger.info(f"Extreme RSI ({rsi:.1f}) for {symbol}, triggering re-evaluation")
+                                should_trigger = True
+                                break
+
+                            # Bollinger Band squeeze breakout
+                            bb_upper = ind.get("bb_upper")
+                            bb_lower = ind.get("bb_lower")
+                            bb_middle = ind.get("bb_middle")
+                            if bb_upper and bb_lower and bb_middle and bb_middle > 0:
+                                bb_width = (bb_upper - bb_lower) / bb_middle
+                                if bb_width < 0.02:
+                                    current_close = raw_candles[-1][4]
+                                    if current_close > bb_upper or current_close < bb_lower:
+                                        logger.info(f"Bollinger Band squeeze breakout for {symbol}, triggering re-evaluation")
+                                        should_trigger = True
+                                        break
+                        except Exception:
+                            continue
+
+                if should_trigger:
+                    self._force_reeval = True
+                    self._reeval_trigger.set()
+                    await asyncio.to_thread(self.redis.set, last_triggered_key, str(time.time()))
+                    await asyncio.to_thread(self.redis.expire, last_triggered_key, 7200)
+            except Exception as e:
+                logger.error(f"Market condition check error: {e}", exc_info=True)
+            await asyncio.sleep(300)  # check every 5 minutes
+
     async def _market_clock_monitor(self):
         """Periodically check market clock and pause/resume trading based on market open/close."""
         await asyncio.sleep(5)  # initial delay
