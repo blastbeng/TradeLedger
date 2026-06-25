@@ -23,6 +23,11 @@ services:
     restart: no
     ports:
       - "8118:8118"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8118 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   bot:
     build: .
@@ -45,7 +50,7 @@ services:
       redis:
         condition: service_healthy
       tor:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./src:/app/src   # for development hot-reload (optional)
       - ./data:/app/data
