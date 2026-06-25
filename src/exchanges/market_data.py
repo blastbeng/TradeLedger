@@ -98,43 +98,121 @@ def get_borsa_italiana_candles(
             logger.debug(f"Could not get ISIN for {symbol}, skipping borsaitaliana")
             return None
 
-    # Determine instrument type and construct URL
+    # Determine instrument type and construct the chart data URL
     instrument_type = _determine_instrument_type(symbol)
 
+    # Map instrument type to the MIC (Market Identifier Code) used by borsaitaliana
+    mic_map = {
+        "stock": "MTAA",
+        "etf": "ETFP",
+        "btp": "MOTX",
+    }
+    mic = mic_map.get(instrument_type, "MTAA")
+
+    # The scheda page is HTML; the actual chart data is loaded via a separate
+    # AJAX endpoint that returns JSON. We call the "dati-completi" page which
+    # contains an embedded JSON data block with historical OHLCV.
     if instrument_type == "btp":
-        url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-MOTX.html?lang=it"
+        base_url = "https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/dati-completi.html"
     elif instrument_type == "etf":
-        url = f"https://www.borsaitaliana.it/borsa/etf/scheda/{isin}-ETFP.html?lang=it"
+        base_url = "https://www.borsaitaliana.it/borsa/etf/dettaglio.html"
     else:  # stock
-        url = f"https://www.borsaitaliana.it/borsa/azioni/scheda/{isin}-MTAA.html?lang=it"
+        base_url = "https://www.borsaitaliana.it/borsa/azioni/dati-completi.html"
+
+    url = f"{base_url}?isin={isin}&mic={mic}&lang=it"
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": url,
-        "Accept": "application/json, text/html",
+        "Referer": f"https://www.borsaitaliana.it/borsa/azioni/scheda/{isin}-{mic}.html?lang=it",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
     }
 
     try:
         response = httpx.get(url, headers=headers, timeout=15.0, follow_redirects=True)
         response.raise_for_status()
 
-        # Try to parse as JSON
-        try:
-            raw_data = response.json()
-        except (json.JSONDecodeError, ValueError):
-            # Response is HTML — try to extract embedded JSON data
-            text = response.text
-            # Look for a JSON array of arrays (OHLCV data format: [[ts, o, h, l, c, v], ...])
-            json_match = re.search(r'\[\[.*?\]\]', text, re.DOTALL)
-            if json_match:
+        # The dati-completi page is HTML with embedded data.
+        # Borsaitaliana embeds historical OHLCV data in a JavaScript block
+        # or in an HTML table. We need to parse it from the HTML.
+        text = response.text
+
+        # Strategy 1: Look for JSON data embedded in JavaScript variables
+        # Borsaitaliana often embeds chart data as JSON in script tags
+        # Patterns: var data = [...]; or JSON.parse('[...]') or data: [...]
+        json_patterns = [
+            # Array of arrays: [[timestamp, open, high, low, close, volume], ...]
+            r'(?:var\s+\w+\s*=\s*|data\s*[:=]\s*|JSON\.parse\(\s*[\'"])(\[\[.*?\]\])',
+            # Single object with data array
+            r'"(?:data|candles|ohlcv|historical|results)"\s*:\s*(\[\[.*?\]\])',
+        ]
+
+        raw_data = None
+        for pattern in json_patterns:
+            match = re.search(pattern, text, re.DOTALL)
+            if match:
                 try:
-                    raw_data = json.loads(json_match.group(0))
+                    raw_data = json.loads(match.group(1))
+                    break
                 except json.JSONDecodeError:
-                    logger.debug(f"Could not extract JSON data from borsaitaliana for {symbol}")
-                    return None
-            else:
-                logger.debug(f"No JSON data found in borsaitaliana response for {symbol}")
-                return None
+                    continue
+
+        # Strategy 2: Parse the HTML table for daily OHLCV data
+        # The dati-completi page may contain a table with historical data
+        if raw_data is None:
+            try:
+                soup = BeautifulSoup(text, "html.parser")
+                table = soup.find("table")
+                if table:
+                    rows = table.find_all("tr")
+                    parsed_rows = []
+                    for row in rows:
+                        cols = row.find_all(["td", "th"])
+                        if len(cols) < 5:
+                            continue
+                        # Try to parse as OHLCV: date, open, high, low, close, volume
+                        col_texts = [c.get_text(strip=True) for c in cols]
+                        # Skip header rows
+                        if any(kw in col_texts[0].lower() for kw in ("data", "date", "giorno")):
+                            continue
+                        try:
+                            # Parse Italian date format (dd/mm/yyyy or dd/mm/yy)
+                            date_str = col_texts[0]
+                            # Try multiple date formats
+                            dt = None
+                            for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y"):
+                                try:
+                                    dt = datetime.strptime(date_str, fmt)
+                                    break
+                                except ValueError:
+                                    continue
+                            if dt is None:
+                                continue
+                            ts = int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+                            # Parse Italian number format (comma as decimal separator)
+                            def _parse_it_num(s):
+                                s = s.replace(".", "").replace(",", ".")
+                                try:
+                                    return float(s)
+                                except ValueError:
+                                    return None
+                            o = _parse_it_num(col_texts[1])
+                            h = _parse_it_num(col_texts[2])
+                            l = _parse_it_num(col_texts[3])
+                            c = _parse_it_num(col_texts[4])
+                            v = _parse_it_num(col_texts[5]) if len(col_texts) > 5 else 0.0
+                            if o and h and l and c:
+                                parsed_rows.append([ts, o, h, l, c, v or 0.0])
+                        except Exception:
+                            continue
+                    if parsed_rows:
+                        raw_data = parsed_rows
+            except Exception as e:
+                logger.debug(f"HTML table parsing failed for {symbol}: {e}")
+
+        if raw_data is None:
+            logger.debug(f"No OHLCV data found in borsaitaliana response for {symbol}")
+            return None
 
         # Handle different JSON formats (some APIs wrap data in a dict)
         if isinstance(raw_data, dict):
@@ -202,7 +280,7 @@ def get_borsa_italiana_candles(
         return None
 
     except Exception as e:
-        logger.debug(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {e}")
+        logger.warning(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {e}")
         return None
 
 
