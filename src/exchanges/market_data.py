@@ -138,13 +138,15 @@ def get_borsa_italiana_candles(
         text = response.text
 
         # Strategy 1: Look for JSON data embedded in JavaScript variables
-        # Borsaitaliana often embeds chart data as JSON in script tags
-        # Patterns: var data = [...]; or JSON.parse('[...]') or data: [...]
+        # Borsaitaliana embeds chart data in various formats within <script> tags.
+        # We try multiple patterns to catch different page layouts.
         json_patterns = [
             # Array of arrays: [[timestamp, open, high, low, close, volume], ...]
             r'(?:var\s+\w+\s*=\s*|data\s*[:=]\s*|JSON\.parse\(\s*[\'"])(\[\[.*?\]\])',
             # Single object with data array
-            r'"(?:data|candles|ohlcv|historical|results)"\s*:\s*(\[\[.*?\]\])',
+            r'"(?:data|candles|ohlcv|historical|results|series)"\s*:\s*(\[\[.*?\]\])',
+            # Borsaitaliana chart data: often in a "series" or "quotes" key
+            r'(?:series|quotes|chartData|chart_data)\s*[:=]\s*(\[\{.*?\}\])',
         ]
 
         raw_data = None
@@ -158,11 +160,27 @@ def get_borsa_italiana_candles(
                     continue
 
         # Strategy 2: Parse the HTML table for daily OHLCV data
-        # The dati-completi page may contain a table with historical data
+        # The dati-completi page may contain a table with historical data.
+        # We look for a table whose first data column contains parseable dates,
+        # rather than blindly grabbing the first table (which is usually a
+        # summary/navigation table, not historical OHLCV).
         if raw_data is None:
             try:
                 soup = BeautifulSoup(text, "html.parser")
-                table = soup.find("table")
+                # Look for a table whose rows contain dates in the first column
+                table = None
+                for t in soup.find_all("table"):
+                    rows = t.find_all("tr")
+                    if len(rows) < 2:
+                        continue
+                    # Check if the second row's first cell looks like a date
+                    sample_cols = rows[1].find_all(["td", "th"])
+                    if len(sample_cols) >= 5:
+                        sample_text = sample_cols[0].get_text(strip=True)
+                        # Quick date-like check: contains "/" or "-" with digits
+                        if re.search(r'\d{1,4}[/\-]\d{1,2}[/\-]\d{1,4}', sample_text):
+                            table = t
+                            break
                 if table:
                     rows = table.find_all("tr")
                     parsed_rows = []
@@ -397,30 +415,6 @@ def _aggregate_candles(candles: List[List], target_tf: str) -> List[List]:
             g['volume']
         ])
     return result
-
-
-def _get_from_date_for_timeframe(tf: str, now: datetime) -> datetime:
-    """Determine a reasonable from_date for Borsa Italiana fallback based on timeframe."""
-    if tf == "1h":
-        return now - timedelta(days=730)       # 2 years (yfinance intraday limit)
-    elif tf == "1d":
-        return now - timedelta(days=365 * 10)  # 10 years
-    elif tf == "1w":
-        return now - timedelta(days=365 * 20)  # 20 years
-    elif tf == "1M":
-        return now - timedelta(days=365 * 30)  # 30 years
-    elif tf == "3M":
-        return now - timedelta(days=365 * 30)
-    elif tf == "6M":
-        return now - timedelta(days=365 * 30)
-    elif tf == "1Y":
-        return now - timedelta(days=365 * 30)
-    elif tf == "3Y":
-        return now - timedelta(days=365 * 30)
-    elif tf == "5Y":
-        return now - timedelta(days=365 * 30)
-    else:
-        return now - timedelta(days=365 * 10)
 
 
 def _fetch_country(symbol: str, max_retries: int = 2) -> Optional[str]:
