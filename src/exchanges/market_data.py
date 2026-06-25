@@ -142,6 +142,16 @@ def _get_yf_session():
         return None
 
 
+def _get_proxies() -> Optional[Dict[str, str]]:
+    """Return a random proxy dict for httpx if enabled, else None."""
+    if settings.YF_PROXY_ENABLED and settings.YF_PROXIES:
+        import random
+        proxy = random.choice(settings.YF_PROXIES)
+        logger.debug(f"Using proxy: {proxy}")
+        return {"http://": proxy, "https://": proxy}
+    return None
+
+
 def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     """Fetch the ISIN code for a symbol using yfinance, cached in Redis for 7 days."""
     if _check_yf_circuit():
@@ -215,7 +225,7 @@ def get_borsa_italiana_candles(
     }
 
     try:
-        response = httpx.get(url, headers=headers, timeout=15.0, follow_redirects=True)
+        response = httpx.get(url, headers=headers, timeout=15.0, follow_redirects=True, proxies=_get_proxies())
         response.raise_for_status()
 
         # The API returns JSON wrapped in HTML <pre> tags
@@ -1111,7 +1121,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
     for page in range(1, 11):
         page_url = f"{url}?&page={page}"
         try:
-            response = httpx.get(page_url, headers=headers, timeout=15.0, follow_redirects=True)
+            response = httpx.get(page_url, headers=headers, timeout=15.0, follow_redirects=True, proxies=_get_proxies())
             if response.status_code != 200:
                 break
 
