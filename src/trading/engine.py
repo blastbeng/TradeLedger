@@ -736,9 +736,20 @@ class TradingEngine:
                             if not ind:
                                 continue
 
-                            # Extreme RSI (< 20 or > 80)
+                            # Extreme RSI — use LLM-configured thresholds (fallback to 20/80)
+                            rsi_oversold = 20.0
+                            rsi_overbought = 80.0
+                            try:
+                                raw = await asyncio.to_thread(self.redis.get, "trading:skip_eval_rsi_oversold")
+                                if raw:
+                                    rsi_oversold = float(raw)
+                                raw = await asyncio.to_thread(self.redis.get, "trading:skip_eval_rsi_overbought")
+                                if raw:
+                                    rsi_overbought = float(raw)
+                            except Exception:
+                                pass
                             rsi = ind.get("rsi")
-                            if rsi is not None and (rsi < 20 or rsi > 80):
+                            if rsi is not None and (rsi < rsi_oversold or rsi > rsi_overbought):
                                 logger.info(f"Extreme RSI ({rsi:.1f}) for {symbol}, triggering re-evaluation")
                                 should_trigger = True
                                 break
@@ -749,7 +760,14 @@ class TradingEngine:
                             bb_middle = ind.get("bb_middle")
                             if bb_upper and bb_lower and bb_middle and bb_middle > 0:
                                 bb_width = (bb_upper - bb_lower) / bb_middle
-                                if bb_width < 0.02:
+                                bb_squeeze_width = 0.02
+                                try:
+                                    raw = await asyncio.to_thread(self.redis.get, "trading:regime_bb_squeeze_width")
+                                    if raw:
+                                        bb_squeeze_width = float(raw)
+                                except Exception:
+                                    pass
+                                if bb_width < bb_squeeze_width:
                                     current_close = raw_candles[-1][4]
                                     if current_close > bb_upper or current_close < bb_lower:
                                         logger.info(f"Bollinger Band squeeze breakout for {symbol}, triggering re-evaluation")
@@ -759,6 +777,12 @@ class TradingEngine:
                             continue
 
                 if should_trigger:
+                    logger.info("Market condition trigger fired – forcing symbol re-evaluation")
+                    if self.notifier:
+                        await self.notifier.send_notification(
+                            "🔄 Market conditions changed – triggering immediate symbol re-evaluation.",
+                            summary={"action": "INFO", "reason": "Market condition triggered re-evaluation"}
+                        )
                     self._force_reeval = True
                     self._reeval_trigger.set()
                     await asyncio.to_thread(self.redis.set, last_triggered_key, str(time.time()))
@@ -2163,6 +2187,15 @@ class TradingEngine:
     async def _reevaluate_symbols_impl(self, force: bool = False):
         # Reset per-cycle spending tracker so new buys are not blocked by prior cycle spending
         self._cycle_spent = 0.0
+
+        # Respect triggered re-evaluation cooldown even for forced re-evals
+        if force:
+            last_triggered = await asyncio.to_thread(self.redis.get, "trading:last_triggered_reeval")
+            if last_triggered:
+                elapsed = time.time() - float(last_triggered)
+                if elapsed < TRIGGERED_REEVALUATION_COOLDOWN:
+                    logger.info(f"Forced re-evaluation skipped: triggered cooldown active ({TRIGGERED_REEVALUATION_COOLDOWN - elapsed:.0f}s remaining)")
+                    return
 
         # Only re-evaluate every SYMBOL_REVALUATION_INTERVAL
         last_key = "trading:last_symbol_eval"
