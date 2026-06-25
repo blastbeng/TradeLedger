@@ -138,6 +138,7 @@ class TradingEngine:
         self._symbol_reeval_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
         self._force_reeval: bool = False
+        self._manual_force_reeval: bool = False
         self._pre_market_reeval: bool = False
         self._running = True
         self._last_state_save = 0
@@ -203,10 +204,12 @@ class TradingEngine:
         """Attach a notification service (e.g., TelegramBot)."""
         self.notifier = notifier
 
-    def trigger_symbol_reevaluation(self, force: bool = False):
+    def trigger_symbol_reevaluation(self, force: bool = False, manual: bool = False):
         """Signal the periodic reevaluate loop to run immediately."""
         if force:
             self._force_reeval = True
+        if manual:
+            self._manual_force_reeval = True
         self._reeval_trigger.set()
 
     async def force_download_all_assets(self):
@@ -501,8 +504,10 @@ class TradingEngine:
                 # Always run re-evaluation, even if paused, to keep generating signals
                 logger.info("Starting symbol re-evaluation...")
                 is_forced = self._force_reeval
+                is_manual = self._manual_force_reeval
                 self._force_reeval = False
-                await self._reevaluate_symbols(force=is_forced)
+                self._manual_force_reeval = False
+                await self._reevaluate_symbols(force=is_forced, manual=is_manual)
                 logger.info("Symbol re-evaluation complete.")
             except Exception as e:
                 logger.error(f"Stock re-evaluation error: {e}", exc_info=True)
@@ -2231,18 +2236,18 @@ class TradingEngine:
                 logger.error(f"Engine loop error: {e}", exc_info=True)
                 await asyncio.sleep(5)
 
-    async def _reevaluate_symbols(self, force: bool = False):
+    async def _reevaluate_symbols(self, force: bool = False, manual: bool = False):
         """Use LLM to select which symbols to trade."""
         async with self._symbol_reeval_lock:
-            return await self._reevaluate_symbols_impl(force=force)
+            return await self._reevaluate_symbols_impl(force=force, manual=manual)
 
-    async def _reevaluate_symbols_impl(self, force: bool = False):
+    async def _reevaluate_symbols_impl(self, force: bool = False, manual: bool = False):
         # Reset per-cycle spending tracker so new buys are not blocked by prior cycle spending
         self._cycle_spent = 0.0
 
         # Respect triggered re-evaluation cooldown for market-condition triggers only.
         # Pre-market re-evaluations are always allowed (they are time-critical).
-        if force and not self._pre_market_reeval:
+        if force and not self._pre_market_reeval and not manual:
             last_triggered = await asyncio.to_thread(self.redis.get, "trading:last_triggered_reeval")
             if last_triggered:
                 elapsed = time.time() - float(last_triggered)
