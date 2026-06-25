@@ -258,6 +258,20 @@ class TelegramBot:
 
         queued_orders = self.engine.queued_orders
 
+        # Batch-fetch current prices for all symbols in open trades and queued orders
+        all_price_symbols = set()
+        for t in open_trades:
+            all_price_symbols.add(t['symbol'].split("/")[0])
+        for q in queued_orders:
+            all_price_symbols.add(q['symbol'].split("/")[0])
+        batch_quotes = {}
+        if all_price_symbols:
+            try:
+                from src.exchanges.market_data import get_quotes
+                batch_quotes = await asyncio.to_thread(get_quotes, list(all_price_symbols))
+            except Exception as e:
+                logger.warning(f"Batch quote fetch failed for trades: {e}")
+
         if not open_trades and not queued_orders:
             await update.message.reply_text("📈 No open trades or queued orders.", reply_markup=self.keyboard)
             return
@@ -277,16 +291,10 @@ class TelegramBot:
 
             ts = datetime.fromtimestamp(t['timestamp'] / 1000).strftime('%Y-%m-%d %H:%M:%S')
 
-            # Fetch current price
-            current_price = None
-            try:
-                from src.exchanges.market_data import get_quotes
-                base_sym = sym.split("/")[0]
-                quotes = await asyncio.to_thread(get_quotes, [base_sym])
-                ticker = quotes.get(base_sym)
-                current_price = ticker.get('last') if ticker else None
-            except Exception as e:
-                logger.warning(f"Could not fetch current price for {sym}: {e}")
+            # Use batched quote
+            base_sym = sym.split("/")[0]
+            ticker = batch_quotes.get(base_sym)
+            current_price = ticker.get('last') if ticker else None
 
             # --- Get position for SL/TP and sector ---
             pos = self.engine.positions.get(sym)
@@ -385,16 +393,10 @@ class TelegramBot:
                 ts = datetime.fromtimestamp(queued_at).strftime('%Y-%m-%d %H:%M:%S') if queued_at else "?"
                 exit_reason = q.get('exit_reason')  # for sells
 
-                # --- Fetch current price and sector ---
-                current_price = None
-                try:
-                    from src.exchanges.market_data import get_quotes
-                    base_sym = sym.split("/")[0]
-                    quotes = await asyncio.to_thread(get_quotes, [base_sym])
-                    ticker = quotes.get(base_sym)
-                    current_price = ticker.get('last') if ticker else None
-                except Exception:
-                    pass
+                # --- Use batched quote ---
+                base_sym = sym.split("/")[0]
+                ticker = batch_quotes.get(base_sym)
+                current_price = ticker.get('last') if ticker else None
                 sector = None
                 for entry in self.engine.current_symbols:
                     if entry['symbol'] == sym:

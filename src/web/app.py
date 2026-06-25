@@ -119,8 +119,11 @@ async def profit():
 async def performance():
     engine = get_engine()
     perf = await run_in_threadpool(engine.get_performance_summary)
-    for row in perf.get("rows", []):
-        row["display_symbol"] = await _get_display_symbol(engine, row["symbol"], row.get("timeframe"))
+    if perf.get("rows"):
+        async def _add_display_to_row(row):
+            row["display_symbol"] = await _get_display_symbol(engine, row["symbol"], row.get("timeframe"))
+            return row
+        perf["rows"] = await asyncio.gather(*[_add_display_to_row(row) for row in perf["rows"]])
     if perf.get("total"):
         total = perf["total"]
         total["display_symbol"] = "TOTAL"
@@ -135,8 +138,10 @@ async def risk():
 async def news():
     engine = get_engine()
     symbols = engine.current_symbols
-    result = []
-    for entry in symbols:
+    if not symbols:
+        return []
+
+    async def _fetch_news_entry(entry):
         symbol = entry["symbol"]
         try:
             news_data = await run_in_threadpool(get_cached_news_summary, symbol)
@@ -144,8 +149,10 @@ async def news():
         except Exception:
             summary = "Could not generate summary."
         display = await _get_display_symbol(engine, symbol, entry.get("timeframe"))
-        result.append({"symbol": symbol, "display_symbol": display, "summary": summary})
-    return result
+        return {"symbol": symbol, "display_symbol": display, "summary": summary}
+
+    result = await asyncio.gather(*[_fetch_news_entry(entry) for entry in symbols])
+    return list(result)
 
 @app.get("/api/messages")
 async def messages():
@@ -180,8 +187,11 @@ async def logs(limit: int = 200):
 async def history(limit: int = 50):
     engine = get_engine()
     trades = engine.trade_history[-limit:]
-    for t in trades:
-        t["display_symbol"] = await _get_display_symbol(engine, t["symbol"], t.get("timeframe"))
+    if trades:
+        async def _add_display_to_trade(t):
+            t["display_symbol"] = await _get_display_symbol(engine, t["symbol"], t.get("timeframe"))
+            return t
+        trades = await asyncio.gather(*[_add_display_to_trade(t) for t in trades])
     return trades
 
 @app.post("/api/pause")
@@ -402,23 +412,35 @@ async def websocket_endpoint(websocket: WebSocket):
                 if _ws_payload_cache is not None and (now - _ws_payload_cache_time) < _WS_PAYLOAD_TTL:
                     payload = _ws_payload_cache
                 else:
-                    # Build current_symbols with display
-                    current_symbols = []
-                    for entry in engine.current_symbols:
+                    # Build current_symbols with display (parallelized to avoid blocking)
+                    async def _build_symbol_entry(entry):
                         entry_copy = dict(entry)
                         entry_copy["display"] = await _get_display_symbol(engine, entry["symbol"], entry.get("timeframe"))
-                        current_symbols.append(entry_copy)
+                        return entry_copy
 
-                    # Build positions with display_symbol
-                    positions = {}
-                    for sym, pos in engine.positions.items():
+                    current_symbols = await asyncio.gather(
+                        *[_build_symbol_entry(entry) for entry in engine.current_symbols]
+                    ) if engine.current_symbols else []
+
+                    # Build positions with display_symbol (parallelized)
+                    async def _build_position_entry(sym, pos):
                         pos_copy = dict(pos)
                         pos_copy["display_symbol"] = await _get_display_symbol(engine, sym, pos.get("timeframe"))
-                        positions[sym] = pos_copy
+                        return sym, pos_copy
+
+                    position_results = await asyncio.gather(
+                        *[_build_position_entry(sym, pos) for sym, pos in engine.positions.items()]
+                    ) if engine.positions else []
+                    positions = dict(position_results)
 
                     perf = await run_in_threadpool(engine.get_performance_summary)
-                    for row in perf.get("rows", []):
-                        row["display_symbol"] = await _get_display_symbol(engine, row["symbol"], row.get("timeframe"))
+                    if perf.get("rows"):
+                        async def _add_display_to_row(row):
+                            row["display_symbol"] = await _get_display_symbol(engine, row["symbol"], row.get("timeframe"))
+                            return row
+                        perf["rows"] = await asyncio.gather(
+                            *[_add_display_to_row(row) for row in perf["rows"]]
+                        )
                     if perf.get("total"):
                         total = perf["total"]
                         total["display_symbol"] = "TOTAL"
