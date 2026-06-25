@@ -240,9 +240,7 @@ def _get_proxies() -> Optional[str]:
 
 
 def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
-    """Fetch the ISIN code for a symbol using yfinance, cached in Redis for 7 days."""
-    if _check_yf_circuit():
-        return None
+    """Fetch the ISIN code for a symbol, using Redis cache first, then yfinance as fallback."""
     redis_client = get_redis_client()
     cache_key = f"isin:{base_symbol}"
     try:
@@ -251,6 +249,11 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
             return cached
     except Exception:
         pass
+
+    # If yfinance circuit is open, we can't fetch the ISIN from yfinance.
+    # Return None to indicate the ISIN is not available.
+    if _check_yf_circuit():
+        return None
 
     suffix = settings.TICKER_SUFFIX
     yf_symbol = f"{base_symbol}{suffix}" if suffix and not base_symbol.endswith(suffix) else base_symbol
@@ -546,11 +549,12 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
     """Scrape a Wikipedia constituent list from one or more URLs.
 
     Returns base symbols (suffix stripped). Tries each URL in order; returns
-    the first non‑empty result.
+    the first non‑empty result. Also extracts and caches ISIN codes in Redis.
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
+    redis_client = get_redis_client()
     for url in urls:
         try:
             response = requests.get(url, headers=headers, timeout=15)
@@ -567,13 +571,15 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
             if isinstance(table.columns, pd.MultiIndex):
                 table.columns = [' '.join(col).strip() for col in table.columns.values]
             
-            # Try to find a ticker column by name
+            # Try to find ticker and ISIN columns by name
             ticker_col = None
+            isin_col = None
             for col in table.columns:
                 col_str = str(col).lower()
-                if any(kw in col_str for kw in ("ticker", "symbol", "code", "isin", "simbolo", "codice", "yahoo", "borsa")):
+                if any(kw in col_str for kw in ("ticker", "symbol", "code", "simbolo", "codice", "yahoo", "borsa")):
                     ticker_col = col
-                    break
+                if "isin" in col_str:
+                    isin_col = col
             
             if ticker_col is None:
                 # Last resort: look for a column whose values look like tickers
@@ -597,11 +603,31 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
                     if non_empty > 0 and ticker_like >= non_empty * 0.6:
                         ticker_col = col
                         break
+
+            # If no explicit ISIN column, look for a column with ISIN-like values
+            if isin_col is None:
+                for col in table.columns:
+                    if col == ticker_col:
+                        continue
+                    sample = table[col].dropna().astype(str).head(20).tolist()
+                    isin_like = 0
+                    non_empty = 0
+                    for s in sample:
+                        s_clean = s.strip().upper()
+                        if not s_clean:
+                            continue
+                        non_empty += 1
+                        if re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", s_clean):
+                            isin_like += 1
+                    if non_empty > 0 and isin_like >= non_empty * 0.8:
+                        isin_col = col
+                        break
             
             if ticker_col is not None:
                 tickers = table[ticker_col].dropna().astype(str).tolist()
+                isins = table[isin_col].dropna().astype(str).tolist() if isin_col is not None else []
                 base_symbols = []
-                for t in tickers:
+                for i, t in enumerate(tickers):
                     t = t.strip().upper()
                     # Skip ISINs (e.g., IT0001233417)
                     if re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", t):
@@ -611,6 +637,14 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
                     base = t.split(".")[0] if "." in t else t
                     if re.match(r"^[A-Z0-9]+$", base):
                         base_symbols.append(base)
+                        # Cache ISIN if available
+                        if i < len(isins):
+                            isin = isins[i].strip().upper()
+                            if re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", isin):
+                                try:
+                                    redis_client.set(f"isin:{base}", isin, ex=7 * 24 * 3600)
+                                except Exception:
+                                    pass
                 
                 if base_symbols:
                     logger.info(f"Discovered {len(base_symbols)} {index_name} tickers from {url}")
