@@ -1556,19 +1556,8 @@ class TradingEngine:
             await asyncio.sleep(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS)
 
     async def _cleanup_yf_cache_loop(self):
-        """Periodically delete the yfinance cache directory if no downloads are running."""
-        import shutil
-        import os
-        cache_dir = os.path.join(settings.DATA_DIR, ".cache")
-        while self._running:
-            await asyncio.sleep(3600)  # check every hour
-            if not self._market_data_running and not self._full_download_running:
-                try:
-                    if os.path.exists(cache_dir):
-                        shutil.rmtree(cache_dir)
-                        logger.info(f"Deleted yfinance cache directory: {cache_dir}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete yfinance cache directory: {e}")
+        """No-op: yfinance manages its own cache. External deletion caused SQLite errors."""
+        pass
 
     async def _download_all_news_loop(self):
         """Periodically pre‑fetch news for ALL tradable assets (stocks, ETFs, BTPs)."""
@@ -2307,7 +2296,9 @@ class TradingEngine:
         self._background_tasks.append(asyncio.create_task(self._refresh_current_symbols_news_fast()))
         self._background_tasks.append(asyncio.create_task(self._download_market_data_loop()))
         self._background_tasks.append(asyncio.create_task(self._download_all_assets_data_loop()))
-        self._background_tasks.append(asyncio.create_task(self._cleanup_yf_cache_loop()))
+        # yfinance cache cleanup removed – it caused OperationalError('unable to open database file')
+        # when deleting the cache directory while yfinance was actively using it from other tasks.
+        # yfinance manages its own cache internally and does not need external cleanup.
         self._background_tasks.append(asyncio.create_task(self._download_all_news_loop()))
         self._background_tasks.append(asyncio.create_task(self._risk_management_loop()))
         self._background_tasks.append(asyncio.create_task(self._periodic_reconcile()))
