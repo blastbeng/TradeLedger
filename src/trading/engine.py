@@ -535,6 +535,8 @@ class TradingEngine:
         self._download_executor.shutdown(wait=True)
         logger.info("Database write executor shut down.")
         logger.info("Download executor shut down.")
+        self._quote_executor.shutdown(wait=False)
+        logger.info("Quote executor shut down.")
         # Close the PostgreSQL connection pool if it was used
         from src.database import close_pool
         close_pool()
