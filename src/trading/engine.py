@@ -99,6 +99,10 @@ class TradingEngine:
         # download tasks from exhausting the default asyncio thread pool used
         # by the web server, Telegram bot, and engine loop.
         self._download_executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="downloader")
+        # Dedicated thread pool for quote fetching – prevents zombie get_quotes
+        # threads (from asyncio.wait_for timeouts) from exhausting the default
+        # asyncio thread pool used by the web server and Telegram bot.
+        self._quote_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="quotes")
 
         self.current_symbols: List[Dict[str, str]] = []   # each dict: {"symbol": ..., "timeframe": ...}
         self.positions: Dict[str, Dict[str, Any]] = {}  # symbol -> position info
@@ -319,7 +323,7 @@ class TradingEngine:
             missing.append(sym.split("/")[0])
         if missing:
             try:
-                raw = await asyncio.to_thread(get_quotes, missing)
+                raw = await self._get_quotes_async(missing, timeout=30.0)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
@@ -354,6 +358,22 @@ class TradingEngine:
         self._balance_cache = balance
         self._balance_cache_time = now
         return balance
+
+    async def _get_quotes_async(self, symbols: List[str], timeout: float = 30.0) -> Dict[str, Dict[str, Any]]:
+        """Fetch quotes using the dedicated quote thread pool with a timeout.
+        This prevents slow yfinance calls from blocking the default asyncio thread pool."""
+        loop = asyncio.get_running_loop()
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(self._quote_executor, get_quotes, symbols),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Quote fetch timed out for {len(symbols)} symbols")
+            return {}
+        except Exception as e:
+            logger.warning(f"Quote fetch failed for {len(symbols)} symbols: {e}")
+            return {}
 
     async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Return aggregate news sentiment, cached for 60 seconds to reduce DB load."""
@@ -686,7 +706,7 @@ class TradingEngine:
                     # Limit to 200 pairs to avoid thread pool exhaustion
                     breadth_pairs = available_pairs[:200]
                     plain_breadth = [s.split("/")[0] for s in breadth_pairs]
-                    raw_breadth = await asyncio.to_thread(get_quotes, plain_breadth)
+                    raw_breadth = await self._get_quotes_async(plain_breadth, timeout=60.0)
                     breadth_tickers = {pair: raw_breadth.get(pair.split("/")[0], {}) for pair in breadth_pairs}
                     positive_count = sum(
                         1 for sym in breadth_pairs
@@ -761,7 +781,7 @@ class TradingEngine:
                         plain_assets = await self._get_tradable_assets()
                         sample_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets[:50]]
                         plain_sample = [s.split("/")[0] for s in sample_pairs]
-                        quotes = await asyncio.to_thread(get_quotes, plain_sample)
+                        quotes = await self._get_quotes_async(plain_sample, timeout=30.0)
                         large_movers = sum(
                             1 for q in quotes.values()
                             if abs(q.get("percentage") or 0) > 5.0
@@ -1179,7 +1199,7 @@ class TradingEngine:
                     # (limit to 200 to avoid excessive API calls)
                     sample_for_vol = available_pairs[:200]
                     plain_sample = [s.split("/")[0] for s in sample_for_vol]
-                    raw_quotes = await asyncio.to_thread(get_quotes, plain_sample)
+                    raw_quotes = await self._get_quotes_async(plain_sample, timeout=30.0)
                     tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_for_vol}
                     def _vol(sym):
                         t = tickers.get(sym, {})
@@ -1610,13 +1630,7 @@ class TradingEngine:
                     chunks = [plain_assets[i:i + chunk_size] for i in range(0, len(plain_assets), chunk_size)]
                     async def _fetch_chunk(chunk):
                         async with asyncio.Semaphore(3):
-                            try:
-                                return await asyncio.wait_for(
-                                    asyncio.to_thread(get_quotes, chunk),
-                                    timeout=15.0
-                                )
-                            except asyncio.TimeoutError:
-                                return {}
+                            return await self._get_quotes_async(chunk, timeout=30.0)
                     await asyncio.gather(*[_fetch_chunk(chunk) for chunk in chunks])
             except Exception as e:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
@@ -2122,7 +2136,7 @@ class TradingEngine:
                 # External sell detected
                 sold_amount = recorded_amount - actual_balance
                 try:
-                    tickers_map = await asyncio.to_thread(get_quotes, [symbol.split("/")[0]])
+                    tickers_map = await self._get_quotes_async([symbol.split("/")[0]], timeout=15.0)
                     ticker = tickers_map.get(symbol.split("/")[0])
                     current_price = ticker['last'] if ticker else pos.get("price", 0.0)
                 except Exception:
@@ -4265,14 +4279,7 @@ class TradingEngine:
         try:
             async with self._exchange_semaphore:
                 base = symbol.split("/")[0]
-                try:
-                    quotes = await asyncio.wait_for(
-                        asyncio.to_thread(get_quotes, [base]),
-                        timeout=15.0
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(f"Quote fetch timed out for {symbol}")
-                    quotes = {}
+                quotes = await self._get_quotes_async([base], timeout=15.0)
                 ticker = quotes.get(base)
             if ticker is None:
                 logger.warning(f"No ticker data for {symbol}, skipping.")
@@ -6370,7 +6377,7 @@ class TradingEngine:
             missing_risk.append(sym.split("/")[0])
         if missing_risk:
             try:
-                raw = await asyncio.to_thread(get_quotes, missing_risk)
+                raw = await self._get_quotes_async(missing_risk, timeout=30.0)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
@@ -6887,7 +6894,7 @@ class TradingEngine:
 
             # Fetch current price early for position sizing and stop calculations
             base = symbol.split("/")[0]
-            quotes = await asyncio.to_thread(get_quotes, [base])
+            quotes = await self._get_quotes_async([base], timeout=15.0)
             ticker = quotes.get(base)
             current_price = ticker['last'] if ticker else None
             if current_price is None or current_price <= 0:
@@ -9630,7 +9637,7 @@ class TradingEngine:
 
         try:
             base = symbol.split("/")[0]
-            quotes = await asyncio.to_thread(get_quotes, [base])
+            quotes = await self._get_quotes_async([base], timeout=15.0)
             ticker = quotes.get(base)
             price = ticker["last"]
         except Exception as e:
@@ -9824,7 +9831,7 @@ class TradingEngine:
                             # Fetch current price
                             try:
                                 base = queued["symbol"].split("/")[0]
-                                quotes = await asyncio.to_thread(get_quotes, [base])
+                                quotes = await self._get_quotes_async([base], timeout=15.0)
                                 ticker = quotes.get(base)
                             except Exception:
                                 pass
@@ -10597,7 +10604,7 @@ class TradingEngine:
         is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
 
         async with self._exchange_semaphore:
-            quotes = await asyncio.to_thread(get_quotes, [base_symbol])
+            quotes = await self._get_quotes_async([base_symbol], timeout=15.0)
             ticker = quotes.get(base_symbol)
         if ticker is None:
             return {"error": "No ticker data"}
