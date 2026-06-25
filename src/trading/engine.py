@@ -239,9 +239,10 @@ class TradingEngine:
                 # Download timeframes in the exact order defined in OHLCV_TIMEFRAMES (longest to shortest)
                 for tf in settings.OHLCV_TIMEFRAMES:
                     try:
-                        await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
-                        await self._fill_gaps(pair, tf)
-                        # Compute and store indicators after candles are downloaded
+                        inserted = await self._backfill_ohlcv(pair, tf, start_ms, now_ms, force=True)
+                        if inserted > 0:
+                            await self._fill_gaps(pair, tf)
+                        # Always compute indicators for force download
                         db_candles = await asyncio.to_thread(get_ohlcv, pair, tf, limit=200)
                         if db_candles:
                             raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
@@ -1286,8 +1287,9 @@ class TradingEngine:
             display += f" ({timeframe})"
         return display
 
-    async def _backfill_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, max_candles: int = None, ignore_existing: bool = False):
-        """Fetch and store all missing OHLCV candles between start_ms and end_ms."""
+    async def _backfill_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, max_candles: int = None, ignore_existing: bool = False, force: bool = False) -> int:
+        """Fetch and store all missing OHLCV candles between start_ms and end_ms.
+        Returns the number of candles inserted."""
         logger.debug(f"Backfill started for {symbol} {timeframe}: {start_ms} → {end_ms}")
         if ignore_existing:
             since = start_ms
@@ -1296,6 +1298,14 @@ class TradingEngine:
             if latest_ts is None:
                 since = start_ms
             else:
+                # Skip the API call entirely if the latest candle is recent enough
+                # (within one candle interval of now). No new data to fetch.
+                if not force:
+                    interval_ms = self._timeframe_to_ms(timeframe)
+                    now_ms = int(time.time() * 1000)
+                    if latest_ts >= now_ms - interval_ms:
+                        logger.debug(f"Skipping backfill for {symbol} {timeframe}: data is up to date (latest_ts={latest_ts})")
+                        return 0
                 since = max(start_ms, latest_ts + 1)
 
         total_inserted = 0
@@ -1339,6 +1349,7 @@ class TradingEngine:
             logger.debug(f"Backfill partial for {symbol} {timeframe}: {total_inserted} candles inserted (limit reached)")
         else:
             logger.info(f"Backfill complete for {symbol} {timeframe}: {total_inserted} candles inserted")
+        return total_inserted
 
     async def _fill_gaps(self, symbol: str, timeframe: str):
         """Detect and fill gaps in stored OHLCV data for a symbol/timeframe."""
@@ -1382,7 +1393,7 @@ class TradingEngine:
         start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
         logger.debug(f"Starting immediate backfill for newly selected symbol {symbol} ({timeframe})")
         try:
-            await self._backfill_ohlcv(symbol, timeframe, start_ms, now_ms)
+            inserted = await self._backfill_ohlcv(symbol, timeframe, start_ms, now_ms)
             await self._fill_gaps(symbol, timeframe)
             # Compute and store indicators after backfill
             db_candles = await asyncio.to_thread(get_ohlcv, symbol, timeframe, limit=200)
@@ -1416,13 +1427,14 @@ class TradingEngine:
                         tf = symbol_entry["timeframe"]
                         logger.debug(f"Downloading market data for {symbol} ({tf})")
                         try:
-                            await self._backfill_ohlcv(symbol, tf, start_ms, now_ms)
-                            await self._fill_gaps(symbol, tf)
-                            # Compute and store indicators after candles are downloaded
-                            db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=200)
-                            if db_candles:
-                                raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
-                                await self._compute_and_store_indicators(symbol, tf, raw_candles)
+                            inserted = await self._backfill_ohlcv(symbol, tf, start_ms, now_ms)
+                            if inserted > 0:
+                                await self._fill_gaps(symbol, tf)
+                                # Compute and store indicators after candles are downloaded
+                                db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=200)
+                                if db_candles:
+                                    raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+                                    await self._compute_and_store_indicators(symbol, tf, raw_candles)
                         except Exception as e:
                             logger.warning(f"Market data download failed for {symbol} {tf}: {e}")
 
@@ -1471,13 +1483,14 @@ class TradingEngine:
                 async def _download_symbol_data(pair: str):
                     for tf in settings.OHLCV_TIMEFRAMES:
                         try:
-                            await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
-                            await self._fill_gaps(pair, tf)
-                            # Compute and store indicators after candles are downloaded
-                            db_candles = await asyncio.to_thread(get_ohlcv, pair, tf, limit=200)
-                            if db_candles:
-                                raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
-                                await self._compute_and_store_indicators(pair, tf, raw_candles)
+                            inserted = await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
+                            if inserted > 0:
+                                await self._fill_gaps(pair, tf)
+                                # Compute and store indicators after candles are downloaded
+                                db_candles = await asyncio.to_thread(get_ohlcv, pair, tf, limit=200)
+                                if db_candles:
+                                    raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+                                    await self._compute_and_store_indicators(pair, tf, raw_candles)
                         except Exception as e:
                             logger.warning(f"Full download failed for {pair} {tf}: {e}")
 
