@@ -102,7 +102,7 @@ class TradingEngine:
         # Dedicated thread pool for quote fetching – prevents zombie get_quotes
         # threads (from asyncio.wait_for timeouts) from exhausting the default
         # asyncio thread pool used by the web server and Telegram bot.
-        self._quote_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="quotes")
+        self._quote_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="quotes")
 
         self.current_symbols: List[Dict[str, str]] = []   # each dict: {"symbol": ..., "timeframe": ...}
         self.positions: Dict[str, Dict[str, Any]] = {}  # symbol -> position info
@@ -1643,11 +1643,12 @@ class TradingEngine:
                         plain_assets = [s.split("/")[0] for s in sample_pairs]
 
                     # Fetch in chunks to avoid overloading yfinance
-                    chunk_size = 20
+                    # Smaller chunks + longer timeout for background task (not time-critical)
+                    chunk_size = 10
                     chunks = [plain_assets[i:i + chunk_size] for i in range(0, len(plain_assets), chunk_size)]
                     async def _fetch_chunk(chunk):
                         async with asyncio.Semaphore(3):
-                            return await self._get_quotes_async(chunk, timeout=60.0)
+                            return await self._get_quotes_async(chunk, timeout=120.0)
                     await asyncio.gather(*[_fetch_chunk(chunk) for chunk in chunks])
             except Exception as e:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
@@ -2603,10 +2604,10 @@ class TradingEngine:
 
         # Parallelize get_quotes by splitting into chunks of 50
         plain_sample = [s.split("/")[0] for s in stock_sample]
-        chunk_size = 20
+        chunk_size = 10
         chunks = [plain_sample[i:i + chunk_size] for i in range(0, len(plain_sample), chunk_size)]
         async def _fetch_quotes_with_limit(chunk):
-            return await self._get_quotes_async(chunk, timeout=30.0)
+            return await self._get_quotes_async(chunk, timeout=45.0)
         quote_tasks = [_fetch_quotes_with_limit(chunk) for chunk in chunks]
         quote_results = await asyncio.gather(*quote_tasks)
         raw_quotes = {}
