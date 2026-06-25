@@ -502,6 +502,22 @@ def _aggregate_candles(candles: List[List], target_tf: str) -> List[List]:
     return result
 
 
+def _merge_candles(borsa_candles: Optional[List[List]], yf_candles: Optional[List[List]]) -> List[List]:
+    """Merge two candle lists, deduplicating by timestamp (borsaitaliana takes precedence)."""
+    if not borsa_candles and not yf_candles:
+        return []
+    if not borsa_candles:
+        return yf_candles
+    if not yf_candles:
+        return borsa_candles
+    merged = {}
+    for c in yf_candles:
+        merged[c[0]] = c
+    for c in borsa_candles:  # borsaitaliana overrides yfinance for same timestamp
+        merged[c[0]] = c
+    return sorted(merged.values(), key=lambda c: c[0])
+
+
 def _fetch_country(symbol: str, max_retries: int = 2) -> Optional[str]:
     """Fetch the country property from yfinance info for a symbol, with retries.
 
@@ -1047,63 +1063,57 @@ def get_multi_timeframe_bars(
         except Exception:
             pass
 
-        # --- Try borsaitaliana first (primary source) ---
+        # --- 1. Always try borsaitaliana first ---
         borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
-        if borsa_candles:
-            result[tf] = borsa_candles
-            try:
-                redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
-            except Exception:
-                pass
-            continue
 
-        # BTPs: never fall back to yfinance — borsaitaliana is the only data source
+        # BTPs: only borsaitaliana, no yfinance
         if re.match(r'^IT[A-Z0-9]{10}$', symbol):
-            result[tf] = []
-            continue
-
-        if _check_yf_circuit():
-            result[tf] = []
-            continue
-
-        # --- Fall back to yfinance ---
-        try:
-            ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
-            # yfinance intraday data limits: 60 days for 5m/15m, 730 days for 60m
-            if fetch_interval in ("5m", "15m"):
-                period = "60d"
-            elif fetch_interval == "60m":
-                period = "730d"
-            else:
-                period = "max"
-            hist = ticker.history(period=period, interval=fetch_interval, auto_adjust=False, actions=False)
-            yf_candles = None
-            if not hist.empty:
-                # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
-                ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
-                hist = hist[[col for col in ohlcv_cols if col in hist.columns]]
-                candles = []
-                for idx, row in hist.iterrows():
-                    ts = int(idx.timestamp() * 1000)
-                    candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
-                
-                if needs_aggregation:
-                    candles = _aggregate_candles(candles, tf)
-                
-                yf_candles = candles[-limit:]
-            else:
-                yf_candles = []
-            
-            if yf_candles:
-                result[tf] = yf_candles
+            result[tf] = borsa_candles or []
+            if borsa_candles:
                 try:
                     redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
                 except Exception:
                     pass
-            else:
-                result[tf] = []
-        except Exception as e:
-            logger.warning(f"Failed to fetch bars for {symbol} {tf}: {e}")
+            continue
+
+        # --- 2. Also fetch from yfinance (not just fallback — always merge) ---
+        yf_candles: List[List] = []
+        if not _check_yf_circuit():
+            yf_symbol = symbol
+            if not re.match(r'^IT[A-Z0-9]{10}$', symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
+                yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
+
+            try:
+                ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
+                if fetch_interval in ("5m", "15m"):
+                    period = "60d"
+                elif fetch_interval == "60m":
+                    period = "730d"
+                else:
+                    period = "max"
+                hist = ticker.history(period=period, interval=fetch_interval, auto_adjust=False, actions=False)
+                if not hist.empty:
+                    ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
+                    hist = hist[[col for col in ohlcv_cols if col in hist.columns]]
+                    candles = []
+                    for idx, row in hist.iterrows():
+                        ts = int(idx.timestamp() * 1000)
+                        candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
+                    if needs_aggregation:
+                        candles = _aggregate_candles(candles, tf)
+                    yf_candles = candles
+            except Exception as e:
+                logger.debug(f"yfinance fetch failed for {symbol} {tf}: {e}")
+
+        # --- 3. Merge both sources ---
+        merged = _merge_candles(borsa_candles, yf_candles)
+        if merged:
+            result[tf] = merged[-limit:] if limit else merged
+            try:
+                redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
+            except Exception:
+                pass
+        else:
             result[tf] = []
     return result
 
@@ -1137,71 +1147,62 @@ def get_bars_range(
     except Exception:
         pass
 
-    # --- Try borsaitaliana first (primary source) ---
+    # --- 1. Always try borsaitaliana first ---
     borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
-    if borsa_candles:
-        try:
-            redis_client.set(cache_key, json.dumps(borsa_candles), ex=300)
-        except Exception:
-            pass
-        return borsa_candles
 
-    # BTPs: never fall back to yfinance — borsaitaliana is the only data source
+    # BTPs: only borsaitaliana, no yfinance
     if re.match(r'^IT[A-Z0-9]{10}$', symbol):
-        return []
-
-    if _check_yf_circuit():
-        return []
-
-    # --- Fall back to yfinance ---
-    # Format symbol for Yahoo Finance: BTP ISINs are used as-is, stocks get TICKER_SUFFIX if missing
-    yf_symbol = symbol
-    if not re.match(r'^IT[A-Z0-9]{10}$', symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
-        yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
-
-    start_dt = datetime.fromtimestamp(start_ms / 1000.0, tz=timezone.utc)
-    end_dt = datetime.now(timezone.utc)
-
-    # Yahoo Finance only provides intraday data for the last 730 days.
-    # Clamp the start date to avoid "requested range must be within the last 730 days" errors.
-    if interval in ("5m", "15m", "60m"):
-        earliest_allowed = datetime.now(timezone.utc) - timedelta(days=730)
-        if start_dt < earliest_allowed:
-            logger.warning(
-                f"Clamping start date for {symbol} {timeframe} from {start_dt} to {earliest_allowed} "
-                f"(Yahoo intraday limit 730 days)"
-            )
-            start_dt = earliest_allowed
-
-    try:
-        ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
-        hist = ticker.history(start=start_dt, end=end_dt, interval=fetch_interval, auto_adjust=False, actions=False)
-        yf_candles = None
-        if not hist.empty:
-            # Filter to essential OHLCV columns only (drop Dividends, Stock Splits, etc.)
-            ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
-            hist = hist[[col for col in ohlcv_cols if col in hist.columns]]
-            candles = []
-            for idx, row in hist.iterrows():
-                ts = int(idx.timestamp() * 1000)
-                candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
-            if needs_aggregation:
-                candles = _aggregate_candles(candles, timeframe)
-            yf_candles = candles[-limit:]
-        else:
-            yf_candles = []
-        
-        if yf_candles:
-            result = yf_candles
+        if borsa_candles:
             try:
-                redis_client.set(cache_key, json.dumps(result), ex=300)
+                redis_client.set(cache_key, json.dumps(borsa_candles), ex=300)
             except Exception:
                 pass
-            return result
+            return borsa_candles
         return []
-    except Exception as e:
-        logger.warning(f"Failed to fetch bars range for {symbol} {timeframe}: {e}")
-        return []
+
+    # --- 2. Also fetch from yfinance (not just fallback — always merge) ---
+    yf_candles: List[List] = []
+    if not _check_yf_circuit():
+        yf_symbol = symbol
+        if settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
+            yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
+
+        start_dt = datetime.fromtimestamp(start_ms / 1000.0, tz=timezone.utc)
+        end_dt = datetime.now(timezone.utc)
+
+        if interval in ("5m", "15m", "60m"):
+            earliest_allowed = datetime.now(timezone.utc) - timedelta(days=730)
+            if start_dt < earliest_allowed:
+                start_dt = earliest_allowed
+
+        try:
+            ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
+            hist = ticker.history(start=start_dt, end=end_dt, interval=fetch_interval, auto_adjust=False, actions=False)
+            if not hist.empty:
+                ohlcv_cols = ["Open", "High", "Low", "Close", "Volume"]
+                hist = hist[[col for col in ohlcv_cols if col in hist.columns]]
+                candles = []
+                for idx, row in hist.iterrows():
+                    ts = int(idx.timestamp() * 1000)
+                    candles.append([ts, row["Open"], row["High"], row["Low"], row["Close"], row["Volume"]])
+                if needs_aggregation:
+                    candles = _aggregate_candles(candles, timeframe)
+                yf_candles = candles
+        except Exception as e:
+            logger.debug(f"yfinance fetch failed for {symbol} {timeframe}: {e}")
+
+    # --- 3. Merge both sources ---
+    merged = _merge_candles(borsa_candles, yf_candles)
+
+    if merged:
+        if limit and len(merged) > limit:
+            merged = merged[-limit:]
+        try:
+            redis_client.set(cache_key, json.dumps(merged), ex=300)
+        except Exception:
+            pass
+        return merged
+    return []
 
 
 def discover_btp_bonds() -> List[Dict[str, Any]]:
