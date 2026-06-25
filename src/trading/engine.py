@@ -2565,6 +2565,20 @@ class TradingEngine:
             )
         ]
 
+        # --- Pre-rank candidates by DB volume to limit expensive quote fetching ---
+        if settings.OHLCV_TIMEFRAMES and len(sample_pairs) > settings.SYMBOL_SELECTION_CANDIDATE_LIMIT:
+            pre_rank_since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000  # last 7 days
+            pre_rank_summary = await asyncio.to_thread(
+                get_ohlcv_summary_for_symbols, sample_pairs, ["1d"], pre_rank_since
+            )
+            sample_pairs = sorted(
+                sample_pairs,
+                key=lambda s: pre_rank_summary.get(s, {}).get("1d", {}).get("volume", 0),
+                reverse=True
+            )
+            sample_pairs = sample_pairs[:settings.SYMBOL_SELECTION_CANDIDATE_LIMIT]
+            logger.info(f"Pre-ranked and limited candidates to {len(sample_pairs)} by DB volume")
+
         # Separate stocks and BTPs for quote fetching
         stock_sample = [s for s in sample_pairs if s in stock_pairs]
         btp_sample = [s for s in sample_pairs if s in btp_pairs]
@@ -2643,6 +2657,10 @@ class TradingEngine:
         btp_sample_sorted = [s for s in sample_pairs if s in btp_pairs]
         # Pass ALL discovered stocks, ETFs, and BTPs to the LLM
         sample_pairs = stock_sample_sorted + etf_sample_sorted + btp_sample_sorted
+        # Limit the number of symbols for expensive OHLCV/indicator fetches
+        # Only the top 50 by volume get full OHLCV/indicator analysis;
+        # the rest will have composite_score=0 and won't make it to the LLM prompt
+        _max_ohlcv_symbols = 50
 
         logger.info("Re-evaluation step 6/12: Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
         news_sentiment = {}
@@ -2697,8 +2715,8 @@ class TradingEngine:
         # Fetch OHLCV from database only for ALL candidate pairs.
         # Background tasks (_download_all_assets_data_loop) keep the DB populated.
         # This avoids blocking reevaluation on slow API calls.
-        sorted_by_vol = sample_pairs
-        logger.info("Re-evaluation step 7/12: Fetching OHLCV from DB for %d symbols...", len(sorted_by_vol))
+        sorted_by_vol = sample_pairs[:_max_ohlcv_symbols]
+        logger.info("Re-evaluation step 7/12: Fetching OHLCV from DB for %d symbols (limited from %d)...", len(sorted_by_vol), len(sample_pairs))
 
         ohlcv_data = {}
         if settings.OHLCV_TIMEFRAMES:
@@ -2939,9 +2957,27 @@ class TradingEngine:
             if sym not in shortlist:
                 shortlist.append(sym)
 
-        # Replace sample_pairs with the curated shortlist for all subsequent steps
-        sample_pairs = shortlist
-        logger.info(f"Curated LLM candidate list: {len(sample_pairs)} symbols")
+        # Limit the final candidate list sent to the LLM to keep prompt size manageable
+        top_n = settings.LLM_STOCK_SELECTION_TOP_N
+        top_by_composite = sorted_by_composite[:top_n]
+        final_set = set(top_by_composite)
+        shortlist_set = set(shortlist)
+        # Always keep current symbols, ETFs, and BTPs
+        for entry in self.current_symbols:
+            if entry["symbol"] in shortlist_set:
+                final_set.add(entry["symbol"])
+        for etf in etf_pairs:
+            if etf in shortlist_set:
+                final_set.add(etf)
+        for btp in btp_pairs:
+            if btp in shortlist_set:
+                final_set.add(btp)
+        # Rebuild sample_pairs preserving composite score order
+        sample_pairs = [s for s in sorted_by_composite if s in final_set]
+        # Add any remaining symbols from final_set not in sorted_by_composite
+        remaining_syms = final_set - set(sample_pairs)
+        sample_pairs.extend(list(remaining_syms))
+        logger.info(f"Curated LLM candidate list: {len(sample_pairs)} symbols (limited from {len(shortlist)})")
 
         # --- Detect upcoming corporate events from news (parallelized) ---
         symbol_events: Dict[str, Dict[str, Any]] = {}
