@@ -51,9 +51,23 @@ class RedisLogHandler(logging.Handler):
         super().__init__()
         self.max_entries = max_entries
         self.setLevel(logging.INFO)   # only INFO and above to keep the list manageable
+        self._seen_keys: set = set()
+        self._seen_keys_max = 500
 
     def emit(self, record):
         try:
+            # Deduplication: skip if we've already processed this exact record.
+            # record.created is a float timestamp set when the LogRecord was
+            # constructed; it is identical across multiple handler calls for
+            # the same record.
+            key = (record.created, record.name, record.levelname, record.msg)
+            if key in self._seen_keys:
+                return
+            self._seen_keys.add(key)
+            # Prevent unbounded growth
+            if len(self._seen_keys) > self._seen_keys_max:
+                self._seen_keys.clear()
+
             redis_client = get_redis_client()
             entry = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -72,7 +86,10 @@ redis_log_handler = RedisLogHandler(max_entries=200)
 # Use a simple format: time - logger - level - message
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 redis_log_handler.setFormatter(formatter)
-logging.getLogger().addHandler(redis_log_handler)
+# Guard against double-addition (e.g., if module is re-imported)
+_root_logger = logging.getLogger()
+if not any(isinstance(h, RedisLogHandler) for h in _root_logger.handlers):
+    _root_logger.addHandler(redis_log_handler)
 
 def _seed_telegram_chat_id():
     """If TELEGRAM_CHAT_ID is set in env and no chat_id is stored, store it."""
@@ -102,6 +119,13 @@ async def main():
     log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
     log_config["loggers"]["uvicorn.access"]["level"] = "DEBUG"
     log_config["loggers"]["uvicorn"]["level"] = settings.LOG_LEVEL.upper()
+
+    # Remove root logger from uvicorn's config to prevent dictConfig from
+    # replacing or duplicating our custom handlers (RedisLogHandler and
+    # StreamHandler from basicConfig).  Uvicorn's own loggers have
+    # propagate=False and their own handlers, so they don't need the root.
+    if "" in log_config.get("loggers", {}):
+        del log_config["loggers"][""]
 
     # Add the health endpoint filter
     log_config["filters"] = {
