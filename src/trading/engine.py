@@ -2909,7 +2909,8 @@ class TradingEngine:
                         }
                     ohlcv_summary[symbol] = summary
 
-        prompt = build_stock_selection_prompt(
+        prompt = await asyncio.to_thread(
+            build_stock_selection_prompt,
             available_symbols=sample_pairs,
             current_symbols=self.current_symbols,
             max_symbols=self.effective_max_symbols,
@@ -4536,7 +4537,8 @@ class TradingEngine:
             except Exception:
                 pass
 
-            prompt = build_strategy_prompt(
+            prompt = await asyncio.to_thread(
+                build_strategy_prompt,
                 symbol=symbol,
                 ticker=ticker,
                 balance=balance,
@@ -10741,7 +10743,8 @@ class TradingEngine:
 
         remaining = max(0.0, base_balance - self._cycle_spent)
 
-        prompt = build_strategy_prompt(
+        prompt = await asyncio.to_thread(
+            build_strategy_prompt,
             symbol=symbol, ticker=ticker, balance=balance, open_positions=open_positions,
             per_symbol_budget=per_symbol_budget, max_symbols=self.effective_max_symbols,
             base_currency=self.base_currency, performance=perf, ohlcv_data=ohlcv_data,

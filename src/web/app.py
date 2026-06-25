@@ -72,7 +72,8 @@ async def health():
 async def status():
     engine = get_engine()
     redis = get_redis_client()
-    paused = redis.get("trading:paused") == "1"
+    paused_raw = await asyncio.to_thread(redis.get, "trading:paused")
+    paused = paused_raw == "1"
     market_open = await engine._is_market_open()
 
     current_symbols = []
