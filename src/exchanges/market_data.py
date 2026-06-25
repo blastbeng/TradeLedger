@@ -992,10 +992,15 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                 group_by="ticker",
                 session=_get_yf_session(),
             )
+            if batch_hist is None or batch_hist.empty:
+                logger.warning(
+                    f"get_quotes: yf.download returned empty data for {len(stock_symbols)} symbols. "
+                    f"Yahoo Finance may be rate-limiting or blocking requests."
+                )
             for sym in stock_symbols:
                 try:
                     if len(stock_symbols) > 1:
-                        if sym not in batch_hist.columns.levels[1]:
+                        if batch_hist is None or batch_hist.empty or sym not in batch_hist.columns.levels[1]:
                             continue
                         sym_data = batch_hist[sym]
                     else:
@@ -1021,6 +1026,11 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                     pass
         except Exception as e:
             logger.warning(f"Batch download failed: {e}")
+    elif stock_symbols and _check_yf_circuit():
+        logger.warning(
+            f"get_quotes: yfinance circuit breaker is OPEN — skipping quote fetch for {len(stock_symbols)} symbols. "
+            f"Quotes will be served from Redis cache or database if available."
+        )
 
     # Cache the result per-symbol in Redis (5 minutes) and save to database
     quotes_to_save = {}
@@ -1038,6 +1048,17 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
             save_quotes_batch(quotes_to_save)
         except Exception as e:
             logger.warning(f"Failed to save quotes to database: {e}")
+
+    # Summary log
+    valid_count = sum(1 for sym in missing_symbols if result[sym].get("last") is not None)
+    if valid_count == 0 and missing_symbols:
+        logger.warning(
+            f"get_quotes: 0/{len(missing_symbols)} symbols got valid prices. "
+            f"Circuit breaker open: {_check_yf_circuit()}. "
+            f"Check yfinance connectivity and proxy settings."
+        )
+    else:
+        logger.debug(f"get_quotes: {valid_count}/{len(missing_symbols)} symbols got valid prices")
 
     return result
 
