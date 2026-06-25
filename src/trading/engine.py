@@ -821,8 +821,10 @@ class TradingEngine:
                                 except Exception:
                                     pass
                                 if bb_width < bb_squeeze_width:
-                                    current_close = raw_candles[-1][4]
-                                    if current_close > bb_upper or current_close < bb_lower:
+                                    db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=1)
+                                    if db_candles:
+                                        current_close = db_candles[-1]["close"]
+                                        if current_close > bb_upper or current_close < bb_lower:
                                         logger.info(f"Bollinger Band squeeze breakout for {symbol}, triggering re-evaluation")
                                         should_trigger = True
                                         break
