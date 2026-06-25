@@ -721,7 +721,14 @@ def insert_ohlcv_batch(symbol: str, timeframe: str, candles: List[List]):
 
 
 def get_ohlcv(symbol: str, timeframe: str, since_ms: int = None, limit: int = 500) -> List[Dict[str, Any]]:
-    """Retrieve OHLCV candles from the market_data table."""
+    """Retrieve OHLCV candles from the market_data table.
+
+    When since_ms is provided, returns candles from that timestamp onward
+    (oldest first), limited to `limit` rows.
+
+    When since_ms is NOT provided, returns the most RECENT `limit` candles
+    in chronological order (oldest first within that recent window).
+    """
     conn = get_connection()
     try:
         query = "SELECT timestamp, open, high, low, close, volume FROM market_data WHERE symbol = %s AND timeframe = %s"
@@ -729,11 +736,16 @@ def get_ohlcv(symbol: str, timeframe: str, since_ms: int = None, limit: int = 50
         if since_ms is not None:
             query += " AND timestamp >= %s"
             params.append(since_ms)
-        query += " ORDER BY timestamp ASC"
-        if limit:
-            query += f" LIMIT {int(limit)}"
+            query += " ORDER BY timestamp ASC"
+            if limit:
+                query += f" LIMIT {int(limit)}"
+        else:
+            # No since_ms: fetch most recent candles (DESC), then we reverse below
+            query += " ORDER BY timestamp DESC"
+            if limit:
+                query += f" LIMIT {int(limit)}"
         rows = conn.execute(_adapt_sql(query), params).fetchall()
-        return [
+        result = [
             {
                 "timestamp": row["timestamp"],
                 "open": row["open"],
@@ -744,6 +756,9 @@ def get_ohlcv(symbol: str, timeframe: str, since_ms: int = None, limit: int = 50
             }
             for row in rows
         ]
+        if since_ms is None:
+            result.reverse()  # reverse DESC → chronological (oldest first)
+        return result
     finally:
         conn.close()
 
