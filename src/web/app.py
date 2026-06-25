@@ -44,7 +44,7 @@ _engine = None
 # redundant API calls and SQLite queries when multiple tabs are open.
 _ws_payload_cache: Optional[dict] = None
 _ws_payload_cache_time: float = 0.0
-_WS_PAYLOAD_TTL: float = 5.0  # seconds — reduce load on the engine
+_ws_payload_ttl: float = 5.0  # seconds — can be changed via API
 
 def set_engine(engine):
     global _engine
@@ -269,6 +269,14 @@ async def reload():
     await run_in_threadpool(settings.reload)
     return {"status": "reloaded"}
 
+@app.post("/api/config/update-interval")
+async def update_interval(data: dict):
+    """Update the WebSocket payload cache TTL to match the frontend's chosen interval."""
+    global _ws_payload_ttl
+    ms = data.get("interval_ms", 5000)
+    _ws_payload_ttl = max(1.0, ms / 1000.0)  # convert ms to seconds, minimum 1s
+    return {"status": "ok", "ttl_seconds": _ws_payload_ttl}
+
 @app.post("/api/force-reeval")
 async def force_reeval():
     engine = get_engine()
@@ -409,7 +417,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 # --- Cached payload: share across all WebSocket clients ---
                 now = time.time()
                 global _ws_payload_cache, _ws_payload_cache_time
-                if _ws_payload_cache is not None and (now - _ws_payload_cache_time) < _WS_PAYLOAD_TTL:
+                if _ws_payload_cache is not None and (now - _ws_payload_cache_time) < _ws_payload_ttl:
                     payload = _ws_payload_cache
                 else:
                     # Build current_symbols with display (parallelized to avoid blocking)

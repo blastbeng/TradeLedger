@@ -1182,6 +1182,12 @@
             updateIntervalMs = parseInt(e.target.value, 10);
             startRefreshTimer();
             startLogsTimer();
+            // Notify server of new TTL
+            fetch('/api/config/update-interval', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ interval_ms: updateIntervalMs })
+            }).catch(() => {});
             // If chart modal is open, restart its timer
             if (currentSymbol && modal.style.display === 'flex') {
                 if (chartUpdateTimer) clearInterval(chartUpdateTimer);
