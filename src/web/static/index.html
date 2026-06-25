@@ -1007,7 +1007,7 @@
 
         async function fetchSignals() {
             try {
-                const resp = await fetch('/api/signals?limit=20');
+                const resp = await fetch('/api/signals?limit=50');
                 const signals = await resp.json();
                 const body = document.querySelector('#signals-table tbody');
                 body.innerHTML = '';

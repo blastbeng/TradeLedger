@@ -2261,6 +2261,7 @@ class TradingEngine:
         self.queued_orders = state.get("queued_orders", [])
         for q in self.queued_orders:
             q['order_book'] = None
+        self.recent_signals = state.get("recent_signals", [])
 
         if "initial_balance" in state:
             self.initial_balance = float(state["initial_balance"])
@@ -2284,6 +2285,7 @@ class TradingEngine:
         self.trade_history = self.trade_history[-1000:]
         await asyncio.to_thread(save_trading_state, "trade_history", self.trade_history)
         await asyncio.to_thread(save_trading_state, "queued_orders", self.queued_orders)
+        await asyncio.to_thread(save_trading_state, "recent_signals", self.recent_signals)
         logger.debug("Saved trading state: %d symbols, %d positions, %d trades",
                      len(self.current_symbols), len(self.positions), len(self.trade_history))
 
