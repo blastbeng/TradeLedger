@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import re
+import threading
 import time
 import warnings
 from datetime import datetime, timezone, timedelta
@@ -19,6 +20,70 @@ from src.utils.redis_client import get_redis_client
 logger = logging.getLogger(__name__)
 
 
+# --- yfinance Circuit Breaker ---
+_yf_error_count = 0
+_yf_last_error_time = 0.0
+_yf_circuit_open_until = 0.0
+_yf_lock = threading.Lock()
+
+YF_MAX_ERRORS = 10
+YF_CIRCUIT_COOLDOWN = 3600  # 1 hour
+
+def _check_yf_circuit() -> bool:
+    """Return True if the circuit is open (yfinance should be skipped)."""
+    with _yf_lock:
+        return time.time() < _yf_circuit_open_until
+
+def _record_yf_error():
+    """Record a yfinance error and potentially trip the circuit breaker."""
+    global _yf_error_count, _yf_last_error_time, _yf_circuit_open_until
+    with _yf_lock:
+        now = time.time()
+        if now - _yf_last_error_time > 300:
+            _yf_error_count = 0
+        _yf_error_count += 1
+        _yf_last_error_time = now
+        if _yf_error_count >= YF_MAX_ERRORS:
+            if _yf_circuit_open_until < now:
+                logger.error(f"yfinance circuit breaker tripped due to {_yf_error_count} errors. Blocking yfinance calls for {YF_CIRCUIT_COOLDOWN}s.")
+            _yf_circuit_open_until = now + YF_CIRCUIT_COOLDOWN
+
+def _reset_yf_circuit():
+    """Reset the circuit breaker after a successful call."""
+    global _yf_error_count
+    with _yf_lock:
+        _yf_error_count = 0
+
+class YFinance401Filter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        if "HTTP Error 401" in msg or "Unauthorized" in msg:
+            _record_yf_error()
+            if _check_yf_circuit():
+                return False  # suppress log spam when circuit is open
+        return True
+
+# Attach filter to yfinance logger
+logging.getLogger("yfinance").addFilter(YFinance401Filter())
+
+class YFinanceSessionWrapper:
+    def __init__(self, session):
+        self._session = session
+
+    def request(self, *args, **kwargs):
+        if _check_yf_circuit():
+            raise ConnectionError("yfinance circuit breaker is open")
+        response = self._session.request(*args, **kwargs)
+        if response.status_code == 401:
+            _record_yf_error()
+        else:
+            _reset_yf_circuit()
+        return response
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+
+
 def _get_yf_session():
     """Return a curl_cffi session that impersonates Chrome for yfinance requests.
 
@@ -28,7 +93,7 @@ def _get_yf_session():
     """
     try:
         from curl_cffi import requests as curl_requests
-        return curl_requests.Session(impersonate="chrome")
+        return YFinanceSessionWrapper(curl_requests.Session(impersonate="chrome"))
     except ImportError:
         logger.warning("curl_cffi not installed – yfinance requests may be blocked.")
         return None
@@ -39,6 +104,8 @@ def _get_yf_session():
 
 def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     """Fetch the ISIN code for a symbol using yfinance, cached in Redis for 7 days."""
+    if _check_yf_circuit():
+        return None
     redis_client = get_redis_client()
     cache_key = f"isin:{base_symbol}"
     try:
@@ -300,6 +367,8 @@ def _fetch_country(symbol: str, max_retries: int = 2) -> Optional[str]:
     Returns the country string on success, or None if yfinance could not
     provide the information after all retries.
     """
+    if _check_yf_circuit():
+        return None
     import time as _time
     for attempt in range(max_retries + 1):
         try:
@@ -716,7 +785,7 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 
     # --- Batch fetch previous close for all stock symbols ---
     prev_closes = {}
-    if stock_symbols:
+    if stock_symbols and not _check_yf_circuit():
         try:
             batch_hist = yf.download(
                 stock_symbols,
@@ -738,6 +807,8 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
             logger.warning(f"Batch daily history failed: {e}")
 
     for sym in stock_symbols:
+        if _check_yf_circuit():
+            break
         try:
             ticker = yf.Ticker(sym, session=_get_yf_session())
             # fast_info gives last price, bid, ask, volume
@@ -831,6 +902,10 @@ def get_multi_timeframe_bars(
                 pass
             continue
 
+        if _check_yf_circuit():
+            result[tf] = []
+            continue
+
         # --- Fall back to yfinance ---
         try:
             ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
@@ -910,6 +985,9 @@ def get_bars_range(
         except Exception:
             pass
         return borsa_candles
+
+    if _check_yf_circuit():
+        return []
 
     # --- Fall back to yfinance ---
     # Format symbol for Yahoo Finance: BTP ISINs are used as-is, stocks get TICKER_SUFFIX if missing

@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 import yfinance as yf
 
 from src.config.settings import settings
-from src.exchanges.market_data import _get_yf_session
+from src.exchanges.market_data import _get_yf_session, _check_yf_circuit
 from src.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ def get_yahoo_quote(symbol: str) -> Optional[Dict[str, Any]]:
     Returns a dict with keys 'bid', 'ask', 'last', or None if unavailable.
     Results are cached in Redis for YAHOO_FINANCE_CACHE_SECONDS.
     """
-    if not settings.YAHOO_FINANCE_ENABLED:
+    if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
         return None
 
     # Normalise symbol: yfinance expects ticker without exchange suffix
@@ -85,7 +85,7 @@ def get_yahoo_quote(symbol: str) -> Optional[Dict[str, Any]]:
 
 def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
     """Fetch key fundamentals (P/E, Market Cap, Sector, etc.) from Yahoo Finance."""
-    if not settings.YAHOO_FINANCE_ENABLED:
+    if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
         return None
 
     base = symbol.split("/")[0] if "/" in symbol else symbol
