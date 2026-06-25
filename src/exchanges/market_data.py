@@ -76,15 +76,11 @@ class YFinanceRateLimiter:
             while self._timestamps and self._timestamps[0] <= now - self.window_seconds:
                 self._timestamps.popleft()
             if len(self._timestamps) >= self.max_requests:
-                # Calculate sleep time until the oldest request exits the window
-                sleep_time = self.window_seconds - (now - self._timestamps[0])
-                if sleep_time > 0:
-                    logger.debug(f"yfinance rate limit reached, sleeping for {sleep_time:.2f}s")
-                    time.sleep(sleep_time)
-                # Clean up again after sleeping
-                now = time.time()
-                while self._timestamps and self._timestamps[0] <= now - self.window_seconds:
-                    self._timestamps.popleft()
+                # Rate limit exceeded — fail fast instead of blocking.
+                # Sleeping would hold the thread pool worker hostage and cause
+                # asyncio.wait_for timeouts in the engine.  Raising lets the
+                # caller fall back to the database immediately.
+                raise ConnectionError("yfinance rate limit exceeded")
             self._timestamps.append(time.time())
 
 
@@ -940,7 +936,42 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"DB quote fetch failed: {e}")
 
+    # --- Try DB close prices first (fast, no network call) ---
+    # This ensures quotes are available even when yfinance is rate-limited or blocked.
+    # The OHLCV data is populated by background download tasks using borsaitaliana as primary source.
+    if missing_symbols:
+        try:
+            db_closes = get_latest_close_prices(missing_symbols)
+            for sym in list(missing_symbols):
+                if sym in db_closes and db_closes[sym] > 0:
+                    result[sym] = {
+                        "last": db_closes[sym],
+                        "bid": db_closes[sym],
+                        "ask": db_closes[sym],
+                        "volume": None,
+                        "change_24h": None,
+                        "percentage": None,
+                        "quoteVolume": None,
+                    }
+                    missing_symbols.remove(sym)
+        except Exception as e:
+            logger.warning(f"get_quotes: DB close price fallback failed: {e}")
+
     if not missing_symbols:
+        # All symbols got prices from cache/DB — cache and return
+        quotes_to_save = {}
+        for sym, q in result.items():
+            if q.get("last") is not None:
+                try:
+                    redis_client.set(f"quote:{sym}", json.dumps(q), ex=300)
+                except Exception:
+                    pass
+                quotes_to_save[sym] = q
+        if quotes_to_save:
+            try:
+                save_quotes_batch(quotes_to_save)
+            except Exception as e:
+                logger.warning(f"Failed to save quotes to database: {e}")
         return result
 
     # Initialize result with None for all still-missing symbols
@@ -1032,28 +1063,9 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
             f"Quotes will be served from Redis cache or database if available."
         )
 
-    # --- Fallback: use latest OHLCV close price from database ---
-    # This ensures quotes are available even when yfinance is completely blocked.
-    # The OHLCV data is populated by background tasks using borsaitaliana as primary source.
-    still_missing = [sym for sym in missing_symbols if result[sym].get("last") is None]
-    if still_missing:
-        try:
-            db_closes = get_latest_close_prices(still_missing)
-            fallback_count = 0
-            for sym in still_missing:
-                if sym in db_closes and db_closes[sym] > 0:
-                    result[sym]["last"] = db_closes[sym]
-                    result[sym]["bid"] = db_closes[sym]
-                    result[sym]["ask"] = db_closes[sym]
-                    fallback_count += 1
-            if fallback_count > 0:
-                logger.info(f"get_quotes: OHLCV fallback provided prices for {fallback_count}/{len(still_missing)} symbols")
-        except Exception as e:
-            logger.warning(f"get_quotes: OHLCV close price fallback failed: {e}")
-
     # Cache the result per-symbol in Redis (5 minutes) and save to database
     quotes_to_save = {}
-    for sym in missing_symbols:
+    for sym in result:
         if result[sym].get("last") is not None:
             try:
                 redis_client.set(f"quote:{sym}", json.dumps(result[sym]), ex=300)
