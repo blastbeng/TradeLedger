@@ -690,7 +690,7 @@ def insert_ohlcv_batch(symbol: str, timeframe: str, candles: List[List]):
                 """
             )
         conn.executemany(sql, [
-            (symbol, timeframe, c[0], c[1], c[2], c[3], c[4], c[5])
+            (symbol, timeframe, int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5]))
             for c in candles
         ])
         conn.commit()
