@@ -948,7 +948,7 @@ class TradingEngine:
                         self._pre_market_reeval = True
                         self._reeval_trigger.set()
                 else:
-                    # Market open – always resume trading and trigger re-evaluation
+                    # Market open – resume trading if paused, and trigger re-evaluation only on transition
                     paused = await asyncio.to_thread(self.redis.get, "trading:paused")
                     if paused:
                         # Delete all pause-related keys unconditionally
@@ -969,10 +969,12 @@ class TradingEngine:
                                 "▶️ Market opened, trading resumed.",
                                 summary={"action": "RESUME", "reason": "Market opened"}
                             )
+                        # Only trigger re-evaluation when we actually resumed from a pause
+                        self._reeval_trigger.set()
                     else:
-                        logger.info("Market opened, trading already active.")
-                    # Always trigger immediate symbol re-evaluation to restart the cycle
-                    self._reeval_trigger.set()
+                        logger.debug("Market open, trading already active.")
+                        # Do NOT trigger re-evaluation when already active — let the normal
+                        # periodic interval handle it to avoid spamming re-evaluations every 60s.
                     # Reset the "opening soon" notification flag
                     self._market_opening_soon_notified = False
                     # Reset the periodic countdown timer so the first update
@@ -2474,11 +2476,22 @@ class TradingEngine:
         if not valid_sample_pairs:
             logger.warning("No symbols with valid price data. Idling until next evaluation.")
             await asyncio.to_thread(self.redis.set, last_key, now)
-            if self.notifier:
+            # Cooldown: only send the notification once per hour to avoid spam
+            no_price_key = "trading:no_price_data_notify"
+            last_notify = await asyncio.to_thread(self.redis.get, no_price_key)
+            should_notify = True
+            if last_notify:
+                try:
+                    if (time.time() - float(last_notify)) < 3600:  # 1 hour cooldown
+                        should_notify = False
+                except (ValueError, TypeError):
+                    pass
+            if should_notify and self.notifier:
                 await self.notifier.send_notification(
                     "⚠️ No symbols with valid price data. Bot will idle.",
                     summary={"action": "HOLD", "reason": "No valid price data"}
                 )
+                await asyncio.to_thread(self.redis.set, no_price_key, str(time.time()))
             return
         sample_pairs = valid_sample_pairs
 
