@@ -87,6 +87,16 @@ def get_borsa_italiana_candles(
     if timeframe not in BORSA_TIMEFRAME_MAP:
         return None
 
+    # --- Short-circuit: borsaitaliana parsing is currently broken ---
+    # The dati-completi / dettaglio pages are pure HTML with no embedded JSON
+    # data blocks, and the historical OHLCV table is loaded via a separate
+    # AJAX endpoint that has not yet been identified.  Until the real chart
+    # data endpoint is found (via browser DevTools), skip the HTTP request
+    # entirely to avoid ~1-2s of wasted latency before every yfinance fallback.
+    # TODO: Find the actual AJAX endpoint used by the borsaitaliana chart widget
+    #       and update this function to call it directly.
+    return None
+
     base = symbol.split("/")[0] if "/" in symbol else symbol
 
     # For BTPs, the symbol IS the ISIN
@@ -121,9 +131,17 @@ def get_borsa_italiana_candles(
 
     url = f"{base_url}?isin={isin}&mic={mic}&lang=it"
 
+    # Build the correct Referer URL per instrument type
+    if instrument_type == "btp":
+        referer_url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-MOTX.html?lang=it"
+    elif instrument_type == "etf":
+        referer_url = f"https://www.borsaitaliana.it/borsa/etf/scheda/{isin}-ETFP.html?lang=it"
+    else:
+        referer_url = f"https://www.borsaitaliana.it/borsa/azioni/scheda/{isin}-MTAA.html?lang=it"
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": f"https://www.borsaitaliana.it/borsa/azioni/scheda/{isin}-{mic}.html?lang=it",
+        "Referer": referer_url,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
     }
