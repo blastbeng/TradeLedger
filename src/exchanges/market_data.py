@@ -949,6 +949,11 @@ def get_multi_timeframe_bars(
                 pass
             continue
 
+        # BTPs: never fall back to yfinance — borsaitaliana is the only data source
+        if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+            result[tf] = []
+            continue
+
         if _check_yf_circuit():
             result[tf] = []
             continue
@@ -1032,6 +1037,10 @@ def get_bars_range(
         except Exception:
             pass
         return borsa_candles
+
+    # BTPs: never fall back to yfinance — borsaitaliana is the only data source
+    if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+        return []
 
     if _check_yf_circuit():
         return []
