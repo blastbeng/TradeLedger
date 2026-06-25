@@ -2574,15 +2574,7 @@ class TradingEngine:
         chunk_size = 50
         chunks = [plain_sample[i:i + chunk_size] for i in range(0, len(plain_sample), chunk_size)]
         async def _fetch_quotes_with_limit(chunk):
-            async with asyncio.Semaphore(20):
-                try:
-                    return await asyncio.wait_for(
-                        asyncio.to_thread(get_quotes, chunk),
-                        timeout=10.0  # 10 seconds per chunk
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(f"Quote fetch timed out for chunk of {len(chunk)} symbols")
-                    return {}
+            return await self._get_quotes_async(chunk, timeout=15.0)
         quote_tasks = [_fetch_quotes_with_limit(chunk) for chunk in chunks]
         quote_results = await asyncio.gather(*quote_tasks)
         raw_quotes = {}
@@ -3864,7 +3856,7 @@ class TradingEngine:
             # Gather minimal market context
             benchmark_price = None
             try:
-                tickers_map = await asyncio.to_thread(get_quotes, [settings.BENCHMARK_SYMBOL])
+                tickers_map = await self._get_quotes_async([settings.BENCHMARK_SYMBOL], timeout=15.0)
                 benchmark_ticker = tickers_map.get(settings.BENCHMARK_SYMBOL)
                 benchmark_price = benchmark_ticker.get("last") if benchmark_ticker else None
             except Exception:
@@ -7637,7 +7629,7 @@ class TradingEngine:
             ticker = None
             try:
                 base = symbol.split("/")[0]
-                quotes = await asyncio.to_thread(get_quotes, [base])
+                quotes = await self._get_quotes_async([base], timeout=15.0)
                 ticker = quotes.get(base)
                 price = ticker['last']
                 # Fetch minimum order size from asset info
@@ -8301,9 +8293,8 @@ class TradingEngine:
         if etype == "limit_price":
             target_price = condition["price"]
             try:
-                async with self._exchange_semaphore:
-                    tickers_map = await asyncio.to_thread(get_quotes, [symbol.split("/")[0]])
-                    ticker = tickers_map.get(symbol.split("/")[0])
+                tickers_map = await self._get_quotes_async([symbol.split("/")[0]], timeout=15.0)
+                ticker = tickers_map.get(symbol.split("/")[0])
             except Exception:
                 return False
             current_price = ticker.get("last", 0) if ticker else 0

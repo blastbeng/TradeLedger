@@ -351,11 +351,10 @@ async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
 
 @app.get("/api/ticker/{symbol:path}")
 async def ticker(symbol: str):
+    engine = get_engine()
     base_symbol = symbol.split("/")[0]
     try:
-        quotes = await asyncio.to_thread(
-            get_quotes, [base_symbol]
-        )
+        quotes = await engine._get_quotes_async([base_symbol], timeout=15.0)
         q = quotes.get(base_symbol)
         if q:
             return {
@@ -380,13 +379,12 @@ async def tickers(symbols: str = ""):
     """Return quotes for a comma-separated list of symbols."""
     if not symbols:
         return {}
+    engine = get_engine()
     full_symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
     base_symbol_list = [s.split("/")[0] for s in full_symbol_list]
     result = {}
     try:
-        quotes = await asyncio.to_thread(
-            get_quotes, base_symbol_list
-        )
+        quotes = await engine._get_quotes_async(base_symbol_list, timeout=15.0)
         for full_sym, base_sym in zip(full_symbol_list, base_symbol_list):
             q = quotes.get(base_sym)
             if q:

@@ -267,8 +267,7 @@ class TelegramBot:
         batch_quotes = {}
         if all_price_symbols:
             try:
-                from src.exchanges.market_data import get_quotes
-                batch_quotes = await asyncio.to_thread(get_quotes, list(all_price_symbols))
+                batch_quotes = await self.engine._get_quotes_async(list(all_price_symbols), timeout=15.0)
             except Exception as e:
                 logger.warning(f"Batch quote fetch failed for trades: {e}")
 
