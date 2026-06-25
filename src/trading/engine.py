@@ -95,6 +95,10 @@ class TradingEngine:
         # from starving the default asyncio thread pool used by the web server,
         # Telegram bot, and all other to_thread calls.
         self._db_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="dbwriter")
+        # Dedicated thread pool for download/indicator operations – prevents
+        # download tasks from exhausting the default asyncio thread pool used
+        # by the web server, Telegram bot, and engine loop.
+        self._download_executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="downloader")
 
         self.current_symbols: List[Dict[str, str]] = []   # each dict: {"symbol": ..., "timeframe": ...}
         self.positions: Dict[str, Dict[str, Any]] = {}  # symbol -> position info
@@ -236,6 +240,7 @@ class TradingEngine:
             random.shuffle(all_pairs)
 
             async def _force_download_symbol(pair: str):
+                loop = asyncio.get_running_loop()
                 # Download timeframes in the exact order defined in OHLCV_TIMEFRAMES (longest to shortest)
                 for tf in settings.OHLCV_TIMEFRAMES:
                     try:
@@ -243,14 +248,18 @@ class TradingEngine:
                         if inserted > 0:
                             await self._fill_gaps(pair, tf)
                         # Always compute indicators for force download
-                        db_candles = await asyncio.to_thread(get_ohlcv, pair, tf, limit=200)
+                        db_candles = await loop.run_in_executor(self._download_executor, get_ohlcv, pair, tf, 200)
                         if db_candles:
                             raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                             await self._compute_and_store_indicators(pair, tf, raw_candles)
                     except Exception as e:
                         logger.warning(f"Force download failed for {pair} {tf}: {e}")
 
-            download_tasks = [_force_download_symbol(pair) for pair in all_pairs]
+            download_concurrency = asyncio.Semaphore(10)
+            async def _limited_force_download(pair: str):
+                async with download_concurrency:
+                    await _force_download_symbol(pair)
+            download_tasks = [_limited_force_download(pair) for pair in all_pairs]
             await asyncio.gather(*download_tasks)
 
             loop = asyncio.get_running_loop()
@@ -505,7 +514,9 @@ class TradingEngine:
         logger.info("Stopping trading engine...")
         self._running = False
         self._db_executor.shutdown(wait=True)
+        self._download_executor.shutdown(wait=True)
         logger.info("Database write executor shut down.")
+        logger.info("Download executor shut down.")
         # Close the PostgreSQL connection pool if it was used
         from src.database import close_pool
         close_pool()
@@ -1062,7 +1073,8 @@ class TradingEngine:
             return
         try:
             async with self._indicator_semaphore:
-                ind = await asyncio.to_thread(compute_all_indicators, candles)
+                loop = asyncio.get_running_loop()
+                ind = await loop.run_in_executor(self._download_executor, compute_all_indicators, candles)
             if ind:
                 latest_ts = candles[-1][0]
                 loop = asyncio.get_running_loop()
@@ -1314,8 +1326,11 @@ class TradingEngine:
         while since < end_ms:
             try:
                 async with self._download_semaphore:
-                    candles = await asyncio.to_thread(
-                        get_bars_range, symbol.split("/")[0], timeframe, start_ms=since, limit=10000
+                    loop = asyncio.get_running_loop()
+                    candles = await loop.run_in_executor(
+                        self._download_executor,
+                        get_bars_range,
+                        symbol.split("/")[0], timeframe, since, 10000
                     )
             except Exception as e:
                 logger.warning(f"get_bars_range failed for {symbol} {timeframe} at {since}: {e}")
@@ -1358,7 +1373,8 @@ class TradingEngine:
             return
 
         # Get all stored timestamps
-        candles = await asyncio.to_thread(get_ohlcv, symbol, timeframe, limit=50000)
+        loop = asyncio.get_running_loop()
+        candles = await loop.run_in_executor(self._download_executor, get_ohlcv, symbol, timeframe, 50000)
         if len(candles) < 2:
             logger.debug(f"Not enough data to check gaps for {symbol} {timeframe}")
             return
@@ -1396,7 +1412,8 @@ class TradingEngine:
             inserted = await self._backfill_ohlcv(symbol, timeframe, start_ms, now_ms)
             await self._fill_gaps(symbol, timeframe)
             # Compute and store indicators after backfill
-            db_candles = await asyncio.to_thread(get_ohlcv, symbol, timeframe, limit=200)
+            loop = asyncio.get_running_loop()
+            db_candles = await loop.run_in_executor(self._download_executor, get_ohlcv, symbol, timeframe, 200)
             if db_candles:
                 raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                 await self._compute_and_store_indicators(symbol, timeframe, raw_candles)
@@ -1426,12 +1443,13 @@ class TradingEngine:
                         symbol = symbol_entry["symbol"]
                         tf = symbol_entry["timeframe"]
                         logger.debug(f"Downloading market data for {symbol} ({tf})")
+                        loop = asyncio.get_running_loop()
                         try:
                             inserted = await self._backfill_ohlcv(symbol, tf, start_ms, now_ms)
                             if inserted > 0:
                                 await self._fill_gaps(symbol, tf)
                                 # Compute and store indicators after candles are downloaded
-                                db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=200)
+                                db_candles = await loop.run_in_executor(self._download_executor, get_ohlcv, symbol, tf, 200)
                                 if db_candles:
                                     raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                                     await self._compute_and_store_indicators(symbol, tf, raw_candles)
@@ -1457,6 +1475,10 @@ class TradingEngine:
         """Periodically download OHLCV for ALL tradable assets (stocks, ETFs, BTPs)."""
         await asyncio.sleep(120)  # initial delay to let the engine settle
         while self._running:
+            if self._full_download_running:
+                logger.info("Full download already running (likely force download); skipping this cycle.")
+                await asyncio.sleep(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS)
+                continue
             self._full_download_running = True
             try:
                 logger.info("Starting full asset OHLCV download cycle...")
@@ -1481,20 +1503,26 @@ class TradingEngine:
                 random.shuffle(all_pairs)
 
                 async def _download_symbol_data(pair: str):
+                    loop = asyncio.get_running_loop()
                     for tf in settings.OHLCV_TIMEFRAMES:
                         try:
                             inserted = await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
                             if inserted > 0:
                                 await self._fill_gaps(pair, tf)
                                 # Compute and store indicators after candles are downloaded
-                                db_candles = await asyncio.to_thread(get_ohlcv, pair, tf, limit=200)
+                                db_candles = await loop.run_in_executor(self._download_executor, get_ohlcv, pair, tf, 200)
                                 if db_candles:
                                     raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                                     await self._compute_and_store_indicators(pair, tf, raw_candles)
                         except Exception as e:
                             logger.warning(f"Full download failed for {pair} {tf}: {e}")
 
-                download_tasks = [_download_symbol_data(pair) for pair in all_pairs]
+                # Limit concurrent symbol downloads to avoid thread pool exhaustion
+                download_concurrency = asyncio.Semaphore(10)
+                async def _limited_download(pair: str):
+                    async with download_concurrency:
+                        await _download_symbol_data(pair)
+                download_tasks = [_limited_download(pair) for pair in all_pairs]
                 await asyncio.gather(*download_tasks)
 
                 # Clean up old data
