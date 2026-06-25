@@ -367,10 +367,13 @@ class TradingEngine:
         next_open = None
 
         try:
-            cal = mcal.get_calendar('XMIL')
-            # Fetch schedule for a window around today to find next trading days
-            schedule = cal.schedule(start_date=today - timedelta(days=1),
+            # Run mcal calls in a thread to avoid blocking the event loop
+            def _get_mcal_schedule():
+                cal = mcal.get_calendar('XMIL')
+                # Fetch schedule for a window around today to find next trading days
+                return cal.schedule(start_date=today - timedelta(days=1),
                                     end_date=today + timedelta(days=10))
+            schedule = await asyncio.to_thread(_get_mcal_schedule)
 
             # --- Fallback when the calendar has no data for the requested range ---
             if schedule.empty:

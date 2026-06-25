@@ -124,6 +124,8 @@ def _get_yf_session():
                 if _check_yf_circuit():
                     raise ConnectionError("yfinance circuit breaker is open")
                 _yf_rate_limiter.acquire()
+                # Enforce a timeout to prevent indefinite hangs
+                kwargs.setdefault('timeout', 15.0)
                 response = super().request(*args, **kwargs)
                 if response.status_code == 401:
                     _record_yf_error()
