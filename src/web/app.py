@@ -44,7 +44,7 @@ _engine = None
 # redundant API calls and SQLite queries when multiple tabs are open.
 _ws_payload_cache: Optional[dict] = None
 _ws_payload_cache_time: float = 0.0
-_WS_PAYLOAD_TTL: float = 2.0  # seconds — matches the send interval
+_WS_PAYLOAD_TTL: float = 5.0  # seconds — reduce load on the engine
 
 def set_engine(engine):
     global _engine

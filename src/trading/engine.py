@@ -5746,6 +5746,29 @@ class TradingEngine:
         """Return profit/loss summary including queued orders."""
         balance = self.trader.fetch_balance()
         current_balance = balance.get(self.base_currency, 0.0)
+
+        # --- Early exit: no positions and no queued orders → nothing to compute ---
+        if not self.positions and not self.queued_orders:
+            return {
+                "initial_balance": self.initial_balance,
+                "current_balance": current_balance,
+                "effective_balance": current_balance,
+                "open_value": 0.0,
+                "total_pnl": current_balance - self.initial_balance,
+                "pnl_percent": ((current_balance - self.initial_balance) / self.initial_balance * 100) if self.initial_balance else 0.0,
+                "total_fees": 0.0,
+                "total_fees_display": "0.000000",
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+                "base_currency": self.base_currency,
+                "queued_buy_count": 0,
+                "queued_sell_count": 0,
+                "queued_buy_quote_total": 0.0,
+                "queued_sell_base_total": 0.0,
+                "queued_sell_value": 0.0,
+            }
+
         open_value = 0.0
         pos_tickers = self._get_all_position_tickers_sync()
         for sym, pos in self.positions.items():
@@ -5777,12 +5800,14 @@ class TradingEngine:
 
         if queued_sell_symbols:
             sell_tickers = self._get_tickers_for_symbols_sync(queued_sell_symbols)
-            for q in self.queued_orders:
-                if q['side'] == 'sell':
-                    sym = q['symbol']
-                    t = sell_tickers.get(sym)
-                    price = t['last'] if t and t.get('last') else 0.0
-                    queued_sell_value += q.get('amount', 0.0) * price
+        else:
+            sell_tickers = {}
+        for q in self.queued_orders:
+            if q['side'] == 'sell':
+                sym = q['symbol']
+                t = sell_tickers.get(sym) if sell_tickers else None
+                price = t['last'] if t and t.get('last') else 0.0
+                queued_sell_value += q.get('amount', 0.0) * price
 
         effective_balance = current_balance - queued_buy_quote_total
 
