@@ -23,6 +23,8 @@ from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close
 
 logger = logging.getLogger(__name__)
 
+_get_quotes_lock = threading.Lock()
+
 
 # --- yfinance Circuit Breaker ---
 _yf_error_count = 0
@@ -925,12 +927,18 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 
     Returns a dict mapping symbol -> {last, bid, ask, volume, change_24h, percentage, quoteVolume}.
     Uses yf.download for efficient batch fetching.
+    A global lock ensures only one batch download runs at a time to prevent rate limits.
     """
     if symbols is None:
         symbols = []
     if not symbols:
         return {}
 
+    with _get_quotes_lock:
+        return _get_quotes_impl(symbols)
+
+
+def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     # Sanitize symbols: remove $ prefix and /currency suffix
     symbols = [s.lstrip('$').split('/')[0] for s in symbols]
 

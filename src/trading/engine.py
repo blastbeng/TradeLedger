@@ -376,20 +376,11 @@ class TradingEngine:
             return {}
 
     async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 180.0, chunk_size: int = 5) -> Dict[str, Dict[str, Any]]:
-        """Fetch quotes for a large list of symbols by chunking into small batches.
-        Prevents timeouts from yf.download with too many symbols at once."""
+        """Fetch quotes for a large list of symbols in a single call.
+        Concurrency is handled by a lock inside get_quotes to prevent rate limiting."""
         if not symbols:
             return {}
-        if len(symbols) <= chunk_size:
-            return await self._get_quotes_async(symbols, timeout=timeout_per_chunk)
-        chunks = [symbols[i:i + chunk_size] for i in range(0, len(symbols), chunk_size)]
-        async def _fetch_chunk(chunk):
-            return await self._get_quotes_async(chunk, timeout=timeout_per_chunk)
-        results = await asyncio.gather(*[_fetch_chunk(chunk) for chunk in chunks])
-        merged = {}
-        for r in results:
-            merged.update(r)
-        return merged
+        return await self._get_quotes_async(symbols, timeout=timeout_per_chunk)
 
     async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Return aggregate news sentiment, cached for 60 seconds to reduce DB load."""
@@ -1648,14 +1639,8 @@ class TradingEngine:
                         )[:_quote_fetch_limit]
                         plain_assets = [s.split("/")[0] for s in sample_pairs]
 
-                    # Fetch in chunks to avoid overloading yfinance
-                    # Smaller chunks + longer timeout for background task (not time-critical)
-                    chunk_size = 5
-                    chunks = [plain_assets[i:i + chunk_size] for i in range(0, len(plain_assets), chunk_size)]
-                    async def _fetch_chunk(chunk):
-                        async with asyncio.Semaphore(3):
-                            return await self._get_quotes_async(chunk, timeout=300.0)
-                    await asyncio.gather(*[_fetch_chunk(chunk) for chunk in chunks])
+                    # Fetch all quotes in a single call (get_quotes uses a lock internally)
+                    await self._get_quotes_async(plain_assets, timeout=300.0)
             except Exception as e:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
             finally:
