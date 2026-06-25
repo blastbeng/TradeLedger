@@ -4276,18 +4276,18 @@ class TradingEngine:
             # Only fall back to API if DB has no data for the assigned timeframe.
             ohlcv_data = {}
             if settings.OHLCV_TIMEFRAMES:
-                for tf in settings.OHLCV_TIMEFRAMES:
+                async def _fetch_ohlcv_tf(tf):
                     try:
-                        db_candles = await asyncio.to_thread(
-                            get_ohlcv, symbol, tf, limit=100
-                        )
+                        db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
                         if db_candles:
-                            ohlcv_data[tf] = [
-                                [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                                for c in db_candles
-                            ]
+                            return tf, [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                     except Exception as e:
                         logger.debug(f"DB OHLCV fetch failed for {symbol} {tf}: {e}")
+                    return tf, None
+                ohlcv_results = await asyncio.gather(*[_fetch_ohlcv_tf(tf) for tf in settings.OHLCV_TIMEFRAMES])
+                for tf, candles in ohlcv_results:
+                    if candles:
+                        ohlcv_data[tf] = candles
 
                 # No API fallback: rely entirely on the database (populated by background tasks).
                 # If the DB is empty, the symbol will be skipped by the no_ohlcv check below.
@@ -4365,12 +4365,15 @@ class TradingEngine:
             vwap = None
             daily_pivot_points = None
 
+            # Batch-fetch all indicators for this symbol in a single DB query
+            batch_inds = await asyncio.to_thread(get_indicators_for_symbols, [symbol], settings.OHLCV_TIMEFRAMES)
+            symbol_inds = batch_inds.get(symbol, {})
+
             for tf in settings.OHLCV_TIMEFRAMES:
                 if tf in ohlcv_data and ohlcv_data[tf]:
                     candles = ohlcv_data[tf]
                     multi_tf_raw_candles[tf] = candles
-                    # Fetch pre-computed indicators from DB
-                    ind = await asyncio.to_thread(get_indicators, symbol, tf)
+                    ind = symbol_inds.get(tf)
                     if ind:
                         multi_tf_indicators[tf] = ind
                         if tf == assigned_tf:
@@ -10584,14 +10587,18 @@ class TradingEngine:
 
         ohlcv_data = {}
         if settings.OHLCV_TIMEFRAMES:
-            # Fetch from database first (background tasks keep it populated)
-            for tf in settings.OHLCV_TIMEFRAMES:
+            async def _sim_fetch_ohlcv_tf(tf):
                 try:
                     db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
                     if db_candles:
-                        ohlcv_data[tf] = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+                        return tf, [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                 except Exception:
                     pass
+                return tf, None
+            sim_ohlcv_results = await asyncio.gather(*[_sim_fetch_ohlcv_tf(tf) for tf in settings.OHLCV_TIMEFRAMES])
+            for tf, candles in sim_ohlcv_results:
+                if candles:
+                    ohlcv_data[tf] = candles
             # No API fallback: rely entirely on the database (populated by background tasks).
 
         # Fetch indicator config from position if exists
@@ -10607,12 +10614,15 @@ class TradingEngine:
         atr_multi_tf = {}
         atr_percentile = None
 
+        # Batch-fetch all indicators for this symbol in a single DB query
+        sim_batch_inds = await asyncio.to_thread(get_indicators_for_symbols, [symbol], settings.OHLCV_TIMEFRAMES)
+        sim_symbol_inds = sim_batch_inds.get(symbol, {})
+
         for tf in settings.OHLCV_TIMEFRAMES:
             if tf in ohlcv_data and ohlcv_data[tf]:
                 candles = ohlcv_data[tf]
                 multi_tf_raw_candles[tf] = candles
-                # Fetch pre-computed indicators from DB
-                ind = await asyncio.to_thread(get_indicators, symbol, tf)
+                ind = sim_symbol_inds.get(tf)
                 if ind:
                     multi_tf_indicators[tf] = ind
                     if tf == assigned_tf:
