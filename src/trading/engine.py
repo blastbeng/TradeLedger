@@ -138,6 +138,7 @@ class TradingEngine:
         self._symbol_reeval_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
         self._force_reeval: bool = False
+        self._pre_market_reeval: bool = False
         self._running = True
         self._last_state_save = 0
         self._last_eval_snapshot: Dict[str, Dict[str, float]] = {}  # symbol -> indicator snapshot
@@ -683,7 +684,7 @@ class TradingEngine:
                             agg = await self._get_cached_sentiment(symbol)
                             if agg:
                                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
-                                prev_key = f"sentiment:prev:{base_symbol}"
+                                prev_key = f"sentiment:reeval_baseline:{base_symbol}"
                                 prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
                                 if prev_raw:
                                     prev_compound = float(prev_raw)
@@ -692,6 +693,11 @@ class TradingEngine:
                                         logger.info(f"Significant sentiment shift for {symbol}, triggering re-evaluation")
                                         should_trigger = True
                                         break
+                                # Update the re-evaluation baseline regardless of whether we triggered
+                                if current_compound is not None:
+                                    await asyncio.to_thread(
+                                        self.redis.setex, prev_key, 3600, str(current_compound)
+                                    )
                         except Exception:
                             continue
 
@@ -904,6 +910,7 @@ class TradingEngine:
                         self._market_opening_soon_notified = True
                         # Trigger pre-market re-evaluation so we're prepared with fresh signals
                         self._force_reeval = True
+                        self._pre_market_reeval = True
                         self._reeval_trigger.set()
                 else:
                     # Market open – always resume trading and trigger re-evaluation
@@ -2188,14 +2195,17 @@ class TradingEngine:
         # Reset per-cycle spending tracker so new buys are not blocked by prior cycle spending
         self._cycle_spent = 0.0
 
-        # Respect triggered re-evaluation cooldown even for forced re-evals
-        if force:
+        # Respect triggered re-evaluation cooldown for market-condition triggers only.
+        # Pre-market re-evaluations are always allowed (they are time-critical).
+        if force and not self._pre_market_reeval:
             last_triggered = await asyncio.to_thread(self.redis.get, "trading:last_triggered_reeval")
             if last_triggered:
                 elapsed = time.time() - float(last_triggered)
                 if elapsed < TRIGGERED_REEVALUATION_COOLDOWN:
                     logger.info(f"Forced re-evaluation skipped: triggered cooldown active ({TRIGGERED_REEVALUATION_COOLDOWN - elapsed:.0f}s remaining)")
                     return
+        # Clear the pre-market flag after reading it
+        self._pre_market_reeval = False
 
         # Only re-evaluate every SYMBOL_REVALUATION_INTERVAL
         last_key = "trading:last_symbol_eval"
