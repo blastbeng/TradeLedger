@@ -204,8 +204,8 @@ class DynamicProxyRotator:
 _dynamic_rotator = DynamicProxyRotator()
 
 
-def _get_proxies() -> Optional[Dict[str, str]]:
-    """Return a random proxy dict for httpx if enabled, else None."""
+def _get_proxies() -> Optional[str]:
+    """Return a random proxy string for httpx if enabled, else None."""
     if not settings.YF_PROXY_ENABLED:
         return None
 
@@ -232,12 +232,12 @@ def _get_proxies() -> Optional[Dict[str, str]]:
         proxy = _dynamic_rotator.get_proxy()
         if proxy:
             logger.debug(f"Using dynamic proxy: {proxy}")
-            return {"http://": proxy, "https://": proxy}
+            return proxy
     
     if settings.YF_PROXIES:
         proxy = random.choice(settings.YF_PROXIES)
         logger.debug(f"Using static proxy: {proxy}")
-        return {"http://": proxy, "https://": proxy}
+        return proxy
     
     return None
 
@@ -315,7 +315,8 @@ def get_borsa_italiana_candles(
     }
 
     try:
-        response = httpx.get(url, headers=headers, timeout=8.0, follow_redirects=True, proxies=_get_proxies())
+        with httpx.Client(proxy=_get_proxies(), timeout=8.0, follow_redirects=True) as client:
+            response = client.get(url, headers=headers)
         response.raise_for_status()
 
         # The API returns JSON wrapped in HTML <pre> tags
@@ -1229,7 +1230,8 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
     for page in range(1, 11):
         page_url = f"{url}?&page={page}"
         try:
-            response = httpx.get(page_url, headers=headers, timeout=15.0, follow_redirects=True, proxies=_get_proxies())
+            with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
+                response = client.get(page_url, headers=headers)
             if response.status_code != 200:
                 break
 
