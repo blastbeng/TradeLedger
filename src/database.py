@@ -1068,36 +1068,21 @@ def get_indicators_for_symbols(symbols: List[str], timeframes: List[str]) -> Dic
         return {}
     conn = get_connection()
     try:
-        if _backend == "postgresql":
-            # Build pairs for ANY() clause
-            pairs = []
-            for sym in symbols:
-                for tf in timeframes:
-                    pairs.append((sym, tf))
-            sql = _adapt_sql(
-                """
-                SELECT symbol, timeframe, indicators_json
-                FROM indicators
-                WHERE (symbol, timeframe) = ANY(%s)
-                """
-            )
-            rows = conn.execute(sql, (pairs,)).fetchall()
-        else:
-            # SQLite: build IN clause with placeholders for (symbol, timeframe) pairs
-            pairs = []
-            for sym in symbols:
-                for tf in timeframes:
-                    pairs.append(sym)
-                    pairs.append(tf)
-            placeholders = ",".join(["(?,?)" for _ in range(len(symbols) * len(timeframes))])
-            sql = _adapt_sql(
-                f"""
-                SELECT symbol, timeframe, indicators_json
-                FROM indicators
-                WHERE (symbol, timeframe) IN ({placeholders})
-                """
-            )
-            rows = conn.execute(sql, pairs).fetchall()
+        # Build a flat list of parameters for the IN clause
+        pairs = []
+        for sym in symbols:
+            for tf in timeframes:
+                pairs.append(sym)
+                pairs.append(tf)
+        placeholders = ",".join(["(%s,%s)"] * (len(symbols) * len(timeframes)))
+        sql = _adapt_sql(
+            f"""
+            SELECT symbol, timeframe, indicators_json
+            FROM indicators
+            WHERE (symbol, timeframe) IN ({placeholders})
+            """
+        )
+        rows = conn.execute(sql, pairs).fetchall()
 
         result: Dict[str, Dict[str, Dict[str, Any]]] = {s: {} for s in symbols}
         for row in rows:
