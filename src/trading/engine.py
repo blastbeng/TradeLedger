@@ -2474,7 +2474,7 @@ class TradingEngine:
                 try:
                     return await asyncio.wait_for(
                         asyncio.to_thread(get_quotes, chunk),
-                        timeout=30.0  # 30 seconds per chunk
+                        timeout=10.0  # 10 seconds per chunk
                     )
                 except asyncio.TimeoutError:
                     logger.warning(f"Quote fetch timed out for chunk of {len(chunk)} symbols")
