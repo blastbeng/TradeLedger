@@ -17,16 +17,17 @@ An advanced, AI-powered trading bot focused on **medium to long-term investment 
 - **Market hours**: Uses `pandas_market_calendars` to determine when Euronext Milan (XMIL) is open.
 - **Telegram bot**: Receive trade notifications (audible for signals, silent for routine updates) and control the bot with commands.
 - **Web dashboard**: Real-time view of positions, balances, trades, and profit. Includes manual trade entry form in notify mode and OHLCV charting.
-- **Redis caching**: LLM responses, market data, and indicators are cached to reduce API calls and improve performance. Logs are also pushed to Redis for the web dashboard.
+- **Database-backed indicators**: Technical indicators are pre-computed in background jobs after each candle download and stored in a dedicated database table. This decouples indicator computation from symbol re-evaluation, making the re-evaluation loop faster and non-blocking.
+- **Redis caching**: LLM responses and market data are cached to reduce API calls. Logs are also pushed to Redis for the web dashboard.
 - **Dockerized**: Ready to run with Docker Compose (includes Redis).
 
 ## How It Works
 
 The bot operates through a series of asynchronous background loops managed by the `TradingEngine`:
 
-1. **Data Collection**: Periodically downloads OHLCV data for all tradable assets and fills historical gaps. News articles are fetched and analyzed for sentiment.
-2. **Symbol Reevaluation**: The LLM evaluates the current portfolio and available assets, selecting the optimal mix of symbols to track based on performance, market breadth, and sentiment.
-3. **Signal Generation**: For each tracked symbol, the bot computes technical indicators, classifies the market regime, and builds a complex prompt. The LLM generates a preliminary trading decision (BUY/SELL/HOLD) with specific parameters (stop-loss, take-profit, hold time).
+1. **Data Collection**: Periodically downloads OHLCV data for all tradable assets and fills historical gaps. After each symbol's candles are downloaded, technical indicators (RSI, MACD, Bollinger Bands, ADX, ATR, etc.) are computed in a background job and stored in the database. News articles are fetched and analyzed for sentiment.
+2. **Symbol Reevaluation**: The LLM evaluates the current portfolio and available assets, selecting the optimal mix of symbols to track based on performance, market breadth, sentiment, and pre-computed indicators fetched from the database.
+3. **Signal Generation**: For each tracked symbol, the bot fetches pre-computed indicators from the database, classifies the market regime, and builds a complex prompt. The LLM generates a preliminary trading decision (BUY/SELL/HOLD) with specific parameters (stop-loss, take-profit, hold time).
 4. **Backtesting & Validation**: The preliminary decision is backtested against historical data. The `Signal` is validated to ensure risk-reward ratios and stop-loss distances are sane.
 5. **Final Decision**: A final LLM call is made with the backtest results and preliminary decision to confirm the trade.
 6. **Execution**: If confirmed, the bot executes the trade (via paper trader or notification) and places exit orders. It continuously monitors positions for risk management, partial take-profits, and trailing stops.
@@ -63,9 +64,9 @@ Sentiment is analyzed using VADER Sentiment, and results are cached in SQLite to
 
 - **Language**: Python 3.11+
 - **Web Framework**: FastAPI, Uvicorn, WebSockets
-- **Database**: SQLite (via `sqlite3`)
+- **Database**: SQLite (via `sqlite3`) or PostgreSQL (via `psycopg2`)
 - **Caching/Queue**: Redis
-- **Market Data**: `yfinance`, `pandas_market_calendars`, `investiny` (for BTPs), `financedatabase`, `beautifulsoup4` (for scraping)
+- **Market Data**: `yfinance`, `pandas_market_calendars`, `financedatabase`, `beautifulsoup4` (for scraping Borsa Italiana and Banca d'Italia)
 - **LLM**: `ollama`, `openai`
 - **Telegram**: `python-telegram-bot`
 - **Data Validation**: `pydantic`, `pydantic-settings`
@@ -81,11 +82,13 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `TICKER_SUFFIX` | Yahoo Finance suffix for Italian stocks | `.MI` |
 | `TARGET_COUNTRY` | Country filter for stock discovery | `italy` |
 | `BASE_CURRENCY` | Quote currency | `EUR` |
-| `PAPER_INITIAL_BALANCE` | Initial balance for paper trading | `3000.0` |
+| `PAPER_INITIAL_BALANCE` | Initial balance for paper trading | `10000.0` |
 | `MAX_SYMBOLS` | Maximum number of stocks to trade simultaneously | `10` |
 | `LLM_PROVIDER` | `ollama` or `openai` | `ollama` |
-| `LLM_TIMEOUT` | LLM request timeout in seconds | `300` |
+| `LLM_TIMEOUT` | LLM request timeout in seconds | `60` |
 | `LLM_TEMPERATURE` | Base LLM temperature (0.0–2.0) | `0.1` |
+| `LLM_MIND_TEMPERATURE` | Temperature range for mind model (e.g. "0.2-0.5") | |
+| `LLM_ACTUATOR_TEMPERATURE` | Temperature range for actuator model (e.g. "0.0-0.1") | |
 | `REDIS_HOST` | Redis host | `redis` |
 | `REDIS_PORT` | Redis port | `6379` |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (optional) | |
@@ -93,32 +96,41 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `WEB_HOST` | Web server host | `0.0.0.0` |
 | `WEB_PORT` | Web server port | `8083` |
 | `LOG_LEVEL` | Logging level | `INFO` |
-| `OHLCV_TIMEFRAMES` | List of timeframes to fetch | `["1w", "1M", "1d", "1h"]` |
-| `OHLCV_RETENTION_DAYS` | Days of historical OHLCV data to keep | `30` |
+| `OHLCV_TIMEFRAMES` | List of timeframes to fetch | `["5Y", "3Y", "1Y", "6M", "3M", "1M", "1w", "1d", "1h"]` |
+| `OHLCV_RETENTION_DAYS` | Days of historical OHLCV data to keep | `3650` |
+| `MARKET_DATA_REFRESH_SECONDS` | Interval for tracked symbol OHLCV download | `900` |
+| `FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS` | Interval for all-asset OHLCV download | `21600` |
 | `NEWS_ENABLED` | Enable news fetching and sentiment | `false` |
 | `BTP_FEE_PERC` | Fee percentage for BTP trades | `0.0024` |
 | `BTP_MIN_FEE` | Minimum fee for BTP trades | `3.50` |
+| `DB_HOST` | PostgreSQL host (empty = use SQLite) | |
+| `DB_PORT` | PostgreSQL port | `5432` |
+| `DB_NAME` | PostgreSQL database name | `trade_ledger` |
+| `DB_USER` | PostgreSQL user | `trade_ledger` |
+| `DB_PASSWORD` | PostgreSQL password | |
 
 ## Quick Start (Docker)
 
 1. Ensure Docker and Docker Compose are installed.
 2. Clone the repository and navigate to its directory.
-3. Copy `.env.example` to `.env` and edit as needed.
+3. Copy `.env.example` to `.env` and edit as needed. To use PostgreSQL instead of SQLite, fill in the `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` variables.
 4. Run:
    ```bash
    docker-compose up -d
    ```
+   This starts Redis, PostgreSQL (optional), a Tor proxy (optional, for yfinance rate-limit avoidance), and the bot.
 5. Access the web dashboard at `http://localhost:8083`.
 6. If Telegram is configured, send `/start` to your bot to begin receiving notifications.
 
 ## Running Locally
 
-1. Install Python 3.11+ and Redis.
+1. Install Python 3.11+, Redis, and (optionally) PostgreSQL.
 2. Create a virtual environment and install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-3. Copy `.env.example` to `.env` and configure.
+   **Note:** TA-Lib C library must be installed separately. See [TA-Lib installation instructions](https://github.com/TA-Lib/ta-lib-python#installation).
+3. Copy `.env.example` to `.env` and configure. To use PostgreSQL, set the `DB_*` variables; otherwise SQLite is used by default.
 4. Start Redis (e.g., `redis-server`).
 5. Run the bot:
    ```bash
@@ -130,6 +142,7 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | Command | Description |
 |---------|-------------|
 | `/start` | Register chat for notifications |
+| `/menu` | Show the interactive keyboard menu |
 | `/pause` | Pause trading |
 | `/resume` | Resume trading |
 | `/status` | Show current symbols, positions, and balances |
@@ -139,6 +152,7 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `/risk` | Show risk metrics |
 | `/market` | Show market status |
 | `/news` | Show news summaries for tracked symbols |
+| `/news_status` | Show news article counts for tracked symbols |
 | `/sell` | Sell all positions or a specific one by ID |
 
 ## Web API Endpoints
@@ -159,6 +173,9 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `POST /api/manual-trade` | Log a manual trade (notify mode only) |
 | `GET /api/manual-trades` | List manual trades |
 | `GET /api/ohlcv/{symbol}` | OHLCV candles for charting |
+| `POST /api/force-reeval` | Force immediate symbol re-evaluation |
+| `POST /api/force-download` | Force download of all asset OHLCV data |
+| `POST /api/restart` | Restart the application |
 | `POST /api/simulate/backtest/{symbol}` | Simulate a backtest for a symbol |
 | `POST /api/simulate/decision/{symbol}` | Simulate an LLM decision for a symbol |
 | `WS /ws` | Real-time dashboard data |
@@ -169,10 +186,10 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 .
 ├── src/
 │   ├── config/          # Settings and validation
-│   ├── exchanges/       # yfinance market data, fees, BTP scrapers
+│   ├── exchanges/       # yfinance market data, fees, BTP scrapers, Borsa Italiana API
 │   ├── llm/             # LLM client, caching, prompts
 │   ├── strategies/      # Signal, strategy, validation, backtester
-│   ├── trading/         # Engine, paper trader, live trader
+│   ├── trading/         # Engine, paper trader (no live trader — paper only)
 │   ├── telegram/        # Telegram bot
 │   ├── news/            # News fetcher and sentiment analysis
 │   ├── utils/           # Redis client, retry
