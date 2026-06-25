@@ -25,7 +25,7 @@ if _backend == "postgresql":
 
     _pg_pool = psycopg2.pool.ThreadedConnectionPool(
         minconn=2,
-        maxconn=10,
+        maxconn=20,
         host=settings.DB_HOST,
         port=settings.DB_PORT,
         dbname=settings.DB_NAME,
@@ -416,8 +416,10 @@ def insert_trade(trade: Dict[str, Any]):
 def load_trading_state() -> Dict[str, Any]:
     """Load all trading state from the database."""
     conn = get_connection()
-    rows = conn.execute("SELECT key, value FROM trading_state").fetchall()
-    conn.close()
+    try:
+        rows = conn.execute("SELECT key, value FROM trading_state").fetchall()
+    finally:
+        conn.close()
     state = {}
     for row in rows:
         try:
@@ -458,10 +460,12 @@ def save_paper_balances(balances: Dict[str, float]):
 def load_paper_balances() -> Dict[str, float]:
     """Load the paper simulator's balances dict. Returns empty dict if not found."""
     conn = get_connection()
-    row = conn.execute(
-        "SELECT value FROM trading_state WHERE key = 'paper_balances'"
-    ).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT value FROM trading_state WHERE key = 'paper_balances'"
+        ).fetchone()
+    finally:
+        conn.close()
     if row:
         try:
             return json.loads(row["value"])
@@ -479,10 +483,12 @@ def save_paper_orders(orders: List[Dict[str, Any]]):
 def load_paper_orders() -> List[Dict[str, Any]]:
     """Load the paper simulator's persisted orders. Returns empty list if not found."""
     conn = get_connection()
-    row = conn.execute(
-        "SELECT value FROM trading_state WHERE key = 'paper_orders'"
-    ).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT value FROM trading_state WHERE key = 'paper_orders'"
+        ).fetchone()
+    finally:
+        conn.close()
     if row:
         try:
             return json.loads(row["value"])
@@ -496,8 +502,10 @@ def load_paper_orders() -> List[Dict[str, Any]]:
 def get_telegram_chat_id() -> Optional[int]:
     """Retrieve the stored Telegram chat ID."""
     conn = get_connection()
-    row = conn.execute("SELECT value FROM telegram_state WHERE key = 'chat_id'").fetchone()
-    conn.close()
+    try:
+        row = conn.execute("SELECT value FROM telegram_state WHERE key = 'chat_id'").fetchone()
+    finally:
+        conn.close()
     if row:
         try:
             return int(row["value"])
@@ -524,7 +532,8 @@ def cleanup_old_ohlcv(retention_days: int = 30):
 def get_performance() -> Dict[str, Any]:
     """Return performance summary grouped by symbol and timeframe, plus a TOTAL row."""
     conn = get_connection()
-    rows = conn.execute("""
+    try:
+        rows = conn.execute("""
         SELECT
             symbol,
             timeframe,
@@ -538,7 +547,8 @@ def get_performance() -> Dict[str, Any]:
         GROUP BY symbol, timeframe
         ORDER BY symbol, timeframe
     """).fetchall()
-    conn.close()
+    finally:
+        conn.close()
 
     performance = []
     total_trades = 0
