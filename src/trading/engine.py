@@ -2958,7 +2958,8 @@ class TradingEngine:
                 shortlist.append(sym)
 
         # Limit the final candidate list sent to the LLM to keep prompt size manageable
-        top_n = settings.LLM_STOCK_SELECTION_TOP_N
+        # Ensure the LLM always has at least MAX_SYMBOLS candidates to choose from
+        top_n = max(settings.LLM_STOCK_SELECTION_TOP_N, settings.MAX_SYMBOLS)
         top_by_composite = sorted_by_composite[:top_n]
         final_set = set(top_by_composite)
         shortlist_set = set(shortlist)
