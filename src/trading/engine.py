@@ -102,7 +102,7 @@ class TradingEngine:
         # Dedicated thread pool for quote fetching – prevents zombie get_quotes
         # threads (from asyncio.wait_for timeouts) from exhausting the default
         # asyncio thread pool used by the web server and Telegram bot.
-        self._quote_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="quotes")
+        self._quote_executor = ThreadPoolExecutor(max_workers=12, thread_name_prefix="quotes")
 
         self.current_symbols: List[Dict[str, str]] = []   # each dict: {"symbol": ..., "timeframe": ...}
         self.positions: Dict[str, Dict[str, Any]] = {}  # symbol -> position info
@@ -323,7 +323,7 @@ class TradingEngine:
             missing.append(sym.split("/")[0])
         if missing:
             try:
-                raw = await self._get_quotes_async(missing, timeout=30.0)
+                raw = await self._get_quotes_async(missing, timeout=60.0)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
@@ -783,7 +783,7 @@ class TradingEngine:
                         plain_assets = await self._get_tradable_assets()
                         sample_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets[:50]]
                         plain_sample = [s.split("/")[0] for s in sample_pairs]
-                        quotes = await self._get_quotes_async(plain_sample, timeout=30.0)
+                        quotes = await self._get_quotes_async(plain_sample, timeout=60.0)
                         large_movers = sum(
                             1 for q in quotes.values()
                             if abs(q.get("percentage") or 0) > 5.0
@@ -1201,7 +1201,7 @@ class TradingEngine:
                     # (limit to 200 to avoid excessive API calls)
                     sample_for_vol = available_pairs[:200]
                     plain_sample = [s.split("/")[0] for s in sample_for_vol]
-                    raw_quotes = await self._get_quotes_async(plain_sample, timeout=30.0)
+                    raw_quotes = await self._get_quotes_async(plain_sample, timeout=60.0)
                     tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_for_vol}
                     def _vol(sym):
                         t = tickers.get(sym, {})
@@ -1648,7 +1648,7 @@ class TradingEngine:
                     chunks = [plain_assets[i:i + chunk_size] for i in range(0, len(plain_assets), chunk_size)]
                     async def _fetch_chunk(chunk):
                         async with asyncio.Semaphore(3):
-                            return await self._get_quotes_async(chunk, timeout=120.0)
+                            return await self._get_quotes_async(chunk, timeout=180.0)
                     await asyncio.gather(*[_fetch_chunk(chunk) for chunk in chunks])
             except Exception as e:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
@@ -2607,7 +2607,7 @@ class TradingEngine:
         chunk_size = 10
         chunks = [plain_sample[i:i + chunk_size] for i in range(0, len(plain_sample), chunk_size)]
         async def _fetch_quotes_with_limit(chunk):
-            return await self._get_quotes_async(chunk, timeout=45.0)
+            return await self._get_quotes_async(chunk, timeout=90.0)
         quote_tasks = [_fetch_quotes_with_limit(chunk) for chunk in chunks]
         quote_results = await asyncio.gather(*quote_tasks)
         raw_quotes = {}
@@ -3912,7 +3912,7 @@ class TradingEngine:
             # Gather minimal market context
             benchmark_price = None
             try:
-                tickers_map = await self._get_quotes_async([settings.BENCHMARK_SYMBOL], timeout=15.0)
+                tickers_map = await self._get_quotes_async([settings.BENCHMARK_SYMBOL], timeout=30.0)
                 benchmark_ticker = tickers_map.get(settings.BENCHMARK_SYMBOL)
                 benchmark_price = benchmark_ticker.get("last") if benchmark_ticker else None
             except Exception:
@@ -4329,7 +4329,7 @@ class TradingEngine:
         try:
             async with self._exchange_semaphore:
                 base = symbol.split("/")[0]
-                quotes = await self._get_quotes_async([base], timeout=15.0)
+                quotes = await self._get_quotes_async([base], timeout=30.0)
                 ticker = quotes.get(base)
             if ticker is None:
                 logger.warning(f"No ticker data for {symbol}, skipping.")
@@ -6427,7 +6427,7 @@ class TradingEngine:
             missing_risk.append(sym.split("/")[0])
         if missing_risk:
             try:
-                raw = await self._get_quotes_async(missing_risk, timeout=30.0)
+                raw = await self._get_quotes_async(missing_risk, timeout=60.0)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
@@ -7685,7 +7685,7 @@ class TradingEngine:
             ticker = None
             try:
                 base = symbol.split("/")[0]
-                quotes = await self._get_quotes_async([base], timeout=15.0)
+                quotes = await self._get_quotes_async([base], timeout=30.0)
                 ticker = quotes.get(base)
                 price = ticker['last']
                 # Fetch minimum order size from asset info
@@ -8349,7 +8349,7 @@ class TradingEngine:
         if etype == "limit_price":
             target_price = condition["price"]
             try:
-                tickers_map = await self._get_quotes_async([symbol.split("/")[0]], timeout=15.0)
+                tickers_map = await self._get_quotes_async([symbol.split("/")[0]], timeout=30.0)
                 ticker = tickers_map.get(symbol.split("/")[0])
             except Exception:
                 return False
@@ -9686,7 +9686,7 @@ class TradingEngine:
 
         try:
             base = symbol.split("/")[0]
-            quotes = await self._get_quotes_async([base], timeout=15.0)
+            quotes = await self._get_quotes_async([base], timeout=30.0)
             ticker = quotes.get(base)
             price = ticker["last"]
         except Exception as e:
@@ -10653,7 +10653,7 @@ class TradingEngine:
         is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
 
         async with self._exchange_semaphore:
-            quotes = await self._get_quotes_async([base_symbol], timeout=15.0)
+            quotes = await self._get_quotes_async([base_symbol], timeout=30.0)
             ticker = quotes.get(base_symbol)
         if ticker is None:
             return {"error": "No ticker data"}
