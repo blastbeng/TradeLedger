@@ -2592,11 +2592,11 @@ class TradingEngine:
                 }
 
 
-        logger.info("Re-evaluation step 7/12: Fetching OHLCV from DB for %d symbols...", len(sorted_by_vol))
         # Fetch OHLCV from database only for ALL candidate pairs.
         # Background tasks (_download_all_assets_data_loop) keep the DB populated.
         # This avoids blocking reevaluation on slow API calls.
         sorted_by_vol = sample_pairs
+        logger.info("Re-evaluation step 7/12: Fetching OHLCV from DB for %d symbols...", len(sorted_by_vol))
 
         ohlcv_data = {}
         if settings.OHLCV_TIMEFRAMES:
