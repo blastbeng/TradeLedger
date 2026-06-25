@@ -970,6 +970,10 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None) -> Li
     in feed entry titles and summaries. Returns a list of unique base symbols
     (suffix stripped) that are NOT already in existing_pairs (if provided).
     Handles exceptions gracefully and returns an empty list on failure.
+
+    The raw discovered tickers are cached in Redis for 1 hour so that the
+    slow RSS fetching and parsing only happens once per hour, and subsequent
+    re-evaluation cycles use the cached list.
     """
     import re
 
@@ -980,65 +984,92 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None) -> Li
     if not settings.NEWS_TICKER_DISCOVERY_ENABLED:
         return []
 
-    # Escape the suffix for regex (e.g., ".MI" -> "\.MI")
-    pattern = re.compile(rf"\b([A-Z0-9]+{re.escape(suffix)})\b")
-    discovered: set = set()
+    redis_client = get_redis_client()
+    cache_key = "news:discovered_tickers_raw"
+    cached_raw = None
+    try:
+        cached_raw = redis_client.get(cache_key)
+    except Exception:
+        pass
 
+    discovered: set = set()
+    if cached_raw:
+        try:
+            discovered = set(json.loads(cached_raw))
+        except Exception:
+            discovered = set()
+    else:
+        # Escape the suffix for regex (e.g., ".MI" -> "\.MI")
+        pattern = re.compile(rf"\b([A-Z0-9]+{re.escape(suffix)})\b")
+
+        existing_set = set()
+        if existing_pairs:
+            for pair in existing_pairs:
+                base = pair.split("/")[0] if "/" in pair else pair
+                existing_set.add(base.upper())
+
+        _cleanup_rss_cache()
+        limiter = _get_rate_limiter()
+
+        for feed_url in settings.RSS_FEEDS:
+            try:
+                # Use the existing RSS cache to avoid redundant HTTP requests
+                with _rss_cache_lock:
+                    cached = _rss_cache.get(feed_url)
+                    if cached and (time.time() - cached[0]) < 300:  # 5-minute TTL
+                        feed_content = cached[1]
+                    else:
+                        feed_content = None
+
+                if feed_content is None:
+                    limiter.wait(feed_url)
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (compatible; TradingBot/1.0; +https://github.com/your-repo)"
+                    }
+                    resp = httpx.get(
+                        feed_url,
+                        headers=headers,
+                        timeout=15.0,
+                        follow_redirects=True,
+                    )
+                    resp.raise_for_status()
+                    feed_content = resp.text
+                    with _rss_cache_lock:
+                        _rss_cache[feed_url] = (time.time(), feed_content)
+
+                feed = feedparser.parse(feed_content)
+                for entry in feed.entries:
+                    title = entry.get("title", "") or ""
+                    summary = entry.get("summary", "") or entry.get("description", "") or ""
+                    text = f"{title} {summary}"
+                    for match in pattern.findall(text):
+                        # Strip the suffix to get the base symbol
+                        base = match[: -len(suffix)]
+                        if base and base.upper() not in existing_set:
+                            discovered.add(base)
+                            if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
+                                break
+                    if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
+                        break
+            except Exception as e:
+                logger.debug(f"Ticker discovery from RSS feed {feed_url} failed: {e}")
+            if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
+                break
+
+        # Cache the raw discovered tickers for 1 hour
+        try:
+            redis_client.set(cache_key, json.dumps(list(discovered)), ex=3600)
+        except Exception as e:
+            logger.warning(f"Failed to cache discovered tickers: {e}")
+
+    # Filter out existing pairs (in case the cache was used)
     existing_set = set()
     if existing_pairs:
         for pair in existing_pairs:
             base = pair.split("/")[0] if "/" in pair else pair
             existing_set.add(base.upper())
 
-    _cleanup_rss_cache()
-    limiter = _get_rate_limiter()
-
-    for feed_url in settings.RSS_FEEDS:
-        try:
-            # Use the existing RSS cache to avoid redundant HTTP requests
-            with _rss_cache_lock:
-                cached = _rss_cache.get(feed_url)
-                if cached and (time.time() - cached[0]) < 300:  # 5-minute TTL
-                    feed_content = cached[1]
-                else:
-                    feed_content = None
-
-            if feed_content is None:
-                limiter.wait(feed_url)
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (compatible; TradingBot/1.0; +https://github.com/your-repo)"
-                }
-                resp = httpx.get(
-                    feed_url,
-                    headers=headers,
-                    timeout=15.0,
-                    follow_redirects=True,
-                )
-                resp.raise_for_status()
-                feed_content = resp.text
-                with _rss_cache_lock:
-                    _rss_cache[feed_url] = (time.time(), feed_content)
-
-            feed = feedparser.parse(feed_content)
-            for entry in feed.entries:
-                title = entry.get("title", "") or ""
-                summary = entry.get("summary", "") or entry.get("description", "") or ""
-                text = f"{title} {summary}"
-                for match in pattern.findall(text):
-                    # Strip the suffix to get the base symbol
-                    base = match[: -len(suffix)]
-                    if base and base.upper() not in existing_set:
-                        discovered.add(base)
-                        if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
-                            break
-                if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
-                    break
-        except Exception as e:
-            logger.debug(f"Ticker discovery from RSS feed {feed_url} failed: {e}")
-        if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
-            break
-
-    return list(discovered)[:settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS]
+    return [t for t in discovered if t.upper() not in existing_set][:settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS]
 
 
 def test_rss_feeds():
