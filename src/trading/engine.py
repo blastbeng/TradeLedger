@@ -181,6 +181,13 @@ class TradingEngine:
         self._tradable_assets_cache: List[str] = []
         self._tradable_assets_cache_time: float = 0.0
 
+        # Cache for BTP bonds (refreshed every 30 minutes)
+        self._btp_bonds_cache: List[Dict[str, Any]] = []
+        self._btp_bonds_cache_time: float = 0.0
+        # Cache for ETF symbols (refreshed every 1 hour)
+        self._etf_symbols_cache: List[str] = []
+        self._etf_symbols_cache_time: float = 0.0
+
         # Cache for asset info (min_order_size, name, etc.) – refreshed every 1 hour
         self._asset_cache: Dict[str, Any] = {}
         self._asset_cache_time: Dict[str, float] = {}
@@ -214,6 +221,7 @@ class TradingEngine:
 
     def trigger_symbol_reevaluation(self, force: bool = False, manual: bool = False):
         """Signal the periodic reevaluate loop to run immediately."""
+        logger.info(f"Re-evaluation triggered (force={force}, manual={manual})")
         if force:
             self._force_reeval = True
         if manual:
@@ -270,6 +278,26 @@ class TradingEngine:
         self._tradable_assets_cache = assets
         self._tradable_assets_cache_time = now
         return assets
+
+    async def _get_btp_bonds(self) -> List[Dict[str, Any]]:
+        """Return BTP bonds, cached for 30 minutes to reduce scraping calls."""
+        now = time.time()
+        if self._btp_bonds_cache and (now - self._btp_bonds_cache_time) < 1800:
+            return self._btp_bonds_cache
+        bonds = await asyncio.to_thread(discover_btp_bonds)
+        self._btp_bonds_cache = bonds
+        self._btp_bonds_cache_time = now
+        return bonds
+
+    async def _get_etf_symbols(self) -> List[str]:
+        """Return Italian UCITS ETF symbols, cached for 1 hour."""
+        now = time.time()
+        if self._etf_symbols_cache and (now - self._etf_symbols_cache_time) < 3600:
+            return self._etf_symbols_cache
+        symbols = await asyncio.to_thread(discover_italian_ucits_etfs)
+        self._etf_symbols_cache = symbols
+        self._etf_symbols_cache_time = now
+        return symbols
 
     async def _get_asset_info(self, symbol: str) -> Any:
         """Return asset info (min order size, name, etc.), cached for 1 hour."""
@@ -516,19 +544,21 @@ class TradingEngine:
         await asyncio.sleep(settings.INITIAL_EVALUATION_DELAY_SECONDS)
         while self._running:
             if self._reevaluate_running:
-                logger.warning("Symbol re-evaluation still running; skipping this cycle.")
+                logger.info("Symbol re-evaluation still running; forced re-eval will be picked up when current cycle finishes.")
                 await asyncio.sleep(10)
                 continue
             self._reevaluate_running = True
             try:
                 # Always run re-evaluation, even if paused, to keep generating signals
+                reeval_start_time = time.time()
                 logger.info("Starting symbol re-evaluation...")
                 is_forced = self._force_reeval
                 is_manual = self._manual_force_reeval
                 self._force_reeval = False
                 self._manual_force_reeval = False
                 await self._reevaluate_symbols(force=is_forced, manual=is_manual)
-                logger.info("Symbol re-evaluation complete.")
+                elapsed = time.time() - reeval_start_time
+                logger.info(f"Symbol re-evaluation complete (took {elapsed:.1f}s).")
             except Exception as e:
                 logger.error(f"Stock re-evaluation error: {e}", exc_info=True)
                 if self.notifier:
@@ -2293,6 +2323,7 @@ class TradingEngine:
     async def _reevaluate_symbols_impl(self, force: bool = False, manual: bool = False):
         # Reset per-cycle spending tracker so new buys are not blocked by prior cycle spending
         self._cycle_spent = 0.0
+        logger.info("Re-evaluation step 1/12: Checking cooldown and fetching asset lists...")
 
         # Respect triggered re-evaluation cooldown for market-condition triggers only.
         # Pre-market re-evaluations are always allowed (they are time-critical).
@@ -2314,16 +2345,17 @@ class TradingEngine:
             logger.info("Skipping symbol re-evaluation: last eval was recent and symbols are already loaded.")
             return
 
+        logger.info("Re-evaluation step 2/12: Fetching tradable assets, BTPs, and ETFs...")
         old_symbols = list(self.current_symbols)
         plain_assets = await self._get_tradable_assets()
         stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
         # Fetch BTP bonds
-        btp_bonds = await asyncio.to_thread(discover_btp_bonds)
+        btp_bonds = await self._get_btp_bonds()
         btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
         # Fetch ETFs
-        etf_symbols = await asyncio.to_thread(discover_italian_ucits_etfs)
+        etf_symbols = await self._get_etf_symbols()
         etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
         btp_quotes = {f"{b['isin']}/{self.base_currency}": {
             "last": b["last_price"],
@@ -2340,6 +2372,7 @@ class TradingEngine:
 
         available_pairs = stock_pairs + btp_pairs
 
+        logger.info("Re-evaluation step 3/12: RSS and news-driven symbol discovery...")
         # --- RSS-based ticker discovery: scan news feeds for symbols with TICKER_SUFFIX ---
         if settings.NEWS_ENABLED and settings.NEWS_TICKER_DISCOVERY_ENABLED and discover_tickers_from_news is not None:
             try:
@@ -2381,6 +2414,7 @@ class TradingEngine:
             except Exception as e:
                 logger.warning(f"News stock discovery failed: {e}")
 
+        logger.info("Re-evaluation step 4/12: Fetching balance and quotes for %d candidate pairs...", len(available_pairs))
         # Fetch balance and compute per-symbol budget
         balance = await self._get_cached_balance()
         base_balance = balance.get(self.base_currency, 0.0)
@@ -2471,6 +2505,7 @@ class TradingEngine:
             return
         sample_pairs = valid_sample_pairs
 
+        logger.info("Re-evaluation step 5/12: Yahoo Finance fallback for missing quotes...")
         # --- Yahoo Finance fallback for missing quotes (last, bid, ask) ---
         if settings.YAHOO_FINANCE_ENABLED:
             missing_quotes = [
@@ -2499,6 +2534,7 @@ class TradingEngine:
         # Pass ALL discovered stocks, ETFs, and BTPs to the LLM
         sample_pairs = stock_sample_sorted + etf_sample_sorted + btp_sample_sorted
 
+        logger.info("Re-evaluation step 6/12: Fetching news sentiment for %d symbols...", len(sample_pairs))
         # Fetch news sentiment for all candidate stocks concurrently
         news_sentiment = {}
         if settings.NEWS_ENABLED:
@@ -2556,6 +2592,7 @@ class TradingEngine:
                 }
 
 
+        logger.info("Re-evaluation step 7/12: Fetching OHLCV from DB for %d symbols...", len(sorted_by_vol))
         # Fetch OHLCV from database only for ALL candidate pairs.
         # Background tasks (_download_all_assets_data_loop) keep the DB populated.
         # This avoids blocking reevaluation on slow API calls.
@@ -2582,6 +2619,7 @@ class TradingEngine:
             results = await asyncio.gather(*tasks)
             ohlcv_data = dict(results)
 
+        logger.info("Re-evaluation step 8/12: Computing indicators for %d symbols...", len(ohlcv_data))
         # Compute indicators for each stock with OHLCV data, for ALL timeframes (parallelized)
         primary_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
 
@@ -2664,6 +2702,7 @@ class TradingEngine:
             if sym not in symbol_trend_scores:
                 symbol_trend_scores[sym] = 0.0
 
+        logger.info("Re-evaluation step 9/12: Fetching historical OHLCV summaries...")
         # Fetch historical OHLCV from database for longer-term trend analysis (up to 30 days)
         historical_ohlcv_summary = {}
         if settings.OHLCV_TIMEFRAMES:
@@ -2776,6 +2815,7 @@ class TradingEngine:
                                 corr_matrix[sym_a][sym_b] = round(cov / (std_a * std_b), 3)
             return corr_matrix
 
+        logger.info("Re-evaluation step 10/12: Computing correlation matrix and performance metrics...")
         correlation_matrix = await asyncio.to_thread(_compute_correlation_matrix)
 
         perf = await asyncio.to_thread(self._compute_performance_metrics)
@@ -2937,6 +2977,7 @@ class TradingEngine:
                         }
                     ohlcv_summary[symbol] = summary
 
+        logger.info("Re-evaluation step 11/12: Building LLM prompt (%d candidate symbols)...", len(sample_pairs))
         prompt = await asyncio.to_thread(
             build_stock_selection_prompt,
             available_symbols=sample_pairs,
@@ -3014,6 +3055,7 @@ class TradingEngine:
         response = None
         llm_provider = None
         llm_model = None
+        logger.info("Re-evaluation step 12/12: Calling LLM for symbol selection (attempt 1/%d)...", max_retries + 1)
         for attempt in range(max_retries + 1):
             try:
                 result = await asyncio.wait_for(
@@ -3037,6 +3079,7 @@ class TradingEngine:
                     logger.warning(
                         f"LLM symbol selection timed out (attempt {attempt+1}/{max_retries+1}). Retrying..."
                     )
+                    logger.info("Re-evaluation: LLM retry attempt %d/%d...", attempt + 2, max_retries + 1)
                     await asyncio.sleep(1)
                 else:
                     logger.warning(
@@ -3047,11 +3090,13 @@ class TradingEngine:
                     logger.warning(
                         f"LLM symbol selection failed with error: {e}. Retrying..."
                     )
+                    logger.info("Re-evaluation: LLM retry attempt %d/%d...", attempt + 2, max_retries + 1)
                     await asyncio.sleep(1)
                 else:
                     logger.error(
                         f"LLM symbol selection failed after all retries: {e}. Falling back to volume-based selection."
                     )
+        logger.info("Re-evaluation: LLM response received (%d chars), parsing...", len(response) if response else 0)
         if response:
             # Truncate long responses to avoid flooding logs with HTML error pages
             if len(response) > 500:
@@ -3704,6 +3749,7 @@ class TradingEngine:
         # else: keep the current interval (may have been set by LLM via
         # stock_revaluation_interval_seconds, or the default SYMBOL_REEVALUATION_INTERVAL)
 
+        logger.info("Re-evaluation complete: %d symbols selected.", len(self.current_symbols))
         await asyncio.to_thread(self.redis.set, last_key, now)
 
     async def _check_pause_resume_decision(self):
