@@ -958,40 +958,33 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Batch daily history failed: {e}")
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    def _fetch_single_quote(sym):
+    for sym in stock_symbols:
         if _check_yf_circuit():
-            return sym, None
+            break
         try:
             ticker = yf.Ticker(sym, session=_get_yf_session())
             info = ticker.fast_info
             last = info.get("lastPrice")
-            quote_data = {
-                "last": float(last) if last is not None else None,
-                "bid": info.get("bid"),
-                "ask": info.get("ask"),
-                "volume": info.get("lastVolume"),
-                "quoteVolume": info.get("lastVolume"),
-            }
+            if last is not None:
+                result[sym]["last"] = float(last)
+            bid = info.get("bid")
+            ask = info.get("ask")
+            if bid is not None:
+                result[sym]["bid"] = bid
+            if ask is not None:
+                result[sym]["ask"] = ask
+            vol = info.get("lastVolume")
+            if vol is not None:
+                result[sym]["volume"] = vol
+                result[sym]["quoteVolume"] = vol
+
             prev_close = prev_closes.get(sym)
             if last is not None and prev_close is not None:
                 change = ((last - prev_close) / prev_close) * 100
-                quote_data["change_24h"] = change
-                quote_data["percentage"] = change
-            return sym, quote_data
+                result[sym]["change_24h"] = change
+                result[sym]["percentage"] = change
         except Exception:
-            return sym, None
-
-    max_workers = min(20, len(stock_symbols)) if stock_symbols else 1
-    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="yfquote") as executor:
-        futures = {executor.submit(_fetch_single_quote, sym): sym for sym in stock_symbols}
-        for future in as_completed(futures):
-            sym, quote_data = future.result()
-            if quote_data:
-                for key, val in quote_data.items():
-                    if val is not None:
-                        result[sym][key] = val
+            pass
 
     # Cache the result per-symbol for 60 seconds
     for sym in missing_symbols:

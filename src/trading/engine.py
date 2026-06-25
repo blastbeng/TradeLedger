@@ -152,6 +152,7 @@ class TradingEngine:
         self._market_data_running = False
         self._full_breadth_running = False
         self._full_download_running = False
+        self._quotes_fetch_running = False
 
         # Market-closed periodic notification tracking
         self._last_market_closed_notify_time: float = 0.0
@@ -682,8 +683,8 @@ class TradingEngine:
                 plain_assets = await self._get_tradable_assets()
                 available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
                 if available_pairs:
-                    # Limit to 500 pairs to avoid excessive API calls
-                    breadth_pairs = available_pairs[:500]
+                    # Limit to 200 pairs to avoid thread pool exhaustion
+                    breadth_pairs = available_pairs[:200]
                     plain_breadth = [s.split("/")[0] for s in breadth_pairs]
                     raw_breadth = await asyncio.to_thread(get_quotes, plain_breadth)
                     breadth_tickers = {pair: raw_breadth.get(pair.split("/")[0], {}) for pair in breadth_pairs}
@@ -1596,6 +1597,11 @@ class TradingEngine:
         """Periodically fetch quotes for all tradable assets and cache them in Redis."""
         await asyncio.sleep(60)  # initial delay
         while self._running:
+            if self._quotes_fetch_running:
+                logger.info("Quotes fetch already running (likely re-evaluation or breadth); skipping this cycle.")
+                await asyncio.sleep(60)
+                continue
+            self._quotes_fetch_running = True
             try:
                 plain_assets = await self._get_tradable_assets()
                 if plain_assets:
@@ -1603,7 +1609,7 @@ class TradingEngine:
                     chunk_size = 50
                     chunks = [plain_assets[i:i + chunk_size] for i in range(0, len(plain_assets), chunk_size)]
                     async def _fetch_chunk(chunk):
-                        async with asyncio.Semaphore(10):
+                        async with asyncio.Semaphore(3):
                             try:
                                 return await asyncio.wait_for(
                                     asyncio.to_thread(get_quotes, chunk),
@@ -1614,6 +1620,8 @@ class TradingEngine:
                     await asyncio.gather(*[_fetch_chunk(chunk) for chunk in chunks])
             except Exception as e:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
+            finally:
+                self._quotes_fetch_running = False
             await asyncio.sleep(60)
 
     def _ensure_cost_basis(self):
