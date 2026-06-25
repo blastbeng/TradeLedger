@@ -24,6 +24,24 @@ services:
     ports:
       - "8118:8118"
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: trade-ledger-postgres
+    restart: no
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${DB_NAME:-trade_ledger}
+      POSTGRES_USER: ${DB_USER:-trade_ledger}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-trade_ledger} -d ${DB_NAME:-trade_ledger}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   bot:
     build: .
     container_name: trade-ledger
@@ -40,16 +58,24 @@ services:
       - HOME=/app/data
       - YF_PROXY_ENABLED=true
       - YF_PROXIES=["http://tor:8118"]
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-trade_ledger}
+      - DB_USER=${DB_USER:-trade_ledger}
+      - DB_PASSWORD=${DB_PASSWORD:-}
     user: "${PUID:-1000}:${PGID:-1000}"
     depends_on:
       redis:
         condition: service_healthy
       tor:
         condition: service_started
+      postgres:
+        condition: service_healthy
     volumes:
       - ./src:/app/src   # for development hot-reload (optional)
       - ./data:/app/data
 
 volumes:
   redis_data:
+  postgres_data:
 

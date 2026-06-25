@@ -214,12 +214,22 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
+    def set_database_backend(self):
+        # Determine if PostgreSQL should be used
+        if all([self.DB_HOST, self.DB_PORT, self.DB_NAME, self.DB_USER, self.DB_PASSWORD]):
+            self.DATABASE_BACKEND = "postgresql"
+        else:
+            self.DATABASE_BACKEND = "sqlite"
+        return self
+
+    @model_validator(mode="after")
     def set_database_path(self):
         if "DATABASE_PATH" not in self.model_fields_set:
-            if self.TRADING_MODE == "paper":
-                self.DATABASE_PATH = "data/paper.db"
-            else:
-                self.DATABASE_PATH = "data/notify.db"
+            if self.DATABASE_BACKEND == "sqlite":
+                if self.TRADING_MODE == "paper":
+                    self.DATABASE_PATH = "data/paper.db"
+                else:
+                    self.DATABASE_PATH = "data/notify.db"
         return self
 
     # Ollama
@@ -385,6 +395,14 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_PATH: str = "data/trading_bot.db"
+    DATABASE_BACKEND: str = "sqlite"  # "sqlite" or "postgresql"
+
+    # PostgreSQL (optional – if all are set, PostgreSQL is used instead of SQLite)
+    DB_HOST: str = ""
+    DB_PORT: int = 5432
+    DB_NAME: str = ""
+    DB_USER: str = ""
+    DB_PASSWORD: str = ""
 
     # News
     NEWS_ENABLED: bool = False
