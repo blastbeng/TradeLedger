@@ -886,19 +886,31 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     # Sanitize symbols: remove $ prefix and /currency suffix
     symbols = [s.lstrip('$').split('/')[0] for s in symbols]
 
-    # Check Redis cache for all symbols
     redis_client = get_redis_client()
-    cache_key = f"quotes:{hashlib.md5(json.dumps(symbols).encode()).hexdigest()}"
-    try:
-        cached = redis_client.get(cache_key)
-        if cached:
-            return json.loads(cached)
-    except Exception:
-        pass
-
     result = {}
-    btp_symbols = [s for s in symbols if re.match(r'^IT[A-Z0-9]{10}$', s)]
-    stock_symbols = [s for s in symbols if s not in btp_symbols]
+    missing_symbols = []
+
+    # Check per-symbol Redis cache first
+    for sym in symbols:
+        cache_key = f"quote:{sym}"
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                result[sym] = json.loads(cached)
+            else:
+                missing_symbols.append(sym)
+        except Exception:
+            missing_symbols.append(sym)
+
+    if not missing_symbols:
+        return result
+
+    # Initialize result with None for all missing symbols
+    for sym in missing_symbols:
+        result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
+
+    btp_symbols = [s for s in missing_symbols if re.match(r'^IT[A-Z0-9]{10}$', s)]
+    stock_symbols = [s for s in missing_symbols if s not in btp_symbols]
 
     # Initialize result with None for all symbols
     for sym in symbols:
@@ -970,11 +982,13 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         except Exception:
             pass
 
-    # Cache the result for 60 seconds
-    try:
-        redis_client.set(cache_key, json.dumps(result), ex=60)
-    except Exception:
-        pass
+    # Cache the result per-symbol for 60 seconds
+    for sym in missing_symbols:
+        if result[sym].get("last") is not None:
+            try:
+                redis_client.set(f"quote:{sym}", json.dumps(result[sym]), ex=60)
+            except Exception:
+                pass
 
     return result
 

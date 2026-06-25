@@ -1592,6 +1592,30 @@ class TradingEngine:
 
             await asyncio.sleep(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS)
 
+    async def _refresh_all_quotes_loop(self):
+        """Periodically fetch quotes for all tradable assets and cache them in Redis."""
+        await asyncio.sleep(60)  # initial delay
+        while self._running:
+            try:
+                plain_assets = await self._get_tradable_assets()
+                if plain_assets:
+                    # Fetch in chunks to avoid overloading yfinance
+                    chunk_size = 50
+                    chunks = [plain_assets[i:i + chunk_size] for i in range(0, len(plain_assets), chunk_size)]
+                    async def _fetch_chunk(chunk):
+                        async with asyncio.Semaphore(10):
+                            try:
+                                return await asyncio.wait_for(
+                                    asyncio.to_thread(get_quotes, chunk),
+                                    timeout=15.0
+                                )
+                            except asyncio.TimeoutError:
+                                return {}
+                    await asyncio.gather(*[_fetch_chunk(chunk) for chunk in chunks])
+            except Exception as e:
+                logger.error(f"Background quote refresh error: {e}", exc_info=True)
+            await asyncio.sleep(60)
+
     def _ensure_cost_basis(self):
         """If positions lack cost_basis, compute it from amount and price (backward compat)."""
         for sym, pos in self.positions.items():
@@ -2224,6 +2248,7 @@ class TradingEngine:
         self._background_tasks.append(asyncio.create_task(self._process_queued_orders()))
         self._background_tasks.append(asyncio.create_task(self._monitor_entry_signals_loop()))
         self._background_tasks.append(asyncio.create_task(self._market_clock_monitor()))
+        self._background_tasks.append(asyncio.create_task(self._refresh_all_quotes_loop()))
 
         while self._running:
             try:
@@ -2544,8 +2569,10 @@ class TradingEngine:
                 if tickers.get(sym, {}).get('last') is None or tickers.get(sym, {}).get('bid') is None or tickers.get(sym, {}).get('ask') is None
             ]
             # Limit to 20 symbols per cycle to stay under Yahoo's rate limits
-            for sym in missing_quotes[:20]:
-                yahoo = await asyncio.to_thread(get_yahoo_quote, sym.split("/")[0])
+            missing_quotes = missing_quotes[:20]
+            async def _fetch_yahoo_quote(sym):
+                base = sym.split("/")[0]
+                yahoo = await asyncio.to_thread(get_yahoo_quote, base)
                 if yahoo:
                     t = tickers.setdefault(sym, {})
                     if t.get('last') is None:
@@ -2554,6 +2581,7 @@ class TradingEngine:
                         t['bid'] = yahoo.get('bid')
                     if t.get('ask') is None:
                         t['ask'] = yahoo.get('ask')
+            await asyncio.gather(*[_fetch_yahoo_quote(sym) for sym in missing_quotes])
 
         # --- Sort candidate pool by 24h volume (preserve BTPs and ETFs) ---
         def _volume(sym):
