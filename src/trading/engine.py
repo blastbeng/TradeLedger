@@ -1627,6 +1627,21 @@ class TradingEngine:
             try:
                 plain_assets = await self._get_tradable_assets()
                 if plain_assets:
+                    # Limit to top MAX_SYMBOLS * 5 by DB volume to avoid excessive API calls
+                    _quote_fetch_limit = max(settings.LLM_STOCK_SELECTION_TOP_N, settings.MAX_SYMBOLS * 5)
+                    sample_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+                    if len(sample_pairs) > _quote_fetch_limit:
+                        pre_rank_since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
+                        pre_rank_summary = await asyncio.to_thread(
+                            get_ohlcv_summary_for_symbols, sample_pairs, ["1d"], pre_rank_since
+                        )
+                        sample_pairs = sorted(
+                            sample_pairs,
+                            key=lambda s: pre_rank_summary.get(s, {}).get("1d", {}).get("volume", 0),
+                            reverse=True
+                        )[:_quote_fetch_limit]
+                        plain_assets = [s.split("/")[0] for s in sample_pairs]
+
                     # Fetch in chunks to avoid overloading yfinance
                     chunk_size = 50
                     chunks = [plain_assets[i:i + chunk_size] for i in range(0, len(plain_assets), chunk_size)]
@@ -2566,7 +2581,10 @@ class TradingEngine:
         ]
 
         # --- Pre-rank candidates by DB volume to limit expensive quote fetching ---
-        if settings.OHLCV_TIMEFRAMES and len(sample_pairs) > settings.SYMBOL_SELECTION_CANDIDATE_LIMIT:
+        # Limit to 5x MAX_SYMBOLS (or LLM_STOCK_SELECTION_TOP_N, whichever is larger)
+        # to avoid fetching quotes for hundreds of symbols when we only need a few.
+        _quote_fetch_limit = max(settings.LLM_STOCK_SELECTION_TOP_N, settings.MAX_SYMBOLS * 5)
+        if settings.OHLCV_TIMEFRAMES and len(sample_pairs) > _quote_fetch_limit:
             pre_rank_since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000  # last 7 days
             pre_rank_summary = await asyncio.to_thread(
                 get_ohlcv_summary_for_symbols, sample_pairs, ["1d"], pre_rank_since
@@ -2576,8 +2594,8 @@ class TradingEngine:
                 key=lambda s: pre_rank_summary.get(s, {}).get("1d", {}).get("volume", 0),
                 reverse=True
             )
-            sample_pairs = sample_pairs[:settings.SYMBOL_SELECTION_CANDIDATE_LIMIT]
-            logger.info(f"Pre-ranked and limited candidates to {len(sample_pairs)} by DB volume")
+            sample_pairs = sample_pairs[:_quote_fetch_limit]
+            logger.info(f"Pre-ranked and limited candidates to {len(sample_pairs)} by DB volume (limit={_quote_fetch_limit})")
 
         # Separate stocks and BTPs for quote fetching
         stock_sample = [s for s in sample_pairs if s in stock_pairs]
