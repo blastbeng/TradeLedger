@@ -102,6 +102,7 @@ class TradingEngine:
         self._exchange_semaphore = asyncio.Semaphore(10)  # max 10 concurrent API calls
         self._news_semaphore = asyncio.Semaphore(5)  # max 5 concurrent news fetches
         self._indicator_semaphore = asyncio.Semaphore(4)  # limit concurrent indicator computations
+        self._download_semaphore = asyncio.Semaphore(5)  # max 5 concurrent background OHLCV backfills
 
         self.current_symbols: List[Dict[str, str]] = []   # each dict: {"symbol": ..., "timeframe": ...}
         self.positions: Dict[str, Dict[str, Any]] = {}  # symbol -> position info
@@ -1294,7 +1295,7 @@ class TradingEngine:
             max_candles = 10000  # Fetch all available history in one go
         while since < end_ms:
             try:
-                async with self._exchange_semaphore:
+                async with self._download_semaphore:
                     candles = await asyncio.to_thread(
                         get_bars_range, symbol.split("/")[0], timeframe, start_ms=since, limit=10000
                     )
