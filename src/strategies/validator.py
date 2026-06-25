@@ -98,16 +98,19 @@ def validate_signal(
         if not isinstance(mht, (int, float)) or mht <= 0:
             return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_hold_time_seconds")
         # Enforce a minimum max hold time relative to the candle timeframe
-        if timeframe_seconds is not None and mht < min_hold_time_mult * timeframe_seconds:
-            return Signal(
-                action="HOLD",
-                confidence=0.0,
-                reasoning=(
-                    f"max_hold_time_seconds ({mht}s) is too short for the "
-                    f"timeframe ({timeframe_seconds}s candles); "
-                    f"minimum is {min_hold_time_mult * timeframe_seconds}s"
+        if timeframe_seconds is not None:
+            # Cap the minimum hold time to avoid absurd values for very long timeframes (e.g., 5Y)
+            min_hold = min(min_hold_time_mult * timeframe_seconds, 31_536_000)  # cap at ~1 year
+            if mht < min_hold:
+                return Signal(
+                    action="HOLD",
+                    confidence=0.0,
+                    reasoning=(
+                        f"max_hold_time_seconds ({mht}s) is too short for the "
+                        f"timeframe ({timeframe_seconds}s candles); "
+                        f"minimum is {min_hold}s"
+                    )
                 )
-            )
 
         if "cooldown_after_loss_seconds" not in params:
             return Signal(action="HOLD", confidence=0.0, reasoning="Missing required parameter: cooldown_after_loss_seconds")
