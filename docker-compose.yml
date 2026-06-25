@@ -56,13 +56,7 @@ services:
       - PGID=1000
       - TZ=Europe/Rome
       - HOME=/app/data
-      - YF_PROXY_ENABLED=true
-      - YF_PROXIES=["http://tor:8118"]
       - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=${DB_NAME:-trade_ledger}
-      - DB_USER=${DB_USER:-trade_ledger}
-      - DB_PASSWORD=${DB_PASSWORD:-}
     user: "${PUID:-1000}:${PGID:-1000}"
     depends_on:
       redis:
