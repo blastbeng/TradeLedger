@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import re
+import time
 import warnings
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
@@ -33,6 +34,175 @@ def _get_yf_session():
         return None
     except Exception as e:
         logger.warning(f"Failed to create curl_cffi session: {e}")
+        return None
+
+
+_etf_symbols_cache: set = None
+_etf_symbols_cache_time: float = 0.0
+
+
+def _is_etf_symbol(base: str) -> bool:
+    """Check if a base symbol is an ETF (cached for 1 hour)."""
+    global _etf_symbols_cache, _etf_symbols_cache_time
+    now = time.time()
+    if _etf_symbols_cache is None or (now - _etf_symbols_cache_time) > 3600:
+        try:
+            etfs = discover_italian_ucits_etfs()
+            _etf_symbols_cache = {e.split("/")[0] if "/" in e else e for e in etfs}
+        except Exception:
+            _etf_symbols_cache = set()
+        _etf_symbols_cache_time = now
+    return base in _etf_symbols_cache
+
+
+def _determine_instrument_type(symbol: str) -> str:
+    """Determine if a symbol is a stock, ETF, or BTP.
+
+    Returns: 'stock', 'etf', or 'btp'
+    """
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+    if re.match(r'^IT[A-Z0-9]{10}$', base):
+        return "btp"
+    if _is_etf_symbol(base):
+        return "etf"
+    return "stock"
+
+
+def get_borsa_italiana_candles(
+    symbol: str,
+    timeframe: str,
+    limit: int = 500,
+    start_ms: int = None,
+) -> Optional[List[List]]:
+    """Download OHLCV candles from borsaitaliana.it as the primary source.
+
+    Fetches daily candles from the borsaitaliana scheda page and resamples
+    them to the requested timeframe using pandas.
+
+    Returns list of [timestamp_ms, open, high, low, close, volume].
+    Returns None if the download fails or the timeframe is not supported
+    (e.g., 1h intraday is not available from borsaitaliana).
+    """
+    # 1h and other intraday timeframes are not available from borsaitaliana
+    if timeframe not in BORSA_TIMEFRAME_MAP:
+        return None
+
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+
+    # For BTPs, the symbol IS the ISIN
+    if re.match(r'^IT[A-Z0-9]{10}$', base):
+        isin = base
+    else:
+        isin = _get_isin_from_yfinance(base)
+        if not isin:
+            logger.debug(f"Could not get ISIN for {symbol}, skipping borsaitaliana")
+            return None
+
+    # Determine instrument type and construct URL
+    instrument_type = _determine_instrument_type(symbol)
+
+    if instrument_type == "btp":
+        url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-MOTX.html?lang=it"
+    elif instrument_type == "etf":
+        url = f"https://www.borsaitaliana.it/borsa/etf/scheda/{isin}-ETFP.html?lang=it"
+    else:  # stock
+        url = f"https://www.borsaitaliana.it/borsa/azioni/scheda/{isin}-MTAA.html?lang=it"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": url,
+        "Accept": "application/json, text/html",
+    }
+
+    try:
+        response = httpx.get(url, headers=headers, timeout=15.0, follow_redirects=True)
+        response.raise_for_status()
+
+        # Try to parse as JSON
+        try:
+            raw_data = response.json()
+        except (json.JSONDecodeError, ValueError):
+            # Response is HTML — try to extract embedded JSON data
+            text = response.text
+            # Look for a JSON array of arrays (OHLCV data format: [[ts, o, h, l, c, v], ...])
+            json_match = re.search(r'\[\[.*?\]\]', text, re.DOTALL)
+            if json_match:
+                try:
+                    raw_data = json.loads(json_match.group(0))
+                except json.JSONDecodeError:
+                    logger.debug(f"Could not extract JSON data from borsaitaliana for {symbol}")
+                    return None
+            else:
+                logger.debug(f"No JSON data found in borsaitaliana response for {symbol}")
+                return None
+
+        # Handle different JSON formats (some APIs wrap data in a dict)
+        if isinstance(raw_data, dict):
+            for key in ('data', 'results', 'candles', 'ohlcv', 'historical'):
+                if key in raw_data and isinstance(raw_data[key], list):
+                    raw_data = raw_data[key]
+                    break
+            else:
+                logger.debug(f"Unexpected JSON format from borsaitaliana for {symbol}")
+                return None
+
+        if not isinstance(raw_data, list) or not raw_data:
+            logger.debug(f"Empty or invalid data from borsaitaliana for {symbol}")
+            return None
+
+        # Build DataFrame
+        columns = ['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume']
+        df = pd.DataFrame(raw_data, columns=columns)
+        df['Date'] = pd.to_datetime(df['Timestamp'], unit='ms')
+        df = df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
+
+        # Filter by start_ms if provided
+        if start_ms is not None:
+            start_dt = pd.to_datetime(start_ms, unit='ms')
+            df = df[df['Date'] >= start_dt]
+
+        # Resample to requested timeframe if needed
+        pandas_freq = BORSA_TIMEFRAME_MAP.get(timeframe)
+        if pandas_freq is not None:
+            df.set_index('Date', inplace=True)
+            ohlcv_rules = {
+                'Open': 'first',
+                'High': 'max',
+                'Low': 'min',
+                'Close': 'last',
+                'Volume': 'sum'
+            }
+            df = df.resample(pandas_freq).agg(ohlcv_rules)
+            df.reset_index(inplace=True)
+            df.dropna(subset=['Open'], inplace=True)
+
+        # Convert to candle format: [timestamp_ms, open, high, low, close, volume]
+        candles = []
+        for _, row in df.iterrows():
+            ts = int(row['Date'].timestamp() * 1000)
+            vol = float(row['Volume']) if pd.notna(row['Volume']) else 0.0
+            candles.append([
+                ts,
+                float(row['Open']),
+                float(row['High']),
+                float(row['Low']),
+                float(row['Close']),
+                vol
+            ])
+
+        # Sort by timestamp and apply limit
+        candles.sort(key=lambda c: c[0])
+        if limit and len(candles) > limit:
+            candles = candles[-limit:]
+
+        if candles:
+            logger.info(f"Downloaded {len(candles)} candles from borsaitaliana for {symbol} {timeframe}")
+            return candles
+
+        return None
+
+    except Exception as e:
+        logger.debug(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {e}")
         return None
 
 
@@ -86,6 +256,18 @@ TIMEFRAME_MS = {
     "1Y": 31_536_000_000,
     "3Y": 94_608_000_000,
     "5Y": 157_680_000_000,
+}
+
+# Borsa Italiana timeframe conversion map (daily data → resampled via pandas)
+BORSA_TIMEFRAME_MAP = {
+    "1d": None,       # Daily native (no conversion needed)
+    "1w": "W",         # Weekly
+    "1M": "ME",        # Month End
+    "3M": "3ME",       # Quarterly
+    "6M": "6ME",       # Semi-annual
+    "1Y": "YE",        # Year End
+    "3Y": "3YE",       # 3-Year
+    "5Y": "5YE",       # 5-Year
 }
 
 
@@ -690,6 +872,17 @@ def get_multi_timeframe_bars(
         except Exception:
             pass
 
+        # --- Try borsaitaliana first (primary source) ---
+        borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
+        if borsa_candles:
+            result[tf] = borsa_candles
+            try:
+                redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
+            except Exception:
+                pass
+            continue
+
+        # --- Fall back to yfinance ---
         try:
             ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
             # yfinance intraday data limits: 60 days for 5m/15m, 730 days for 60m
@@ -760,6 +953,16 @@ def get_bars_range(
     except Exception:
         pass
 
+    # --- Try borsaitaliana first (primary source) ---
+    borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
+    if borsa_candles:
+        try:
+            redis_client.set(cache_key, json.dumps(borsa_candles), ex=300)
+        except Exception:
+            pass
+        return borsa_candles
+
+    # --- Fall back to yfinance ---
     # Format symbol for Yahoo Finance: BTP ISINs are used as-is, stocks get TICKER_SUFFIX if missing
     yf_symbol = symbol
     if not re.match(r'^IT[A-Z0-9]{10}$', symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
