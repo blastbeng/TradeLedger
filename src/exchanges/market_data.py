@@ -948,8 +948,10 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Failed to fetch BTP quotes: {e}")
 
-    # --- Batch fetch previous close for all stock symbols ---
-    prev_closes = {}
+    # --- Batch fetch ALL price data using yf.download (single HTTP request) ---
+    # This replaces the slow sequential fast_info calls that caused timeouts.
+    # We get last price, volume, and previous close from one batch download.
+    # Bid/ask are fetched on-demand by _process_symbol via get_yahoo_quote.
     if stock_symbols and not _check_yf_circuit():
         try:
             batch_hist = yf.download(
@@ -962,42 +964,34 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                 session=_get_yf_session(),
             )
             for sym in stock_symbols:
-                if sym in batch_hist.columns.levels[1]:
-                    sym_data = batch_hist[sym]
+                try:
+                    if len(stock_symbols) > 1:
+                        if sym not in batch_hist.columns.levels[1]:
+                            continue
+                        sym_data = batch_hist[sym]
+                    else:
+                        sym_data = batch_hist
+
+                    if len(sym_data) >= 1:
+                        last = sym_data["Close"].iloc[-1]
+                        if last is not None and not pd.isna(last) and last > 0:
+                            result[sym]["last"] = float(last)
+                        vol = sym_data["Volume"].iloc[-1] if "Volume" in sym_data.columns else None
+                        if vol is not None and not pd.isna(vol):
+                            result[sym]["volume"] = float(vol)
+                            result[sym]["quoteVolume"] = float(vol)
                     if len(sym_data) >= 2:
                         prev_close = sym_data["Close"].iloc[-2]
-                        if prev_close and prev_close > 0:
-                            prev_closes[sym] = prev_close
+                        if prev_close is not None and not pd.isna(prev_close) and prev_close > 0:
+                            last_val = result[sym].get("last")
+                            if last_val is not None:
+                                change = ((last_val - prev_close) / prev_close) * 100
+                                result[sym]["change_24h"] = change
+                                result[sym]["percentage"] = change
+                except Exception:
+                    pass
         except Exception as e:
-            logger.warning(f"Batch daily history failed: {e}")
-
-    for sym in stock_symbols:
-        if _check_yf_circuit():
-            break
-        try:
-            ticker = yf.Ticker(sym, session=_get_yf_session())
-            info = ticker.fast_info
-            last = info.get("lastPrice")
-            if last is not None:
-                result[sym]["last"] = float(last)
-            bid = info.get("bid")
-            ask = info.get("ask")
-            if bid is not None:
-                result[sym]["bid"] = bid
-            if ask is not None:
-                result[sym]["ask"] = ask
-            vol = info.get("lastVolume")
-            if vol is not None:
-                result[sym]["volume"] = vol
-                result[sym]["quoteVolume"] = vol
-
-            prev_close = prev_closes.get(sym)
-            if last is not None and prev_close is not None:
-                change = ((last - prev_close) / prev_close) * 100
-                result[sym]["change_24h"] = change
-                result[sym]["percentage"] = change
-        except Exception:
-            pass
+            logger.warning(f"Batch download failed: {e}")
 
     # Cache the result per-symbol for 60 seconds
     for sym in missing_symbols:
