@@ -102,25 +102,6 @@ class YFinance401Filter(logging.Filter):
 # Attach filter to yfinance logger
 logging.getLogger("yfinance").addFilter(YFinance401Filter())
 
-class YFinanceSessionWrapper:
-    def __init__(self, session):
-        self._session = session
-
-    def request(self, *args, **kwargs):
-        if _check_yf_circuit():
-            raise ConnectionError("yfinance circuit breaker is open")
-        _yf_rate_limiter.acquire()
-        response = self._session.request(*args, **kwargs)
-        if response.status_code == 401:
-            _record_yf_error()
-        else:
-            _reset_yf_circuit()
-        return response
-
-    def __getattr__(self, name):
-        return getattr(self._session, name)
-
-
 def _get_yf_session():
     """Return a curl_cffi session that impersonates Chrome for yfinance requests.
 
@@ -138,9 +119,19 @@ def _get_yf_session():
             proxies = {"http": proxy, "https": proxy}
             logger.debug(f"Using proxy for yfinance: {proxy}")
 
-        return YFinanceSessionWrapper(
-            curl_requests.Session(impersonate="chrome", proxies=proxies)
-        )
+        class YFinanceSessionWrapper(curl_requests.Session):
+            def request(self, *args, **kwargs):
+                if _check_yf_circuit():
+                    raise ConnectionError("yfinance circuit breaker is open")
+                _yf_rate_limiter.acquire()
+                response = super().request(*args, **kwargs)
+                if response.status_code == 401:
+                    _record_yf_error()
+                else:
+                    _reset_yf_circuit()
+                return response
+
+        return YFinanceSessionWrapper(impersonate="chrome", proxies=proxies)
     except ImportError:
         logger.warning("curl_cffi not installed – yfinance requests may be blocked.")
         return None
