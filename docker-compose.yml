@@ -35,7 +35,7 @@ services:
       POSTGRES_USER: ${DB_USER:-trade_ledger}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./postgresql/data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-trade_ledger} -d ${DB_NAME:-trade_ledger}"]
       interval: 10s
@@ -70,5 +70,4 @@ services:
 
 volumes:
   redis_data:
-  postgres_data:
 

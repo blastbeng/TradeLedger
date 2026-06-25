@@ -221,3 +221,6 @@ __marimo__/
 data/*
 data/paper.db
 data/notifications.jsonl
+postgresql/*
+postgresql/data
+postgresql/data/*
