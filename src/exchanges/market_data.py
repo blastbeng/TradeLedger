@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
-from src.database import save_quotes_batch, get_quotes_from_db
+from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close_prices
 
 logger = logging.getLogger(__name__)
 
@@ -1031,6 +1031,25 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
             f"get_quotes: yfinance circuit breaker is OPEN — skipping quote fetch for {len(stock_symbols)} symbols. "
             f"Quotes will be served from Redis cache or database if available."
         )
+
+    # --- Fallback: use latest OHLCV close price from database ---
+    # This ensures quotes are available even when yfinance is completely blocked.
+    # The OHLCV data is populated by background tasks using borsaitaliana as primary source.
+    still_missing = [sym for sym in missing_symbols if result[sym].get("last") is None]
+    if still_missing:
+        try:
+            db_closes = get_latest_close_prices(still_missing)
+            fallback_count = 0
+            for sym in still_missing:
+                if sym in db_closes and db_closes[sym] > 0:
+                    result[sym]["last"] = db_closes[sym]
+                    result[sym]["bid"] = db_closes[sym]
+                    result[sym]["ask"] = db_closes[sym]
+                    fallback_count += 1
+            if fallback_count > 0:
+                logger.info(f"get_quotes: OHLCV fallback provided prices for {fallback_count}/{len(still_missing)} symbols")
+        except Exception as e:
+            logger.warning(f"get_quotes: OHLCV close price fallback failed: {e}")
 
     # Cache the result per-symbol in Redis (5 minutes) and save to database
     quotes_to_save = {}

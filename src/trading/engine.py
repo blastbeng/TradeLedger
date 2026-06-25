@@ -2525,7 +2525,7 @@ class TradingEngine:
             except Exception as e:
                 logger.warning(f"News stock discovery failed: {e}")
 
-        logger.info("Re-evaluation step 4/12: Fetching balance and quotes for %d candidate pairs...", len(available_pairs))
+        logger.info("Re-evaluation step 4/12: Fetching balance and quotes (from %d available pairs)...", len(available_pairs))
         # Fetch balance and compute per-symbol budget
         balance = await self._get_cached_balance()
         base_balance = balance.get(self.base_currency, 0.0)
@@ -2592,6 +2592,7 @@ class TradingEngine:
         # Separate stocks and BTPs for quote fetching
         stock_sample = [s for s in sample_pairs if s in stock_pairs]
         btp_sample = [s for s in sample_pairs if s in btp_pairs]
+        logger.info(f"Step 4: Fetching quotes for {len(stock_sample)} stocks + {len(btp_sample)} BTPs (pre-ranked from {len(available_pairs)} candidates)")
 
         # Parallelize get_quotes by splitting into chunks of 50
         plain_sample = [s.split("/")[0] for s in stock_sample]

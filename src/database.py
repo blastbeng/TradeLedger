@@ -1199,6 +1199,49 @@ def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict
         conn.close()
 
 
+def get_latest_close_prices(symbols: List[str]) -> Dict[str, float]:
+    """Get the latest close price for multiple symbols from the market_data table.
+    Used as a fallback when yfinance quotes are unavailable."""
+    if not symbols:
+        return {}
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                """
+                SELECT DISTINCT ON (symbol) symbol, close
+                FROM market_data
+                WHERE symbol = ANY(%s) AND timeframe = '1d'
+                ORDER BY symbol, timestamp DESC
+                """
+            )
+            rows = conn.execute(sql, (symbols,)).fetchall()
+        else:
+            placeholders = ",".join(["?" for _ in symbols])
+            sql = _adapt_sql(
+                f"""
+                SELECT m.symbol, m.close
+                FROM market_data m
+                INNER JOIN (
+                    SELECT symbol, MAX(timestamp) as max_ts
+                    FROM market_data
+                    WHERE symbol IN ({placeholders}) AND timeframe = '1d'
+                    GROUP BY symbol
+                ) latest ON m.symbol = latest.symbol AND m.timestamp = latest.max_ts
+                WHERE m.timeframe = '1d'
+                """
+            )
+            rows = conn.execute(sql, symbols).fetchall()
+
+        result = {}
+        for row in rows:
+            if row["close"] is not None and row["close"] > 0:
+                result[row["symbol"]] = float(row["close"])
+        return result
+    finally:
+        conn.close()
+
+
 def close_pool():
     """Close the PostgreSQL connection pool if it exists."""
     global _pg_pool
