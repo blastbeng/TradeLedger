@@ -1042,7 +1042,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
     # Check database for quotes not in Redis cache (up to 24 hours old)
     try:
-        db_quotes = get_quotes_from_db(missing_symbols, max_age_seconds=86400)
+        db_quotes = get_quotes_from_db(missing_symbols, max_age_seconds=900)
         for sym in list(missing_symbols):
             if sym in db_quotes:
                 result[sym] = db_quotes[sym]
@@ -1248,7 +1248,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 
     # Check database for quotes not in Redis cache (up to 24 hours old)
     try:
-        db_quotes = get_quotes_from_db(missing_symbols, max_age_seconds=86400)
+        db_quotes = get_quotes_from_db(missing_symbols, max_age_seconds=900)
         for sym in list(missing_symbols):
             if sym in db_quotes:
                 result[sym] = db_quotes[sym]
