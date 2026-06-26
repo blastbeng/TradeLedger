@@ -1256,7 +1256,8 @@ Maximum symbols to trade: {max_symbols}
             "- Set a reasonable `cooldown_after_loss_seconds` (e.g., 1-3 candle periods) to avoid consecutive losses.\n"
             "- Use `trailing_stop` to lock in profits during strong trends.\n"
             "Return these as a `backtest_variants` array in your JSON output. You decide how many variants to return "
-            "(minimum 1, recommended 3–5). Each variant should explore a different hypothesis:\n"
+            "(minimum 1, recommended 3–5, maximum 10). If you provide more than 10, only the first 10 will be tested. "
+            "Each variant should explore a different hypothesis:\n"
             "- e.g., tight stop vs wide stop\n"
             "- short hold vs long hold\n"
             "- trailing stop on vs off\n"
@@ -1599,6 +1600,7 @@ def build_final_decision_prompt(
     base_currency: str,
     trading_paused: bool = False,
     step1_prompt: str = "",
+    total_variants_proposed: Optional[int] = None,
 ) -> str:
     """Build a prompt to ask the LLM for its final decision after reviewing backtest results."""
     current_price = ticker.get("last") if ticker else None
@@ -1645,6 +1647,12 @@ If ANY backtest variant confirms a strategy is viable, you may output your final
         f"\n**Backtest Period:** The backtests were run using historical data on the {preliminary_decision.get('timeframe', 'assigned')} timeframe. "
         f"Each variant may have used a different `backtest_period_days` value (see individual variant parameters above).\n"
     )
+    if total_variants_proposed is not None and total_variants_proposed > len(backtest_results):
+        prompt += (
+            f"\n**Note:** You proposed {total_variants_proposed} backtest variants in Step 1, but only the first "
+            f"{len(backtest_results)} were tested (maximum 10 variants per cycle). The results above cover all "
+            f"tested variants. To avoid truncation in future cycles, limit your `backtest_variants` array to at most 10 entries.\n"
+        )
     prompt += (
         "**Output ONLY the raw JSON object as specified.**\n"
         "Return a JSON object with these **required** fields:\n"

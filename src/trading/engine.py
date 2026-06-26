@@ -5175,6 +5175,7 @@ class TradingEngine:
 
                 if backtest_results:
                     # Build Step 2 prompt with ALL backtest results
+                    total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
                     step2_prompt = build_final_decision_prompt(
                         symbol=symbol,
                         ticker=ticker,
@@ -5189,6 +5190,7 @@ class TradingEngine:
                         base_currency=self.base_currency,
                         trading_paused=trading_paused,
                         step1_prompt=prompt,
+                        total_variants_proposed=total_variants_proposed,
                     )
                     # Append position info if exists
                     if symbol in self.positions:
@@ -11369,6 +11371,7 @@ class TradingEngine:
             f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
         ) if backtest_results else "No backtest performed"
 
+        total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
         step2_prompt = build_final_decision_prompt(
             symbol=symbol,
             ticker=data["ticker"],
@@ -11383,6 +11386,7 @@ class TradingEngine:
             base_currency=self.base_currency,
             trading_paused=False,
             step1_prompt=data["prompt"],
+            total_variants_proposed=total_variants_proposed,
         )
         
         # Append position info if exists
