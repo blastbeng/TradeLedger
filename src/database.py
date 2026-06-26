@@ -1216,7 +1216,7 @@ def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict
         if _backend == "postgresql":
             sql = _adapt_sql(
                 """
-                SELECT symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, name, coupon, maturity
+                SELECT symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, name, coupon, maturity, updated_at
                 FROM quotes WHERE symbol = ANY(%s) AND updated_at >= %s
                 """
             )
