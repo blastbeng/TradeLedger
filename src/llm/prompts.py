@@ -1307,6 +1307,16 @@ Maximum symbols to trade: {max_symbols}
     if sentiment_trend is not None:
         prompt += f"\nSentiment trend (change in compound score since last cycle): {sentiment_trend:+.4f}\n"
         prompt += "Positive delta = sentiment improving, negative = deteriorating. Adjust confidence and risk parameters accordingly.\n"
+        prompt += (
+            "\n**News Sentiment Exit Threshold:**\n"
+            "You may include `\"news_sentiment_exit_threshold\"` in your strategy parameters (range -1.0 to 0.0). "
+            "If set, the engine will automatically close the position when the aggregate news sentiment compound score "
+            "drops below this threshold. **This value MUST be negative** (e.g., -0.3) — a positive or zero value would "
+            "cause the position to exit even when sentiment is neutral or mildly positive, which is almost certainly "
+            "not your intent. Use a more negative value (e.g., -0.5) for a stricter exit (only exit on very negative "
+            "sentiment) or a less negative value (e.g., -0.1) for a more sensitive exit. Omit this field if you do not "
+            "want a sentiment-based exit.\n"
+        )
     if volume_trend is not None:
         prompt += f"\nVolume trend: {volume_trend:.2f}x (current daily volume relative to recent average)\n"
         prompt += "Ratio > 1.0 = volume above average, > 2.0 = significant spike. Elevated volume confirms price move strength. Low volume during breakout may signal fakeout.\n"

@@ -6677,11 +6677,16 @@ class TradingEngine:
                 # --- News sentiment exit ---
                 news_threshold = pos.get("news_sentiment_exit_threshold")
                 if news_threshold is not None and settings.NEWS_ENABLED:
+                    # Clamp to non-positive: a positive threshold would trigger
+                    # an exit even when sentiment is mildly positive, which is
+                    # almost certainly not the LLM's intent.  Only negative
+                    # compound scores should trigger a sentiment-based exit.
+                    effective_threshold = min(float(news_threshold), 0.0)
                     try:
                         agg = await self._get_cached_sentiment(symbol)
-                        if agg and agg["avg_compound"] < news_threshold:
+                        if agg and agg["avg_compound"] < effective_threshold:
                             logger.info(
-                                f"News sentiment exit for {symbol}: compound {agg['avg_compound']:.2f} < threshold {news_threshold}"
+                                f"News sentiment exit for {symbol}: compound {agg['avg_compound']:.2f} < threshold {effective_threshold}"
                             )
                             if self.notifier:
                                 await self.notifier.send_notification(
