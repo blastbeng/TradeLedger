@@ -60,6 +60,7 @@ MIN_LLM_PAUSE_DURATION = 1800  # seconds (30 min) – LLM cannot resume before t
 TRIGGERED_REEVALUATION_COOLDOWN = 1800  # 30 min – minimum between condition-triggered re-evaluations
 MAX_STOP_LOSS_REVIEWS = 10   # force-sell after this many consecutive stop-loss reviews
 MAX_TAKE_PROFIT_REVIEWS = 10   # force-sell after this many consecutive take-profit reviews
+DUST_KEEP_TIMEOUT_SECONDS = 7 * 24 * 3600  # 7 days – max time dust can be kept before auto-sell
 
 
 @dataclass
@@ -5760,7 +5761,12 @@ class TradingEngine:
             # --- Handle dust sweep triggered ---
             if dust_sweep_triggered and signal.action == "HOLD":
                 self.positions[symbol].pop("_dust_sweep_triggered", None)
-                self.positions[symbol].pop("_dust_sweep_review_count", None)
+                # Record when the LLM first decided to keep the dust (for time-based auto-sell)
+                if self.positions[symbol].get("_dust_keep_since") is None:
+                    self.positions[symbol]["_dust_keep_since"] = time.time()
+                # Do NOT reset _dust_sweep_review_count — let it accumulate so
+                # max_dust_sweep_reviews eventually forces a sell if the LLM
+                # keeps saying HOLD.
                 logger.info(f"LLM decided to hold dust for {symbol}")
                 if self.notifier:
                     await self.notifier.send_notification(
@@ -6714,6 +6720,26 @@ class TradingEngine:
                         is_dust = True
 
                     if is_dust:
+                        # Check if dust has been kept past the timeout
+                        dust_keep_since = pos.get("_dust_keep_since")
+                        if dust_keep_since is not None and (time.time() - dust_keep_since) > DUST_KEEP_TIMEOUT_SECONDS:
+                            logger.info(
+                                f"Dust keep timeout reached for {symbol} "
+                                f"(kept for {(time.time() - dust_keep_since) / 3600:.1f}h), force-selling."
+                            )
+                            if self.notifier:
+                                await self.notifier.send_notification(
+                                    f"🧹 Dust keep timeout for {display_symbol} – auto-selling "
+                                    f"after {DUST_KEEP_TIMEOUT_SECONDS // 3600:.0f}h.",
+                                    summary={
+                                        "symbol": symbol,
+                                        "action": "SELL",
+                                        "reason": "Dust keep timeout",
+                                        "exit_reason": "dust_keep_timeout",
+                                    }
+                                )
+                            await self._sweep_dust(symbol)
+                            continue
                         review_count = pos.get("_dust_sweep_review_count", 0) + 1
                         if review_count > max_dust_sweep_reviews:
                             logger.info(f"Dust sweep max reviews reached for {symbol}, force sweeping.")
@@ -6745,6 +6771,7 @@ class TradingEngine:
                     if not is_dust:
                         pos.pop("_dust_sweep_triggered", None)
                         pos.pop("_dust_sweep_review_count", None)
+                        pos.pop("_dust_keep_since", None)
                         logger.info(f"Dust condition cleared for {symbol}")
 
                 # --- News sentiment exit ---
