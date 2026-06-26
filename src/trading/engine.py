@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -90,6 +91,7 @@ class TradingEngine:
         self._exchange_semaphore = asyncio.Semaphore(10)  # max 10 concurrent API calls
         self._news_semaphore = asyncio.Semaphore(5)  # max 5 concurrent news fetches
         self._indicator_semaphore = asyncio.Semaphore(4)  # limit concurrent indicator computations
+        self._backtest_semaphore = asyncio.Semaphore(4)  # limit concurrent backtest variants
         self._download_semaphore = asyncio.Semaphore(5)  # max 5 concurrent background OHLCV backfills
 
         # Dedicated thread pool for database writes – prevents write contention
@@ -5170,19 +5172,20 @@ class TradingEngine:
                     )
                     variants_to_test = variants_to_test[:MAX_BACKTEST_VARIANTS]
 
-                # Run backtest for each variant sequentially
-                backtest_results = []
-                for i, variant_params in enumerate(variants_to_test):
+                # Limit number of variants based on available data length
+                source_candles = historical_ohlcv or raw_candles or []
+                if source_candles and len(source_candles) < 50:
+                    variants_to_test = variants_to_test[:2]
+                elif source_candles and len(source_candles) < 100:
+                    variants_to_test = variants_to_test[:3]
+
+                # Run backtest variants in parallel (concurrency-limited by semaphore)
+                async def _run_single_variant(vp: Dict[str, Any]) -> Dict[str, Any]:
                     try:
-                        variant_signal = Signal(
-                            action="BUY",
-                            confidence=preliminary_signal.confidence,
-                            reasoning=preliminary_signal.reasoning,
-                            strategy_params=variant_params,
-                        )
-                        bt_stats, bt_summary = await self._run_backtest_from_signal(
+                        bt_stats, bt_summary = await self._run_backtest_variant(
                             symbol=symbol,
-                            signal=variant_signal,
+                            variant_params=vp,
+                            preliminary_signal=preliminary_signal,
                             atr=atr,
                             current_price=current_price,
                             tf_secs=tf_seconds,
@@ -5193,26 +5196,21 @@ class TradingEngine:
                             is_btp=is_btp,
                         )
                         if bt_stats is not None:
-                            backtest_results.append({
-                                "variant_params": variant_params,
-                                "summary": bt_summary,
-                                "stats": bt_stats,
-                            })
-                            logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: {bt_summary}")
+                            return {"variant_params": vp, "summary": bt_summary, "stats": bt_stats}
                         else:
-                            backtest_results.append({
-                                "variant_params": variant_params,
-                                "summary": bt_summary or "Insufficient data for backtest.",
-                                "stats": {},
-                            })
-                            logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: insufficient data")
+                            return {"variant_params": vp, "summary": bt_summary or "Insufficient data for backtest.", "stats": {}}
                     except Exception as e:
-                        logger.warning(f"Backtest variant {i+1} failed for {symbol}: {e}")
-                        backtest_results.append({
-                            "variant_params": variant_params,
-                            "summary": f"Backtest error: {e}",
-                            "stats": {},
-                        })
+                        logger.warning(f"Backtest variant failed for {symbol}: {e}")
+                        return {"variant_params": vp, "summary": f"Backtest error: {e}", "stats": {}}
+
+                backtest_results = list(await asyncio.gather(*[_run_single_variant(vp) for vp in variants_to_test]))
+
+                # Log results after all variants complete
+                for i, r in enumerate(backtest_results):
+                    if r["stats"]:
+                        logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: {r['summary']}")
+                    else:
+                        logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: insufficient data")
 
                 # Build combined backtest summary for notifications
                 combined_bt_summary = " | ".join(
@@ -10739,6 +10737,70 @@ class TradingEngine:
                 logger.warning(f"Sync batch quote fetch failed: {e}")
         return tickers
 
+    async def _run_backtest_variant(
+        self,
+        symbol: str,
+        variant_params: Dict[str, Any],
+        preliminary_signal: Signal,
+        atr: Optional[float],
+        current_price: float,
+        tf_secs: int,
+        assigned_tf: str,
+        historical_ohlcv: Optional[List[List]],
+        raw_candles: Optional[List[List]],
+        base_balance: float,
+        is_btp: bool,
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        """Run a single backtest variant with Redis caching and concurrency limiting."""
+        # Build cache key from symbol, timeframe, params hash, and data fingerprint
+        source_candles = historical_ohlcv or raw_candles or []
+        last_ts = source_candles[-1][0] if source_candles else 0
+        candle_count = len(source_candles)
+        params_hash = hashlib.md5(
+            json.dumps(variant_params, sort_keys=True, default=str).encode()
+        ).hexdigest()[:16]
+        cache_key = f"backtest:{symbol}:{assigned_tf}:{params_hash}:{last_ts}:{candle_count}"
+
+        # Check Redis cache
+        try:
+            cached = await asyncio.to_thread(self.redis.get, cache_key)
+            if cached:
+                data = json.loads(cached)
+                return data["stats"], data["summary"]
+        except Exception:
+            pass
+
+        # Run backtest with concurrency limiting
+        async with self._backtest_semaphore:
+            variant_signal = Signal(
+                action="BUY",
+                confidence=preliminary_signal.confidence,
+                reasoning=preliminary_signal.reasoning,
+                strategy_params=variant_params,
+            )
+            bt_stats, bt_summary = await self._run_backtest_from_signal(
+                symbol=symbol,
+                signal=variant_signal,
+                atr=atr,
+                current_price=current_price,
+                tf_secs=tf_secs,
+                assigned_tf=assigned_tf,
+                historical_ohlcv=historical_ohlcv,
+                raw_candles=raw_candles,
+                base_balance=base_balance,
+                is_btp=is_btp,
+            )
+
+        # Cache the result for 1 hour
+        if bt_stats is not None:
+            try:
+                cache_data = json.dumps({"stats": bt_stats, "summary": bt_summary})
+                await asyncio.to_thread(self.redis.setex, cache_key, 3600, cache_data)
+            except Exception:
+                pass
+
+        return bt_stats, bt_summary
+
     async def _run_backtest_from_signal(
         self,
         symbol: str,
@@ -11411,18 +11473,19 @@ class TradingEngine:
                 )
                 variants_to_test = variants_to_test[:MAX_BACKTEST_VARIANTS]
 
-            backtest_results = []
-            for i, variant_params in enumerate(variants_to_test):
+            # Limit number of variants based on available data length
+            source_candles = data.get("historical_ohlcv") or data.get("raw_candles") or []
+            if source_candles and len(source_candles) < 50:
+                variants_to_test = variants_to_test[:2]
+            elif source_candles and len(source_candles) < 100:
+                variants_to_test = variants_to_test[:3]
+
+            async def _sim_run_variant(vp: Dict[str, Any]) -> Dict[str, Any]:
                 try:
-                    variant_signal = Signal(
-                        action="BUY",
-                        confidence=preliminary_signal.confidence,
-                        reasoning=preliminary_signal.reasoning,
-                        strategy_params=variant_params,
-                    )
-                    bt_stats, bt_summary = await self._run_backtest_from_signal(
+                    bt_stats, bt_summary = await self._run_backtest_variant(
                         symbol=symbol,
-                        signal=variant_signal,
+                        variant_params=vp,
+                        preliminary_signal=preliminary_signal,
                         atr=data["atr"],
                         current_price=data["current_price"],
                         tf_secs=data["tf_seconds"],
@@ -11433,24 +11496,14 @@ class TradingEngine:
                         is_btp=data["is_btp"],
                     )
                     if bt_stats is not None:
-                        backtest_results.append({
-                            "variant_params": variant_params,
-                            "summary": bt_summary,
-                            "stats": bt_stats,
-                        })
+                        return {"variant_params": vp, "summary": bt_summary, "stats": bt_stats}
                     else:
-                        backtest_results.append({
-                            "variant_params": variant_params,
-                            "summary": bt_summary or "Insufficient data for backtest.",
-                            "stats": {},
-                        })
+                        return {"variant_params": vp, "summary": bt_summary or "Insufficient data for backtest.", "stats": {}}
                 except Exception as e:
-                    logger.warning(f"Backtest variant {i+1} failed for {symbol}: {e}")
-                    backtest_results.append({
-                        "variant_params": variant_params,
-                        "summary": f"Backtest error: {e}",
-                        "stats": {},
-                    })
+                    logger.warning(f"Backtest variant failed for {symbol}: {e}")
+                    return {"variant_params": vp, "summary": f"Backtest error: {e}", "stats": {}}
+
+            backtest_results = list(await asyncio.gather(*[_sim_run_variant(vp) for vp in variants_to_test]))
 
             combined_bt_summary = " | ".join(
                 f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
@@ -11544,19 +11597,19 @@ class TradingEngine:
             )
             variants_to_test = variants_to_test[:MAX_BACKTEST_VARIANTS]
 
-        # Run backtest for each variant sequentially
-        backtest_results = []
-        for i, variant_params in enumerate(variants_to_test):
+        # Limit number of variants based on available data length
+        source_candles = data.get("historical_ohlcv") or data.get("raw_candles") or []
+        if source_candles and len(source_candles) < 50:
+            variants_to_test = variants_to_test[:2]
+        elif source_candles and len(source_candles) < 100:
+            variants_to_test = variants_to_test[:3]
+
+        async def _sim_run_variant(vp: Dict[str, Any]) -> Dict[str, Any]:
             try:
-                variant_signal = Signal(
-                    action="BUY",
-                    confidence=preliminary_signal.confidence,
-                    reasoning=preliminary_signal.reasoning,
-                    strategy_params=variant_params,
-                )
-                bt_stats, bt_summary = await self._run_backtest_from_signal(
+                bt_stats, bt_summary = await self._run_backtest_variant(
                     symbol=symbol,
-                    signal=variant_signal,
+                    variant_params=vp,
+                    preliminary_signal=preliminary_signal,
                     atr=data["atr"],
                     current_price=data["current_price"],
                     tf_secs=data["tf_seconds"],
@@ -11567,24 +11620,14 @@ class TradingEngine:
                     is_btp=data["is_btp"],
                 )
                 if bt_stats is not None:
-                    backtest_results.append({
-                        "variant_params": variant_params,
-                        "summary": bt_summary,
-                        "stats": bt_stats,
-                    })
+                    return {"variant_params": vp, "summary": bt_summary, "stats": bt_stats}
                 else:
-                    backtest_results.append({
-                        "variant_params": variant_params,
-                        "summary": bt_summary or "Insufficient data for backtest.",
-                        "stats": {},
-                    })
+                    return {"variant_params": vp, "summary": bt_summary or "Insufficient data for backtest.", "stats": {}}
             except Exception as e:
-                logger.warning(f"Backtest variant {i+1} failed for {symbol}: {e}")
-                backtest_results.append({
-                    "variant_params": variant_params,
-                    "summary": f"Backtest error: {e}",
-                    "stats": {},
-                })
+                logger.warning(f"Backtest variant failed for {symbol}: {e}")
+                return {"variant_params": vp, "summary": f"Backtest error: {e}", "stats": {}}
+
+        backtest_results = list(await asyncio.gather(*[_sim_run_variant(vp) for vp in variants_to_test]))
 
         combined_bt_summary = " | ".join(
             f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
