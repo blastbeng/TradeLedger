@@ -1621,6 +1621,11 @@ class TradingEngine:
                 continue
             self._quotes_fetch_running = True
             try:
+                # Skip the entire cycle if yfinance circuit breaker is open
+                if _check_yf_circuit():
+                    logger.info("Quotes refresh skipped: yfinance circuit breaker is open.")
+                    await asyncio.sleep(60)
+                    continue
                 plain_assets = await self._get_tradable_assets()
                 if plain_assets:
                     # Limit to SYMBOL_SELECTION_CANDIDATE_LIMIT by DB volume
