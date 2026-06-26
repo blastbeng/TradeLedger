@@ -110,6 +110,7 @@ class TradingEngine:
         self.initial_balance: float = 0.0
         self.last_loss_time: Dict[str, float] = {}  # symbol -> timestamp of last losing trade
         self.cooldown_durations: Dict[str, float] = {}  # symbol -> cooldown seconds set by LLM
+        self._global_risk_multiplier: Optional[float] = None
         self._last_strategy_eval: Dict[str, float] = {}   # symbol -> timestamp of last strategy evaluation
         self._strategy_intervals: Dict[str, float] = {}    # symbol -> custom interval in seconds
         self._symbol_reevaluation_interval = SYMBOL_REEVALUATION_INTERVAL
@@ -2266,6 +2267,7 @@ class TradingEngine:
         self._last_decisions = state.get("last_decisions", {})
         self.last_loss_time = state.get("last_loss_time", {})
         self.cooldown_durations = state.get("cooldown_durations", {})
+        self._global_risk_multiplier = state.get("global_risk_multiplier")
 
         # Restore pending entries (reconstruct Signal objects from dicts)
         raw_pending = state.get("pending_entries", {})
@@ -2328,6 +2330,7 @@ class TradingEngine:
         await asyncio.to_thread(save_trading_state, "last_decisions", self._last_decisions)
         await asyncio.to_thread(save_trading_state, "last_loss_time", self.last_loss_time)
         await asyncio.to_thread(save_trading_state, "cooldown_durations", self.cooldown_durations)
+        await asyncio.to_thread(save_trading_state, "global_risk_multiplier", self._global_risk_multiplier)
         logger.debug("Saved trading state: %d symbols, %d positions, %d trades",
                      len(self.current_symbols), len(self.positions), len(self.trade_history))
 
@@ -3657,9 +3660,7 @@ class TradingEngine:
                 global_risk_mult = parsed.get("global_risk_multiplier")
                 if global_risk_mult is not None:
                     if isinstance(global_risk_mult, (int, float)) and 0.0 <= global_risk_mult <= 1.0:
-                        await asyncio.to_thread(
-                            self.redis.setex, "trading:global_risk_multiplier", 3600, str(global_risk_mult)
-                        )
+                        await self._set_global_risk_multiplier(global_risk_mult)
                         logger.info(f"LLM set global risk multiplier: {global_risk_mult}")
                     else:
                         logger.warning(f"Invalid global_risk_multiplier: {global_risk_mult}")
@@ -4099,10 +4100,7 @@ class TradingEngine:
                     await asyncio.to_thread(self.redis.delete, fail_key)
                     # --- Also reset keep counter and set force‑resume risk multiplier ---
                     await asyncio.to_thread(self.redis.delete, keep_key)
-                    await asyncio.to_thread(
-                        self.redis.setex, "trading:global_risk_multiplier", 3600,
-                        str(force_resume_mult)
-                    )
+                    await self._set_global_risk_multiplier(force_resume_mult)
                     self._reeval_trigger.set()
                     if self.notifier:
                         await self.notifier.send_notification(
@@ -4150,9 +4148,7 @@ class TradingEngine:
                     try:
                         mult_val = float(global_mult_raw)
                         if 0.0 <= mult_val <= 1.0:
-                            await asyncio.to_thread(
-                                self.redis.setex, "trading:global_risk_multiplier", 3600, str(mult_val)
-                            )
+                            await self._set_global_risk_multiplier(mult_val)
                             logger.info(f"LLM set global risk multiplier on resume: {mult_val}")
                             applied_mult = mult_val
                         else:
@@ -4214,10 +4210,7 @@ class TradingEngine:
                     for key in pause_keys:
                         await asyncio.to_thread(self.redis.delete, key)
                     await asyncio.to_thread(self.redis.delete, keep_key)
-                    await asyncio.to_thread(
-                        self.redis.setex, "trading:global_risk_multiplier", 3600,
-                        str(force_resume_mult)
-                    )
+                    await self._set_global_risk_multiplier(force_resume_mult)
                     self._reeval_trigger.set()
                     if self.notifier:
                         await self.notifier.send_notification(
@@ -4725,13 +4718,7 @@ class TradingEngine:
                 minutes_to_market_close = None
 
             # Fetch current global risk multiplier so the LLM can adjust position sizing
-            global_risk_mult = None
-            global_mult_raw = await asyncio.to_thread(self.redis.get, "trading:global_risk_multiplier")
-            if global_mult_raw:
-                try:
-                    global_risk_mult = float(global_mult_raw)
-                except (ValueError, TypeError):
-                    pass
+            global_risk_mult = await self._get_global_risk_multiplier()
 
             # Read LLM-decided portfolio risk thresholds
             max_port_exp = None
@@ -7368,15 +7355,10 @@ class TradingEngine:
                             return
 
             # Apply global risk multiplier if set by LLM in symbol selection
-            global_mult_raw = await asyncio.to_thread(self.redis.get, "trading:global_risk_multiplier")
-            if global_mult_raw:
-                try:
-                    global_mult = float(global_mult_raw)
-                    if 0.0 <= global_mult <= 1.0:
-                        desired_amount *= global_mult
-                        logger.info(f"Applied global risk multiplier {global_mult}: desired_amount={desired_amount:.2f}")
-                except (ValueError, TypeError):
-                    pass
+            global_mult = await self._get_global_risk_multiplier()
+            if global_mult is not None and 0.0 <= global_mult <= 1.0:
+                desired_amount *= global_mult
+                logger.info(f"Applied global risk multiplier {global_mult}: desired_amount={desired_amount:.2f}")
 
             # Apply per-symbol position size multiplier if set by LLM in strategy params
             per_symbol_mult = params.get("position_size_multiplier")
@@ -8943,6 +8925,32 @@ class TradingEngine:
             "rsi": rsi,
             "macd_hist": macd_hist,
         }
+
+    async def _get_global_risk_multiplier(self) -> Optional[float]:
+        """Return the global risk multiplier, falling back to persisted value if Redis key expired."""
+        raw = await asyncio.to_thread(self.redis.get, "trading:global_risk_multiplier")
+        if raw:
+            try:
+                val = float(raw)
+                if 0.0 <= val <= 1.0:
+                    self._global_risk_multiplier = val
+                    return val
+            except (ValueError, TypeError):
+                pass
+        # Redis key expired or invalid — fall back to last known persisted value
+        if self._global_risk_multiplier is not None:
+            logger.warning(
+                "Global risk multiplier Redis key expired — using persisted fallback "
+                f"value {self._global_risk_multiplier}. The LLM should set a new value."
+            )
+            return self._global_risk_multiplier
+        return None
+
+    async def _set_global_risk_multiplier(self, value: float):
+        """Set the global risk multiplier in Redis (with TTL) and persist it to the database."""
+        await asyncio.to_thread(self.redis.setex, "trading:global_risk_multiplier", 3600, str(value))
+        self._global_risk_multiplier = value
+        await asyncio.to_thread(save_trading_state, "global_risk_multiplier", value)
 
     def _update_position_params(
         self,
@@ -10996,11 +11004,7 @@ class TradingEngine:
         else:
             minutes_to_market_close = None
 
-        global_risk_mult = None
-        global_mult_raw = await asyncio.to_thread(self.redis.get, "trading:global_risk_multiplier")
-        if global_mult_raw:
-            try: global_risk_mult = float(global_mult_raw)
-            except: pass
+        global_risk_mult = await self._get_global_risk_multiplier()
 
         max_port_exp = max_port_risk = None
         try:
