@@ -4477,13 +4477,47 @@ class TradingEngine:
                 logger.info(
                     f"Skipping {symbol}: no OHLCV data – market data unavailable."
                 )
+                # Find the most recent OHLCV timestamp across all timeframes
+                last_data_ts = None
+                last_data_tf = None
+                for tf in settings.OHLCV_TIMEFRAMES:
+                    try:
+                        ts = await asyncio.to_thread(get_latest_ohlcv_timestamp, symbol, tf)
+                        if ts is not None and (last_data_ts is None or ts > last_data_ts):
+                            last_data_ts = ts
+                            last_data_tf = tf
+                    except Exception:
+                        pass
+
+                if last_data_ts is not None:
+                    age_seconds = time.time() - (last_data_ts / 1000.0)
+                    if age_seconds < 3600:
+                        age_str = f"{age_seconds/60:.0f} minutes ago"
+                    elif age_seconds < 86400:
+                        age_str = f"{age_seconds/3600:.1f} hours ago"
+                    else:
+                        age_str = f"{age_seconds/86400:.1f} days ago"
+                    msg = (
+                        f"⚠️ Skipping {display_symbol}: no OHLCV data available. "
+                        f"Last data: {last_data_tf} candle from {age_str}. "
+                        f"Try a manual force-download via the dashboard or Telegram."
+                    )
+                else:
+                    msg = (
+                        f"⚠️ Skipping {display_symbol}: no OHLCV data available. "
+                        f"No historical data found in database. "
+                        f"Run a force-download via the dashboard or Telegram to populate market data."
+                    )
+
                 if self.notifier:
                     await self.notifier.send_notification(
-                        f"⚠️ Skipping {display_symbol}: no OHLCV data available.",
+                        msg,
                         summary={
                             "symbol": symbol,
                             "action": "SKIP",
                             "reason": "No OHLCV data",
+                            "last_data_timestamp": last_data_ts,
+                            "last_data_timeframe": last_data_tf,
                         }
                     )
                 self._force_eval.pop(symbol, None)
