@@ -23,6 +23,26 @@ BORSA_TIMEFRAME_MAP = {
     "5Y": "5YE",       # 5-Year
 }
 
+def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
+    """Dynamically fetch the bearer token from the Borsa Italiana summary chart page."""
+    url = f"https://grafici.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+            response = client.get(url, headers=headers)
+            response.raise_for_status()
+            # Extract token from <chart-allinone ... token="..." ...>
+            match = re.search(r'<chart-allinone[^>]*token="([^"]+)"', response.text)
+            if match:
+                return match.group(1)
+            logger.warning(f"Could not find Borsa Italiana token for {isin}-{market_code}")
+            return None
+    except Exception as e:
+        logger.warning(f"Failed to fetch Borsa Italiana token for {isin}-{market_code}: {e}")
+        return None
+
 def get_borsa_italiana_candles_debug(
     symbol: str,
     timeframe: str,
@@ -45,14 +65,23 @@ def get_borsa_italiana_candles_debug(
         return None
 
     # Determine market code for referer URL
-    is_btp = re.match(r'^IT[A-Z0-9]{10}$', isin) is not None
-    market_code = "MOTX" if is_btp else "XMIL"
+    try:
+        from src.config.settings import settings
+        market_code = settings.MARKET_CODE
+    except ImportError:
+        market_code = "XMIL"
+
+    # Dynamically fetch the bearer token
+    token = _get_borsa_italiana_token(isin, market_code)
+    if not token:
+        logger.warning(f"Skipping Borsa Italiana download for {symbol} {timeframe}: no token found.")
+        return None
 
     # Headers matching the browser request exactly
     headers = {
         "accept": "*/*",
         "accept-language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-        "authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiItMSIsImV4cCI6NDkwNTU4MzU3MiwiaWF0IjoxNzUxOTgzNTcyLCJhdXRob3JpdGllcyI6W119.d7Eh_LOGqA44BH58HIiPrPIz1SLskVOPj4BRsae05cI",
+        "authorization": f"Bearer {token}",
         "priority": "u=1, i",
         "referer": f"https://grafici.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it",
         "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
@@ -78,21 +107,21 @@ def get_borsa_italiana_candles_debug(
         with httpx.Client(proxy=proxy, timeout=15.0, follow_redirects=True) as client:
             if timeframe == "1d":
                 # For 1d, use the intraday endpoint
-                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/intraday?resolution=1MN"
+                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/intraday?resolution=1MN"
                 logger.info(f"Fetching intraday data from URL: {url}")
                 response = client.get(url, headers=headers)
 
                 if response.status_code != 200:
                     logger.warning(f"Intraday endpoint returned {response.status_code} for {symbol} {timeframe}, falling back to history endpoint")
                     # Fall back to history endpoint
-                    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
+                    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
                     logger.info(f"Falling back to history URL: {url}")
                     response = client.get(url, headers=headers)
 
                 response.raise_for_status()
             else:
                 # For other timeframes, use the history endpoint
-                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
+                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
                 logger.info(f"Fetching data from URL: {url}")
                 response = client.get(url, headers=headers)
                 response.raise_for_status()
