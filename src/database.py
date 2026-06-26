@@ -1280,12 +1280,12 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             sql = _adapt_sql(
                 """
                 WITH RankedCandles AS (
-                    SELECT symbol, close, volume, timestamp,
+                    SELECT symbol, close, volume, timestamp, timeframe,
                            ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
                     FROM market_data
                     WHERE symbol = ANY(%s)
                 )
-                SELECT symbol, close, volume, timestamp
+                SELECT symbol, close, volume, timestamp, timeframe
                 FROM RankedCandles
                 WHERE rn <= 2
                 ORDER BY symbol, timestamp DESC
@@ -1297,12 +1297,12 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             sql = _adapt_sql(
                 f"""
                 WITH RankedCandles AS (
-                    SELECT symbol, close, volume, timestamp,
+                    SELECT symbol, close, volume, timestamp, timeframe,
                            ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
                     FROM market_data
                     WHERE symbol IN ({placeholders})
                 )
-                SELECT symbol, close, volume, timestamp
+                SELECT symbol, close, volume, timestamp, timeframe
                 FROM RankedCandles
                 WHERE rn <= 2
                 ORDER BY symbol, timestamp DESC
@@ -1323,10 +1323,14 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                         "volume": float(row["volume"]) if row["volume"] is not None else None,
                         "prev_close": None,
                         "candle_timestamp": row["timestamp"],
+                        "timeframe": row["timeframe"],
                     }
                 else:
-                    # Second row (older timestamp)
-                    result[db_base]["prev_close"] = float(row["close"])
+                    # Second row (older timestamp) — only use as prev_close
+                    # if it's from the SAME timeframe as the latest candle.
+                    # Otherwise the percentage change would be meaningless.
+                    if row["timeframe"] == result[db_base]["timeframe"]:
+                        result[db_base]["prev_close"] = float(row["close"])
         return result
     finally:
         conn.close()
