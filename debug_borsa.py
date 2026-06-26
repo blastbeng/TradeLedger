@@ -4,6 +4,7 @@ import re
 import logging
 import random
 import pandas as pd
+import yfinance as yf
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -56,12 +57,23 @@ def get_borsa_italiana_candles_debug(
 
     base = symbol.split("/")[0] if "/" in symbol else symbol
 
-    # For BTPs, the symbol IS the ISIN. For stocks, we skip yfinance ISIN lookup in this debug script.
+    # For BTPs, the symbol IS the ISIN. For stocks, fetch ISIN from yfinance.
     if re.match(r'^IT[A-Z0-9]{10}$', base):
         isin = base
     else:
-        logger.error(f"Symbol {base} is not a valid BTP ISIN. Please provide a valid ISIN (e.g., IT0001234567) for debugging.")
-        return None
+        try:
+            from src.config.settings import settings
+            suffix = settings.TICKER_SUFFIX
+            yf_symbol = f"{base}{suffix}" if suffix and not base.endswith(suffix) else base
+            ticker = yf.Ticker(yf_symbol)
+            isin = ticker.isin
+            if not isin:
+                logger.error(f"Could not fetch ISIN for {base} from yfinance.")
+                return None
+            logger.info(f"Fetched ISIN for {base}: {isin}")
+        except Exception as e:
+            logger.error(f"Failed to fetch ISIN for {base}: {e}")
+            return None
 
     # Determine market code for referer URL
     try:
@@ -109,14 +121,6 @@ def get_borsa_italiana_candles_debug(
                 url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/intraday?resolution=1MN"
                 logger.info(f"Fetching intraday data from URL: {url}")
                 response = client.get(url, headers=headers)
-
-                if response.status_code != 200:
-                    logger.warning(f"Intraday endpoint returned {response.status_code} for {symbol} {timeframe}, falling back to history endpoint")
-                    # Fall back to history endpoint
-                    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=1d&adjustment=true&add-last-price=true"
-                    logger.info(f"Falling back to history URL: {url}")
-                    response = client.get(url, headers=headers)
-
                 response.raise_for_status()
             else:
                 # For other timeframes, use the history endpoint with the correct period

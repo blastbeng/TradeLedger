@@ -366,13 +366,6 @@ def get_borsa_italiana_candles(
                 url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/intraday?resolution=1MN"
                 logger.debug(f"Fetching intraday data from: {url}")
                 response = client.get(url, headers=headers)
-
-                if response.status_code != 200:
-                    logger.debug(f"Intraday endpoint returned {response.status_code} for {symbol} {timeframe}, falling back to history endpoint")
-                    # Fall back to history endpoint
-                    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=1d&adjustment=true&add-last-price=true"
-                    response = client.get(url, headers=headers)
-
                 response.raise_for_status()
             else:
                 # For other timeframes, use the history endpoint with the correct period
