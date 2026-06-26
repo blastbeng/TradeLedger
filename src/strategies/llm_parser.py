@@ -84,6 +84,7 @@ def parse_llm_response(response_text: str) -> Signal:
             "stop_loss_order_type", "stop_loss_stop_price",
             "stop_loss_limit_price", "stop_loss_trail_offset",
             "take_profit_order_type", "take_profit_limit_price",
+            "backtest_entry_config",
         ]
         for k in known_params:
             if k in data:

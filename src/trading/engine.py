@@ -10522,6 +10522,7 @@ class TradingEngine:
         bt_trailing = bt_params.get("trailing_stop", False)
         bt_trail_dist = bt_params.get("trailing_stop_distance_pct")
         bt_trail_act = bt_params.get("trailing_stop_activation_pct")
+        bt_entry_config = bt_params.get("backtest_entry_config")
 
         bt_period_days = bt_params.get("backtest_period_days")
         if bt_period_days is not None:
@@ -10623,6 +10624,7 @@ class TradingEngine:
                 cooldown_after_loss_seconds=bt_params.get("cooldown_after_loss_seconds"),
                 slippage_pct=0.001,
                 trend_filter_ema_period=50,
+                backtest_entry_config=bt_entry_config,
             )
             bt_summary = format_backtest_summary(backtest_stats)
             return backtest_stats, bt_summary
