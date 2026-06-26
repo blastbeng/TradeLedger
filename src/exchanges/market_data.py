@@ -273,6 +273,18 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     return None
 
 
+# Borsa Italiana timeframe conversion map (daily data → resampled via pandas)
+BORSA_TIMEFRAME_MAP = {
+    "1d": None,       # Daily native (no conversion needed)
+    "1w": "W",         # Weekly
+    "1M": "ME",        # Month End
+    "3M": "3ME",       # Quarterly
+    "6M": "6ME",       # Semi-annual
+    "1Y": "YE",        # Year End
+    "3Y": "3YE",       # 3-Year
+    "5Y": "5YE",       # 5-Year
+}
+
 def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
     """Dynamically fetch the bearer token from the Borsa Italiana summary chart page."""
     url = f"https://grafici.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it"
@@ -529,18 +541,6 @@ TIMEFRAME_MS = {
     "1Y": 31_536_000_000,
     "3Y": 94_608_000_000,
     "5Y": 157_680_000_000,
-}
-
-# Borsa Italiana timeframe conversion map (daily data → resampled via pandas)
-BORSA_TIMEFRAME_MAP = {
-    "1d": None,       # Daily native (no conversion needed)
-    "1w": "W",         # Weekly
-    "1M": "ME",        # Month End
-    "3M": "3ME",       # Quarterly
-    "6M": "6ME",       # Semi-annual
-    "1Y": "YE",        # Year End
-    "3Y": "3YE",       # 3-Year
-    "5Y": "5YE",       # 5-Year
 }
 
 def _aggregate_candles(candles: List[List], target_tf: str) -> List[List]:
