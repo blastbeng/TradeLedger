@@ -352,20 +352,20 @@ def get_borsa_italiana_candles(
         with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
             if timeframe == "1d":
                 # For 1d, use the intraday endpoint
-                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/intraday?resolution=1MN"
+                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/intraday?resolution=1MN"
                 logger.debug(f"Fetching intraday data from: {url}")
                 response = client.get(url, headers=headers)
 
                 if response.status_code != 200:
                     logger.debug(f"Intraday endpoint returned {response.status_code} for {symbol} {timeframe}, falling back to history endpoint")
                     # Fall back to history endpoint
-                    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
+                    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
                     response = client.get(url, headers=headers)
 
                 response.raise_for_status()
             else:
                 # For other timeframes, use the history endpoint (always fetch 5Y of daily data, then resample)
-                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
+                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
                 response = client.get(url, headers=headers)
                 response.raise_for_status()
 
