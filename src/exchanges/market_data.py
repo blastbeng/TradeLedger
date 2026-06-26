@@ -283,12 +283,11 @@ def get_borsa_italiana_candles(
 
     Fetches daily candles from the borsaitaliana chart API and resamples
     them to the requested timeframe using pandas.
+    For 1d timeframe, uses the intraday endpoint.
 
     Returns list of [timestamp_ms, open, high, low, close, volume].
-    Returns None if the download fails or the timeframe is not supported
-    (e.g., 1h intraday is not available from borsaitaliana).
+    Returns None if the download fails or the timeframe is not supported.
     """
-    # 1h and other intraday timeframes are not available from borsaitaliana
     if timeframe not in BORSA_TIMEFRAME_MAP:
         return None
 
@@ -303,23 +302,46 @@ def get_borsa_italiana_candles(
             logger.debug(f"Could not get ISIN for {symbol}, skipping borsaitaliana")
             return None
 
-    # The API always returns daily candles for the requested period.
-    # We always fetch 5Y to get maximum available data, then resample.
-    api_period = "5Y"
+    # Determine market code for referer URL
+    is_btp = re.match(r'^IT[A-Z0-9]{10}$', isin) is not None
+    market_code = "MOTX" if is_btp else "XMIL"
 
-    # The exchange code is always XMIL for the grafici API
-    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/history/period?period={api_period}&adjustment=true&add-last-price=true"
-
+    # Headers matching the browser request exactly
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
+        "accept": "*/*",
+        "accept-language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        "authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiItMSIsImV4cCI6NDkwNTU4MzU3MiwiaWF0IjoxNzUxOTgzNTcyLCJhdXRob3JpdGllcyI6W119.d7Eh_LOGqA44BH58HIiPrPIz1SLskVOPj4BRsae05cI",
+        "priority": "u=1, i",
+        "referer": f"https://grafici.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it",
+        "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
     }
 
     try:
-        with httpx.Client(proxy=_get_proxies(), timeout=8.0, follow_redirects=True) as client:
-            response = client.get(url, headers=headers)
-        response.raise_for_status()
+        with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+            if timeframe == "1d":
+                # For 1d, use the intraday endpoint
+                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/intraday?resolution=1MN"
+                logger.debug(f"Fetching intraday data from: {url}")
+                response = client.get(url, headers=headers)
+
+                if response.status_code != 200:
+                    logger.debug(f"Intraday endpoint returned {response.status_code} for {symbol} {timeframe}, falling back to history endpoint")
+                    # Fall back to history endpoint
+                    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
+                    response = client.get(url, headers=headers)
+
+                response.raise_for_status()
+            else:
+                # For other timeframes, use the history endpoint (always fetch 5Y of daily data, then resample)
+                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
+                response = client.get(url, headers=headers)
+                response.raise_for_status()
 
         # The API returns JSON wrapped in HTML <pre> tags
         text = response.text
@@ -338,23 +360,37 @@ def get_borsa_italiana_candles(
                 logger.error(f"No JSON data found in borsaitaliana response for {symbol}")
                 return None
 
-        # Extract the history data
+        # Extract history data — handle both "history" and "intraday" response keys
         history = data.get("history", {})
+        if not history:
+            history = data.get("intraday", {})
         history_dt = history.get("historyDt", [])
+        if not history_dt:
+            history_dt = history.get("intradayDt", [])
 
         if not history_dt:
             logger.warning(f"Empty history from borsaitaliana for {symbol} {timeframe}")
             return None
 
         # Build candle list from the API response
-        # Date format is "YYYYMMDD" string
+        # Date format is "YYYYMMDD" for history, may be "YYYYMMDDHHMMSS" for intraday
         rows = []
         for item in history_dt:
             dt_str = item.get("dt", "")
-            if not dt_str or len(dt_str) != 8:
+            if not dt_str:
                 continue
             try:
-                dt = datetime.strptime(dt_str, "%Y%m%d")
+                if len(dt_str) == 8:
+                    # YYYYMMDD (daily)
+                    dt = datetime.strptime(dt_str, "%Y%m%d")
+                elif len(dt_str) == 14:
+                    # YYYYMMDDHHMMSS (intraday)
+                    dt = datetime.strptime(dt_str, "%Y%m%d%H%M%S")
+                elif len(dt_str) == 12:
+                    # YYMMDDHHMMSS (intraday, 2-digit year)
+                    dt = datetime.strptime(dt_str, "%y%m%d%H%M%S")
+                else:
+                    continue
                 ts = int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
                 rows.append([
                     ts,
@@ -377,6 +413,33 @@ def get_borsa_italiana_candles(
         # Filter by start_ms if provided
         if start_ms is not None:
             rows = [c for c in rows if c[0] >= start_ms]
+
+        # For 1d intraday data, aggregate 1-minute candles into daily candles
+        if timeframe == "1d" and len(rows) > 1:
+            # Check if we have intraday granularity (timestamps within same day)
+            first_ts = rows[0][0]
+            second_ts = rows[1][0]
+            if (second_ts - first_ts) < 86400000:  # less than 1 day apart = intraday
+                logger.debug(f"Aggregating {len(rows)} intraday candles into daily candles for {symbol}")
+                df = pd.DataFrame(rows, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+                df['Date'] = pd.to_datetime(df['Timestamp'], unit='ms')
+                df.set_index('Date', inplace=True)
+                ohlcv_rules = {
+                    'Open': 'first',
+                    'High': 'max',
+                    'Low': 'min',
+                    'Close': 'last',
+                    'Volume': 'sum'
+                }
+                df = df.resample('1D').agg(ohlcv_rules)
+                df.dropna(subset=['Open'], inplace=True)
+                df.reset_index(inplace=True)
+                rows = []
+                for _, row in df.iterrows():
+                    ts = int(row['Date'].timestamp() * 1000)
+                    vol = float(row['Volume']) if pd.notna(row['Volume']) else 0.0
+                    rows.append([ts, float(row['Open']), float(row['High']), float(row['Low']), float(row['Close']), vol])
+                rows.sort(key=lambda c: c[0])
 
         # Resample to requested timeframe if needed (not 1d)
         pandas_freq = BORSA_TIMEFRAME_MAP.get(timeframe)
