@@ -778,8 +778,12 @@ def build_strategy_prompt(
         min_hold = 31_536_000  # ~1 year cap for 1Y/6M candles
     else:
         min_hold = 2 * tf_seconds
+    _ticker_compact = {
+        k: ticker.get(k) for k in ("last", "bid", "ask", "volume", "quoteVolume", "percentage", "name", "coupon", "maturity")
+        if k in ticker
+    }
     prompt = f"""Symbol: {symbol}
-Current ticker: {json.dumps(ticker)}
+Current ticker: {json.dumps(_ticker_compact)}
 Current balances: {json.dumps(balance)}
 """
     # --- Portfolio context: total base balance and all tracked symbols ---
@@ -792,7 +796,17 @@ Current balances: {json.dumps(balance)}
             prompt += f"Other symbols being traded (you must leave budget for them): {symbol_list_str}\n"
         else:
             prompt += "This is the only symbol being traded; you may use the full budget.\n"
-    prompt += f"""Open positions: {json.dumps(open_positions)}
+    _positions_compact = [
+        {
+            "symbol": p.get("symbol"),
+            "entry": p.get("price"),
+            "amount": p.get("amount"),
+            "sl": p.get("stop_loss"),
+            "tp": p.get("take_profit"),
+        }
+        for p in open_positions
+    ]
+    prompt += f"""Open positions: {json.dumps(_positions_compact)}
 Your total available {base_currency} balance: {base_balance:.2f}
 Suggested equal share per symbol (balance / max_symbols): {per_symbol_budget:.2f} {base_currency}
 Maximum symbols to trade: {max_symbols}
@@ -1136,41 +1150,51 @@ Maximum symbols to trade: {max_symbols}
         for tf in settings.OHLCV_TIMEFRAMES:
             if tf in multi_tf_indicators:
                 ind = multi_tf_indicators[tf]
-                lines = [f"[{tf}]"]
-                if ind.get('rsi') is not None:
-                    lines.append(f"  RSI={ind['rsi']:.2f}")
+                ind_compact = {}
+                if ind.get('rsi') is not None: ind_compact['rsi'] = round(ind['rsi'], 2)
                 if ind.get('macd') is not None:
-                    lines.append(f"  MACD={ind['macd']:.4f} Signal={ind['macd_signal']:.4f} Hist={ind['macd_hist']:.4f}")
+                    ind_compact['macd'] = round(ind['macd'], 4)
+                    ind_compact['macd_sig'] = round(ind['macd_signal'], 4)
+                    ind_compact['macd_h'] = round(ind['macd_hist'], 4)
                 if ind.get('bb_upper') is not None:
-                    lines.append(f"  BB Upper={ind['bb_upper']:.4f} Middle={ind['bb_middle']:.4f} Lower={ind['bb_lower']:.4f}")
+                    ind_compact['bb_u'] = round(ind['bb_upper'], 4)
+                    ind_compact['bb_m'] = round(ind['bb_middle'], 4)
+                    ind_compact['bb_l'] = round(ind['bb_lower'], 4)
                 if ind.get('ema_9') is not None:
-                    lines.append(f"  EMA9={ind['ema_9']:.4f} EMA21={ind['ema_21']:.4f}")
+                    ind_compact['ema9'] = round(ind['ema_9'], 4)
+                    ind_compact['ema21'] = round(ind['ema_21'], 4)
                 if ind.get('stochastic_k') is not None:
-                    lines.append(f"  Stoch %K={ind['stochastic_k']:.2f} %D={ind['stochastic_d']:.2f}")
+                    ind_compact['stoch_k'] = round(ind['stochastic_k'], 2)
+                    if ind.get('stochastic_d') is not None:
+                        ind_compact['stoch_d'] = round(ind['stochastic_d'], 2)
                 if ind.get('adx') is not None:
-                    lines.append(f"  ADX={ind['adx']:.2f} +DI={ind['plus_di']:.2f} -DI={ind['minus_di']:.2f}")
-                if ind.get('obv') is not None:
-                    lines.append(f"  OBV={ind['obv']:.2f}")
-                if ind.get('mfi') is not None:
-                    lines.append(f"  MFI={ind['mfi']:.2f}")
-                if ind.get('cci') is not None:
-                    lines.append(f"  CCI={ind['cci']:.2f}")
-                if ind.get('williams_r') is not None:
-                    lines.append(f"  Williams %R={ind['williams_r']:.2f}")
+                    ind_compact['adx'] = round(ind['adx'], 2)
+                    ind_compact['+di'] = round(ind['plus_di'], 2)
+                    ind_compact['-di'] = round(ind['minus_di'], 2)
+                if ind.get('obv') is not None: ind_compact['obv'] = round(ind['obv'], 2)
+                if ind.get('mfi') is not None: ind_compact['mfi'] = round(ind['mfi'], 2)
+                if ind.get('cci') is not None: ind_compact['cci'] = round(ind['cci'], 2)
+                if ind.get('williams_r') is not None: ind_compact['wr'] = round(ind['williams_r'], 2)
                 if ind.get('ichimoku') is not None:
                     ich = ind['ichimoku']
-                    lines.append(f"  Ichimoku: Tenkan={ich['tenkan_sen']:.4f} Kijun={ich['kijun_sen']:.4f} SpanA={ich['senkou_span_a']:.4f} SpanB={ich['senkou_span_b']:.4f} Cloud={ich['cloud_bottom']:.4f}-{ich['cloud_top']:.4f}")
+                    ind_compact['ich'] = {
+                        "t": round(ich['tenkan_sen'], 4),
+                        "k": round(ich['kijun_sen'], 4),
+                        "sa": round(ich['senkou_span_a'], 4),
+                        "sb": round(ich['senkou_span_b'], 4),
+                        "cb": round(ich['cloud_bottom'], 4),
+                        "ct": round(ich['cloud_top'], 4),
+                    }
                 if ind.get('donchian_channels') is not None:
                     dc = ind['donchian_channels']
-                    lines.append(f"  Donchian: Upper={dc['upper']:.4f} Middle={dc['middle']:.4f} Lower={dc['lower']:.4f}")
-                if ind.get('atr') is not None:
-                    lines.append(f"  ATR(14)={ind['atr']:.6f}")
-                if ind.get('parabolic_sar') is not None:
-                    lines.append(f"  SAR={ind['parabolic_sar']:.6f}")
+                    ind_compact['dc'] = {"u": round(dc['upper'], 4), "m": round(dc['middle'], 4), "l": round(dc['lower'], 4)}
+                if ind.get('atr') is not None: ind_compact['atr'] = round(ind['atr'], 6)
+                if ind.get('parabolic_sar') is not None: ind_compact['sar'] = round(ind['parabolic_sar'], 6)
                 if ind.get('keltner_channels') is not None:
                     kc = ind['keltner_channels']
-                    lines.append(f"  Keltner: Upper={kc['upper']:.6f} Middle={kc['middle']:.6f} Lower={kc['lower']:.6f}")
-                prompt += "\n".join(lines) + "\n"
+                    ind_compact['kc'] = {"u": round(kc['upper'], 6), "m": round(kc['middle'], 6), "l": round(kc['lower'], 6)}
+                
+                prompt += f"[{tf}] {json.dumps(ind_compact)}\n"
     elif raw_candles:
         summary = _summarize_ohlcv(raw_candles)
         if summary:
@@ -1272,7 +1296,16 @@ Maximum symbols to trade: {max_symbols}
     if drawdown_pct is not None:
         prompt += f"Current account drawdown: {drawdown_pct}%\n"
     if recent_trades:
-        prompt += f"\nRecent closed trades (last {len(recent_trades)}):\n{json.dumps(recent_trades)}\n"
+        _recent_compact = [
+            {
+                "sym": t.get("symbol"),
+                "pnl": t.get("realized_pnl"),
+                "reason": t.get("exit_reason"),
+                "hold": t.get("hold_time_seconds"),
+            }
+            for t in recent_trades
+        ]
+        prompt += f"\nRecent closed trades (last {len(recent_trades)}):\n{json.dumps(_recent_compact)}\n"
         prompt += "Use these outcomes to adapt your strategy. If recent trades are losing, become more conservative.\n"
 
     # --- Past trades for this symbol ---
@@ -1289,15 +1322,7 @@ Maximum symbols to trade: {max_symbols}
             cost_basis = t.get("cost_basis", amount * entry_price)
             pnl_pct = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
             hold_str = f"{hold_time:.0f}s" if hold_time is not None else "N/A"
-            buy_conf = t.get("buy_confidence", 0.0)
-            buy_reason = t.get("buy_reasoning", "")
-            conf_str = f", Buy Conf: {buy_conf:.2f}" if buy_conf else ""
-            reason_str = f", Buy Reason: {buy_reason}" if buy_reason else ""
-            prompt += (
-                f"- Entry: {entry_price:.4f}, Exit: {exit_price:.4f}, Amount: {amount:.6f}, "
-                f"P&L: {pnl:+.4f} ({pnl_pct:+.2f}%), Reason: {exit_reason}, "
-                f"Hold: {hold_str}, Strategy: {strategy}{conf_str}{reason_str}\n"
-            )
+            prompt += f"- Entry:{entry_price:.4f} Exit:{exit_price:.4f} P&L:{pnl:+.2f} ({pnl_pct:+.1f}%) Reason:{exit_reason} Hold:{hold_str} Strat:{strategy}\n"
         prompt += (
             "Use these past outcomes to avoid repeating mistakes and reinforce successful patterns. "
             "Calibrate your confidence: if high-confidence trades are losing, lower confidence for similar setups; "
