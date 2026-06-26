@@ -4505,12 +4505,22 @@ class TradingEngine:
 
             balance = await self._get_cached_balance()
             base_balance = balance.get(self.base_currency, 0.0)
-            if base_balance <= 0 or self.effective_max_symbols == 0:
+            has_position = symbol in self.positions
+            # If we have an open position, we must continue evaluating it for SELL signals
+            # even when base_balance is 0 (all capital deployed) or effective_max_symbols is 0.
+            if not has_position and (base_balance <= 0 or self.effective_max_symbols == 0):
                 logger.warning(
                     f"Skipping {symbol}: {self.base_currency} balance={base_balance:.2f}, "
                     f"effective_max_symbols={self.effective_max_symbols}"
                 )
                 return
+            # For positions we still need to manage, use a per_symbol_budget of 0
+            # so the LLM knows no new capital is available for scaling in.
+            if base_balance <= 0:
+                logger.info(
+                    f"Evaluating {symbol} for position management only "
+                    f"(base_balance={base_balance:.2f}, no new capital available)."
+                )
 
             # Fetch OHLCV from database first (background tasks keep it populated).
             # Only fall back to API if DB has no data for the assigned timeframe.
@@ -5464,6 +5474,7 @@ class TradingEngine:
                             signal.backtest_summary = combined_bt_summary
                         # Carry over execution-critical fields from Step 1 if not provided in Step 2
                         if signal.action == "BUY":
+                            # Execution parameters
                             if signal.entry_condition is None and preliminary_signal.entry_condition is not None:
                                 signal.entry_condition = preliminary_signal.entry_condition
                             if signal.order_type is None and preliminary_signal.order_type is not None:
@@ -5486,6 +5497,41 @@ class TradingEngine:
                                 signal.take_profit_limit_price = preliminary_signal.take_profit_limit_price
                             if signal.trail_offset is None and preliminary_signal.trail_offset is not None:
                                 signal.trail_offset = preliminary_signal.trail_offset
+                            # Risk parameters — carry over from Step 1 if missing in Step 2
+                            if signal.strategy_params:
+                                prelim_params = preliminary_signal.strategy_params or {}
+                                for risk_key in (
+                                    "cooldown_after_loss_seconds",
+                                    "max_hold_time_seconds",
+                                    "stop_loss_method",
+                                    "stop_loss_atr_multiple",
+                                    "trailing_stop_distance_pct",
+                                    "trailing_stop_atr_multiple",
+                                    "trailing_stop_activation_pct",
+                                    "partial_take_profit_levels",
+                                    "partial_take_profit_pct",
+                                    "partial_take_profit_fraction",
+                                    "breakeven_activation_pct",
+                                    "trailing_take_profit",
+                                    "trailing_take_profit_distance_pct",
+                                    "max_unrealized_loss_pct",
+                                    "news_sentiment_exit_threshold",
+                                    "max_risk_per_trade_pct",
+                                    "max_portfolio_risk_pct",
+                                    "min_profit_per_trade",
+                                    "min_risk_reward_ratio",
+                                    "min_confidence",
+                                    "position_size_multiplier",
+                                    "strategy_interval_seconds",
+                                    "backtest_period_days",
+                                    "order_fill_timeout_seconds",
+                                    "time_in_force",
+                                ):
+                                    if risk_key not in signal.strategy_params and risk_key in prelim_params:
+                                        signal.strategy_params[risk_key] = prelim_params[risk_key]
+                            else:
+                                # Step 2 returned no params at all — use Step 1's params
+                                signal.strategy_params = preliminary_signal.strategy_params
                     except Exception as e:
                         logger.error(f"LLM Step 2 call failed for {symbol}: {e}. Using preliminary decision.")
                         signal = preliminary_signal
@@ -6682,7 +6728,18 @@ class TradingEngine:
                         if tf:
                             try:
                                 last_check_ts = pos.get("_last_trailing_check_ts", 0)
-                                since_ms = int(last_check_ts * 1000) if last_check_ts > 0 else int((time.time() - 86400) * 1000)
+                                # On the first check, use the position's entry timestamp
+                                # instead of looking back 24h (which could set
+                                # _highest_price to a value from before the position
+                                # was opened, making the trailing stop too tight).
+                                if last_check_ts > 0:
+                                    since_ms = int(last_check_ts * 1000)
+                                else:
+                                    entry_ts = pos.get("timestamp", 0) / 1000.0
+                                    if entry_ts > 0:
+                                        since_ms = int(entry_ts * 1000)
+                                    else:
+                                        since_ms = int((time.time() - 3600) * 1000)  # 1 hour fallback
                                 db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, since_ms=since_ms, limit=200)
                                 if db_candles:
                                     candle_high = max(c["high"] for c in db_candles)
@@ -9598,6 +9655,13 @@ class TradingEngine:
             # Continue anyway – the old order may still be open, but we'll place a new one.
             # The OCO logic will eventually cancel the old one if the new one fills.
 
+        # Capture the old queued entry's limit price BEFORE removing it
+        old_queued = next(
+            (q for q in self.queued_orders if q.get("order_id") == old_order_id),
+            None
+        )
+        old_limit_price = old_queued.get("limit_price") if old_queued else None
+
         # Remove the old queued entry
         self.queued_orders = [
             q for q in self.queued_orders
@@ -9616,13 +9680,9 @@ class TradingEngine:
                     time_in_force="gtc", timeout=60.0
                 )
             else:  # stop_limit
-                # For stop_limit, we need a limit price. Use the original limit price
-                # from the old queued entry, or fall back to the new stop price.
-                old_queued = next(
-                    (q for q in self.queued_orders if q.get("order_id") == old_order_id),
-                    None
-                )
-                limit_price = old_queued.get("limit_price") if old_queued else new_stop_price
+                # For stop_limit, use the original limit price from the old
+                # queued entry, or fall back to the new stop price.
+                limit_price = old_limit_price if old_limit_price is not None else new_stop_price
                 order = await asyncio.to_thread(
                     self.trader.create_stop_limit_sell_order,
                     symbol, qty, new_stop_price, limit_price,

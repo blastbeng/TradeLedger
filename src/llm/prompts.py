@@ -1405,8 +1405,10 @@ Maximum symbols to trade: {max_symbols}
     else:
         validator_min = int(min_hold_time_mult * tf_seconds)
 
+    # Use validator_min as the "reasonable minimum" in the prompt so the LLM
+    # is told the same value the validator actually enforces.
     prompt += f"""
-**For the {assigned_timeframe or 'default'} timeframe, a reasonable minimum max_hold_time_seconds is {min_hold} seconds. Do not set it lower unless you have a very specific, justified reason (e.g., medium-term with a very tight stop and high confidence). For long-term candles (1M, 3M, 6M, 1Y, 3Y, 5Y), prefer max_hold_time_seconds of 2,592,000–94,608,000 seconds (1–36 months or more) to allow long-term trends to fully develop. The most profitable trades in stocks, ETFs, and BTPs come from holding positions for many months or years on long-term candles.
+**For the {assigned_timeframe or 'default'} timeframe, a reasonable minimum max_hold_time_seconds is {validator_min} seconds. Do not set it lower unless you have a very specific, justified reason (e.g., medium-term with a very tight stop and high confidence). For long-term candles (1M, 3M, 6M, 1Y, 3Y, 5Y), prefer max_hold_time_seconds of 2,592,000–94,608,000 seconds (1–36 months or more) to allow long-term trends to fully develop. The most profitable trades in stocks, ETFs, and BTPs come from holding positions for many months or years on long-term candles.
 
 The validator enforces a hard minimum of {validator_min} seconds for this timeframe. Your max_hold_time_seconds must be at least this value.
 
