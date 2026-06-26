@@ -68,56 +68,6 @@ def _sanitize_env_file():
 _sanitize_env_file()
 
 
-def _get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
-    """Fetch a quote from Borsa Italiana 1d candles (mirrors market_data.py logic)."""
-    from src.exchanges.market_data import get_borsa_italiana_candles
-
-    base = symbol.split("/")[0] if "/" in symbol else symbol
-
-    # Skip BTPs — they are handled separately
-    if re.match(r'^IT[A-Z0-9]{10}$', base):
-        return None
-
-    try:
-        borsa_candles = get_borsa_italiana_candles(base, "1d", limit=2)
-        if not borsa_candles or len(borsa_candles) == 0:
-            logger.warning(f"[BORSA] No candles returned for {base}")
-            return None
-
-        last_candle = borsa_candles[-1]
-        last_price = float(last_candle[4])
-        volume = float(last_candle[5]) if last_candle[5] else None
-
-        if last_price <= 0:
-            logger.warning(f"[BORSA] Invalid last_price={last_price} for {base}")
-            return None
-
-        quote = {
-            "last": last_price,
-            "bid": last_price,
-            "ask": last_price,
-            "volume": volume,
-            "change_24h": None,
-            "percentage": None,
-            "quoteVolume": volume,
-            "source": "borsa_italiana",
-        }
-
-        if len(borsa_candles) > 1:
-            prev_close = float(borsa_candles[-2][4])
-            if prev_close > 0:
-                change = ((last_price - prev_close) / prev_close) * 100
-                quote["change_24h"] = round(change, 4)
-                quote["percentage"] = round(change, 4)
-
-        logger.info(f"[BORSA] {base}: last={last_price:.4f}, vol={volume}, "
-                     f"change={quote['percentage']}%, candles={len(borsa_candles)}")
-        return quote
-    except Exception as e:
-        logger.error(f"[BORSA] Failed for {base}: {e}")
-        return None
-
-
 def _get_db_close_price(symbol: str) -> Optional[Dict[str, Any]]:
     """Fetch the latest close price from the database OHLCV table."""
     from src.database import get_latest_close_prices
@@ -269,15 +219,14 @@ def _print_quote_table(symbols: List[str], results: Dict[str, Dict[str, Any]]):
     print("=" * 120 + "\n")
 
 
-def _print_comparison(symbol: str, borsa_q: Optional[dict], db_q: Optional[dict],
-                      db_close: Optional[dict], yf_q: Optional[dict]):
+def _print_comparison(symbol: str, db_q: Optional[dict], db_close: Optional[dict],
+                      yf_q: Optional[dict]):
     """Print a detailed comparison for a single symbol."""
     print("\n" + "=" * 80)
     print(f"COMPARISON FOR {symbol}")
     print("=" * 80)
 
     sources = [
-        ("Borsa Italiana", borsa_q),
         ("DB Quotes Table", db_q),
         ("DB Close Prices", db_close),
         ("yfinance", yf_q),
@@ -349,12 +298,11 @@ def main():
         print(f"\nComparing all quote sources for: {symbol}")
         print("-" * 60)
 
-        borsa_q = _get_borsa_italiana_quote(symbol)
         db_q = _get_db_quotes(symbol)
         db_close = _get_db_close_price(symbol)
         yf_q = _get_yfinance_quote(symbol)
 
-        _print_comparison(symbol, borsa_q, db_q, db_close, yf_q)
+        _print_comparison(symbol, db_q, db_close, yf_q)
         return
 
     if args.all or not args.symbols:
@@ -394,22 +342,16 @@ def main():
                 results[sym] = q
             continue
 
-        # 1. Try Borsa Italiana candles
-        print(f"  Step 1: Borsa Italiana 1d candle...")
-        borsa_q = _get_borsa_italiana_quote(sym)
+        # 1. Try DB quotes table
+        print(f"  Step 1: Database quotes table...")
+        db_q = _get_db_quotes(sym)
 
         # 2. Try DB close prices
         print(f"  Step 2: Database close prices...")
         db_close = _get_db_close_price(sym)
 
-        # 3. Try DB quotes table
-        print(f"  Step 3: Database quotes table...")
-        db_q = _get_db_quotes(sym)
-
-        # Priority: Borsa Italiana > DB quotes > DB close prices
-        if borsa_q:
-            results[sym] = borsa_q
-        elif db_q:
+        # Priority: DB quotes > DB close prices
+        if db_q:
             results[sym] = db_q
         elif db_close:
             results[sym] = db_close
@@ -425,7 +367,6 @@ def main():
 
     # --- Statistics ---
     total = len(symbols)
-    borsa_count = sum(1 for q in results.values() if q.get("source") == "borsa_italiana")
     db_quotes_count = sum(1 for q in results.values() if q.get("source") == "db_quotes")
     db_close_count = sum(1 for q in results.values() if q.get("source") == "db_close_price")
     btp_count = sum(1 for q in results.values() if q.get("source") == "btp_bond_list")
@@ -435,7 +376,6 @@ def main():
     print("STATISTICS")
     print("=" * 60)
     print(f"  Total symbols tested:      {total}")
-    print(f"  Borsa Italiana quotes:     {borsa_count}")
     print(f"  DB quotes table:           {db_quotes_count}")
     print(f"  DB close prices:           {db_close_count}")
     print(f"  BTP bond list:             {btp_count}")
