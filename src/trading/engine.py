@@ -6117,8 +6117,10 @@ class TradingEngine:
                     min_timeout = max(300, int(settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT * tf_seconds))
                     # Cap the minimum timeout to avoid absurd values for very long timeframes
                     # (e.g., 2 × 31,536,000 = ~730 days for 1Y candles).
-                    # 7 days is a reasonable maximum wait for an entry condition in medium/long-term trading.
-                    min_timeout = min(min_timeout, 604800)
+                    # 180 days is a reasonable maximum wait for an entry condition in medium/long-term
+                    # trading — it accommodates 1M (60d natural) and 3M (180d natural) candles
+                    # while still capping 6M, 1Y, 3Y, and 5Y candles.
+                    min_timeout = min(min_timeout, 15_552_000)  # 180 days
                     if timeout < min_timeout:
                         logger.info(
                             f"Entry condition timeout for {symbol} too short ({timeout}s), "
