@@ -1057,6 +1057,13 @@
                             const amtStr = (s.trade_amount != null && s.trade_amount > 0)
                                 ? s.trade_amount.toFixed(2) + ' ' + cur : '—';
                             smTitle.textContent = `${s.display_symbol || s.symbol} — ${actionLabel}`;
+                            let extraInfo = '';
+                            if (s.news_sentiment) {
+                                extraInfo += `\n<strong>News Sentiment:</strong> ${s.news_sentiment}\n`;
+                            }
+                            if (s.backtest_summary) {
+                                extraInfo += `\n<strong>Backtest Results:</strong>\n${s.backtest_summary}\n`;
+                            }
                             smBody.innerHTML =
                                 `<strong>Time:</strong> ${time}\n` +
                                 `<strong>Ticker:</strong> ${s.display_symbol || s.symbol}\n` +
@@ -1066,6 +1073,7 @@
                                 `<strong>Model:</strong> ${s.model_type || '—'}\n` +
                                 `<strong>Provider:</strong> ${s.llm_provider || '—'}\n` +
                                 `<strong>Model Name:</strong> ${s.llm_model || '—'}\n` +
+                                extraInfo +
                                 `\n<strong>Reasoning:</strong>\n${fullReasoning}`;
                             sm.style.display = 'flex';
                         };
