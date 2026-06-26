@@ -9470,15 +9470,21 @@ class TradingEngine:
         sl_price = exit_prices.get("stop_loss_price")
         sl_order_id = None
         if sl_ot in ("stop", "stop_limit") and sl_price is not None:
+            actual_sl_ot = sl_ot
             try:
-                if sl_ot == "stop":
+                if sl_ot == "stop" or (sl_ot == "stop_limit" and signal.stop_loss_limit_price is None):
+                    # Fall back to a regular stop order when no explicit limit
+                    # price is provided for stop_limit. Defaulting the limit to
+                    # the stop price defeats the purpose of a stop-limit order.
+                    if sl_ot == "stop_limit":
+                        actual_sl_ot = "stop"
                     order = await asyncio.to_thread(
                         self.trader.create_stop_sell_order,
                         symbol, qty, sl_price,
                         time_in_force="gtc", timeout=60.0
                     )
-                else:  # stop_limit
-                    limit_price = signal.stop_loss_limit_price or sl_price
+                else:  # stop_limit with explicit limit price
+                    limit_price = signal.stop_loss_limit_price
                     order = await asyncio.to_thread(
                         self.trader.create_stop_limit_sell_order,
                         symbol, qty, sl_price, limit_price,
@@ -9493,7 +9499,7 @@ class TradingEngine:
                     "limit_price": order.get("limit_price"),
                     "stop_price": order.get("stop_price"),
                     "trail_offset": order.get("trail_offset"),
-                    "order_type": sl_ot,
+                    "order_type": actual_sl_ot,
                     "time_in_force": "gtc",
                     "signal": asdict(signal),
                     "timeframe": timeframe,
@@ -9602,8 +9608,8 @@ class TradingEngine:
         # Store order IDs in position for risk management
         pos["stop_loss_order_id"] = sl_order_id
         # Store order type for risk management decisions
-        if sl_ot:
-            pos["stop_loss_order_type"] = sl_ot
+        if actual_sl_ot:
+            pos["stop_loss_order_type"] = actual_sl_ot
         pos["take_profit_order_id"] = tp_order_id
 
         # Notify user
@@ -9612,11 +9618,11 @@ class TradingEngine:
             display_symbol = self._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
             msg = f"🛡️ Exit orders placed for {display_symbol}:\n"
             if sl_order_id:
-                sl_type = sl_ot or "stop"
-                if sl_ot == "trailing_stop":
+                sl_type = actual_sl_ot or "stop"
+                if actual_sl_ot == "trailing_stop":
                     msg += f"  🛑 Trailing stop: offset ${trail_offset:.2f}\n"
-                elif sl_ot == "stop_limit":
-                    msg += f"  🛑 Stop-limit: stop ${sl_price:.2f}, limit ${signal.stop_loss_limit_price or sl_price:.2f}\n"
+                elif actual_sl_ot == "stop_limit":
+                    msg += f"  🛑 Stop-limit: stop ${sl_price:.2f}, limit ${signal.stop_loss_limit_price:.2f}\n"
                 else:
                     msg += f"  🛑 Stop: ${sl_price:.2f}\n"
             if tp_order_id:
