@@ -4251,6 +4251,7 @@ class TradingEngine:
                 logger.info(f"Max symbol tenure reached for {symbol} ({max_tenure_hours:.1f}h), forcing sell")
                 signal = Signal(action="SELL", confidence=1.0, reasoning="Max symbol tenure reached")
                 await self._execute_signal(symbol, signal, exit_reason="max_tenure")
+                self._force_eval.pop(symbol, None)
                 return
 
         # --- Cooldown after a losing trade (LLM-defined) ---
@@ -4267,11 +4268,13 @@ class TradingEngine:
                         logger.info(
                             f"Skipping {symbol}: cooldown active ({remaining:.0f}s remaining after loss)"
                         )
+                        self._force_eval.pop(symbol, None)
                         return
 
         # Skip if there is already a queued order for this symbol
         if any(q['symbol'] == symbol for q in self.queued_orders):
             logger.info(f"Skipping {display_symbol}: order already queued.")
+            self._force_eval.pop(symbol, None)
             return
 
         # --- Max hold expired flag ---
@@ -4410,6 +4413,7 @@ class TradingEngine:
                             "reason": "No OHLCV data",
                         }
                     )
+                self._force_eval.pop(symbol, None)
                 return
 
             open_positions = [
@@ -5062,6 +5066,7 @@ class TradingEngine:
                             "model_type": strategy_model_type,
                         }
                     )
+                self._force_eval.pop(symbol, None)
                 return
 
             if response is None:
@@ -5102,6 +5107,7 @@ class TradingEngine:
                             "model_type": strategy_model_type,
                         }
                     )
+                self._force_eval.pop(symbol, None)
                 return
 
             # --- Step 1: Parse preliminary decision ---
