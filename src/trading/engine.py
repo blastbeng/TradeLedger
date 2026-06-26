@@ -1617,14 +1617,14 @@ class TradingEngine:
         while self._running:
             if self._quotes_fetch_running:
                 logger.info("Quotes fetch already running (likely re-evaluation or breadth); skipping this cycle.")
-                await asyncio.sleep(60)
+                await asyncio.sleep(settings.QUOTE_REFRESH_INTERVAL_SECONDS)
                 continue
             self._quotes_fetch_running = True
             try:
                 # Skip the entire cycle if yfinance circuit breaker is open
                 if _check_yf_circuit():
                     logger.info("Quotes refresh skipped: yfinance circuit breaker is open.")
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(settings.QUOTE_REFRESH_INTERVAL_SECONDS)
                     continue
                 plain_assets = await self._get_tradable_assets()
                 if plain_assets:
@@ -1650,7 +1650,7 @@ class TradingEngine:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
             finally:
                 self._quotes_fetch_running = False
-            await asyncio.sleep(60)
+            await asyncio.sleep(settings.QUOTE_REFRESH_INTERVAL_SECONDS)
 
     async def _refresh_ticker_discovery_loop(self):
         """Periodically discover tickers from news RSS feeds and trending stocks.
