@@ -275,7 +275,7 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
 
 def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
     """Dynamically fetch the bearer token from the Borsa Italiana summary chart page."""
-    url = f"https://grafichi.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it"
+    url = f"https://grafici.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
