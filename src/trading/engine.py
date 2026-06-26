@@ -2600,22 +2600,10 @@ class TradingEngine:
             )
         ]
 
-        # --- Pre-rank candidates by DB volume to limit expensive quote fetching ---
-        # Use the full candidate limit (200) since the DB fallback (get_latest_close_prices)
-        # provides instant prices from the market_data table without yfinance calls.
-        _quote_fetch_limit = settings.SYMBOL_SELECTION_CANDIDATE_LIMIT
-        if settings.OHLCV_TIMEFRAMES and len(sample_pairs) > _quote_fetch_limit:
-            pre_rank_since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000  # last 7 days
-            pre_rank_summary = await asyncio.to_thread(
-                get_ohlcv_summary_for_symbols, sample_pairs, ["1d"], pre_rank_since
-            )
-            sample_pairs = sorted(
-                sample_pairs,
-                key=lambda s: pre_rank_summary.get(s, {}).get("1d", {}).get("volume", 0),
-                reverse=True
-            )
-            sample_pairs = sample_pairs[:_quote_fetch_limit]
-            logger.info(f"Pre-ranked and limited candidates to {len(sample_pairs)} by DB volume (limit={_quote_fetch_limit})")
+        # --- Do NOT pre-rank or limit candidates by volume ---
+        # We want the LLM to evaluate ALL symbols that have a quote in cache/DB.
+        # The quote fetch uses get_quotes_cached which only reads from Redis/DB
+        # (no network calls), so fetching quotes for hundreds of symbols is fast.
 
         # Separate stocks and BTPs for quote fetching
         stock_sample = [s for s in sample_pairs if s in stock_pairs]
@@ -2991,28 +2979,12 @@ class TradingEngine:
             if sym not in shortlist:
                 shortlist.append(sym)
 
-        # Limit the final candidate list sent to the LLM to keep prompt size manageable
-        # Ensure the LLM always has at least MAX_SYMBOLS candidates to choose from
-        top_n = max(settings.LLM_STOCK_SELECTION_TOP_N, settings.MAX_SYMBOLS)
-        top_by_composite = sorted_by_composite[:top_n]
-        final_set = set(top_by_composite)
-        shortlist_set = set(shortlist)
-        # Always keep current symbols, ETFs, and BTPs
-        for entry in self.current_symbols:
-            if entry["symbol"] in shortlist_set:
-                final_set.add(entry["symbol"])
-        for etf in etf_pairs:
-            if etf in shortlist_set:
-                final_set.add(etf)
-        for btp in btp_pairs:
-            if btp in shortlist_set:
-                final_set.add(btp)
-        # Rebuild sample_pairs preserving composite score order
-        sample_pairs = [s for s in sorted_by_composite if s in final_set]
-        # Add any remaining symbols from final_set not in sorted_by_composite
-        remaining_syms = final_set - set(sample_pairs)
-        sample_pairs.extend(list(remaining_syms))
-        logger.info(f"Curated LLM candidate list: {len(sample_pairs)} symbols (limited from {len(shortlist)})")
+        # --- Do NOT limit the final candidate list ---
+        # The LLM must evaluate ALL symbols that have a valid quote in cache/DB.
+        # sample_pairs already contains only symbols with valid quotes (filtered above).
+        # shortlist includes sample_pairs plus current symbols, ETFs, and BTPs.
+        sample_pairs = shortlist
+        logger.info(f"LLM candidate list: {len(sample_pairs)} symbols (all symbols with valid quotes)")
 
         # --- Detect upcoming corporate events from news (parallelized) ---
         symbol_events: Dict[str, Dict[str, Any]] = {}
