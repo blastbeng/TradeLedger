@@ -3123,6 +3123,14 @@ class TradingEngine:
             if sym not in shortlist:
                 shortlist.append(sym)
 
+        # Deduplicate shortlist while preserving order. The sample_pairs
+        # reconstruction (stocks + ETFs + BTPs) can introduce duplicates
+        # when a symbol appears in multiple category lists, and those
+        # duplicates propagate into shortlist via the initial
+        # sorted_by_composite assignment.
+        seen = set()
+        shortlist = [s for s in shortlist if not (s in seen or seen.add(s))]
+
         # --- Do NOT limit the final candidate list ---
         # The LLM must evaluate ALL symbols that have a valid quote in cache/DB.
         # sample_pairs already contains only symbols with valid quotes (filtered above).
