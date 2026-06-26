@@ -6511,9 +6511,29 @@ class TradingEngine:
                             activated = False
 
                     if activated:
-                        # Track highest price since activation
-                        if "_highest_price" not in pos or current_price > pos["_highest_price"]:
-                            pos["_highest_price"] = current_price
+                        # Track highest price since activation.
+                        # Use both the current ticker price AND the highest high
+                        # from recent OHLCV candles to capture intra-check price
+                        # spikes (the risk check only runs every
+                        # RISK_CHECK_INTERVAL_SECONDS, so the ticker price alone
+                        # may miss brief highs between checks).
+                        candidate_prices = [current_price]
+                        tf = pos.get("timeframe")
+                        if tf:
+                            try:
+                                last_check_ts = pos.get("_last_trailing_check_ts", 0)
+                                since_ms = int(last_check_ts * 1000) if last_check_ts > 0 else int((time.time() - 86400) * 1000)
+                                db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, since_ms=since_ms, limit=200)
+                                if db_candles:
+                                    candle_high = max(c["high"] for c in db_candles)
+                                    candidate_prices.append(candle_high)
+                            except Exception as e:
+                                logger.debug(f"Failed to fetch OHLCV for trailing stop on {symbol}: {e}")
+                        pos["_last_trailing_check_ts"] = time.time()
+
+                        best_high = max(candidate_prices)
+                        if "_highest_price" not in pos or best_high > pos["_highest_price"]:
+                            pos["_highest_price"] = best_high
 
                         highest_price = pos["_highest_price"]
                         new_stop = None
