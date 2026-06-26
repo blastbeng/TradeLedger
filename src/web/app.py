@@ -486,6 +486,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_text(json.dumps(payload))
             except HTTPException:
                 await websocket.send_text(json.dumps({"status": "initializing"}))
+            except WebSocketDisconnect:
+                logger.debug("WebSocket client disconnected")
+                break
             except Exception as e:
                 logger.error(f"WebSocket error: {e}", exc_info=True)
                 break
