@@ -151,6 +151,8 @@ def get_borsa_italiana_candles_debug(
             history_dt = history.get("intradayPoint", [])
         if not history_dt:
             history_dt = history.get("intradayDt", [])
+        if not history_dt:
+            history_dt = data.get("intradayPoint", [])
 
         if not history_dt:
             logger.warning(f"Empty history from borsaitaliana for {symbol} {timeframe}")
