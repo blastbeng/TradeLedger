@@ -139,6 +139,8 @@ class TradingEngine:
         self._symbol_first_seen: Dict[str, float] = {}  # symbol -> timestamp when first added
         self._market_breadth: Optional[Dict[str, Any]] = None
         self._risk_lock = asyncio.Lock()
+        self._state_lock = asyncio.Lock()
+        self._state_save_pending = False
         self._symbol_reeval_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
         self._force_reeval: bool = False
@@ -1739,6 +1741,9 @@ class TradingEngine:
         ):
             return self._perf_cache
 
+        # Snapshot trade_history to avoid concurrent modification during iteration
+        trades_snapshot = list(self.trade_history)
+
         from collections import defaultdict
 
         now = time.time()
@@ -1747,7 +1752,7 @@ class TradingEngine:
         symbol_stop_losses = defaultdict(int)
         symbol_hold_times = defaultdict(list)
 
-        for trade in self.trade_history:
+        for trade in trades_snapshot:
             if trade.get("side") != "sell":
                 continue
             symbol = trade["symbol"]
@@ -1798,7 +1803,7 @@ class TradingEngine:
             }
 
         # Overall equity curve summary: last 10 trades P&L trend
-        recent_sells = [t for t in self.trade_history if t.get("side") == "sell"][-10:]
+        recent_sells = [t for t in trades_snapshot if t.get("side") == "sell"][-10:]
         recent_pnl = [t.get("realized_pnl", 0.0) for t in recent_sells]
         total_recent_pnl = sum(recent_pnl)
         trend = "up" if total_recent_pnl > 0 else "down" if total_recent_pnl < 0 else "flat"
@@ -1806,7 +1811,7 @@ class TradingEngine:
         # Compute drawdown based on total equity (initial balance + cumulative realized P&L)
         equity_series = []
         running_equity = self.initial_balance
-        for trade in self.trade_history:
+        for trade in trades_snapshot:
             if trade.get("side") == "sell":
                 running_equity += trade.get("realized_pnl", 0.0)
             equity_series.append(running_equity)
@@ -1833,7 +1838,7 @@ class TradingEngine:
 
         # Count consecutive losing trades (most recent first)
         consecutive_losses = 0
-        for trade in reversed(self.trade_history):
+        for trade in reversed(trades_snapshot):
             if trade.get("side") == "sell":
                 pnl = trade.get("realized_pnl", 0.0)
                 if pnl < 0:
@@ -1845,7 +1850,7 @@ class TradingEngine:
             "stock_performance": symbol_perf,
             "strategy_performance": strategy_perf,
             "equity_curve": {
-                "total_pnl": round(sum(t.get("realized_pnl", 0.0) for t in self.trade_history if t.get("side") == "sell"), 4),
+                "total_pnl": round(sum(t.get("realized_pnl", 0.0) for t in trades_snapshot if t.get("side") == "sell"), 4),
                 "recent_10_trades_pnl": round(total_recent_pnl, 4),
                 "trend": trend,
                 "drawdown_pct": round(drawdown_pct, 2),
@@ -1867,9 +1872,12 @@ class TradingEngine:
         if len(self.trade_history) == self._trade_pattern_cache_trade_count and self._trade_pattern_cache is not None:
             return self._trade_pattern_cache
 
+        # Snapshot trade_history to avoid concurrent modification during iteration
+        trades_snapshot = list(self.trade_history)
+
         from collections import defaultdict
 
-        sells = [t for t in self.trade_history if t.get("side") == "sell" and "realized_pnl" in t]
+        sells = [t for t in trades_snapshot if t.get("side") == "sell" and "realized_pnl" in t]
         if not sells:
             result: Dict[str, Any] = {}
             self._trade_pattern_cache = result
@@ -2340,7 +2348,25 @@ class TradingEngine:
         )
 
     async def _save_state(self):
-        """Persist current symbols, positions, and trade history to SQLite."""
+        """Persist current symbols, positions, and trade history to SQLite.
+
+        Uses a lock to serialize concurrent calls and a debounce flag to
+        coalesce multiple save requests into fewer DB write batches.
+        """
+        # If a save is already in progress, just mark that another is needed
+        if self._state_lock.locked():
+            self._state_save_pending = True
+            return
+
+        async with self._state_lock:
+            await self._save_state_impl()
+            # If another save was requested while we were saving, do one more
+            while self._state_save_pending:
+                self._state_save_pending = False
+                await self._save_state_impl()
+
+    async def _save_state_impl(self):
+        """Actual state persistence (must be called under _state_lock)."""
         await asyncio.to_thread(save_trading_state, "current_symbols", self.current_symbols)
         await asyncio.to_thread(save_trading_state, "positions", self.positions)
         await asyncio.to_thread(save_trading_state, "queued_orders", self.queued_orders)
