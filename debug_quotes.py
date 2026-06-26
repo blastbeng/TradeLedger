@@ -75,18 +75,26 @@ def _get_db_close_price(symbol: str) -> Optional[Dict[str, Any]]:
     base = symbol.split("/")[0] if "/" in symbol else symbol
 
     try:
-        db_closes = get_latest_close_prices([base])
-        if base in db_closes and db_closes[base] > 0:
-            price = db_closes[base]
-            logger.info(f"[DB] {base}: close_price={price:.4f}")
+        db_candles = get_latest_close_prices([base])
+        if base in db_candles and db_candles[base].get("last", 0) > 0:
+            data = db_candles[base]
+            price = data["last"]
+            prev_close = data.get("prev_close")
+            volume = data.get("volume")
+
+            pct = None
+            if prev_close and prev_close > 0:
+                pct = round(((price - prev_close) / prev_close) * 100, 4)
+
+            logger.info(f"[DB] {base}: close_price={price:.4f}, prev_close={prev_close}, vol={volume}, pct={pct}")
             return {
                 "last": price,
                 "bid": price,
                 "ask": price,
-                "volume": None,
-                "change_24h": None,
-                "percentage": None,
-                "quoteVolume": None,
+                "volume": volume,
+                "change_24h": pct,
+                "percentage": pct,
+                "quoteVolume": volume,
                 "source": "db_close_price",
             }
         else:

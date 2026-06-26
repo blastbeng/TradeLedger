@@ -1194,11 +1194,11 @@ def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict
         conn.close()
 
 
-def get_latest_close_prices(symbols: List[str]) -> Dict[str, float]:
-    """Get the latest close price for multiple symbols from the market_data table.
+def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Get the latest 2 close prices and volume for multiple symbols from the market_data table.
     Used as a fallback when yfinance quotes are unavailable.
 
-    Queries the most recent candle across ALL timeframes (not just '1d')
+    Queries the most recent 2 candles across ALL timeframes (not just '1d')
     to ensure a price is available even if only long-term timeframes
     (5Y, 1Y, 1w, etc.) have been downloaded by background tasks.
 
@@ -1206,6 +1206,8 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, float]:
     but get_quotes passes base symbols (e.g., 'ENI.MI'). This function
     queries all candles and filters by the base part in Python to
     handle the format mismatch.
+
+    Returns a dict mapping base symbol -> {"last": float, "prev_close": float|None, "volume": float|None}.
     """
     if not symbols:
         return {}
@@ -1214,28 +1216,18 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, float]:
 
     conn = get_connection()
     try:
-        if _backend == "postgresql":
-            sql = _adapt_sql(
-                """
-                SELECT DISTINCT ON (symbol) symbol, close
-                FROM market_data
-                ORDER BY symbol, timestamp DESC
-                """
-            )
-            rows = conn.execute(sql).fetchall()
-        else:
-            sql = _adapt_sql(
-                """
-                SELECT m.symbol, m.close
-                FROM market_data m
-                INNER JOIN (
-                    SELECT symbol, MAX(timestamp) as max_ts
-                    FROM market_data
-                    GROUP BY symbol
-                ) latest ON m.symbol = latest.symbol AND m.timestamp = latest.max_ts
-                """
-            )
-            rows = conn.execute(sql).fetchall()
+        sql = _adapt_sql(
+            """
+            SELECT symbol, close, volume, timestamp
+            FROM market_data m
+            WHERE (
+                SELECT COUNT(*) FROM market_data m2
+                WHERE m2.symbol = m.symbol AND m2.timestamp > m.timestamp
+            ) < 2
+            ORDER BY m.symbol, m.timestamp DESC
+            """
+        )
+        rows = conn.execute(sql).fetchall()
 
         result = {}
         for row in rows:
@@ -1243,7 +1235,16 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, float]:
             # Strip /currency suffix to get base symbol for matching
             db_base = db_symbol.split('/')[0]
             if db_base in base_symbols and row["close"] is not None and row["close"] > 0:
-                result[db_base] = float(row["close"])
+                if db_base not in result:
+                    # Latest row (due to ORDER BY timestamp DESC)
+                    result[db_base] = {
+                        "last": float(row["close"]),
+                        "volume": float(row["volume"]) if row["volume"] is not None else None,
+                        "prev_close": None
+                    }
+                else:
+                    # Second row (older timestamp)
+                    result[db_base]["prev_close"] = float(row["close"])
         return result
     finally:
         conn.close()

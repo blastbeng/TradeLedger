@@ -1062,19 +1062,29 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     # The OHLCV data is populated by background download tasks using borsaitaliana as primary source.
     if missing_symbols:
         try:
-            db_closes = get_latest_close_prices(missing_symbols)
+            db_candles = get_latest_close_prices(missing_symbols)
             for sym in list(missing_symbols):
-                if sym in db_closes and db_closes[sym] > 0:
+                if sym in db_candles and db_candles[sym].get("last", 0) > 0:
+                    last = db_candles[sym]["last"]
+                    prev_close = db_candles[sym].get("prev_close")
+                    volume = db_candles[sym].get("volume")
+
+                    change = None
+                    pct = None
+                    if prev_close and prev_close > 0:
+                        change = ((last - prev_close) / prev_close) * 100
+                        pct = round(change, 4)
+
                     result[sym] = {
-                        "last": db_closes[sym],
-                        "bid": db_closes[sym],
-                        "ask": db_closes[sym],
-                        "volume": None,
-                        "change_24h": None,
-                        "percentage": None,
-                        "quoteVolume": None,
+                        "last": last,
+                        "bid": last,
+                        "ask": last,
+                        "volume": volume,
+                        "change_24h": pct,
+                        "percentage": pct,
+                        "quoteVolume": volume,
                     }
-                    missing_symbols.remove(sym)
+                    # Do not remove from missing_symbols so yfinance can still try to update it
         except Exception as e:
             logger.warning(f"get_quotes: DB close price fallback failed: {e}")
 
@@ -1095,9 +1105,10 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 logger.warning(f"Failed to save quotes to database: {e}")
         return result
 
-    # Initialize result with None for all still-missing symbols
+    # Initialize result with None for all still-missing symbols that don't have a DB quote yet
     for sym in missing_symbols:
-        result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
+        if sym not in result or result[sym].get("last") is None:
+            result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
 
     # Filter out BTP ISINs as they are not supported by yfinance and should be served from DB
     stock_symbols = [s for s in missing_symbols if not re.match(r'^IT[A-Z0-9]{10}$', s)]
@@ -1253,17 +1264,27 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     # Try DB close prices for anything still missing
     if missing_symbols:
         try:
-            db_closes = get_latest_close_prices(missing_symbols)
+            db_candles = get_latest_close_prices(missing_symbols)
             for sym in list(missing_symbols):
-                if sym in db_closes and db_closes[sym] > 0:
+                if sym in db_candles and db_candles[sym].get("last", 0) > 0:
+                    last = db_candles[sym]["last"]
+                    prev_close = db_candles[sym].get("prev_close")
+                    volume = db_candles[sym].get("volume")
+
+                    change = None
+                    pct = None
+                    if prev_close and prev_close > 0:
+                        change = ((last - prev_close) / prev_close) * 100
+                        pct = round(change, 4)
+
                     result[sym] = {
-                        "last": db_closes[sym],
-                        "bid": db_closes[sym],
-                        "ask": db_closes[sym],
-                        "volume": None,
-                        "change_24h": None,
-                        "percentage": None,
-                        "quoteVolume": None,
+                        "last": last,
+                        "bid": last,
+                        "ask": last,
+                        "volume": volume,
+                        "change_24h": pct,
+                        "percentage": pct,
+                        "quoteVolume": volume,
                     }
                     missing_symbols.remove(sym)
         except Exception as e:
