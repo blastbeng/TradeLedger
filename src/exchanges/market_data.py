@@ -439,12 +439,13 @@ def get_borsa_italiana_candles(
                     else:
                         continue
                     ts = int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+                    close_px = item.get("closePx") or item.get("lastPx") or item.get("setPx") or 0
                     rows.append([
                         ts,
-                        float(item["openPx"]),
-                        float(item["highPx"]),
-                        float(item["lowPx"]),
-                        float(item["closePx"]),
+                        float(item.get("openPx") or close_px),
+                        float(item.get("highPx") or close_px),
+                        float(item.get("lowPx") or close_px),
+                        float(close_px),
                         float(item.get("qty", 0) or 0),
                     ])
                 except (ValueError, KeyError) as e:
