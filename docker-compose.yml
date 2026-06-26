@@ -17,13 +17,6 @@ services:
       timeout: 5s
       retries: 5
 
-  tor:
-    image: dperson/torproxy
-    container_name: trade-ledger-tor
-    restart: no
-    ports:
-      - "8118:8118"
-
   postgres:
     image: postgres:16-alpine
     container_name: trade-ledger-postgres
@@ -63,8 +56,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      tor:
-        condition: service_started
       postgres:
         condition: service_healthy
     volumes:

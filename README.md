@@ -118,7 +118,7 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
    ```bash
    docker-compose up -d
    ```
-   This starts Redis, PostgreSQL (optional), a Tor proxy (optional, for yfinance rate-limit avoidance), and the bot.
+   This starts Redis, PostgreSQL (optional), and the bot.
 5. Access the web dashboard at `http://localhost:8083`.
 6. If Telegram is configured, send `/start` to your bot to begin receiving notifications.
 
