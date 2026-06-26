@@ -2494,19 +2494,6 @@ class TradingEngine:
         # Fetch ETFs
         etf_symbols = await self._get_etf_symbols()
         etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
-        btp_quotes = {f"{b['isin']}/{self.base_currency}": {
-            "last": b["last_price"],
-            "bid": b["last_price"],
-            "ask": b["last_price"],
-            "volume": 0,
-            "change_24h": b["change_pct"],
-            "percentage": b["change_pct"],
-            "quoteVolume": 0,
-            "name": b["name"],
-            "coupon": b.get("coupon"),
-            "maturity": b.get("maturity"),
-        } for b in btp_bonds}
-
         available_pairs = stock_pairs + btp_pairs
 
         logger.info("Re-evaluation step 3/12: RSS and news-driven symbol discovery...")
@@ -2605,21 +2592,17 @@ class TradingEngine:
         # The quote fetch uses get_quotes_cached which only reads from Redis/DB
         # (no network calls), so fetching quotes for hundreds of symbols is fast.
 
-        # Separate stocks and BTPs for quote fetching
-        stock_sample = [s for s in sample_pairs if s in stock_pairs]
-        btp_sample = [s for s in sample_pairs if s in btp_pairs]
-        logger.info(f"Step 4: Fetching quotes for {len(stock_sample)} stocks + {len(btp_sample)} BTPs (pre-ranked from {len(available_pairs)} candidates)")
+        logger.info(f"Step 4: Fetching quotes for {len(sample_pairs)} symbols from Redis/DB cache")
 
         # Fetch quotes from Redis/DB cache only — no network calls.
         # The background _refresh_all_quotes_loop keeps the cache warm.
         # This prevents the re-evaluation from hanging on slow yfinance
         # or Borsa Italiana API calls.
-        plain_sample = [s.split("/")[0] for s in stock_sample]
+        # BTPs are included so their quotes are fetched from DB close prices
+        # (same as stocks), not from the Borsa Italiana bond list.
+        plain_sample = [s.split("/")[0] for s in sample_pairs]
         raw_quotes = await asyncio.to_thread(get_quotes_cached, plain_sample)
-        tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in stock_sample}
-
-        # Add BTP quotes directly without using yfinance
-        tickers.update(btp_quotes)
+        tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_pairs}
 
         # Filter out symbols with no valid last price
         valid_sample_pairs = [
@@ -2676,9 +2659,8 @@ class TradingEngine:
             return t.get('quoteVolume', 0) or 0
         stock_sample_sorted = sorted([s for s in sample_pairs if s in stock_pairs and s not in etf_pairs], key=_volume, reverse=True)
         etf_sample_sorted = [s for s in sample_pairs if s in etf_pairs]
-        btp_sample_sorted = [s for s in sample_pairs if s in btp_pairs]
         # Pass ALL discovered stocks, ETFs, and BTPs to the LLM
-        sample_pairs = stock_sample_sorted + etf_sample_sorted + btp_sample_sorted
+        sample_pairs = stock_sample_sorted + etf_sample_sorted + [s for s in sample_pairs if s in btp_pairs]
         # Limit the number of symbols for expensive OHLCV/indicator fetches
         # Top 100 by volume get full OHLCV/indicator analysis;
         # the rest will have composite_score=0 and won't make it to the LLM prompt
