@@ -2647,11 +2647,6 @@ class TradingEngine:
         etf_sample_sorted = [s for s in sample_pairs if s in etf_pairs]
         # Pass ALL discovered stocks, ETFs, and BTPs to the LLM
         sample_pairs = stock_sample_sorted + etf_sample_sorted + [s for s in sample_pairs if s in btp_pairs]
-        # Limit the number of symbols for expensive OHLCV/indicator fetches
-        # Top 100 by volume get full OHLCV/indicator analysis;
-        # the rest will have composite_score=0 and won't make it to the LLM prompt
-        _max_ohlcv_symbols = 100
-
         logger.info("Re-evaluation step 6/12: Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
         news_sentiment = {}
         if settings.NEWS_ENABLED:
@@ -2705,8 +2700,8 @@ class TradingEngine:
         # Fetch OHLCV from database only for ALL candidate pairs.
         # Background tasks (_download_all_assets_data_loop) keep the DB populated.
         # This avoids blocking reevaluation on slow API calls.
-        sorted_by_vol = sample_pairs[:_max_ohlcv_symbols]
-        logger.info("Re-evaluation step 7/12: Fetching OHLCV from DB for %d symbols (limited from %d)...", len(sorted_by_vol), len(sample_pairs))
+        sorted_by_vol = sample_pairs
+        logger.info("Re-evaluation step 7/12: Fetching OHLCV from DB for %d symbols...", len(sorted_by_vol))
 
         ohlcv_data = {}
         if settings.OHLCV_TIMEFRAMES:
