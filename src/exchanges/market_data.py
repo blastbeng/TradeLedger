@@ -324,14 +324,19 @@ def get_borsa_italiana_candles(
             return None
 
     # Determine market code for referer URL
-    is_btp = re.match(r'^IT[A-Z0-9]{10}$', isin) is not None
-    market_code = "MOTX" if is_btp else "XMIL"
+    market_code = settings.BORSA_ITALIANA_MARKET_CODE
+
+    # Dynamically fetch the bearer token
+    token = _get_borsa_italiana_token(isin, market_code)
+    if not token:
+        logger.warning(f"Skipping Borsa Italiana download for {symbol} {timeframe}: no token found.")
+        return None
 
     # Headers matching the browser request exactly
     headers = {
         "accept": "*/*",
         "accept-language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-        "authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiItMSIsImV4cCI6NDkwNTU4MzU3MiwiaWF0IjoxNzUxOTgzNTcyLCJhdXRob3JpdGllcyI6W119.d7Eh_LOGqA44BH58HIiPrPIz1SLskVOPj4BRsae05cI",
+        "authorization": f"Bearer {token}",
         "priority": "u=1, i",
         "referer": f"https://grafici.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it",
         "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
