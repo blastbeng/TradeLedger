@@ -2252,6 +2252,15 @@ class TradingEngine:
         for q in self.queued_orders:
             q['order_book'] = None
         self.recent_signals = state.get("recent_signals", [])
+        self._symbol_first_seen = state.get("symbol_first_seen", {})
+        self._entry_signal_state = state.get("entry_signal_state", {})
+        self._last_eval_snapshot = state.get("last_eval_snapshot", {})
+        self._force_eval = state.get("force_eval", {})
+        self._force_eval_time = state.get("force_eval_time", {})
+        self._strategy_intervals = state.get("strategy_intervals", {})
+        self._last_decisions = state.get("last_decisions", {})
+        self.last_loss_time = state.get("last_loss_time", {})
+        self.cooldown_durations = state.get("cooldown_durations", {})
 
         # Restore pending entries (reconstruct Signal objects from dicts)
         raw_pending = state.get("pending_entries", {})
@@ -2305,6 +2314,15 @@ class TradingEngine:
                 "condition": entry["condition"],
             }
         await asyncio.to_thread(save_trading_state, "pending_entries", pending_entries_serializable)
+        await asyncio.to_thread(save_trading_state, "symbol_first_seen", self._symbol_first_seen)
+        await asyncio.to_thread(save_trading_state, "entry_signal_state", self._entry_signal_state)
+        await asyncio.to_thread(save_trading_state, "last_eval_snapshot", self._last_eval_snapshot)
+        await asyncio.to_thread(save_trading_state, "force_eval", self._force_eval)
+        await asyncio.to_thread(save_trading_state, "force_eval_time", self._force_eval_time)
+        await asyncio.to_thread(save_trading_state, "strategy_intervals", self._strategy_intervals)
+        await asyncio.to_thread(save_trading_state, "last_decisions", self._last_decisions)
+        await asyncio.to_thread(save_trading_state, "last_loss_time", self.last_loss_time)
+        await asyncio.to_thread(save_trading_state, "cooldown_durations", self.cooldown_durations)
         logger.debug("Saved trading state: %d symbols, %d positions, %d trades",
                      len(self.current_symbols), len(self.positions), len(self.trade_history))
 
