@@ -10447,6 +10447,39 @@ class TradingEngine:
                             if pos:
                                 pos.pop("stop_loss_order_id", None)
                                 pos.pop("take_profit_order_id", None)
+                                # Place replacement exit orders for the remaining position to avoid
+                                # a protection gap until the next risk-management loop tick.
+                                if pos.get("amount", 0) > 0 and pos.get("stop_loss") is not None:
+                                    from src.strategies.base import Signal as _Signal
+                                    _dummy_params = {
+                                        "trailing_take_profit": pos.get("trailing_take_profit", False),
+                                        "partial_take_profit_levels": pos.get("partial_take_profit_levels"),
+                                        "partial_take_profit_pct": pos.get("partial_take_profit_pct"),
+                                    }
+                                    _dummy_signal = _Signal(
+                                        action="BUY",
+                                        confidence=1.0,
+                                        reasoning="Replacing exit orders after partial exit-order fill",
+                                        stop_loss_order_type=pos.get("stop_loss_order_type"),
+                                        stop_loss_stop_price=pos.get("stop_loss"),
+                                        stop_loss_limit_price=pos.get("stop_loss"),
+                                        take_profit_order_type=pos.get("take_profit_order_type"),
+                                        take_profit_limit_price=pos.get("take_profit"),
+                                        strategy_params=_dummy_params,
+                                    )
+                                    _exit_prices = {
+                                        "stop_loss_price": pos.get("stop_loss"),
+                                        "take_profit_price": pos.get("take_profit"),
+                                    }
+                                    try:
+                                        await self._place_exit_orders(
+                                            queued["symbol"], _dummy_signal, _exit_prices, pos.get("timeframe")
+                                        )
+                                    except Exception as _e:
+                                        logger.warning(
+                                            f"Failed to place replacement exit orders after partial "
+                                            f"fill for {queued['symbol']}: {_e}"
+                                        )
                             # Notify user
                             if self.notifier:
                                 stock_name = await self._get_stock_name(queued["symbol"])
