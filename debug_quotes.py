@@ -169,38 +169,6 @@ def _get_yfinance_quote(symbol: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _get_btp_quote(isin: str) -> Optional[Dict[str, Any]]:
-    """Fetch a BTP quote from the Borsa Italiana bond list."""
-    from src.exchanges.market_data import discover_btp_bonds
-
-    try:
-        btp_bonds = discover_btp_bonds()
-        for b in btp_bonds:
-            if b["isin"] == isin:
-                quote = {
-                    "last": b["last_price"],
-                    "bid": b["last_price"],
-                    "ask": b["last_price"],
-                    "volume": 0,
-                    "change_24h": b["change_pct"],
-                    "percentage": b["change_pct"],
-                    "quoteVolume": 0,
-                    "name": b.get("name"),
-                    "coupon": b.get("coupon"),
-                    "maturity": b.get("maturity"),
-                    "source": "btp_bond_list",
-                }
-                logger.info(f"[BTP] {isin}: last={b['last_price']:.4f}, "
-                             f"name={b.get('name')}, coupon={b.get('coupon')}, "
-                             f"maturity={b.get('maturity')}")
-                return quote
-        logger.warning(f"[BTP] ISIN {isin} not found in BTP bond list")
-        return None
-    except Exception as e:
-        logger.error(f"[BTP] Failed for {isin}: {e}")
-        return None
-
-
 def _print_quote_table(symbols: List[str], results: Dict[str, Dict[str, Any]]):
     """Print a formatted comparison table."""
     print("\n" + "=" * 120)
@@ -267,7 +235,6 @@ def _print_comparison(symbol: str, db_q: Optional[dict], db_close: Optional[dict
 def main():
     parser = argparse.ArgumentParser(description="Debug quote calculation from Borsa Italiana and database.")
     parser.add_argument("symbols", nargs="*", help="Base symbols to test (e.g., ENI ENEL ISP)")
-    parser.add_argument("--btp", metavar="ISIN", help="Test a specific BTP ISIN")
     parser.add_argument("--compare", metavar="SYMBOL", help="Compare all sources for a single symbol")
     parser.add_argument("--all", action="store_true", help="Test all tradable assets")
     parser.add_argument("--limit", type=int, default=20, help="Limit number of symbols (default 20)")
@@ -284,15 +251,6 @@ def main():
     print("Database initialized.")
 
     # --- Determine symbols to test ---
-    if args.btp:
-        print(f"\nTesting BTP ISIN: {args.btp}")
-        quote = _get_btp_quote(args.btp)
-        if quote:
-            _print_quote_table([args.btp], {args.btp: quote})
-        else:
-            print(f"\n❌ No quote found for BTP {args.btp}")
-        return
-
     if args.compare:
         symbol = args.compare
         print(f"\nComparing all quote sources for: {symbol}")
@@ -334,14 +292,6 @@ def main():
     for i, sym in enumerate(symbols):
         print(f"\n[{i+1}/{len(symbols)}] Testing {sym}...")
 
-        # Skip BTPs in the general loop (they need the BTP bond list)
-        if re.match(r'^IT[A-Z0-9]{10}$', sym):
-            print(f"  BTP ISIN detected, using BTP bond list...")
-            q = _get_btp_quote(sym)
-            if q:
-                results[sym] = q
-            continue
-
         # 1. Try DB quotes table
         print(f"  Step 1: Database quotes table...")
         db_q = _get_db_quotes(sym)
@@ -369,7 +319,6 @@ def main():
     total = len(symbols)
     db_quotes_count = sum(1 for q in results.values() if q.get("source") == "db_quotes")
     db_close_count = sum(1 for q in results.values() if q.get("source") == "db_close_price")
-    btp_count = sum(1 for q in results.values() if q.get("source") == "btp_bond_list")
     none_count = sum(1 for q in results.values() if q.get("source") == "none")
 
     print("\n" + "=" * 60)
@@ -378,7 +327,6 @@ def main():
     print(f"  Total symbols tested:      {total}")
     print(f"  DB quotes table:           {db_quotes_count}")
     print(f"  DB close prices:           {db_close_count}")
-    print(f"  BTP bond list:             {btp_count}")
     print(f"  No quote found:            {none_count}")
     print(f"  Success rate:              {(total - none_count) / total * 100:.1f}%" if total > 0 else "N/A")
     print("=" * 60 + "\n")

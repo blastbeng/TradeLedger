@@ -1099,27 +1099,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     for sym in missing_symbols:
         result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
 
-    btp_symbols = [s for s in missing_symbols if re.match(r'^IT[A-Z0-9]{10}$', s)]
-    stock_symbols = [s for s in missing_symbols if s not in btp_symbols]
-
-    # Fetch BTP quotes from Borsa Italiana cache
-    if btp_symbols:
-        try:
-            btp_bonds = discover_btp_bonds()
-            btp_map = {b["isin"]: b for b in btp_bonds}
-            for sym in btp_symbols:
-                if sym in btp_map:
-                    b = btp_map[sym]
-                    result[sym]["last"] = b["last_price"]
-                    result[sym]["bid"] = b["last_price"]
-                    result[sym]["ask"] = b["last_price"]
-                    result[sym]["change_24h"] = b["change_pct"]
-                    result[sym]["percentage"] = b["change_pct"]
-                    result[sym]["name"] = b.get("name")
-                    result[sym]["coupon"] = b.get("coupon")
-                    result[sym]["maturity"] = b.get("maturity")
-        except Exception as e:
-            logger.warning(f"Failed to fetch BTP quotes: {e}")
+    # Filter out BTP ISINs as they are not supported by yfinance and should be served from DB
+    stock_symbols = [s for s in missing_symbols if not re.match(r'^IT[A-Z0-9]{10}$', s)]
 
     # --- Batch fetch ALL price data using yf.download (single HTTP request) ---
     # This replaces the slow sequential fast_info calls that caused timeouts.
