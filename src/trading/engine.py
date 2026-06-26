@@ -5888,6 +5888,10 @@ class TradingEngine:
                     timeout = validated.entry_condition.get("timeout_seconds", 600)
                     # Enforce a minimum based on the candle timeframe
                     min_timeout = max(300, int(settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT * tf_seconds))
+                    # Cap the minimum timeout to avoid absurd values for very long timeframes
+                    # (e.g., 2 × 31,536,000 = ~730 days for 1Y candles).
+                    # 7 days is a reasonable maximum wait for an entry condition in medium/long-term trading.
+                    min_timeout = min(min_timeout, 604800)
                     if timeout < min_timeout:
                         logger.info(
                             f"Entry condition timeout for {symbol} too short ({timeout}s), "
