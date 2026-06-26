@@ -49,7 +49,7 @@ from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
 from src.strategies.backtester import backtest_strategy, format_backtest_summary
 from src.utils.redis_client import get_redis_client
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades
 
 logger = logging.getLogger(__name__)
 
@@ -2247,7 +2247,7 @@ class TradingEngine:
                 )
                 del self.positions[symbol]
 
-        self.trade_history = state.get("trade_history", [])
+        self.trade_history = get_all_trades()
         self.queued_orders = state.get("queued_orders", [])
         for q in self.queued_orders:
             q['order_book'] = None
@@ -2293,9 +2293,6 @@ class TradingEngine:
         """Persist current symbols, positions, and trade history to SQLite."""
         await asyncio.to_thread(save_trading_state, "current_symbols", self.current_symbols)
         await asyncio.to_thread(save_trading_state, "positions", self.positions)
-        # Keep only the last 1000 trades to avoid unbounded growth
-        self.trade_history = self.trade_history[-1000:]
-        await asyncio.to_thread(save_trading_state, "trade_history", self.trade_history)
         await asyncio.to_thread(save_trading_state, "queued_orders", self.queued_orders)
         await asyncio.to_thread(save_trading_state, "recent_signals", self.recent_signals)
         # Serialize pending entries (convert Signal objects to dicts for JSON storage)

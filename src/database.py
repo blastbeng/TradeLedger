@@ -158,6 +158,9 @@ def _migrate_db():
         ("trade_history", "strategy_type", "ALTER TABLE trade_history ADD COLUMN strategy_type TEXT"),
         ("trade_history", "note", "ALTER TABLE trade_history ADD COLUMN note TEXT"),
         ("trade_history", "status", "ALTER TABLE trade_history ADD COLUMN status TEXT"),
+        ("trade_history", "exit_reason", "ALTER TABLE trade_history ADD COLUMN exit_reason TEXT"),
+        ("trade_history", "hold_time_seconds", "ALTER TABLE trade_history ADD COLUMN hold_time_seconds REAL"),
+        ("trade_history", "buy_confidence", "ALTER TABLE trade_history ADD COLUMN buy_confidence REAL"),
         ("quotes", "quotevolume", "ALTER TABLE quotes ADD COLUMN quotevolume REAL"),
     ]
 
@@ -210,7 +213,10 @@ def init_db():
                     strategy_type TEXT,
                     note TEXT,
                     status TEXT,
-                    timestamp BIGINT NOT NULL
+                    timestamp BIGINT NOT NULL,
+                    exit_reason TEXT,
+                    hold_time_seconds REAL,
+                    buy_confidence REAL
                 )
                 """,
                 "CREATE INDEX IF NOT EXISTS idx_trade_history_symbol ON trade_history(symbol)",
@@ -306,7 +312,10 @@ def init_db():
                     strategy_type TEXT,
                     note TEXT,
                     status TEXT,
-                    timestamp INTEGER NOT NULL
+                    timestamp INTEGER NOT NULL,
+                    exit_reason TEXT,
+                    hold_time_seconds REAL,
+                    buy_confidence REAL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_trade_history_symbol ON trade_history(symbol);
@@ -385,8 +394,9 @@ def insert_trade(trade: Dict[str, Any]):
             INSERT INTO trade_history (
                 order_id, symbol, timeframe, side, type, amount, price, cost,
                 fee_cost, fee_currency, realized_pnl, cost_basis,
-                strategy_type, note, status, timestamp
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                strategy_type, note, status, timestamp,
+                exit_reason, hold_time_seconds, buy_confidence
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         conn.execute(sql, (
@@ -406,6 +416,9 @@ def insert_trade(trade: Dict[str, Any]):
             trade.get("note"),
             trade.get("status", "closed"),
             trade["timestamp"],
+            trade.get("exit_reason"),
+            trade.get("hold_time_seconds"),
+            trade.get("buy_confidence"),
         ))
         conn.commit()
     finally:
@@ -526,6 +539,48 @@ def cleanup_old_ohlcv(retention_days: int = 30):
         if deleted:
             logger.info(f"Cleaned up {deleted} old OHLCV candles (older than {retention_days} days)")
         return deleted
+    finally:
+        conn.close()
+
+
+def get_all_trades() -> List[Dict[str, Any]]:
+    """Retrieve all trades from the trade_history table, ordered by timestamp ascending."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            SELECT order_id, symbol, timeframe, side, type, amount, price, cost,
+                   fee_cost, fee_currency, realized_pnl, cost_basis,
+                   strategy_type, note, status, timestamp,
+                   exit_reason, hold_time_seconds, buy_confidence
+            FROM trade_history
+            ORDER BY timestamp ASC
+            """
+        )
+        rows = conn.execute(sql).fetchall()
+        trades = []
+        for row in rows:
+            trades.append({
+                "id": row["order_id"],
+                "symbol": row["symbol"],
+                "timeframe": row["timeframe"],
+                "side": row["side"],
+                "type": row["type"],
+                "amount": row["amount"],
+                "price": row["price"],
+                "cost": row["cost"],
+                "fee": {"cost": row["fee_cost"], "currency": row["fee_currency"]} if row["fee_cost"] is not None else {},
+                "realized_pnl": row["realized_pnl"],
+                "cost_basis": row["cost_basis"],
+                "strategy_type": row["strategy_type"],
+                "note": row["note"],
+                "status": row["status"],
+                "timestamp": row["timestamp"],
+                "exit_reason": row["exit_reason"],
+                "hold_time_seconds": row["hold_time_seconds"],
+                "buy_confidence": row["buy_confidence"],
+            })
+        return trades
     finally:
         conn.close()
 
