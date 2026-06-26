@@ -1444,6 +1444,7 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         "- `\"delay\"`: simply wait `\"delay_seconds\"` before executing.\n"
         "  Example: {\"type\": \"delay\", \"delay_seconds\": 3600}\n"
         "- `\"indicator_combo\"`: wait until ALL listed indicator conditions are met.\n"
+        "  Supported indicators: `rsi`, `macd`, `macd_signal`, `macd_hist`, `bb_upper`, `bb_middle`, `bb_lower`, `ema_9`, `ema_21`, `stochastic_k`, `stochastic_d`, `adx`, `plus_di`, `minus_di`, `obv`, `mfi`, `cci`, `williams_r`, `parabolic_sar`, `atr`.\n"
         "  Example: {\"type\": \"indicator_combo\", \"conditions\": [ {\"indicator\": \"rsi\", \"threshold\": 30, \"direction\": \"below\"}, {\"indicator\": \"macd_hist\", \"threshold\": 0, \"direction\": \"above\"} ], \"timeout_seconds\": 7200}\n"
         "If a timeout expires without the condition being met, the trade is skipped entirely.\n"
         "**Important:** The engine enforces a minimum timeout of 300 seconds or "

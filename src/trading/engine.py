@@ -8514,16 +8514,42 @@ class TradingEngine:
             ind = await asyncio.to_thread(get_indicators, symbol, timeframe)
             if not ind:
                 return False
+            # Mapping of indicator names the LLM can use to DB keys.
+            # All scalar indicators stored in the indicators table are supported.
+            _INDICATOR_KEYS = {
+                "rsi": "rsi",
+                "macd": "macd",
+                "macd_signal": "macd_signal",
+                "macd_hist": "macd_hist",
+                "bb_upper": "bb_upper",
+                "bb_middle": "bb_middle",
+                "bb_lower": "bb_lower",
+                "ema_9": "ema_9",
+                "ema_21": "ema_21",
+                "stochastic_k": "stochastic_k",
+                "stochastic_d": "stochastic_d",
+                "adx": "adx",
+                "plus_di": "plus_di",
+                "minus_di": "minus_di",
+                "obv": "obv",
+                "mfi": "mfi",
+                "cci": "cci",
+                "williams_r": "williams_r",
+                "parabolic_sar": "parabolic_sar",
+                "atr": "atr",
+            }
             for cond in conditions:
                 indicator_name = cond["indicator"]
                 thresh = cond["threshold"]
                 direction = cond["direction"]
-                if indicator_name == "rsi":
-                    val = ind.get("rsi")
-                elif indicator_name == "macd_hist":
-                    val = ind.get("macd_hist")
-                else:
-                    return False  # unsupported indicator for combo conditions
+                db_key = _INDICATOR_KEYS.get(indicator_name)
+                if db_key is None:
+                    logger.warning(
+                        f"Unsupported indicator '{indicator_name}' in indicator_combo "
+                        f"entry condition for {symbol}"
+                    )
+                    return False
+                val = ind.get(db_key)
                 if val is None:
                     return False
                 if direction == "below" and val > thresh:
