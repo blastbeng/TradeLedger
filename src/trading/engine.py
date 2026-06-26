@@ -8403,7 +8403,11 @@ class TradingEngine:
         # Always call if enough time has passed (3× the effective interval)
         # For medium/long-term, be more patient before forcing an evaluation
         effective_interval = timeframe_seconds * settings.STRATEGY_INTERVAL_MULTIPLIER
-        if now - last_time > 3 * effective_interval:
+        # Cap the safety net at 7 days so the bot never skips LLM evaluations
+        # indefinitely, even for very long timeframes (e.g., 1Y, 3Y, 5Y where
+        # 3× the interval would be ~3 years).
+        max_skip_interval = 604_800  # 7 days in seconds
+        if now - last_time > min(3 * effective_interval, max_skip_interval):
             return False
 
         # Fetch LLM-driven skip thresholds from Redis.
