@@ -1213,10 +1213,7 @@ class TradingEngine:
                     def _vol(sym):
                         t = tickers.get(sym, {})
                         return t.get('quoteVolume', 0) or 0
-                    top_volume_pairs = sorted(sample_for_vol, key=_vol, reverse=True)[
-                        :settings.SYMBOL_SELECTION_TOP_VOLUME_LIMIT
-                    ]
-                    symbols_to_refresh = set(top_volume_pairs) - current_symbols
+                    symbols_to_refresh = set(sample_for_vol) - current_symbols
                 except Exception as e:
                     logger.warning(f"Could not get available pairs for news refresh: {e}")
 
@@ -1628,22 +1625,6 @@ class TradingEngine:
                     continue
                 plain_assets = await self._get_tradable_assets()
                 if plain_assets:
-                    # Limit to SYMBOL_SELECTION_CANDIDATE_LIMIT by DB volume
-                    # The DB fallback provides instant prices for all symbols
-                    _quote_fetch_limit = settings.SYMBOL_SELECTION_CANDIDATE_LIMIT
-                    sample_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
-                    if len(sample_pairs) > _quote_fetch_limit:
-                        pre_rank_since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
-                        pre_rank_summary = await asyncio.to_thread(
-                            get_ohlcv_summary_for_symbols, sample_pairs, ["1d"], pre_rank_since
-                        )
-                        sample_pairs = sorted(
-                            sample_pairs,
-                            key=lambda s: pre_rank_summary.get(s, {}).get("1d", {}).get("volume", 0),
-                            reverse=True
-                        )[:_quote_fetch_limit]
-                        plain_assets = [s.split("/")[0] for s in sample_pairs]
-
                     # Fetch all quotes in a single call (get_quotes uses a lock internally)
                     await self._get_quotes_async(plain_assets, timeout=600.0)
             except Exception as e:

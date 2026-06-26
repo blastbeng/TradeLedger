@@ -55,10 +55,6 @@ class Settings(BaseSettings):
         return v
 
     # Symbol selection limits
-    SYMBOL_SELECTION_TOP_VOLUME_LIMIT: int = 50
-    # Maximum number of candidate symbols to consider during symbol selection
-    # (fetches tickers/OHLCV for this many top-volume symbols)
-    SYMBOL_SELECTION_CANDIDATE_LIMIT: int = 200
     SYMBOL_SELECTION_MIN_SENTIMENT: float = -1.0   # -1.0 = disabled
 
     # ETFs that are always included in the candidate pool (if tradable),
