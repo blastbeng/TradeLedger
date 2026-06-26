@@ -56,6 +56,7 @@ def backtest_strategy(
     rsi_values: Optional[List[Optional[float]]] = None,
     max_rsi: float = 70.0,
     macd_hist_values: Optional[List[Optional[float]]] = None,
+    backtest_entry_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Backtest a long-only strategy on historical OHLCV candles.
@@ -88,37 +89,78 @@ def backtest_strategy(
     if take_profit_pct is None or take_profit_pct <= 0:
         take_profit_pct = 0.05
 
+    # Parse configurable entry logic
+    if backtest_entry_config is None:
+        backtest_entry_config = {}
+    entry_ema_period = backtest_entry_config.get("ema_period", trend_filter_ema_period)
+    entry_ema_direction = backtest_entry_config.get("ema_direction", "above")
+    entry_min_adx = backtest_entry_config.get("min_adx", min_adx)
+    entry_max_rsi = backtest_entry_config.get("max_rsi", max_rsi)
+    entry_min_rsi = backtest_entry_config.get("min_rsi", 0.0)
+    entry_macd_filter = backtest_entry_config.get("macd_filter", "positive")
+    entry_logic = backtest_entry_config.get("logic", "and")
+
     trades = []
     i = 0
 
     # Compute EMA for trend filter
     ema_values = []
-    if trend_filter_ema_period > 0 and len(candles) >= trend_filter_ema_period:
+    if entry_ema_period > 0 and len(candles) >= entry_ema_period:
         closes = [c[4] for c in candles]
-        ema_values = compute_ema(closes, trend_filter_ema_period)
+        ema_values = compute_ema(closes, entry_ema_period)
 
     while i < len(candles) - 1 and len(trades) < max_trades:
-        # Trend filter: only enter if close > EMA
-        if trend_filter_ema_period > 0 and ema_values:
-            if i >= len(ema_values) or ema_values[i] is None or candles[i][4] <= ema_values[i]:
-                i += 1
-                continue
+        # --- Configurable entry filters ---
+        filter_results = []
 
-        # ADX filter: only enter if trend is strong enough
-        if adx_values is not None and min_adx > 0:
-            if i >= len(adx_values) or adx_values[i] is None or adx_values[i] < min_adx:
-                i += 1
-                continue
+        # EMA trend filter
+        if entry_ema_period > 0 and ema_values:
+            if i < len(ema_values) and ema_values[i] is not None:
+                if entry_ema_direction == "above":
+                    filter_results.append(candles[i][4] > ema_values[i])
+                else:
+                    filter_results.append(candles[i][4] < ema_values[i])
+            else:
+                filter_results.append(False)
 
-        # RSI filter: don't enter if overbought
-        if rsi_values is not None and max_rsi > 0:
-            if i >= len(rsi_values) or rsi_values[i] is None or rsi_values[i] > max_rsi:
-                i += 1
-                continue
+        # ADX filter
+        if entry_min_adx > 0 and adx_values is not None:
+            if i < len(adx_values) and adx_values[i] is not None:
+                filter_results.append(adx_values[i] >= entry_min_adx)
+            else:
+                filter_results.append(False)
 
-        # MACD filter: only enter if MACD histogram is positive (bullish momentum)
-        if macd_hist_values is not None:
-            if i >= len(macd_hist_values) or macd_hist_values[i] is None or macd_hist_values[i] <= 0:
+        # RSI max filter (overbought)
+        if entry_max_rsi > 0 and rsi_values is not None:
+            if i < len(rsi_values) and rsi_values[i] is not None:
+                filter_results.append(rsi_values[i] <= entry_max_rsi)
+            else:
+                filter_results.append(False)
+
+        # RSI min filter (oversold)
+        if entry_min_rsi > 0 and rsi_values is not None:
+            if i < len(rsi_values) and rsi_values[i] is not None:
+                filter_results.append(rsi_values[i] >= entry_min_rsi)
+            else:
+                filter_results.append(False)
+
+        # MACD filter
+        if entry_macd_filter != "none" and macd_hist_values is not None:
+            if i < len(macd_hist_values) and macd_hist_values[i] is not None:
+                if entry_macd_filter == "positive":
+                    filter_results.append(macd_hist_values[i] > 0)
+                else:
+                    filter_results.append(macd_hist_values[i] < 0)
+            else:
+                filter_results.append(False)
+
+        # Combine filters
+        if filter_results:
+            if entry_logic == "or":
+                enter = any(filter_results)
+            else:
+                enter = all(filter_results)
+            if not enter:
                 i += 1
                 continue
 
