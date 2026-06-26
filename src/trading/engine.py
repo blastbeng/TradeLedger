@@ -3631,36 +3631,39 @@ class TradingEngine:
                     else:
                         logger.warning(f"Invalid global_risk_multiplier: {global_risk_mult}")
 
-                existing_symbols = {c['symbol']: c for c in self.current_symbols}
-                for entry in deduped[: self.effective_max_symbols]:
-                    sym = entry['symbol']
-                    new_tf = entry['timeframe']
-                    if sym in existing_symbols:
-                        old_entry = existing_symbols[sym]
-                        if 'entry_time' in old_entry:
-                            entry['entry_time'] = old_entry['entry_time']
+                # Only replace current_symbols if the LLM returned at least one valid symbol.
+                # If the LLM returned no symbols (empty list or max_stocks=0), keep the
+                # previously tracked symbols so the bot continues to generate signals for them.
+                if deduped and self.effective_max_symbols > 0:
+                    existing_symbols = {c['symbol']: c for c in self.current_symbols}
+                    for entry in deduped[: self.effective_max_symbols]:
+                        sym = entry['symbol']
+                        new_tf = entry['timeframe']
+                        if sym in existing_symbols:
+                            old_entry = existing_symbols[sym]
+                            if 'entry_time' in old_entry:
+                                entry['entry_time'] = old_entry['entry_time']
+                            else:
+                                entry['entry_time'] = time.time()
+                            
+                            # Preserve max_tenure_hours from existing symbol if LLM didn't specify it
+                            if 'max_tenure_hours' not in entry and 'max_tenure_hours' in old_entry:
+                                entry['max_tenure_hours'] = old_entry['max_tenure_hours']
+                                
+                            # Check if timeframe changed for an existing symbol
+                            old_tf = old_entry.get('timeframe')
+                            if old_tf != new_tf:
+                                logger.info(f"Timeframe changed for {sym}: {old_tf} -> {new_tf}")
+                                if sym in self.positions:
+                                    self.positions[sym]['timeframe'] = new_tf
+                                    # Clear max hold expired flags since the timeframe context changed
+                                    self.positions[sym].pop("_max_hold_expired", None)
+                                    self.positions[sym].pop("_max_hold_expired_count", None)
                         else:
                             entry['entry_time'] = time.time()
-                        
-                        # Preserve max_tenure_hours from existing symbol if LLM didn't specify it
-                        if 'max_tenure_hours' not in entry and 'max_tenure_hours' in old_entry:
-                            entry['max_tenure_hours'] = old_entry['max_tenure_hours']
-                            
-                        # Check if timeframe changed for an existing symbol
-                        old_tf = old_entry.get('timeframe')
-                        if old_tf != new_tf:
-                            logger.info(f"Timeframe changed for {sym}: {old_tf} -> {new_tf}")
-                            if sym in self.positions:
-                                self.positions[sym]['timeframe'] = new_tf
-                                # Clear max hold expired flags since the timeframe context changed
-                                self.positions[sym].pop("_max_hold_expired", None)
-                                self.positions[sym].pop("_max_hold_expired_count", None)
-                    else:
-                        entry['entry_time'] = time.time()
-                self.current_symbols = deduped[: self.effective_max_symbols]
-
-                # If LLM explicitly chose zero symbols, respect that and don't fall back to volume-based selection
-                if not deduped or self.effective_max_symbols == 0:
+                    self.current_symbols = deduped[: self.effective_max_symbols]
+                else:
+                    # LLM returned no symbols – keep previously tracked symbols
                     if old_symbols:
                         logger.info("LLM selected 0 symbols. Keeping previously tracked symbols for signal generation.")
                         self.current_symbols = old_symbols
