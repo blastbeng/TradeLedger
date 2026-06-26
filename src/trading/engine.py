@@ -224,6 +224,12 @@ class TradingEngine:
         logger.info(f"Re-evaluation triggered (force={force})")
         if force:
             self._force_reeval = True
+            # Invalidate correlation matrix cache on forced re-evaluation
+            # so the LLM sees fresh correlations after significant market changes
+            try:
+                self.redis.delete("reeval:correlation_matrix")
+            except Exception:
+                pass
         self._reeval_trigger.set()
 
     async def force_download_all_assets(self):
@@ -902,6 +908,8 @@ class TradingEngine:
 
                 if should_trigger:
                     logger.info("Market condition trigger fired – forcing symbol re-evaluation")
+                    # Invalidate correlation matrix cache due to significant market changes
+                    await asyncio.to_thread(self.redis.delete, "reeval:correlation_matrix")
                     if self.notifier:
                         await self.notifier.send_notification(
                             "🔄 Market conditions changed – triggering immediate symbol re-evaluation.",
@@ -1026,6 +1034,8 @@ class TradingEngine:
                                 summary={"action": "INFO", "reason": "Market opening soon"}
                             )
                         self._market_opening_soon_notified = True
+                        # Invalidate correlation matrix cache before pre-market re-evaluation
+                        await asyncio.to_thread(self.redis.delete, "reeval:correlation_matrix")
                         # Trigger pre-market re-evaluation so we're prepared with fresh signals
                         self._force_reeval = True
                         self._pre_market_reeval = True
@@ -1052,6 +1062,8 @@ class TradingEngine:
                                 "▶️ Market opened, trading resumed.",
                                 summary={"action": "RESUME", "reason": "Market opened"}
                             )
+                        # Invalidate correlation matrix cache on market open
+                        await asyncio.to_thread(self.redis.delete, "reeval:correlation_matrix")
                         # Only trigger re-evaluation when we actually resumed from a pause
                         self._reeval_trigger.set()
                     else:
@@ -3038,9 +3050,19 @@ class TradingEngine:
             pass
         if correlation_matrix is None:
             correlation_matrix = await asyncio.to_thread(_compute_correlation_matrix)
+            # Dynamic TTL: shorter during high-volatility / extreme market conditions
+            corr_ttl = 1800  # default 30 minutes
+            if market_breadth:
+                pos_pct = market_breadth.get("positive_pct", 50)
+                if pos_pct > 80 or pos_pct < 20:
+                    corr_ttl = 600  # 10 minutes during extreme breadth
+            if full_market_breadth:
+                pos_pct = full_market_breadth.get("positive_pct", 50)
+                if pos_pct > 80 or pos_pct < 20:
+                    corr_ttl = 600
             try:
                 await asyncio.to_thread(
-                    self.redis.setex, corr_cache_key, 1800, json.dumps(correlation_matrix)
+                    self.redis.setex, corr_cache_key, corr_ttl, json.dumps(correlation_matrix)
                 )
             except Exception:
                 pass
