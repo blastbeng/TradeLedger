@@ -33,6 +33,41 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
+def _sanitize_env_file():
+    """Sanitize .env to prevent Pydantic validation errors (extra fields, inline comments)."""
+    import os
+    env_path = ".env"
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    changed = False
+    out = []
+    for line in lines:
+        stripped = line.strip()
+        # Remove extra forbidden keys not defined in settings.py
+        if stripped.startswith("LIMIT_ORDER_MARKET_FALLBACK_SECONDS="):
+            changed = True
+            continue
+        # Strip inline comments from float values
+        if stripped.startswith("SYMBOL_SELECTION_MIN_SENTIMENT="):
+            key, val = line.split("=", 1)
+            clean_val = val.split("#")[0].strip()
+            out.append(f"{key}={clean_val}\n")
+            changed = True
+        else:
+            out.append(line)
+
+    if changed:
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(out)
+
+
+# Run the sanitizer before any src.* imports happen
+_sanitize_env_file()
+
+
 def _get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
     """Fetch a quote from Borsa Italiana 1d candles (mirrors market_data.py logic)."""
     from src.exchanges.market_data import get_borsa_italiana_candles
