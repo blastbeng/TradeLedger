@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.exchanges.market_data import get_tradable_assets, get_quotes, get_multi_timeframe_bars, get_bars_range, discover_btp_bonds, discover_italian_ucits_etfs, _get_yf_session, _check_yf_circuit
+from src.exchanges.market_data import get_tradable_assets, get_quotes, get_quotes_cached, get_multi_timeframe_bars, get_bars_range, discover_btp_bonds, discover_italian_ucits_etfs, _get_yf_session, _check_yf_circuit
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
 from src.trading.paper_trader import PaperTrader
 from src.llm.cache import get_cached_llm_response, compute_market_hash
@@ -2622,10 +2622,12 @@ class TradingEngine:
         btp_sample = [s for s in sample_pairs if s in btp_pairs]
         logger.info(f"Step 4: Fetching quotes for {len(stock_sample)} stocks + {len(btp_sample)} BTPs (pre-ranked from {len(available_pairs)} candidates)")
 
-        # Fetch all quotes in a single call (get_quotes uses a lock internally
-        # to prevent concurrent yfinance calls that cause rate limiting)
+        # Fetch quotes from Redis/DB cache only — no network calls.
+        # The background _refresh_all_quotes_loop keeps the cache warm.
+        # This prevents the re-evaluation from hanging on slow yfinance
+        # or Borsa Italiana API calls.
         plain_sample = [s.split("/")[0] for s in stock_sample]
-        raw_quotes = await self._get_quotes_async(plain_sample, timeout=300.0)
+        raw_quotes = await asyncio.to_thread(get_quotes_cached, plain_sample)
         tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in stock_sample}
 
         # Add BTP quotes directly without using yfinance

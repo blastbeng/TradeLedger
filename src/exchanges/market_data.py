@@ -1255,6 +1255,82 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     return result
 
 
+def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
+    """Fetch quotes from Redis cache and database only. No network calls.
+
+    Used by the symbol re-evaluation loop which must never block on yfinance
+    or Borsa Italiana API calls. The background quote refresh loop is
+    responsible for keeping Redis and the database up to date.
+    """
+    if symbols is None:
+        symbols = []
+    if not symbols:
+        return {}
+
+    # Sanitize symbols: remove $ prefix and /currency suffix
+    symbols = [s.lstrip('$').split('/')[0] for s in symbols]
+
+    redis_client = get_redis_client()
+    result = {}
+    missing_symbols = []
+
+    # Check per-symbol Redis cache first
+    for sym in symbols:
+        cache_key = f"quote:{sym}"
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                result[sym] = json.loads(cached)
+            else:
+                missing_symbols.append(sym)
+        except Exception:
+            missing_symbols.append(sym)
+
+    if not missing_symbols:
+        return result
+
+    # Check database for quotes not in Redis cache (up to 24 hours old)
+    try:
+        db_quotes = get_quotes_from_db(missing_symbols, max_age_seconds=86400)
+        for sym in list(missing_symbols):
+            if sym in db_quotes:
+                result[sym] = db_quotes[sym]
+                missing_symbols.remove(sym)
+                # Refresh Redis cache from DB data
+                try:
+                    redis_client.set(f"quote:{sym}", json.dumps(db_quotes[sym]), ex=300)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"get_quotes_cached: DB quote fetch failed: {e}")
+
+    # Try DB close prices for anything still missing
+    if missing_symbols:
+        try:
+            db_closes = get_latest_close_prices(missing_symbols)
+            for sym in list(missing_symbols):
+                if sym in db_closes and db_closes[sym] > 0:
+                    result[sym] = {
+                        "last": db_closes[sym],
+                        "bid": db_closes[sym],
+                        "ask": db_closes[sym],
+                        "volume": None,
+                        "change_24h": None,
+                        "percentage": None,
+                        "quoteVolume": None,
+                    }
+                    missing_symbols.remove(sym)
+        except Exception as e:
+            logger.warning(f"get_quotes_cached: DB close price fallback failed: {e}")
+
+    # Initialize remaining missing symbols with None values
+    for sym in missing_symbols:
+        result[sym] = {"last": None, "bid": None, "ask": None, "volume": None,
+                       "change_24h": None, "percentage": None, "quoteVolume": None}
+
+    return result
+
+
 def _get_btp_name(isin: str) -> str:
     """Get the BTP name from the cached BTP bonds list."""
     try:
