@@ -3849,10 +3849,11 @@ class TradingEngine:
         await asyncio.sleep(60)  # initial delay
         while self._running:
             try:
-                await self._check_pause_resume_decision()
+                if await self._is_market_open():
+                    await self._check_pause_resume_decision()
             except Exception as e:
                 logger.error(f"Pause/resume check error: {e}", exc_info=True)
-            await asyncio.sleep(300)  # every 5 minutes
+            await asyncio.sleep(1800)  # every 30 minutes
 
     async def _check_pause_resume_decision(self):
         """When trading is paused, ask the LLM whether to resume (lightweight)."""
