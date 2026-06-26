@@ -11,16 +11,16 @@ from typing import Optional, List
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Borsa Italiana API period mapping
-BORSA_API_PERIOD_MAP = {
-    "1d": "1D",
-    "1w": "1W",
-    "1M": "1M",
-    "3M": "3M",
-    "6M": "6M",
-    "1Y": "1Y",
-    "3Y": "3Y",
-    "5Y": "5Y",
+# Borsa Italiana timeframe conversion map (daily data → resampled via pandas)
+BORSA_TIMEFRAME_MAP = {
+    "1d": None,       # Daily native (no conversion needed)
+    "1w": "W",         # Weekly
+    "1M": "ME",        # Month End
+    "3M": "3ME",       # Quarterly
+    "6M": "6ME",       # Semi-annual
+    "1Y": "YE",        # Year End
+    "3Y": "3YE",       # 3-Year
+    "5Y": "5YE",       # 5-Year
 }
 
 def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
@@ -51,8 +51,8 @@ def get_borsa_italiana_candles_debug(
 ) -> Optional[List[List]]:
     """Debug version of get_borsa_italiana_candles. Omits Redis and DB, prints summary."""
 
-    if timeframe not in BORSA_API_PERIOD_MAP:
-        logger.error(f"Timeframe {timeframe} not supported. Supported: {list(BORSA_API_PERIOD_MAP.keys())}")
+    if timeframe not in BORSA_TIMEFRAME_MAP:
+        logger.error(f"Timeframe {timeframe} not supported. Supported: {list(BORSA_TIMEFRAME_MAP.keys())}")
         return None
 
     base = symbol.split("/")[0] if "/" in symbol else symbol
@@ -114,15 +114,14 @@ def get_borsa_italiana_candles_debug(
                 if response.status_code != 200:
                     logger.warning(f"Intraday endpoint returned {response.status_code} for {symbol} {timeframe}, falling back to history endpoint")
                     # Fall back to history endpoint
-                    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=1D&adjustment=true&add-last-price=true"
+                    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
                     logger.info(f"Falling back to history URL: {url}")
                     response = client.get(url, headers=headers)
 
                 response.raise_for_status()
             else:
-                # For other timeframes, use the history endpoint with the correct period
-                api_period = BORSA_API_PERIOD_MAP.get(timeframe, "5Y")
-                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period={api_period}&adjustment=true&add-last-price=true"
+                # For other timeframes, use the history endpoint (always fetch 5Y of daily data, then resample)
+                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
                 logger.info(f"Fetching data from URL: {url}")
                 response = client.get(url, headers=headers)
                 response.raise_for_status()
@@ -225,6 +224,28 @@ def get_borsa_italiana_candles_debug(
                     vol = float(row['Volume']) if pd.notna(row['Volume']) else 0.0
                     rows.append([ts, float(row['Open']), float(row['High']), float(row['Low']), float(row['Close']), vol])
                 rows.sort(key=lambda c: c[0])
+
+        pandas_freq = BORSA_TIMEFRAME_MAP.get(timeframe)
+        if pandas_freq is not None:
+            logger.info(f"Resampling daily candles to {timeframe} using pandas freq '{pandas_freq}'...")
+            df = pd.DataFrame(rows, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+            df['Date'] = pd.to_datetime(df['Timestamp'], unit='ms')
+            df.set_index('Date', inplace=True)
+            ohlcv_rules = {
+                'Open': 'first',
+                'High': 'max',
+                'Low': 'min',
+                'Close': 'last',
+                'Volume': 'sum'
+            }
+            df = df.resample(pandas_freq).agg(ohlcv_rules)
+            df.dropna(subset=['Open'], inplace=True)
+            df.reset_index(inplace=True)
+            rows = []
+            for _, row in df.iterrows():
+                ts = int(row['Date'].timestamp() * 1000)
+                vol = float(row['Volume']) if pd.notna(row['Volume']) else 0.0
+                rows.append([ts, float(row['Open']), float(row['High']), float(row['Low']), float(row['Close']), vol])
 
         rows.sort(key=lambda c: c[0])
 
