@@ -1055,7 +1055,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         if db_quotes:
             logger.debug(f"Loaded {len(db_quotes)} quotes from database (Redis miss fallback)")
     except Exception as e:
-        logger.warning(f"DB quote fetch failed: {e}")
+        logger.warning(f"DB quote fetch failed: {e}", exc_info=True)
 
     # --- Try DB close prices first (fast, no network call) ---
     # This ensures quotes are available even when yfinance is rate-limited or blocked.
@@ -1259,7 +1259,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                 except Exception:
                     pass
     except Exception as e:
-        logger.warning(f"get_quotes_cached: DB quote fetch failed: {e}")
+        logger.warning(f"get_quotes_cached: DB quote fetch failed: {e}", exc_info=True)
 
     # Try DB close prices for anything still missing
     if missing_symbols:
