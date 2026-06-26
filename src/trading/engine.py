@@ -5034,6 +5034,7 @@ class TradingEngine:
             market_snapshot = {
                 "symbol": symbol,
                 "ticker": ticker,
+                "staleness_warning": staleness_warning,
                 "balance": balance,
                 "open_positions": open_positions,
                 "per_symbol_budget": per_symbol_budget,
