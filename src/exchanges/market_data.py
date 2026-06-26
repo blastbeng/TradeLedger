@@ -1295,6 +1295,25 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         result[sym] = {"last": None, "bid": None, "ask": None, "volume": None,
                        "change_24h": None, "percentage": None, "quoteVolume": None}
 
+    # Persist DB close prices to Redis and the quotes table so that other
+    # consumers (web dashboard, re-evaluation, etc.) can access them even
+    # when yfinance is unavailable.  This is a fast batch DB write, not a
+    # network call, so it respects the "no network calls" contract of this
+    # function.
+    quotes_to_save = {}
+    for sym, q in result.items():
+        if q.get("last") is not None:
+            try:
+                redis_client.set(f"quote:{sym}", json.dumps(q), ex=300)
+            except Exception:
+                pass
+            quotes_to_save[sym] = q
+    if quotes_to_save:
+        try:
+            save_quotes_batch(quotes_to_save)
+        except Exception as e:
+            logger.warning(f"get_quotes_cached: Failed to save DB close prices to quotes table: {e}")
+
     return result
 
 
