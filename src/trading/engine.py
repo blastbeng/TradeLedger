@@ -2617,17 +2617,10 @@ class TradingEngine:
         btp_sample = [s for s in sample_pairs if s in btp_pairs]
         logger.info(f"Step 4: Fetching quotes for {len(stock_sample)} stocks + {len(btp_sample)} BTPs (pre-ranked from {len(available_pairs)} candidates)")
 
-        # Parallelize get_quotes by splitting into chunks of 50
+        # Fetch all quotes in a single call (get_quotes uses a lock internally
+        # to prevent concurrent yfinance calls that cause rate limiting)
         plain_sample = [s.split("/")[0] for s in stock_sample]
-        chunk_size = 5
-        chunks = [plain_sample[i:i + chunk_size] for i in range(0, len(plain_sample), chunk_size)]
-        async def _fetch_quotes_with_limit(chunk):
-            return await self._get_quotes_async(chunk, timeout=300.0)
-        quote_tasks = [_fetch_quotes_with_limit(chunk) for chunk in chunks]
-        quote_results = await asyncio.gather(*quote_tasks)
-        raw_quotes = {}
-        for res in quote_results:
-            raw_quotes.update(res)
+        raw_quotes = await self._get_quotes_async(plain_sample, timeout=300.0)
         tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in stock_sample}
 
         # Add BTP quotes directly without using yfinance
