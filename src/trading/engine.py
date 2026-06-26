@@ -7151,6 +7151,25 @@ class TradingEngine:
                                     "reason": "Stop triggered, OCO pair cancelled (risk check)",
                                 }
                             )
+                        # Immediately execute the stop-loss sell instead of waiting
+                        # up to 120s for _process_queued_orders to poll the stop order.
+                        try:
+                            await asyncio.to_thread(self.trader.cancel_order, sl_order_id)
+                        except Exception:
+                            pass
+                        self.queued_orders = [
+                            q for q in self.queued_orders
+                            if q.get("order_id") != sl_order_id
+                        ]
+                        pos.pop("stop_loss_order_id", None)
+                        pos.pop("stop_loss_order_type", None)
+                        pos.pop("_native_stop_price", None)
+                        await self._execute_signal(
+                            symbol,
+                            Signal(action="SELL", confidence=1.0, reasoning="Stop-loss triggered (risk check)"),
+                            exit_reason="stop_loss"
+                        )
+                        continue  # position has been closed, move to next
 
                     # Take-profit price reached → cancel stop OCO pair
                     if (sl_order_id and tp_order_id
@@ -7185,6 +7204,23 @@ class TradingEngine:
                                     "reason": "Take-profit reached, OCO pair cancelled (risk check)",
                                 }
                             )
+                        # Immediately execute the take-profit sell instead of waiting
+                        # up to 120s for _process_queued_orders to poll the TP order.
+                        try:
+                            await asyncio.to_thread(self.trader.cancel_order, tp_order_id)
+                        except Exception:
+                            pass
+                        self.queued_orders = [
+                            q for q in self.queued_orders
+                            if q.get("order_id") != tp_order_id
+                        ]
+                        pos.pop("take_profit_order_id", None)
+                        await self._execute_signal(
+                            symbol,
+                            Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered (risk check)"),
+                            exit_reason="take_profit"
+                        )
+                        continue  # position has been closed, move to next
                 elif current_price <= pos["stop_loss"]:
                     # Instead of immediately selling, ask the LLM whether to sell or adjust the stop.
                     review_count = pos.get("_stop_loss_review_count", 0)
