@@ -5069,6 +5069,7 @@ class TradingEngine:
                 "atr_percentile": atr_percentile,
                 "global_risk_multiplier": global_risk_mult,
                 "trading_paused": trading_paused,
+                "last_decision": self._last_decisions.get(symbol),
             }
             market_hash = compute_market_hash(market_snapshot)
             # Determine whether we even need to call the LLM, and if so which model to use
@@ -11558,6 +11559,7 @@ class TradingEngine:
             "atr_percentile": atr_percentile,
             "global_risk_multiplier": global_risk_mult,
             "trading_paused": trading_paused,  # False for simulation
+            "last_decision": self._last_decisions.get(symbol),
         }
         market_hash = compute_market_hash(market_snapshot)
 
