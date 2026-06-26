@@ -1219,13 +1219,15 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     try:
         sql = _adapt_sql(
             """
+            WITH RankedCandles AS (
+                SELECT symbol, close, volume, timestamp,
+                       ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
+                FROM market_data
+            )
             SELECT symbol, close, volume, timestamp
-            FROM market_data m
-            WHERE (
-                SELECT COUNT(*) FROM market_data m2
-                WHERE m2.symbol = m.symbol AND m2.timestamp > m.timestamp
-            ) < 2
-            ORDER BY m.symbol, m.timestamp DESC
+            FROM RankedCandles
+            WHERE rn <= 2
+            ORDER BY symbol, timestamp DESC
             """
         )
         rows = conn.execute(sql).fetchall()
