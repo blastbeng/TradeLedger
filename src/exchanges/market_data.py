@@ -1099,11 +1099,15 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     volume = float(last_candle[5]) if last_candle[5] else None
                     
                     if last_price > 0:
-                        result[sym]["last"] = last_price
-                        result[sym]["bid"] = last_price
-                        result[sym]["ask"] = last_price
-                        result[sym]["volume"] = volume
-                        result[sym]["quoteVolume"] = volume
+                        result[sym] = {
+                            "last": last_price,
+                            "bid": last_price,
+                            "ask": last_price,
+                            "volume": volume,
+                            "change_24h": None,
+                            "percentage": None,
+                            "quoteVolume": volume,
+                        }
                         
                         if len(borsa_candles) > 1:
                             prev_close = float(borsa_candles[-2][4])
