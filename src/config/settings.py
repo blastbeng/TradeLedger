@@ -56,15 +56,10 @@ class Settings(BaseSettings):
 
     # Symbol selection limits
     SYMBOL_SELECTION_TOP_VOLUME_LIMIT: int = 50
-    SYMBOL_SELECTION_MAX_SYMBOLS: int = 100
     # Maximum number of candidate symbols to consider during symbol selection
     # (fetches tickers/OHLCV for this many top-volume symbols)
     SYMBOL_SELECTION_CANDIDATE_LIMIT: int = 200
     SYMBOL_SELECTION_MIN_SENTIMENT: float = -1.0   # -1.0 = disabled
-
-    # Maximum number of candidates sent to the LLM for stock selection.
-    # The engine pre‑ranks candidates by a composite score and keeps only the top N.
-    LLM_STOCK_SELECTION_TOP_N: int = 30
 
     # ETFs that are always included in the candidate pool (if tradable),
     # regardless of volume or composite score.
