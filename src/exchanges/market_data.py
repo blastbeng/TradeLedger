@@ -275,14 +275,13 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
 
 # Borsa Italiana timeframe conversion map (daily data → resampled via pandas)
 BORSA_TIMEFRAME_MAP = {
-    "1d": None,       # Daily native (no conversion needed)
-    "1w": "W",         # Weekly
-    "1M": "ME",        # Month End
-    "3M": "3ME",       # Quarterly
-    "6M": "6ME",       # Semi-annual
-    "1Y": "YE",        # Year End
-    "3Y": "3YE",       # 3-Year
-    "5Y": "5YE",       # 5-Year
+    "1d": "1d",       # Daily (uses intraday endpoint)
+    "1M": "1M",       # Monthly
+    "3M": "3M",       # Quarterly
+    "6M": "6M",       # Semi-annual
+    "1Y": "1Y",       # Year End
+    "3Y": "3Y",       # 3-Year
+    "5Y": "5Y",       # 5-Year
 }
 
 def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
@@ -371,13 +370,14 @@ def get_borsa_italiana_candles(
                 if response.status_code != 200:
                     logger.debug(f"Intraday endpoint returned {response.status_code} for {symbol} {timeframe}, falling back to history endpoint")
                     # Fall back to history endpoint
-                    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
+                    url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=1d&adjustment=true&add-last-price=true"
                     response = client.get(url, headers=headers)
 
                 response.raise_for_status()
             else:
-                # For other timeframes, use the history endpoint (always fetch 5Y of daily data, then resample)
-                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=5Y&adjustment=true&add-last-price=true"
+                # For other timeframes, use the history endpoint with the correct period
+                period = BORSA_TIMEFRAME_MAP.get(timeframe)
+                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period={period}&adjustment=true&add-last-price=true"
                 response = client.get(url, headers=headers)
                 response.raise_for_status()
 
@@ -478,28 +478,6 @@ def get_borsa_italiana_candles(
                     vol = float(row['Volume']) if pd.notna(row['Volume']) else 0.0
                     rows.append([ts, float(row['Open']), float(row['High']), float(row['Low']), float(row['Close']), vol])
                 rows.sort(key=lambda c: c[0])
-
-        # Resample to requested timeframe if needed (not 1d)
-        pandas_freq = BORSA_TIMEFRAME_MAP.get(timeframe)
-        if pandas_freq is not None:
-            df = pd.DataFrame(rows, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
-            df['Date'] = pd.to_datetime(df['Timestamp'], unit='ms')
-            df.set_index('Date', inplace=True)
-            ohlcv_rules = {
-                'Open': 'first',
-                'High': 'max',
-                'Low': 'min',
-                'Close': 'last',
-                'Volume': 'sum'
-            }
-            df = df.resample(pandas_freq).agg(ohlcv_rules)
-            df.dropna(subset=['Open'], inplace=True)
-            df.reset_index(inplace=True)
-            rows = []
-            for _, row in df.iterrows():
-                ts = int(row['Date'].timestamp() * 1000)
-                vol = float(row['Volume']) if pd.notna(row['Volume']) else 0.0
-                rows.append([ts, float(row['Open']), float(row['High']), float(row['Low']), float(row['Close']), vol])
 
         # Sort by timestamp
         rows.sort(key=lambda c: c[0])
