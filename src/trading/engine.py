@@ -2293,6 +2293,7 @@ class TradingEngine:
         self._background_tasks.append(asyncio.create_task(self._periodic_reconcile()))
         self._background_tasks.append(asyncio.create_task(self._periodic_reevaluate()))
         self._background_tasks.append(asyncio.create_task(self._periodic_pause_check()))
+        self._background_tasks.append(asyncio.create_task(self._periodic_pause_resume_check()))
         self._background_tasks.append(asyncio.create_task(self._periodic_full_market_breadth()))
         self._background_tasks.append(asyncio.create_task(self._periodic_market_condition_check()))
         self._background_tasks.append(asyncio.create_task(self._check_pending_entries()))
@@ -3842,6 +3843,16 @@ class TradingEngine:
 
         logger.info("Re-evaluation complete: %d symbols selected.", len(self.current_symbols))
         await asyncio.to_thread(self.redis.set, last_key, now)
+
+    async def _periodic_pause_resume_check(self):
+        """Periodically ask the LLM whether to resume trading when paused."""
+        await asyncio.sleep(60)  # initial delay
+        while self._running:
+            try:
+                await self._check_pause_resume_decision()
+            except Exception as e:
+                logger.error(f"Pause/resume check error: {e}", exc_info=True)
+            await asyncio.sleep(300)  # every 5 minutes
 
     async def _check_pause_resume_decision(self):
         """When trading is paused, ask the LLM whether to resume (lightweight)."""
