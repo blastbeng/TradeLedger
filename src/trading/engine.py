@@ -156,6 +156,7 @@ class TradingEngine:
         self._full_breadth_running = False
         self._full_download_running = False
         self._quotes_fetch_running = False
+        self._delayed_entry_tasks: set = set()
 
         # Market-closed periodic notification tracking
         self._last_market_closed_notify_time: float = 0.0
@@ -537,6 +538,10 @@ class TradingEngine:
         """Gracefully stop the engine and all background tasks."""
         logger.info("Stopping trading engine...")
         self._running = False
+        for task in self._delayed_entry_tasks:
+            task.cancel()
+        self._delayed_entry_tasks.clear()
+        logger.info("Cancelled delayed entry tasks.")
         self._db_executor.shutdown(wait=True)
         self._download_executor.shutdown(wait=True)
         logger.info("Database write executor shut down.")
@@ -5891,9 +5896,11 @@ class TradingEngine:
                         # Delay entries are simple time-based waits – schedule directly
                         delay_sec = validated.entry_condition.get("delay_seconds", 0)
                         logger.info(f"Scheduling delayed BUY for {symbol} in {delay_sec}s")
-                        asyncio.create_task(
+                        task = asyncio.create_task(
                             self._execute_delayed_entry(symbol, validated, assigned_tf, delay_sec)
                         )
+                        self._delayed_entry_tasks.add(task)
+                        task.add_done_callback(self._delayed_entry_tasks.discard)
                         if self.notifier:
                             await self.notifier.send_notification(
                                 f"⏳ Delayed entry for {display_symbol} – executing in {delay_sec}s.",
