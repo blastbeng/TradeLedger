@@ -1214,23 +1214,44 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         return {}
     # Normalize input symbols to base form (strip /currency suffix)
     base_symbols = set(s.split('/')[0] for s in symbols)
+    # Construct full pair symbols for exact matching in the database
+    full_pairs = [f"{bs}/{settings.BASE_CURRENCY}" for bs in base_symbols]
 
     conn = get_connection()
     try:
-        sql = _adapt_sql(
-            """
-            WITH RankedCandles AS (
-                SELECT symbol, close, volume, timestamp,
-                       ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
-                FROM market_data
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                """
+                WITH RankedCandles AS (
+                    SELECT symbol, close, volume, timestamp,
+                           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
+                    FROM market_data
+                    WHERE symbol = ANY(%s)
+                )
+                SELECT symbol, close, volume, timestamp
+                FROM RankedCandles
+                WHERE rn <= 2
+                ORDER BY symbol, timestamp DESC
+                """
             )
-            SELECT symbol, close, volume, timestamp
-            FROM RankedCandles
-            WHERE rn <= 2
-            ORDER BY symbol, timestamp DESC
-            """
-        )
-        rows = conn.execute(sql).fetchall()
+            rows = conn.execute(sql, (full_pairs,)).fetchall()
+        else:
+            placeholders = ",".join(["?" for _ in full_pairs])
+            sql = _adapt_sql(
+                f"""
+                WITH RankedCandles AS (
+                    SELECT symbol, close, volume, timestamp,
+                           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
+                    FROM market_data
+                    WHERE symbol IN ({placeholders})
+                )
+                SELECT symbol, close, volume, timestamp
+                FROM RankedCandles
+                WHERE rn <= 2
+                ORDER BY symbol, timestamp DESC
+                """
+            )
+            rows = conn.execute(sql, full_pairs).fetchall()
 
         result = {}
         for row in rows:
