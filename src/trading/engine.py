@@ -50,7 +50,7 @@ from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
 from src.strategies.backtester import backtest_strategy, format_backtest_summary
 from src.utils.redis_client import get_redis_client
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices
 
 logger = logging.getLogger(__name__)
 
@@ -710,7 +710,13 @@ class TradingEngine:
             await asyncio.sleep(30)
 
     async def _periodic_full_market_breadth(self):
-        """Periodically compute market breadth over all available pairs."""
+        """Periodically compute market breadth over all available pairs.
+
+        Uses cached quotes (Redis/DB only, no network calls) to avoid
+        thread pool exhaustion. Falls back to DB close prices for symbols
+        without cached quotes. Uses a random sample of up to 500 symbols
+        when the universe is larger, ensuring a representative sample.
+        """
         await asyncio.sleep(60)  # initial delay
         while self._running:
             if self._full_breadth_running:
@@ -722,11 +728,40 @@ class TradingEngine:
                 plain_assets = await self._get_tradable_assets()
                 available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
                 if available_pairs:
-                    # Limit to 200 pairs to avoid thread pool exhaustion
-                    breadth_pairs = available_pairs[:200]
+                    # Use a random sample of up to 500 pairs for better representativeness
+                    MAX_BREADTH_SAMPLE = 500
+                    if len(available_pairs) > MAX_BREADTH_SAMPLE:
+                        breadth_pairs = random.sample(available_pairs, MAX_BREADTH_SAMPLE)
+                    else:
+                        breadth_pairs = available_pairs
                     plain_breadth = [s.split("/")[0] for s in breadth_pairs]
-                    raw_breadth = await self._get_quotes_batched(plain_breadth, timeout_per_chunk=300.0)
+
+                    # Use cached quotes (Redis/DB only, no network calls)
+                    raw_breadth = await asyncio.to_thread(get_quotes_cached, plain_breadth)
                     breadth_tickers = {pair: raw_breadth.get(pair.split("/")[0], {}) for pair in breadth_pairs}
+
+                    # Fall back to DB close prices for symbols without cached quotes
+                    missing_breadth = [
+                        s.split("/")[0] for s in breadth_pairs
+                        if breadth_tickers.get(s, {}).get('percentage') is None
+                    ]
+                    if missing_breadth:
+                        try:
+                            db_candles = await asyncio.to_thread(get_latest_close_prices, missing_breadth)
+                            for pair in breadth_pairs:
+                                base = pair.split("/")[0]
+                                if base in db_candles and db_candles[base].get("last", 0) > 0:
+                                    last = db_candles[base]["last"]
+                                    prev_close = db_candles[base].get("prev_close")
+                                    if prev_close and prev_close > 0:
+                                        pct = ((last - prev_close) / prev_close) * 100
+                                        breadth_tickers[pair] = {
+                                            "last": last,
+                                            "percentage": round(pct, 4),
+                                        }
+                        except Exception as e:
+                            logger.warning(f"DB close price fallback for breadth failed: {e}")
+
                     positive_count = sum(
                         1 for sym in breadth_pairs
                         if (breadth_tickers.get(sym, {}).get('percentage') or 0) > 0
@@ -736,11 +771,12 @@ class TradingEngine:
                         "positive_pct": round(positive_count / total_count * 100, 1) if total_count > 0 else 0.0,
                         "positive_count": positive_count,
                         "total_count": total_count,
+                        "universe_size": len(available_pairs),
                     }
                     await asyncio.to_thread(
                         self.redis.setex, "market:breadth:full", 600, json.dumps(full_market_breadth)
                     )
-                    logger.info(f"Full market breadth updated: {full_market_breadth}")
+                    logger.info(f"Full market breadth updated: {full_market_breadth} (sampled from {len(available_pairs)} symbols)")
             except Exception as e:
                 logger.error(f"Full market breadth computation error: {e}", exc_info=True)
             finally:
