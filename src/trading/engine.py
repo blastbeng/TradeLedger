@@ -6842,8 +6842,80 @@ class TradingEngine:
                         continue   # skip further checks for this symbol in this cycle
 
                 if pos.get("stop_loss_order_id") or pos.get("take_profit_order_id"):
-                    # Native exit orders are active – skip manual stop/tp triggers
-                    pass
+                    # Native exit orders are active – skip manual stop/tp triggers.
+                    # But proactively cancel the OCO pair when the trigger price
+                    # has been reached, instead of waiting up to 120s for the
+                    # queued-order polling loop to notice.
+                    sl_order_id = pos.get("stop_loss_order_id")
+                    tp_order_id = pos.get("take_profit_order_id")
+                    sl_order_type = pos.get("stop_loss_order_type", "stop")
+
+                    # Stop price reached → cancel take-profit OCO pair
+                    if (sl_order_id and tp_order_id
+                            and sl_order_type in ("stop", "stop_limit")
+                            and pos.get("stop_loss") is not None
+                            and current_price <= pos["stop_loss"]):
+                        try:
+                            await asyncio.to_thread(self.trader.cancel_order, tp_order_id)
+                            logger.info(
+                                f"Risk check: stop price reached for {symbol}, "
+                                f"cancelled OCO take-profit {tp_order_id}"
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to cancel OCO TP {tp_order_id} for {symbol}: {e}")
+                        self.queued_orders = [
+                            q for q in self.queued_orders
+                            if q.get("order_id") != tp_order_id
+                        ]
+                        pos.pop("take_profit_order_id", None)
+                        for q in self.queued_orders:
+                            if q.get("order_id") == sl_order_id:
+                                q["oco_pair"] = None
+                                break
+                        if self.notifier:
+                            await self.notifier.send_notification(
+                                f"🛑 Stop triggered for {display_symbol} at {current_price:.4f}, "
+                                f"take‑profit order cancelled.",
+                                summary={
+                                    "symbol": symbol,
+                                    "action": "CANCEL",
+                                    "reason": "Stop triggered, OCO pair cancelled (risk check)",
+                                }
+                            )
+
+                    # Take-profit price reached → cancel stop OCO pair
+                    if (sl_order_id and tp_order_id
+                            and pos.get("take_profit") is not None
+                            and current_price >= pos["take_profit"]):
+                        try:
+                            await asyncio.to_thread(self.trader.cancel_order, sl_order_id)
+                            logger.info(
+                                f"Risk check: take-profit price reached for {symbol}, "
+                                f"cancelled OCO stop {sl_order_id}"
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to cancel OCO stop {sl_order_id} for {symbol}: {e}")
+                        self.queued_orders = [
+                            q for q in self.queued_orders
+                            if q.get("order_id") != sl_order_id
+                        ]
+                        pos.pop("stop_loss_order_id", None)
+                        pos.pop("stop_loss_order_type", None)
+                        pos.pop("_native_stop_price", None)
+                        for q in self.queued_orders:
+                            if q.get("order_id") == tp_order_id:
+                                q["oco_pair"] = None
+                                break
+                        if self.notifier:
+                            await self.notifier.send_notification(
+                                f"🎯 Take‑profit reached for {display_symbol} at {current_price:.4f}, "
+                                f"stop order cancelled.",
+                                summary={
+                                    "symbol": symbol,
+                                    "action": "CANCEL",
+                                    "reason": "Take-profit reached, OCO pair cancelled (risk check)",
+                                }
+                            )
                 elif current_price <= pos["stop_loss"]:
                     # Instead of immediately selling, ask the LLM whether to sell or adjust the stop.
                     review_count = pos.get("_stop_loss_review_count", 0)
