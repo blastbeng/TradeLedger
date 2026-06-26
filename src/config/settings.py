@@ -200,8 +200,8 @@ class Settings(BaseSettings):
     YF_RATE_LIMIT_ENABLED: bool = True
     YF_RATE_LIMIT_MAX_REQUESTS: int = 30
     YF_RATE_LIMIT_WINDOW_SECONDS: int = 60
-    YF_PROXY_ENABLED: bool = False
-    YF_PROXIES: list[str] = []
+    HTTP_PROXY_ENABLED: bool = False
+    HTTP_PROXIES: list[str] = []
 
 
 

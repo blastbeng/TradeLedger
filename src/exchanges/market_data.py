@@ -114,9 +114,9 @@ def _get_yf_session():
         from curl_cffi import requests as curl_requests
 
         proxies = None
-        if settings.YF_PROXY_ENABLED and settings.YF_PROXIES:
+        if settings.HTTP_PROXY_ENABLED and settings.HTTP_PROXIES:
             import random
-            proxy = random.choice(settings.YF_PROXIES)
+            proxy = random.choice(settings.HTTP_PROXIES)
             proxies = {"http": proxy, "https": proxy}
             logger.debug(f"Using proxy for yfinance: {proxy}")
 
@@ -205,7 +205,7 @@ _dynamic_rotator = DynamicProxyRotator()
 
 def _get_proxies() -> Optional[str]:
     """Return a random proxy string for httpx if enabled, else None."""
-    if not settings.YF_PROXY_ENABLED:
+    if not settings.HTTP_PROXY_ENABLED:
         return None
 
     # Trigger background refresh if pool is empty or stale (every 30 mins)
@@ -220,11 +220,11 @@ def _get_proxies() -> Optional[str]:
     # Randomly decide to use YF_PROXIES or dynamic rotator
     use_dynamic = False
     if _dynamic_rotator.valid_proxies:
-        if settings.YF_PROXIES:
+        if settings.HTTP_PROXIES:
             use_dynamic = random.choice([True, False])
         else:
             use_dynamic = True
-    elif not settings.YF_PROXIES:
+    elif not settings.HTTP_PROXIES:
         return None
 
     if use_dynamic:
@@ -233,8 +233,8 @@ def _get_proxies() -> Optional[str]:
             logger.debug(f"Using dynamic proxy: {proxy}")
             return proxy
     
-    if settings.YF_PROXIES:
-        proxy = random.choice(settings.YF_PROXIES)
+    if settings.HTTP_PROXIES:
+        proxy = random.choice(settings.HTTP_PROXIES)
         logger.debug(f"Using static proxy: {proxy}")
         return proxy
     
@@ -323,7 +323,7 @@ def get_borsa_italiana_candles(
     }
 
     try:
-        with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+        with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
             if timeframe == "1d":
                 # For 1d, use the intraday endpoint
                 url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/intraday?resolution=1MN"
@@ -1112,13 +1112,13 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     if stock_symbols and not _check_yf_circuit():
         try:
             # Log proxy status for debugging
-            if settings.YF_PROXY_ENABLED:
-                if settings.YF_PROXIES:
-                    logger.debug(f"get_quotes: YF_PROXY_ENABLED with {len(settings.YF_PROXIES)} static proxies")
+            if settings.HTTP_PROXY_ENABLED:
+                if settings.HTTP_PROXIES:
+                    logger.debug(f"get_quotes: HTTP_PROXY_ENABLED with {len(settings.HTTP_PROXIES)} static proxies")
                 else:
-                    logger.debug("get_quotes: YF_PROXY_ENABLED with dynamic proxy rotator")
+                    logger.debug("get_quotes: HTTP_PROXY_ENABLED with dynamic proxy rotator")
             else:
-                logger.debug("get_quotes: YF_PROXY not enabled")
+                logger.debug("get_quotes: HTTP_PROXY not enabled")
             batch_hist = yf.download(
                 stock_symbols,
                 period="2d",

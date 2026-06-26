@@ -2,6 +2,7 @@ import httpx
 import json
 import re
 import logging
+import random
 import pandas as pd
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -63,8 +64,18 @@ def get_borsa_italiana_candles_debug(
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
     }
 
+    # Proxy support (matching the production code)
+    proxy = None
     try:
-        with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+        from src.config.settings import settings
+        if settings.HTTP_PROXY_ENABLED and settings.HTTP_PROXIES:
+            proxy = random.choice(settings.HTTP_PROXIES)
+            logger.info(f"Using proxy: {proxy}")
+    except Exception:
+        pass
+
+    try:
+        with httpx.Client(proxy=proxy, timeout=15.0, follow_redirects=True) as client:
             if timeframe == "1d":
                 # For 1d, use the intraday endpoint
                 url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},XMIL,ISIN/intraday?resolution=1MN"
