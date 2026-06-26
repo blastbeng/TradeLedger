@@ -2,7 +2,7 @@ import logging
 import json
 from src.exchanges.market_data import discover_btp_bonds, _get_quotes_impl, get_quotes_cached
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 def main():
     print("Discovering BTP bonds...")
