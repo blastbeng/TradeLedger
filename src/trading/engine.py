@@ -2081,6 +2081,11 @@ class TradingEngine:
         # --- Delisted stocks ---
         plain_assets = await self._get_tradable_assets()
         available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+        # Include BTP bonds and ETFs so they are not removed during reconciliation
+        btp_bonds = await self._get_btp_bonds()
+        available_pairs += [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
+        etf_symbols = await self._get_etf_symbols()
+        available_pairs += [f"{sym}/{self.base_currency}" for sym in etf_symbols]
         for entry in list(self.current_symbols):
             symbol = entry["symbol"]
             if symbol not in available_pairs:
