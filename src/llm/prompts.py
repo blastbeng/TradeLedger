@@ -771,13 +771,6 @@ def build_strategy_prompt(
         logger.warning(f"Assigned timeframe {assigned_timeframe} is not supported by yfinance. Falling back to default.")
         assigned_timeframe = "1d" if "1d" in TIMEFRAME_MAP else list(TIMEFRAME_MAP.keys())[0]
     tf_seconds = _timeframe_to_seconds(assigned_timeframe) if assigned_timeframe else 86400
-    # Cap min_hold for very long timeframes to avoid absurd values (e.g., 10 years for 5Y)
-    if assigned_timeframe in ("3Y", "5Y"):
-        min_hold = 94_608_000  # ~3 years cap for 3Y/5Y candles
-    elif assigned_timeframe in ("1Y", "6M"):
-        min_hold = 31_536_000  # ~1 year cap for 1Y/6M candles
-    else:
-        min_hold = 2 * tf_seconds
     _ticker_compact = {
         k: ticker.get(k) for k in ("last", "bid", "ask", "volume", "quoteVolume", "percentage", "name", "coupon", "maturity")
         if k in ticker
