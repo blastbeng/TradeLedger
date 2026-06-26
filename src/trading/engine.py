@@ -1065,6 +1065,37 @@ class TradingEngine:
         return ""
 
 
+    @staticmethod
+    def _get_quote_staleness_warning(ticker: Dict[str, Any]) -> str:
+        """Return a warning string if the quote data is stale, or empty string if fresh."""
+        last_update = ticker.get("last_update")
+        source = ticker.get("source", "unknown")
+
+        if last_update is None:
+            # No timestamp available — can't determine staleness
+            return ""
+
+        age_seconds = (time.time() * 1000 - last_update) / 1000
+
+        # Only warn for potentially stale sources
+        if source == "db_close" and age_seconds > 900:  # 15 minutes
+            age_minutes = int(age_seconds / 60)
+            return (
+                f"\n⚠️ **STALE QUOTE WARNING:** The current price ({ticker.get('last')}) "
+                f"is from database close prices and is {age_minutes} minutes old. "
+                f"It may not reflect real-time market conditions. "
+                f"Exercise extra caution and consider waiting for fresher data.\n"
+            )
+        elif source == "db_quotes" and age_seconds > 900:
+            age_minutes = int(age_seconds / 60)
+            return (
+                f"\n⚠️ **STALE QUOTE WARNING:** The current price ({ticker.get('last')}) "
+                f"is from cached database quotes and is {age_minutes} minutes old. "
+                f"It may not reflect real-time market conditions.\n"
+            )
+
+        return ""
+
     async def _fetch_vix(self) -> Optional[float]:
         """VIX is not available for the Italian market via yfinance. Returns None."""
         return None
@@ -4850,6 +4881,10 @@ class TradingEngine:
                 min_stop_atr_mult=min_stop_atr_mult,
                 min_viable_trade_amount=min_viable_amount,
             )
+            # Add quote staleness warning if the price data is outdated
+            staleness_warning = self._get_quote_staleness_warning(ticker)
+            if staleness_warning:
+                prompt += staleness_warning
             logger.info(f"LLM prompt for {symbol}: {len(prompt)} chars")
             # Build a market snapshot dict for caching (per-symbol)
             market_snapshot = {
@@ -11291,6 +11326,10 @@ class TradingEngine:
             min_stop_atr_mult=sim_min_stop_atr_mult,
             min_viable_trade_amount=min_viable_amount,
         )
+        # Add quote staleness warning if the price data is outdated
+        staleness_warning = self._get_quote_staleness_warning(ticker)
+        if staleness_warning:
+            prompt += staleness_warning
 
         # Compute complexity and model tier for perfect emulation
         _conflicting = False

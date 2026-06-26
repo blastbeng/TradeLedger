@@ -1225,7 +1225,7 @@ def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict
             placeholders = ",".join(["?" for _ in symbols])
             sql = _adapt_sql(
                 f"""
-                SELECT symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, name, coupon, maturity
+                SELECT symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, name, coupon, maturity, updated_at
                 FROM quotes WHERE symbol IN ({placeholders}) AND updated_at >= %s
                 """
             )
@@ -1244,6 +1244,8 @@ def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict
                 "name": row["name"],
                 "coupon": row["coupon"],
                 "maturity": row["maturity"],
+                "last_update": int(row["updated_at"] * 1000) if row["updated_at"] else None,
+                "source": "db_quotes",
             }
         return result
     finally:
@@ -1319,7 +1321,8 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     result[db_base] = {
                         "last": float(row["close"]),
                         "volume": float(row["volume"]) if row["volume"] is not None else None,
-                        "prev_close": None
+                        "prev_close": None,
+                        "candle_timestamp": row["timestamp"],
                     }
                 else:
                     # Second row (older timestamp)

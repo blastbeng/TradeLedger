@@ -305,6 +305,82 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
         return None
 
 
+def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
+    """Fetch the latest real-time quote from Borsa Italiana for an Italian stock or BTP.
+
+    Returns a dict with keys: last, bid, ask, volume, change_24h, percentage,
+    quoteVolume, last_update, source.
+    Returns None if the quote cannot be fetched.
+    """
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+
+    if re.match(r'^IT[A-Z0-9]{10}$', base):
+        isin = base
+    else:
+        isin = _get_isin_from_yfinance(base)
+        if not isin:
+            return None
+
+    market_code = settings.MARKET_CODE
+    token = _get_borsa_italiana_token(isin, market_code)
+    if not token:
+        return None
+
+    headers = {
+        "accept": "*/*",
+        "accept-language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        "authorization": f"Bearer {token}",
+        "priority": "u=1, i",
+        "referer": f"https://grafici.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it",
+        "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    }
+
+    try:
+        with httpx.Client(proxy=_get_proxies(), timeout=10.0, follow_redirects=True) as client:
+            url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/intraday?resolution=1MN"
+            response = client.get(url, headers=headers)
+            response.raise_for_status()
+
+            try:
+                data = response.json()
+            except (json.JSONDecodeError, ValueError):
+                match = re.search(r'<pre>(.*?)</pre>', response.text, re.DOTALL)
+                if match:
+                    try:
+                        data = json.loads(match.group(1))
+                    except json.JSONDecodeError:
+                        return None
+                else:
+                    return None
+
+            intraday_points = data.get("intradayPoint", [])
+            if intraday_points:
+                latest = intraday_points[-1]
+                last_price = float(latest.get("endPx", 0))
+                if last_price > 0:
+                    vol = float(latest.get("vol", 0) or 0)
+                    return {
+                        "last": last_price,
+                        "bid": last_price,
+                        "ask": last_price,
+                        "volume": vol,
+                        "change_24h": None,
+                        "percentage": None,
+                        "quoteVolume": vol,
+                        "last_update": int(time.time() * 1000),
+                        "source": "borsa_italiana",
+                    }
+    except Exception as e:
+        logger.debug(f"Borsa Italiana quote fetch failed for {symbol}: {e}")
+    return None
+
+
 def get_borsa_italiana_candles(
     symbol: str,
     timeframe: str,
@@ -1084,6 +1160,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                         "change_24h": pct,
                         "percentage": pct,
                         "quoteVolume": volume,
+                        "last_update": db_candles[sym].get("candle_timestamp"),
+                        "source": "db_close",
                     }
                     # Do not remove from missing_symbols so yfinance can still try to update it
         except Exception as e:
@@ -1176,6 +1254,20 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             f"get_quotes: yfinance circuit breaker is OPEN — skipping quote fetch for {len(stock_symbols)} symbols. "
             f"Quotes will be served from Redis cache or database if available."
         )
+
+    # --- Try Borsa Italiana for Italian stocks still missing valid prices ---
+    # This is a per-symbol HTTP call (token + intraday), so limit to a small batch.
+    missing_after_yf = [
+        sym for sym in stock_symbols
+        if result.get(sym, {}).get("last") is None
+    ]
+    if missing_after_yf:
+        # Limit to 5 symbols to avoid excessive API calls
+        for sym in missing_after_yf[:5]:
+            bi_quote = get_borsa_italiana_quote(sym)
+            if bi_quote:
+                result[sym].update(bi_quote)
+                logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
 
     # Cache the result per-symbol in Redis (5 minutes) and save to database
     quotes_to_save = {}
@@ -1286,6 +1378,8 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                         "change_24h": pct,
                         "percentage": pct,
                         "quoteVolume": volume,
+                        "last_update": db_candles[sym].get("candle_timestamp"),
+                        "source": "db_close",
                     }
                     missing_symbols.remove(sym)
         except Exception as e:
