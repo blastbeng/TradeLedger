@@ -4882,8 +4882,10 @@ class TradingEngine:
                 is_critical=is_critical,
             ):
                 logger.info(f"Skipping LLM for {symbol}: market unchanged, no strong signals.")
-                # Update snapshot but no LLM call – assume HOLD
-                self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist)
+                # Do NOT update the snapshot here. Keeping the last actual LLM evaluation
+                # values ensures the 3× interval safety net fires and cumulative change
+                # detection works. Updating the snapshot on every skip would reset the
+                # clock and prevent forced re-evaluation from ever triggering.
                 # Clear any force‑eval flag for this symbol
                 self._force_eval.pop(symbol, None)
                 return
@@ -8045,6 +8047,11 @@ class TradingEngine:
                 return False
         if macd_hist is not None and last_macd_hist is not None:
             if abs(macd_hist - last_macd_hist) > skip_macd:
+                return False
+
+        # MACD histogram sign change (crossover) — momentum shift
+        if macd_hist is not None and last_macd_hist is not None:
+            if (macd_hist > 0) != (last_macd_hist > 0):
                 return False
 
         # If we have no open position and nothing is screaming, skip
