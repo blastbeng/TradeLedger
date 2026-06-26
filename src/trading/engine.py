@@ -8296,9 +8296,11 @@ class TradingEngine:
         ichimoku = ind.get("ichimoku")
         current_close = closes[-1] if closes else None
 
-        # Volume EMA for spike detection (using talib via compute_ema)
+        # Volume EMA for spike detection (using talib via compute_ema).
+        # Exclude the latest candle (which may be incomplete for intraday
+        # timeframes) by using the second-to-last EMA value.
         volume_ema_list = compute_ema(volumes, 20)
-        volume_ema = volume_ema_list[-1] if volume_ema_list else 0.0
+        volume_ema = volume_ema_list[-2] if len(volume_ema_list) >= 2 else 0.0
 
         # Store current state for next cycle
         new_state = {
@@ -8388,8 +8390,10 @@ class TradingEngine:
             if prev_width < bb_squeeze_width and current_close is not None and current_close > bb_upper:
                 return True
 
-        # 8. Volume spike (current volume > 3 * EMA of volume) — significant only
-        if volumes and volume_ema > 0 and volumes[-1] > 3.0 * volume_ema:
+        # 8. Volume spike (last COMPLETE candle volume > 3 * EMA of volume)
+        # Use the second-to-last candle to avoid false signals from the
+        # latest candle which may still be forming (incomplete volume).
+        if len(volumes) >= 2 and volume_ema > 0 and volumes[-2] > 3.0 * volume_ema:
             return True
 
         # 9. EMA9 crossing above EMA21 (golden cross)
