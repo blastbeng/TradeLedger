@@ -2469,14 +2469,14 @@ class TradingEngine:
                                 self._process_symbol(symbol_entry, trading_paused=trading_paused),
                                 timeout=settings.LLM_TIMEOUT + 10  # slightly longer than the LLM timeout
                             )
+                            self._last_strategy_eval[symbol] = now
                         except asyncio.TimeoutError:
-                            logger.error(f"Timeout processing symbol {symbol_entry['symbol']} – skipping.")
+                            logger.error(f"Timeout processing symbol {symbol_entry['symbol']} – skipping. Will retry on next loop iteration.")
                             if self.notifier:
                                 await self.notifier.send_notification(
                                     f"⏱️ Processing timeout for {symbol_entry['symbol']} – skipping this cycle.",
                                     summary={"symbol": symbol_entry["symbol"], "action": "SKIP", "reason": "Processing timeout"}
                                 )
-                        self._last_strategy_eval[symbol] = now
                         await asyncio.sleep(0.2)   # small delay to reduce contention
 
                 # Save state periodically (every 30 seconds)
