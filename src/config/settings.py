@@ -481,6 +481,9 @@ class Settings(BaseSettings):
     # Borsa Italiana BTP list URL
     BORSA_ITALIANA_BTP_URL: str = "https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/lista.html"
 
+    # Borsa Italiana market code (e.g., XMIL for Borsa di Milano)
+    BORSA_ITALIANA_MARKET_CODE: str = "XMIL"
+
     # BTP Bond Fees (Intesa Sanpaolo Investo)
     BTP_FEE_PERC: float = 0.0024
     BTP_MIN_FEE: float = 3.50

@@ -273,6 +273,27 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     return None
 
 
+def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
+    """Dynamically fetch the bearer token from the Borsa Italiana summary chart page."""
+    url = f"https://grafichi.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
+            response = client.get(url, headers=headers)
+            response.raise_for_status()
+            # Extract token from <chart-allinone ... token="..." ...>
+            match = re.search(r'<chart-allinone[^>]*token="([^"]+)"', response.text)
+            if match:
+                return match.group(1)
+            logger.warning(f"Could not find Borsa Italiana token for {isin}-{market_code}")
+            return None
+    except Exception as e:
+        logger.warning(f"Failed to fetch Borsa Italiana token for {isin}-{market_code}: {e}")
+        return None
+
+
 def get_borsa_italiana_candles(
     symbol: str,
     timeframe: str,
