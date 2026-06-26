@@ -167,7 +167,7 @@ def get_borsa_italiana_candles_debug(
 
 if __name__ == "__main__":
     # Replace with a valid BTP ISIN you want to test
-    TEST_ISIN = "IT0001234567" 
+    TEST_ISIN = "IT0005637399" 
     TEST_TIMEFRAME = "1d" # Try "1d", "1w", "1M", etc.
     
     print(f"Running debug script for {TEST_ISIN} on {TEST_TIMEFRAME} timeframe...")
