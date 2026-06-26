@@ -7709,6 +7709,24 @@ class TradingEngine:
                     required_quote = max(required_quote, float(min_cost_limit))
 
                 if required_quote > amount:
+                    # If the required minimum exceeds the risk-limited desired_amount, skip
+                    if required_quote > desired_amount:
+                        logger.info(
+                            f"Skipping BUY {symbol}: exchange minimum {required_quote:.2f} "
+                            f"exceeds risk-limited amount {desired_amount:.2f}"
+                        )
+                        if self.notifier:
+                            await self.notifier.send_notification(
+                                f"⚠️ Skipping BUY {display_symbol}: exchange minimum exceeds risk limit",
+                                summary={
+                                    "symbol": symbol,
+                                    "action": "SKIP",
+                                    "reason": "Exchange minimum exceeds risk limit",
+                                    "required_quote": required_quote,
+                                    "desired_amount": desired_amount,
+                                }
+                            )
+                        return
                     # Adjust amount upward to meet the minimum
                     old_amount = amount
                     amount = required_quote
