@@ -142,56 +142,71 @@ def get_borsa_italiana_candles_debug(
                 logger.error(f"No JSON data found in borsaitaliana response for {symbol}")
                 return None
 
-        # Extract history data — handle both "history" and "intraday" response keys
+        # Extract candle data — handle both "history" and "intraday" response formats
         history = data.get("history", {})
-        if not history:
-            history = data.get("intraday", {})
         history_dt = history.get("historyDt", [])
-        if not history_dt:
-            history_dt = history.get("intradayPoint", [])
-        if not history_dt:
-            history_dt = history.get("intradayDt", [])
-        if not history_dt:
-            history_dt = data.get("intradayPoint", [])
+        intraday_points = data.get("intradayPoint", [])
 
-        if not history_dt:
+        rows = []
+        if intraday_points:
+            # Intraday response format (1d endpoint)
+            # Fields: time (YYYYMMDD-HH:MM:SS), beginPx, highPx, lowPx, endPx, vol
+            logger.info(f"Received {len(intraday_points)} raw intraday points from API.")
+            for item in intraday_points:
+                time_str = item.get("time", "")
+                if not time_str:
+                    continue
+                try:
+                    # Format: "YYYYMMDD-HH:MM:SS"
+                    dt = datetime.strptime(time_str, "%Y%m%d-%H:%M:%S")
+                    ts = int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+                    rows.append([
+                        ts,
+                        float(item["beginPx"]),
+                        float(item["highPx"]),
+                        float(item["lowPx"]),
+                        float(item["endPx"]),
+                        float(item.get("vol", 0) or 0),
+                    ])
+                except (ValueError, KeyError) as e:
+                    logger.error(f"Failed to parse borsaitaliana intraday candle for {symbol}: {e}")
+                    continue
+        elif history_dt:
+            # History response format (1M, 3M, 1Y, etc. endpoints)
+            # Fields: dt (YYYYMMDD), openPx, highPx, lowPx, closePx, qty
+            logger.info(f"Received {len(history_dt)} raw history candles from API.")
+            for item in history_dt:
+                dt_str = item.get("dt", "")
+                if not dt_str:
+                    continue
+                try:
+                    if len(dt_str) == 8:
+                        # YYYYMMDD (daily)
+                        dt = datetime.strptime(dt_str, "%Y%m%d")
+                    elif len(dt_str) == 14:
+                        # YYYYMMDDHHMMSS (intraday)
+                        dt = datetime.strptime(dt_str, "%Y%m%d%H%M%S")
+                    elif len(dt_str) == 12:
+                        # YYMMDDHHMMSS (intraday, 2-digit year)
+                        dt = datetime.strptime(dt_str, "%y%m%d%H%M%S")
+                    else:
+                        logger.warning(f"Unexpected date format: {dt_str} (len={len(dt_str)})")
+                        continue
+                    ts = int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+                    rows.append([
+                        ts,
+                        float(item["openPx"]),
+                        float(item["highPx"]),
+                        float(item["lowPx"]),
+                        float(item["closePx"]),
+                        float(item.get("qty", 0) or 0),
+                    ])
+                except (ValueError, KeyError) as e:
+                    logger.error(f"Failed to parse borsaitaliana history candle for {symbol}: {e}")
+                    continue
+        else:
             logger.warning(f"Empty history from borsaitaliana for {symbol} {timeframe}")
             return None
-
-        logger.info(f"Received {len(history_dt)} raw candles from API.")
-
-        # Build candle list from the API response
-        # Date format is "YYYYMMDD" for history, may be "YYYYMMDDHHMMSS" for intraday
-        rows = []
-        for item in history_dt:
-            dt_str = item.get("dt", "")
-            if not dt_str:
-                continue
-            try:
-                if len(dt_str) == 8:
-                    # YYYYMMDD (daily)
-                    dt = datetime.strptime(dt_str, "%Y%m%d")
-                elif len(dt_str) == 14:
-                    # YYYYMMDDHHMMSS (intraday)
-                    dt = datetime.strptime(dt_str, "%Y%m%d%H%M%S")
-                elif len(dt_str) == 12:
-                    # YYMMDDHHMMSS (intraday, 2-digit year)
-                    dt = datetime.strptime(dt_str, "%y%m%d%H%M%S")
-                else:
-                    logger.warning(f"Unexpected date format: {dt_str} (len={len(dt_str)})")
-                    continue
-                ts = int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
-                rows.append([
-                    ts,
-                    float(item["openPx"]),
-                    float(item["highPx"]),
-                    float(item["lowPx"]),
-                    float(item["closePx"]),
-                    float(item.get("qty", 0) or 0),
-                ])
-            except (ValueError, KeyError) as e:
-                logger.error(f"Failed to parse borsaitaliana candle for {symbol}: {e}")
-                continue
 
         if not rows:
             logger.error("No valid rows parsed from API response.")
