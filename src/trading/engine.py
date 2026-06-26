@@ -8582,10 +8582,13 @@ class TradingEngine:
             if pos_pct > 80 or pos_pct < 20:
                 complexity += 1
 
-        # For medium/long-term, only use the expensive "mind" model when
-        # complexity is genuinely high (at least 2 factors). Routine
-        # evaluations use "actuator" to conserve tokens.
-        return "mind" if complexity >= 5 else "actuator"
+        # For medium/long-term, use the "mind" model when complexity is
+        # moderately high (at least 3 independent factors). This ensures
+        # that genuinely complex situations — conflicting signals,
+        # drawdown, volatility extremes, upcoming events, etc. — receive
+        # the deeper reasoning of the mind model, while routine
+        # evaluations still use the faster actuator to conserve tokens.
+        return "mind" if complexity >= 3 else "actuator"
 
     def _compute_prompt_complexity(
         self,
