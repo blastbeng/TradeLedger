@@ -503,10 +503,31 @@ class Settings(BaseSettings):
         return v
 
     def reload(self):
-        """Reload settings from .env file and environment variables."""
+        """Reload settings from .env file and environment variables.
+
+        Updates all fields on this singleton instance in-place so that all
+        modules that imported ``settings`` see the new values immediately.
+
+        **Safe to reload at runtime:**
+        - LLM provider/model/temperature/timeout settings
+        - News settings (NEWS_ENABLED, NEWS_API_KEY, RSS_FEEDS, etc.)
+        - Trading mode (TRADING_MODE), MAX_SYMBOLS
+        - Risk/engine loop intervals
+        - OHLCV timeframes and retention
+        - Yahoo Finance and yfinance rate limit settings
+        - Proxy settings (HTTP_PROXY_ENABLED, HTTP_PROXIES)
+        - Notification settings (NOTIFICATION_VERBOSITY, etc.)
+        - BTP settings (BTP_URL, BTP_FEE_PERC, etc.)
+
+        **Requires restart (NOT safe to reload):**
+        - DATABASE_BACKEND / DATABASE_PATH — connections already open
+        - REDIS_HOST / REDIS_PORT / REDIS_DB — Redis client already connected
+        - WEB_HOST / WEB_PORT — Uvicorn already listening
+        - PAPER_INITIAL_BALANCE — only used at first initialization
+        """
         new_settings = self.__class__()
-        for field in self.__fields__:
-            setattr(self, field, getattr(new_settings, field))
+        for field_name in self.model_fields:
+            setattr(self, field_name, getattr(new_settings, field_name))
 
     class Config:
         env_file = ".env"

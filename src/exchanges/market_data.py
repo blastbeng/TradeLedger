@@ -70,14 +70,17 @@ class YFinanceRateLimiter:
         self._lock = threading.Lock()
 
     def acquire(self):
-        if not settings.YF_RATE_LIMIT_ENABLED or self.max_requests <= 0:
+        # Read live settings to allow runtime reload without restart
+        if not settings.YF_RATE_LIMIT_ENABLED or settings.YF_RATE_LIMIT_MAX_REQUESTS <= 0:
             return
         with self._lock:
             now = time.time()
+            window = settings.YF_RATE_LIMIT_WINDOW_SECONDS
+            max_req = settings.YF_RATE_LIMIT_MAX_REQUESTS
             # Remove timestamps outside the window
-            while self._timestamps and self._timestamps[0] <= now - self.window_seconds:
+            while self._timestamps and self._timestamps[0] <= now - window:
                 self._timestamps.popleft()
-            if len(self._timestamps) >= self.max_requests:
+            if len(self._timestamps) >= max_req:
                 # Rate limit exceeded — fail fast instead of blocking.
                 # Sleeping would hold the thread pool worker hostage and cause
                 # asyncio.wait_for timeouts in the engine.  Raising lets the
