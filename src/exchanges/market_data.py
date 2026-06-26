@@ -324,7 +324,7 @@ def get_borsa_italiana_candles(
             return None
 
     # Determine market code for referer URL
-    market_code = settings.BORSA_ITALIANA_MARKET_CODE
+    market_code = settings.MARKET_CODE
 
     # Dynamically fetch the bearer token
     token = _get_borsa_italiana_token(isin, market_code)
@@ -1437,7 +1437,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
     except Exception:
         pass
 
-    url = settings.BORSA_ITALIANA_BTP_URL
+    url = settings.BTP_URL
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
