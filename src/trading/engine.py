@@ -5376,7 +5376,7 @@ class TradingEngine:
                 "display_symbol": display_symbol,
                 "action": validated.action,
                 "confidence": validated.confidence,
-                "reasoning": (validated.reasoning or "")[:200],
+                "reasoning": validated.reasoning or "",
                 "strategy_type": signal.strategy_type,
                 "model_type": getattr(validated, 'model_type', None),
                 "llm_provider": llm_provider,
