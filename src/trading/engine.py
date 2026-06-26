@@ -126,7 +126,6 @@ class TradingEngine:
             "trading:pause_duration",
             "trading:pause_reason",
             "trading:llm_pause_time",
-            "trading:last_symbol_eval",
         ]
         for key in pause_keys:
             self.redis.delete(key)
