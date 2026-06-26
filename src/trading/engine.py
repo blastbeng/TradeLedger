@@ -3052,12 +3052,20 @@ class TradingEngine:
             correlation_matrix = await asyncio.to_thread(_compute_correlation_matrix)
             # Dynamic TTL: shorter during high-volatility / extreme market conditions
             corr_ttl = 1800  # default 30 minutes
-            if market_breadth:
-                pos_pct = market_breadth.get("positive_pct", 50)
+            _mb = getattr(self, '_market_breadth', None)
+            if _mb:
+                pos_pct = _mb.get("positive_pct", 50)
                 if pos_pct > 80 or pos_pct < 20:
                     corr_ttl = 600  # 10 minutes during extreme breadth
-            if full_market_breadth:
-                pos_pct = full_market_breadth.get("positive_pct", 50)
+            _fmb = None
+            try:
+                _fmb_raw = await asyncio.to_thread(self.redis.get, "market:breadth:full")
+                if _fmb_raw:
+                    _fmb = json.loads(_fmb_raw)
+            except Exception:
+                pass
+            if _fmb:
+                pos_pct = _fmb.get("positive_pct", 50)
                 if pos_pct > 80 or pos_pct < 20:
                     corr_ttl = 600
             try:
