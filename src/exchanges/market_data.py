@@ -404,6 +404,8 @@ def get_borsa_italiana_candles(
             history = data.get("intraday", {})
         history_dt = history.get("historyDt", [])
         if not history_dt:
+            history_dt = history.get("intradayPoint", [])
+        if not history_dt:
             history_dt = history.get("intradayDt", [])
 
         if not history_dt:
