@@ -6765,7 +6765,27 @@ class TradingEngine:
                                     try:
                                         ind = await asyncio.to_thread(get_indicators, symbol, tf)
                                         if ind and ind.get("atr") and ind["atr"] > 0:
-                                            pos["_current_atr"] = ind["atr"]
+                                            # Check indicator staleness: if the latest candle
+                                            # used to compute ATR is older than 2× the timeframe
+                                            # interval, the ATR may not reflect current volatility.
+                                            ind_ts = ind.get("_indicator_timestamp")
+                                            atr_is_stale = False
+                                            if ind_ts is not None:
+                                                tf_secs = self._timeframe_to_seconds(tf)
+                                                max_age_secs = tf_secs * 2
+                                                age_secs = (time.time() * 1000 - ind_ts) / 1000
+                                                if age_secs > max_age_secs:
+                                                    logger.info(
+                                                        f"ATR for {symbol} {tf} is stale "
+                                                        f"(indicator data {age_secs/86400:.1f}d old, "
+                                                        f"max {max_age_secs/86400:.1f}d). "
+                                                        f"Falling back to fixed-percentage trailing stop."
+                                                    )
+                                                    atr_is_stale = True
+                                            if not atr_is_stale:
+                                                pos["_current_atr"] = ind["atr"]
+                                            else:
+                                                pos["_current_atr"] = None
                                             pos["_atr_fetched_at"] = time.time()
                                     except Exception as e:
                                         logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {e}")
@@ -6774,7 +6794,7 @@ class TradingEngine:
                             if current_atr is not None and current_atr > 0:
                                 new_stop = highest_price - (current_atr * atr_mult)
                             else:
-                                # Fallback to fixed percentage if ATR fetch failed
+                                # Fallback to fixed percentage if ATR fetch failed or is stale
                                 distance = pos.get("trailing_stop_distance_pct")
                                 if distance is not None:
                                     new_stop = highest_price * (1 - distance)

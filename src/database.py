@@ -1112,15 +1112,22 @@ def save_indicators(symbol: str, timeframe: str, timestamp: int, indicators: Dic
 
 
 def get_indicators(symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
-    """Retrieve the latest computed indicators for a symbol/timeframe from DB, or None if not found."""
+    """Retrieve the latest computed indicators for a symbol/timeframe from DB, or None if not found.
+
+    The returned dict includes a ``_indicator_timestamp`` key (ms epoch) indicating
+    the timestamp of the latest candle used to compute the indicators, so callers
+    can detect stale data.
+    """
     conn = get_connection()
     try:
         sql = _adapt_sql(
-            "SELECT indicators_json FROM indicators WHERE symbol = %s AND timeframe = %s"
+            "SELECT indicators_json, timestamp FROM indicators WHERE symbol = %s AND timeframe = %s"
         )
         row = conn.execute(sql, (symbol, timeframe)).fetchone()
         if row:
-            return json.loads(row["indicators_json"])
+            data = json.loads(row["indicators_json"])
+            data["_indicator_timestamp"] = row["timestamp"]
+            return data
         return None
     finally:
         conn.close()
