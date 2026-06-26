@@ -7647,8 +7647,11 @@ class TradingEngine:
                     self.positions[symbol]["price"] = new_price
                     self.positions[symbol]["cost_basis"] = new_cost_basis
                     self.positions[symbol]["net_base"] = new_net_base
-                    self.positions[symbol]["stop_loss"] = new_price * (1 - sl_pct)
-                    self.positions[symbol]["take_profit"] = new_price * (1 + tp_pct)
+                    # Preserve existing absolute SL/TP prices when scaling in.
+                    # Recalculating based on the new weighted average would shift
+                    # them from where the LLM originally intended. The LLM can
+                    # still update SL/TP via _update_position_params (which uses
+                    # current_price, not the new average).
                     self.positions[symbol]["take_profit_atr_multiple"] = params.get("take_profit_atr_multiple")
                     self.positions[symbol]["trailing_stop"] = trailing_stop
                     self.positions[symbol]["trailing_stop_distance_pct"] = trailing_stop_distance_pct
@@ -10311,10 +10314,9 @@ class TradingEngine:
             self.positions[symbol]["price"] = new_price
             self.positions[symbol]["cost_basis"] = new_cost_basis
             self.positions[symbol]["net_base"] = new_net_base
-            if sl_pct:
-                self.positions[symbol]["stop_loss"] = new_price * (1 - sl_pct)
-            if tp_pct:
-                self.positions[symbol]["take_profit"] = new_price * (1 + tp_pct)
+            # Preserve existing absolute SL/TP prices when scaling in.
+            # Recalculating based on the new weighted average would shift
+            # them from where the LLM originally intended.
             self.positions[symbol]["take_profit_atr_multiple"] = params.get("take_profit_atr_multiple")
             self.positions[symbol]["trailing_stop"] = trailing_stop
             self.positions[symbol]["trailing_stop_distance_pct"] = trailing_stop_distance_pct
