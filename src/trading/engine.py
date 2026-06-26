@@ -2253,6 +2253,28 @@ class TradingEngine:
             q['order_book'] = None
         self.recent_signals = state.get("recent_signals", [])
 
+        # Restore pending entries (reconstruct Signal objects from dicts)
+        raw_pending = state.get("pending_entries", {})
+        self._pending_entries = {}
+        for symbol, entry in raw_pending.items():
+            try:
+                signal = Signal(**entry["signal"])
+                self._pending_entries[symbol] = {
+                    "signal": signal,
+                    "deadline": entry["deadline"],
+                    "timeframe": entry["timeframe"],
+                    "condition": entry["condition"],
+                }
+            except Exception as e:
+                logger.warning(f"Failed to restore pending entry for {symbol}: {e}")
+
+        # Prune any pending entries whose deadline has already passed
+        now = time.time()
+        expired = [sym for sym, e in self._pending_entries.items() if now >= e["deadline"]]
+        for sym in expired:
+            logger.info(f"Discarding expired pending entry for {sym} (deadline passed during downtime).")
+            del self._pending_entries[sym]
+
         if "initial_balance" in state:
             self.initial_balance = float(state["initial_balance"])
         else:
@@ -2276,6 +2298,16 @@ class TradingEngine:
         await asyncio.to_thread(save_trading_state, "trade_history", self.trade_history)
         await asyncio.to_thread(save_trading_state, "queued_orders", self.queued_orders)
         await asyncio.to_thread(save_trading_state, "recent_signals", self.recent_signals)
+        # Serialize pending entries (convert Signal objects to dicts for JSON storage)
+        pending_entries_serializable = {}
+        for symbol, entry in self._pending_entries.items():
+            pending_entries_serializable[symbol] = {
+                "signal": asdict(entry["signal"]),
+                "deadline": entry["deadline"],
+                "timeframe": entry["timeframe"],
+                "condition": entry["condition"],
+            }
+        await asyncio.to_thread(save_trading_state, "pending_entries", pending_entries_serializable)
         logger.debug("Saved trading state: %d symbols, %d positions, %d trades",
                      len(self.current_symbols), len(self.positions), len(self.trade_history))
 
