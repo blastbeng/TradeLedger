@@ -1085,6 +1085,37 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"get_quotes: DB close price fallback failed: {e}")
 
+    # --- Try Borsa Italiana candles for remaining missing stock symbols ---
+    if missing_symbols:
+        for sym in list(missing_symbols):
+            # Skip BTPs, they are handled separately below
+            if re.match(r'^IT[A-Z0-9]{10}$', sym):
+                continue
+            try:
+                borsa_candles = get_borsa_italiana_candles(sym, "1d", limit=2)
+                if borsa_candles and len(borsa_candles) > 0:
+                    last_candle = borsa_candles[-1]
+                    last_price = float(last_candle[4])
+                    volume = float(last_candle[5]) if last_candle[5] else None
+                    
+                    if last_price > 0:
+                        result[sym]["last"] = last_price
+                        result[sym]["bid"] = last_price
+                        result[sym]["ask"] = last_price
+                        result[sym]["volume"] = volume
+                        result[sym]["quoteVolume"] = volume
+                        
+                        if len(borsa_candles) > 1:
+                            prev_close = float(borsa_candles[-2][4])
+                            if prev_close > 0:
+                                change = ((last_price - prev_close) / prev_close) * 100
+                                result[sym]["change_24h"] = change
+                                result[sym]["percentage"] = change
+                        
+                        missing_symbols.remove(sym)
+            except Exception as e:
+                logger.debug(f"get_quotes: Borsa Italiana candle fetch failed for {sym}: {e}")
+
     if not missing_symbols:
         # All symbols got prices from cache/DB — cache and return
         quotes_to_save = {}
