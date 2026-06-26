@@ -10652,11 +10652,11 @@ class TradingEngine:
         for entry in settings.EXCLUDED_SYMBOLS:
             parts = entry.split("/")
             if len(parts) == 2:
-                # "SYMBOL" or "SYMBOL/*" → exclude all timeframes
+                # "BASE/QUOTE" → exclude all timeframes for this pair
                 if parts[0] == symbol.split("/")[0] and parts[1] == symbol.split("/")[1]:
                     return True
             elif len(parts) == 3:
-                # "SYMBOL/TIMEFRAME" → exclude only that specific timeframe
+                # "BASE/QUOTE/TIMEFRAME" → exclude only that specific timeframe
                 if (parts[0] == symbol.split("/")[0] and
                     parts[1] == symbol.split("/")[1] and
                     parts[2] == timeframe):
