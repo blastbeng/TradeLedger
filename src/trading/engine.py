@@ -5560,16 +5560,17 @@ class TradingEngine:
             # Log and notify the decision
             logger.info(f"Decision for {symbol}: {validated.action} (confidence: {validated.confidence:.2f})")
             # Store the last decision for the next prompt cycle
+            params = signal.strategy_params
             self._last_decisions[symbol] = {
                 "action": validated.action,
                 "confidence": validated.confidence,
                 "reasoning": validated.reasoning[:300],
                 "strategy_type": signal.strategy_type,
                 "timestamp": time.time(),
-                "stop_loss_pct": params.get("stop_loss_pct") if (params := signal.strategy_params) else None,
-                "take_profit_pct": params.get("take_profit_pct") if (params := signal.strategy_params) else None,
-                "position_size_fraction": params.get("position_size_fraction") if (params := signal.strategy_params) else None,
-                "stop_loss_method": params.get("stop_loss_method") if (params := signal.strategy_params) else None,
+                "stop_loss_pct": params.get("stop_loss_pct") if params else None,
+                "take_profit_pct": params.get("take_profit_pct") if params else None,
+                "position_size_fraction": params.get("position_size_fraction") if params else None,
+                "stop_loss_method": params.get("stop_loss_method") if params else None,
             }
             # Compute trade amount for display in the signals card
             _params = signal.strategy_params or {}
