@@ -54,15 +54,16 @@ class Settings(BaseSettings):
             raise ValueError("MAX_SYMBOLS must be at least 1")
         return v
 
-    # Maximum number of candidate symbols to send to the LLM for stock selection.
-    # Sending too many symbols can overwhelm the LLM and degrade output quality.
-    MAX_LLM_CANDIDATES: int = 80
+    # Number of candidate symbols per LLM chunk call during symbol re-evaluation.
+    # All candidates are evaluated in chunks of this size, then a final LLM call
+    # aggregates the results. Lower values = smaller prompts but more LLM calls.
+    LLM_CHUNK_SIZE: int = 20
 
-    @field_validator("MAX_LLM_CANDIDATES")
+    @field_validator("LLM_CHUNK_SIZE")
     @classmethod
-    def validate_max_llm_candidates(cls, v: int) -> int:
-        if v < 10:
-            raise ValueError("MAX_LLM_CANDIDATES must be at least 10")
+    def validate_llm_chunk_size(cls, v: int) -> int:
+        if v < 5:
+            raise ValueError("LLM_CHUNK_SIZE must be at least 5")
         return v
 
     # Symbol selection limits

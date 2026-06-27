@@ -21,6 +21,7 @@ from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import (
     SYSTEM_PROMPT,
     build_stock_selection_prompt,
+    build_final_selection_prompt,
     build_strategy_prompt,
     build_final_decision_prompt,
     _format_news_for_prompt,
@@ -3147,76 +3148,8 @@ class TradingEngine:
         seen = set()
         shortlist = [s for s in shortlist if not (s in seen or seen.add(s))]
 
-        # --- Limit the candidate list to avoid overwhelming the LLM ---
-        # Sending too many symbols produces a massive prompt that degrades LLM
-        # output quality.  Cap to a configurable number while always keeping
-        # currently tracked symbols and symbols with open positions.
-        # Non-priority slots are allocated across asset classes (stocks, ETFs,
-        # BTPs) using a round-robin approach sorted by composite score to
-        # ensure diversification and equal priority.
-        max_candidates = settings.MAX_LLM_CANDIDATES
-        if len(shortlist) > max_candidates:
-            priority = set()
-            for entry in self.current_symbols:
-                priority.add(entry["symbol"])
-            for sym in self.positions:
-                priority.add(sym)
-
-            priority_in_list = [s for s in shortlist if s in priority]
-            others = [s for s in shortlist if s not in priority]
-            total_before_cap = len(shortlist)
-
-            # Categorize and sort non-priority candidates by composite score
-            stock_others = sorted(
-                [s for s in others if s in stock_pairs and s not in etf_pairs],
-                key=lambda x: composite_scores.get(x, 0.0),
-                reverse=True
-            )
-            etf_others = sorted(
-                [s for s in others if s in etf_pairs],
-                key=lambda x: composite_scores.get(x, 0.0),
-                reverse=True
-            )
-            btp_others = sorted(
-                [s for s in others if s in btp_pairs],
-                key=lambda x: composite_scores.get(x, 0.0),
-                reverse=True
-            )
-
-            remaining_slots = max_candidates - len(priority_in_list)
-            selected_others = []
-
-            # Round-robin pick across asset classes to ensure diversification
-            idx_stock, idx_etf, idx_btp = 0, 0, 0
-            while remaining_slots > 0:
-                picked = False
-                if idx_stock < len(stock_others):
-                    selected_others.append(stock_others[idx_stock])
-                    idx_stock += 1
-                    remaining_slots -= 1
-                    picked = True
-                if remaining_slots > 0 and idx_etf < len(etf_others):
-                    selected_others.append(etf_others[idx_etf])
-                    idx_etf += 1
-                    remaining_slots -= 1
-                    picked = True
-                if remaining_slots > 0 and idx_btp < len(btp_others):
-                    selected_others.append(btp_others[idx_btp])
-                    idx_btp += 1
-                    remaining_slots -= 1
-                    picked = True
-                if not picked:
-                    break  # no more candidates available
-
-            shortlist = priority_in_list + selected_others
-            logger.info(
-                f"Capped LLM candidate list from {total_before_cap} to {len(shortlist)} symbols "
-                f"(priority: {len(priority_in_list)}, stocks: {idx_stock}, "
-                f"etfs: {idx_etf}, btps: {idx_btp})."
-            )
-
         sample_pairs = shortlist
-        logger.info(f"LLM candidate list: {len(sample_pairs)} symbols")
+        logger.info(f"LLM candidate list: {len(sample_pairs)} symbols (will be evaluated in chunks)")
 
         # --- Ensure tickers dict covers all symbols in the final shortlist ---
         # The tickers dict was built from the original sample_pairs before
@@ -3342,65 +3275,7 @@ class TradingEngine:
                         }
                     ohlcv_summary[symbol] = summary
 
-        logger.info("Re-evaluation step 11/12: Building LLM prompt (%d candidate symbols)...", len(sample_pairs))
-        prompt = await asyncio.to_thread(
-            build_stock_selection_prompt,
-            available_symbols=sample_pairs,
-            current_symbols=self.current_symbols,
-            max_symbols=self.effective_max_symbols,
-            base_currency=self.base_currency,
-            tickers=tickers,
-            base_balance=base_balance,
-            per_symbol_budget=per_symbol_budget,
-            market_limits=market_limits,
-            performance=perf,
-            ohlcv_summary=ohlcv_summary,
-            market_trend=market_trend,
-            symbol_indicators=symbol_indicators,
-            daily_pnl=perf["equity_curve"].get("daily_pnl"),
-            historical_ohlcv_summary=historical_ohlcv_summary,
-            correlation_matrix=correlation_matrix,
-            session_info=session_info,
-            sentiment_trend=sentiment_trend,
-            trading_paused=trading_paused_bool,
-            open_positions=self.positions,
-            symbol_tenure=symbol_tenure,
-            symbol_max_tenure=symbol_max_tenure,
-            vix=vix,
-            trade_pattern_analysis=trade_pattern_analysis,
-            symbol_events=symbol_events,
-            symbol_trend_scores=symbol_trend_scores,
-            market_breadth=market_breadth,
-            min_viable_trade_amount=min_viable_amount,
-        )
-        if auto_resume_note:
-            prompt += "\n" + auto_resume_note
-        # Build a market snapshot dict for caching
-        market_snapshot = {
-            "available_pairs": sample_pairs,
-            "tickers": tickers,
-            "market_limits": market_limits,
-            "ohlcv_data": ohlcv_data,
-            "news_sentiment": news_sentiment,
-            "symbol_indicators": symbol_indicators,
-            "performance": perf,
-            "session_info": session_info,
-            "market_breadth": market_breadth,
-            "trading_paused": trading_paused_bool,
-            "open_positions": self.positions,
-            "symbol_tenure": symbol_tenure,
-            "symbol_max_tenure": symbol_max_tenure,
-            "full_market_breadth": full_market_breadth,
-            "base_balance": base_balance,
-            "per_symbol_budget": per_symbol_budget,
-            "max_symbols": self.effective_max_symbols,
-            "current_symbols": self.current_symbols,
-            "historical_ohlcv_summary": historical_ohlcv_summary,
-            "correlation_matrix": correlation_matrix,
-            "sentiment_trend": sentiment_trend,
-            "vix": vix,
-        }
-        market_hash = compute_market_hash(market_snapshot)
+        max_retries = 2
         # Compute prompt complexity for temperature selection
         _st_values = [abs(v) for v in sentiment_trend.values() if v is not None]
         _st_mag = max(_st_values) if _st_values else None
@@ -3415,52 +3290,231 @@ class TradingEngine:
         )
         effective_temp = self._get_effective_temperature("mind", symbol_selection_complexity)
 
-        parsed = {}
-        max_retries = 2
+        # --- Chunked LLM evaluation ---
+        CHUNK_SIZE = settings.LLM_CHUNK_SIZE
+        chunk_results: List[Dict[str, Any]] = []
+        chunks = [sample_pairs[i:i + CHUNK_SIZE] for i in range(0, len(sample_pairs), CHUNK_SIZE)]
+        total_steps = 10 + len(chunks) + 2
+        logger.info("Re-evaluation step 11/%d: Evaluating %d chunks of ~%d symbols each...", total_steps, len(chunks), CHUNK_SIZE)
+
+        for chunk_idx, chunk_symbols in enumerate(chunks):
+            chunk_set = set(chunk_symbols)
+
+            # Filter per-symbol data to chunk symbols
+            chunk_tickers = {s: tickers.get(s, {}) for s in chunk_symbols}
+            chunk_ohlcv_summary = {s: ohlcv_summary.get(s, {}) for s in chunk_symbols if s in ohlcv_summary}
+            chunk_symbol_indicators = {s: symbol_indicators.get(s, {}) for s in chunk_symbols if s in symbol_indicators}
+            chunk_market_limits = {s: market_limits.get(s, {}) for s in chunk_symbols if s in market_limits}
+            chunk_symbol_events = {s: symbol_events.get(s, {}) for s in chunk_symbols if s in symbol_events}
+            chunk_symbol_trend_scores = {s: symbol_trend_scores.get(s, 0.0) for s in chunk_symbols}
+            chunk_sentiment_trend = {s.split("/")[0]: sentiment_trend.get(s.split("/")[0]) for s in chunk_symbols if s.split("/")[0] in sentiment_trend}
+
+            # Filter correlation matrix to chunk symbols
+            chunk_corr = {}
+            if correlation_matrix:
+                for sym_a, row in correlation_matrix.items():
+                    if sym_a in chunk_set:
+                        chunk_corr[sym_a] = {sym_b: v for sym_b, v in row.items() if sym_b in chunk_set}
+
+            # Build chunk prompt
+            chunk_prompt = await asyncio.to_thread(
+                build_stock_selection_prompt,
+                available_symbols=chunk_symbols,
+                current_symbols=self.current_symbols,
+                max_symbols=self.effective_max_symbols,
+                base_currency=self.base_currency,
+                tickers=chunk_tickers,
+                base_balance=base_balance,
+                per_symbol_budget=per_symbol_budget,
+                market_limits=chunk_market_limits,
+                performance=perf,
+                ohlcv_summary=chunk_ohlcv_summary,
+                market_trend=market_trend,
+                symbol_indicators=chunk_symbol_indicators,
+                daily_pnl=perf["equity_curve"].get("daily_pnl"),
+                historical_ohlcv_summary=historical_ohlcv_summary,
+                correlation_matrix=chunk_corr if chunk_corr else None,
+                session_info=session_info,
+                sentiment_trend=chunk_sentiment_trend,
+                trading_paused=trading_paused_bool,
+                open_positions=self.positions,
+                symbol_tenure=symbol_tenure,
+                symbol_max_tenure=symbol_max_tenure,
+                vix=vix,
+                trade_pattern_analysis=trade_pattern_analysis,
+                symbol_events=chunk_symbol_events,
+                symbol_trend_scores=chunk_symbol_trend_scores,
+                market_breadth=market_breadth,
+                min_viable_trade_amount=min_viable_amount,
+            )
+            if auto_resume_note:
+                chunk_prompt += "\n" + auto_resume_note
+
+            # Build market snapshot for caching
+            chunk_market_snapshot = {
+                "chunk_idx": chunk_idx,
+                "available_pairs": chunk_symbols,
+                "tickers": chunk_tickers,
+                "ohlcv_data": {s: ohlcv_data.get(s, {}) for s in chunk_symbols},
+                "symbol_indicators": chunk_symbol_indicators,
+                "performance": perf,
+                "session_info": session_info,
+                "market_breadth": market_breadth,
+                "trading_paused": trading_paused_bool,
+                "open_positions": self.positions,
+                "base_balance": base_balance,
+                "per_symbol_budget": per_symbol_budget,
+                "current_symbols": self.current_symbols,
+            }
+            chunk_market_hash = compute_market_hash(chunk_market_snapshot)
+
+            # Call LLM for this chunk
+            chunk_response = None
+            for attempt in range(max_retries + 1):
+                try:
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            get_cached_llm_response,
+                            compact_prompt(chunk_prompt),
+                            COMPACTED_SYSTEM_PROMPT,
+                            300,
+                            market_hash=chunk_market_hash,
+                            model_type="mind",
+                            temperature=effective_temp,
+                        ),
+                        timeout=settings.LLM_TIMEOUT
+                    )
+                    chunk_response = result["response"]
+                    break
+                except asyncio.TimeoutError:
+                    if attempt < max_retries:
+                        logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM timed out (attempt {attempt + 1}). Retrying...")
+                        await asyncio.sleep(5 * (attempt + 1))
+                    else:
+                        logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM timed out after all retries. Skipping.")
+                except Exception as e:
+                    if attempt < max_retries:
+                        logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM failed: {e}. Retrying...")
+                        await asyncio.sleep(5 * (attempt + 1))
+                    else:
+                        logger.error(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM failed after all retries: {e}")
+
+            if chunk_response:
+                try:
+                    chunk_parsed = json.loads(chunk_response)
+                    chunk_results.append(chunk_parsed)
+                    logger.info("Chunk %d/%d: received %d symbol selections", chunk_idx + 1, len(chunks), len(chunk_parsed.get("stocks", [])))
+                except json.JSONDecodeError:
+                    logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)}: invalid JSON, retrying with correction.")
+                    correction = (
+                        "Your previous response was not valid JSON. "
+                        "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
+                        "Here is the original request:\n\n" + chunk_prompt
+                    )
+                    try:
+                        correction_result = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                get_cached_llm_response, compact_prompt(correction), COMPACTED_SYSTEM_PROMPT, 120,
+                                model_type="actuator", temperature=effective_temp,
+                            ),
+                            timeout=settings.LLM_TIMEOUT
+                        )
+                        chunk_parsed = json.loads(correction_result["response"])
+                        chunk_results.append(chunk_parsed)
+                        logger.info("Chunk %d/%d: corrected, received %d selections", chunk_idx + 1, len(chunks), len(chunk_parsed.get("stocks", [])))
+                    except Exception as e:
+                        logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)}: correction also failed: {e}")
+            else:
+                logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)}: no response, skipping.")
+
+            await asyncio.sleep(1)
+
+        # --- Final selection call ---
+        logger.info("Re-evaluation step %d/%d: Calling LLM for final selection from %d chunk results...", total_steps - 1, total_steps, len(chunk_results))
+
         response = None
         llm_provider = None
         llm_model = None
-        logger.info("Re-evaluation step 12/12: Calling LLM for symbol selection (attempt 1/%d)...", max_retries + 1)
-        for attempt in range(max_retries + 1):
-            try:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        get_cached_llm_response,
-                        compact_prompt(prompt),
-                        COMPACTED_SYSTEM_PROMPT,
-                        300,
-                        market_hash=market_hash,
-                        model_type="mind",
-                        temperature=effective_temp,
-                    ),
-                    timeout=settings.LLM_TIMEOUT
-                )
-                response = result["response"]
-                llm_provider = result["provider"]
-                llm_model = result["model"]
-                break  # success
-            except asyncio.TimeoutError:
-                if attempt < max_retries:
-                    logger.warning(
-                        f"LLM symbol selection timed out (attempt {attempt+1}/{max_retries+1}). Retrying..."
+
+        if not chunk_results:
+            logger.warning("All chunk LLM calls failed. Will use fallback selection.")
+        else:
+            final_prompt = await asyncio.to_thread(
+                build_final_selection_prompt,
+                chunk_results=chunk_results,
+                current_symbols=self.current_symbols,
+                max_symbols=self.effective_max_symbols,
+                base_currency=self.base_currency,
+                base_balance=base_balance,
+                per_symbol_budget=per_symbol_budget,
+                performance=perf,
+                open_positions=self.positions,
+                market_breadth=market_breadth,
+                full_market_breadth=full_market_breadth,
+                market_trend=market_trend,
+                session_info=session_info,
+                trading_paused=trading_paused_bool,
+                symbol_tenure=symbol_tenure,
+                symbol_max_tenure=symbol_max_tenure,
+                trade_pattern_analysis=trade_pattern_analysis,
+                daily_pnl=perf["equity_curve"].get("daily_pnl"),
+                vix=vix,
+                min_viable_trade_amount=min_viable_amount,
+                available_timeframes=settings.OHLCV_TIMEFRAMES,
+            )
+
+            for attempt in range(max_retries + 1):
+                try:
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            get_cached_llm_response,
+                            compact_prompt(final_prompt),
+                            COMPACTED_SYSTEM_PROMPT,
+                            300,
+                            model_type="mind",
+                            temperature=effective_temp,
+                        ),
+                        timeout=settings.LLM_TIMEOUT
                     )
-                    logger.info("Re-evaluation: LLM retry attempt %d/%d...", attempt + 2, max_retries + 1)
-                    await asyncio.sleep(5 * (attempt + 1))
-                else:
-                    logger.warning(
-                        "LLM symbol selection timed out after all retries."
-                    )
-            except Exception as e:
-                if attempt < max_retries:
-                    logger.warning(
-                        f"LLM symbol selection failed with error: {e}. Retrying..."
-                    )
-                    logger.info("Re-evaluation: LLM retry attempt %d/%d...", attempt + 2, max_retries + 1)
-                    await asyncio.sleep(5 * (attempt + 1))
-                else:
-                    logger.error(
-                        f"LLM symbol selection failed after all retries: {e}."
-                    )
+                    response = result["response"]
+                    llm_provider = result["provider"]
+                    llm_model = result["model"]
+                    break
+                except asyncio.TimeoutError:
+                    if attempt < max_retries:
+                        logger.warning(f"Final selection LLM timed out (attempt {attempt + 1}). Retrying...")
+                        await asyncio.sleep(5 * (attempt + 1))
+                    else:
+                        logger.warning("Final selection LLM timed out after all retries.")
+                except Exception as e:
+                    if attempt < max_retries:
+                        logger.warning(f"Final selection LLM failed: {e}. Retrying...")
+                        await asyncio.sleep(5 * (attempt + 1))
+                    else:
+                        logger.error(f"Final selection LLM failed after all retries: {e}")
+
+            # Fallback: merge all chunk selections if final call failed
+            if response is None and chunk_results:
+                logger.warning("Final selection LLM call failed. Merging all chunk selections as fallback.")
+                merged_stocks = []
+                for chunk in chunk_results:
+                    for stock in chunk.get("stocks", []):
+                        if isinstance(stock, dict) and "symbol" in stock:
+                            merged_stocks.append(stock)
+                seen = set()
+                deduped = []
+                for s in merged_stocks:
+                    if s["symbol"] not in seen:
+                        seen.add(s["symbol"])
+                        deduped.append(s)
+                response = json.dumps({
+                    "stocks": deduped[:self.effective_max_symbols],
+                    "max_stocks": min(len(deduped), self.effective_max_symbols),
+                    "reasoning": "Fallback: merged all chunk selections (final LLM call failed)",
+                })
+                llm_provider = "fallback"
+                llm_model = "merged_chunks"
+
         logger.info("Re-evaluation: LLM response received (%d chars), parsing...", len(response) if response else 0)
         if response:
             # Truncate long responses to avoid flooding logs with HTML error pages

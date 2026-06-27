@@ -675,6 +675,213 @@ Per-strategy performance: {json.dumps(performance.get('strategy_performance', {}
         )
     return prompt
 
+
+def build_final_selection_prompt(
+    chunk_results: List[Dict[str, Any]],
+    current_symbols: List[Dict[str, str]],
+    max_symbols: int,
+    base_currency: str,
+    base_balance: float,
+    per_symbol_budget: float,
+    performance: Optional[Dict[str, Any]] = None,
+    open_positions: Optional[Dict[str, Dict[str, Any]]] = None,
+    market_breadth: Optional[Dict[str, Any]] = None,
+    full_market_breadth: Optional[Dict[str, Any]] = None,
+    market_trend: Optional[Dict[str, Any]] = None,
+    session_info: Optional[Dict[str, Any]] = None,
+    trading_paused: Optional[bool] = None,
+    symbol_tenure: Optional[Dict[str, float]] = None,
+    symbol_max_tenure: Optional[Dict[str, Optional[float]]] = None,
+    trade_pattern_analysis: Optional[Dict[str, Any]] = None,
+    daily_pnl: Optional[float] = None,
+    vix: Optional[float] = None,
+    min_viable_trade_amount: float = 0.0,
+    available_timeframes: Optional[List[str]] = None,
+) -> str:
+    """Build a prompt for the final symbol selection from chunk results.
+
+    After evaluating candidates in chunks, this prompt presents the combined
+    shortlist from all chunks and asks the LLM to make the final selection.
+    """
+    # Build shortlist from all chunk results
+    shortlist = []
+    for i, chunk in enumerate(chunk_results):
+        stocks = chunk.get("stocks", [])
+        reasoning = chunk.get("reasoning", "")
+        for stock in stocks:
+            entry = {
+                "symbol": stock.get("symbol"),
+                "timeframe": stock.get("timeframe"),
+                "sector": stock.get("sector"),
+                "chunk_reasoning": reasoning[:200] if reasoning else "",
+            }
+            if stock.get("max_tenure_hours") is not None:
+                entry["max_tenure_hours"] = stock.get("max_tenure_hours")
+            shortlist.append(entry)
+
+    # Deduplicate by symbol
+    seen = set()
+    deduped_shortlist = []
+    for s in shortlist:
+        sym = s.get("symbol")
+        if sym and sym not in seen:
+            seen.add(sym)
+            deduped_shortlist.append(s)
+    shortlist = deduped_shortlist
+
+    if not available_timeframes:
+        available_timeframes = ["5Y", "3Y", "1Y", "6M", "3M", "1M", "1w", "1d", "1h"]
+
+    prompt = f"""**Final Symbol Selection — Step 2**
+
+You have evaluated {len(chunk_results)} batches of candidate symbols and selected a combined shortlist of {len(shortlist)} symbols.
+Your task is to make the FINAL selection of up to {max_symbols} symbols from this shortlist.
+
+Current base currency: {base_currency}
+Your available {base_currency} balance: {base_balance:.2f}
+Maximum number of stocks to trade: {max_symbols}
+Reference equal-share budget per stock (suggestion only): {per_symbol_budget:.2f} {base_currency}
+Available timeframes: {json.dumps(available_timeframes)}
+Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols) if current_symbols else "None"}
+
+**Combined Shortlist from All Batches (deduplicated):**
+{json.dumps(shortlist)}
+
+Select between 0 and {max_symbols} assets from the shortlist above. You may keep current assets if they are still promising, or replace them. Each symbol can only appear once. Choose the single best timeframe for each stock.
+
+**Important:** Unless the market is in a clear crisis, you MUST select at least 1-2 stocks with small position sizes. When you have {max_symbols} slots available, aim to fill as many as possible. Use small position_size_fraction values (0.02-0.05) to fit more symbols.
+
+"""
+    # Add open positions
+    if open_positions:
+        prompt += "\n**Open positions (these will continue to be managed even if trading is paused):**\n"
+        for sym, pos in open_positions.items():
+            entry = pos.get("price", "?")
+            amount = pos.get("amount", "?")
+            sl = pos.get("stop_loss", "?")
+            tp = pos.get("take_profit", "?")
+            prompt += f"  {sym}: entry={entry}, amount={amount}, stop_loss={sl}, take_profit={tp}\n"
+        prompt += "When deciding to pause or resume, consider these open positions.\n"
+
+    # Add symbol tenure
+    if symbol_tenure:
+        shortlist_syms = {s.get("symbol") for s in shortlist}
+        current_syms = {c.get("symbol") for c in current_symbols} if current_symbols else set()
+        relevant_syms = shortlist_syms | current_syms
+        prompt += "\n**Stock tenure (seconds):**\n"
+        for sym, sec in symbol_tenure.items():
+            if sym in relevant_syms:
+                prompt += f"  {sym}: {sec:.0f}s\n"
+    if symbol_max_tenure:
+        prompt += "\n**Current max tenure per stock (hours, if set):**\n"
+        for sym, hours in symbol_max_tenure.items():
+            if hours is not None and (sym in {s.get("symbol") for s in shortlist} or sym in {c.get("symbol") for c in current_symbols}):
+                prompt += f"  {sym}: {hours:.1f}h\n"
+
+    # Add performance
+    if performance:
+        prompt += f"""
+Historical Performance Data:
+Overall equity curve: {json.dumps(performance.get('equity_curve', {}))}
+Per-stock performance (win rate, avg P&L, total trades): {json.dumps(performance.get('stock_performance', {}))}
+Per-strategy performance: {json.dumps(performance.get('strategy_performance', {}))}
+"""
+        if daily_pnl is not None:
+            prompt += f"Today's realized P&L: {daily_pnl:.4f} {base_currency}\n"
+        consecutive_losses = performance.get("equity_curve", {}).get("consecutive_losses", 0)
+        if consecutive_losses > 0:
+            prompt += f"⚠️ You have {consecutive_losses} consecutive losing trades. Consider pausing or reducing risk.\n"
+
+    # Add trade pattern analysis
+    if trade_pattern_analysis:
+        prompt += "\n" + _format_trade_pattern_analysis(trade_pattern_analysis) + "\n"
+
+    # Add market context
+    if market_breadth:
+        prompt += f"\nMarket breadth: {market_breadth.get('positive_pct', 50)}% positive ({market_breadth.get('positive_count', 0)}/{market_breadth.get('total_count', 0)})\n"
+    if full_market_breadth:
+        prompt += f"Full market breadth: {full_market_breadth.get('positive_pct', 50)}% positive\n"
+    if market_trend:
+        prompt += f"\nOverall market trend ({market_trend['symbol']}): daily change {market_trend.get('change_24h')}%, last price {market_trend.get('last')}\n"
+    if session_info:
+        prompt += f"\nCurrent UTC hour: {session_info['utc_hour']} ({session_info['session']} session)\n"
+
+    # Market regime
+    regime_label = "neutral"
+    if market_breadth:
+        breadth_pct = market_breadth.get("positive_pct", 50)
+        if breadth_pct > 60:
+            regime_label = "RISK-ON (broad market strength)"
+        elif breadth_pct < 40:
+            regime_label = "RISK-OFF (broad market weakness)"
+    prompt += f"\n**Market Regime: {regime_label}**\n"
+
+    # Pause/resume guidance
+    if trading_paused:
+        prompt += (
+            "\n**Trading is currently PAUSED.**\n"
+            "You may resume trading by setting pause_trading to false if you see clear profit opportunities.\n"
+            "If you keep trading paused, include a pause_reason field.\n"
+        )
+    else:
+        prompt += (
+            "\n**Trading is currently ACTIVE.**\n"
+            "You may pause trading by setting pause_trading to true if conditions warrant.\n"
+        )
+
+    # Account P&L
+    if performance:
+        daily_pnl_val = performance.get("equity_curve", {}).get("daily_pnl", 0.0)
+        total_pnl = performance.get("equity_curve", {}).get("total_pnl", 0.0)
+        prompt += (
+            f"\n**Account P&L**: Today's realized P&L = {daily_pnl_val:.4f} {base_currency}, "
+            f"Total realized P&L = {total_pnl:.4f} {base_currency}.\n"
+        )
+
+    # Output format
+    prompt += f"""
+Return a JSON object with the following fields:
+- "stocks": a JSON array of objects, each with "symbol", "timeframe" (one of {', '.join([repr(tf) for tf in available_timeframes])}), "sector", and optionally "max_tenure_hours"
+- "max_stocks": an integer between 0 and {max_symbols}
+- "max_positions_per_sector": an integer between 1 and {max_symbols}
+- "reasoning": a short string (max 200 characters) explaining your final selection
+- "skip_eval_price_change_atr_mult": a float (e.g., 0.5)
+- "skip_eval_rsi_change": a float (e.g., 5.0)
+- "skip_eval_rsi_oversold": a float (e.g., 30.0)
+- "skip_eval_rsi_overbought": a float (e.g., 70.0)
+- "skip_eval_macd_hist_change": a float (e.g., 0.0005)
+- "regime_adx_strong": a float (e.g., 40.0)
+- "regime_adx_moderate": a float (e.g., 25.0)
+- "regime_volatility_high_pct": a float (e.g., 80.0)
+- "regime_volatility_low_pct": a float (e.g., 20.0)
+- "regime_bb_squeeze_width": a float (e.g., 0.02)
+- "regime_bb_expansion_width": a float (e.g., 0.08)
+- "min_stop_loss_atr_mult": a float (e.g., 1.5)
+- "min_max_hold_time_mult": a float (e.g., 2.0)
+- "max_stop_loss_reviews": an integer between 1 and 20
+- "max_take_profit_reviews": an integer between 1 and 20
+- "max_partial_tp_reviews": an integer between 1 and 20
+- "max_dust_sweep_reviews": an integer between 1 and 20
+- "min_llm_pause_duration_seconds": an integer between 300 and 14400
+- "pause_max_consecutive_keep": an integer between 1 and 10
+- "pause_force_resume_risk_multiplier": a float between 0.0 and 1.0
+- "max_portfolio_exposure_pct": a float between 0.0 and 1.0
+- "max_portfolio_stop_risk_pct": a float between 0.0 and 1.0
+- "min_risk_reward_ratio": a positive number
+- "limit_price_max_distance_pct": an optional float between 0.0 and 1.0
+- "min_viable_trade_amount": an optional positive number
+- "stock_revaluation_interval_seconds": an optional integer >= 3600
+- "pause_trading": optional boolean
+- "pause_reason": optional string
+- "pause_duration_seconds": optional positive integer
+- "global_risk_multiplier": optional float (0.0-1.0)
+
+Set max_portfolio_exposure_pct to at least 0.8 and max_portfolio_stop_risk_pct to at least 0.1 unless you have a very strong reason to be more conservative.
+
+Output ONLY the raw JSON object."""
+    return prompt
+
+
 def build_strategy_prompt(
     symbol: str,
     ticker: Dict[str, Any],
