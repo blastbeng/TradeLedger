@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Any
 
 from src.config.settings import settings
 from src.database import load_paper_balances, save_paper_balances, load_paper_orders, save_paper_orders
-from src.exchanges.market_data import get_quotes
+from src.exchanges.market_data import get_quotes, get_quotes_cached
 from src.exchanges.fees import calculate_transaction_costs
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ class PaperTrader:
     def _get_current_price(self, symbol: str) -> Optional[float]:
         base = symbol.split("/")[0] if "/" in symbol else symbol
         try:
-            quotes = get_quotes([base])
+            quotes = get_quotes_cached([base])
             q = quotes.get(base, {})
             return q.get("last")
         except Exception as e:

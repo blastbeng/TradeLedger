@@ -345,14 +345,18 @@ class TradingEngine:
         return tickers
 
     def _get_all_position_tickers_sync(self) -> Dict[str, Dict[str, Any]]:
-        """Fetch tickers for all open positions synchronously, batching missing ones."""
+        """Fetch tickers for all open positions synchronously, batching missing ones.
+
+        Uses get_quotes_cached (Redis/DB only, no network calls) to avoid
+        blocking the default asyncio thread pool with slow yfinance requests.
+        """
         tickers: Dict[str, Dict[str, Any]] = {}
         missing: List[str] = []
         for sym in self.positions:
             missing.append(sym.split("/")[0])
         if missing:
             try:
-                raw = get_quotes(missing)
+                raw = get_quotes_cached(missing)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
@@ -371,7 +375,7 @@ class TradingEngine:
         self._balance_cache_time = now
         return balance
 
-    async def _get_quotes_async(self, symbols: List[str], timeout: float = 300.0) -> Dict[str, Dict[str, Any]]:
+    async def _get_quotes_async(self, symbols: List[str], timeout: float = 30.0) -> Dict[str, Dict[str, Any]]:
         """Fetch quotes using the dedicated quote thread pool with a timeout.
         This prevents slow yfinance calls from blocking the default asyncio thread pool."""
         loop = asyncio.get_running_loop()
@@ -387,7 +391,7 @@ class TradingEngine:
             logger.warning(f"Quote fetch failed for {len(symbols)} symbols: {e}")
             return {}
 
-    async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 300.0, chunk_size: int = 5) -> Dict[str, Dict[str, Any]]:
+    async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 30.0, chunk_size: int = 5) -> Dict[str, Dict[str, Any]]:
         """Fetch quotes for a large list of symbols in a single call.
         Concurrency is handled by a lock inside get_quotes to prevent rate limiting."""
         if not symbols:
@@ -11204,14 +11208,18 @@ class TradingEngine:
         self._pending_entries.pop(symbol, None)
 
     def _get_tickers_for_symbols_sync(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
-        """Fetch latest quotes for a list of symbols synchronously, batching missing ones."""
+        """Fetch latest quotes for a list of symbols synchronously, batching missing ones.
+
+        Uses get_quotes_cached (Redis/DB only, no network calls) to avoid
+        blocking the default asyncio thread pool with slow yfinance requests.
+        """
         tickers: Dict[str, Dict[str, Any]] = {}
         missing: List[str] = []
         for sym in symbols:
             missing.append(sym.split("/")[0])
         if missing:
             try:
-                raw = get_quotes(missing)
+                raw = get_quotes_cached(missing)
                 for sym in symbols:
                     base = sym.split("/")[0]
                     if base in raw:

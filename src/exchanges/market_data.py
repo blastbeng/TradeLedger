@@ -15,6 +15,7 @@ import json
 import requests
 import yfinance as yf
 import httpx
+import concurrent.futures
 from bs4 import BeautifulSoup
 
 from src.config.settings import settings
@@ -24,6 +25,28 @@ from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close
 logger = logging.getLogger(__name__)
 
 _get_quotes_lock = threading.Lock()
+
+# Dedicated thread pool for yf.download with a hard timeout wrapper.
+# This prevents yf.download from hanging threads indefinitely when
+# curl_cffi's own timeout doesn't fire.
+_yf_download_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="yf-download-timeout"
+)
+
+
+def _yf_download_with_timeout(symbols, **kwargs):
+    """Run yf.download with a hard 30-second timeout to prevent indefinite hangs.
+
+    If the timeout fires, the underlying thread is abandoned (it will eventually
+    die on its own due to the curl_cffi HTTP timeout). Returns None on timeout.
+    """
+    future = _yf_download_executor.submit(yf.download, symbols, **kwargs)
+    try:
+        return future.result(timeout=30)
+    except concurrent.futures.TimeoutError:
+        count = len(symbols) if isinstance(symbols, list) else 1
+        logger.warning(f"yf.download timed out after 30s for {count} symbols")
+        return None
 
 
 # --- yfinance Circuit Breaker ---
@@ -1219,7 +1242,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     logger.debug("get_quotes: HTTP_PROXY_ENABLED with dynamic proxy rotator")
             else:
                 logger.debug("get_quotes: HTTP_PROXY not enabled")
-            batch_hist = yf.download(
+            batch_hist = _yf_download_with_timeout(
                 stock_symbols,
                 period="2d",
                 interval="1d",
