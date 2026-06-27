@@ -3138,22 +3138,71 @@ class TradingEngine:
         shortlist = [s for s in shortlist if not (s in seen or seen.add(s))]
 
         # --- Limit the candidate list to avoid overwhelming the LLM ---
-        # Sending 200+ symbols produces a massive prompt that degrades LLM
-        # output quality.  Cap to a reasonable number while always keeping
+        # Sending too many symbols produces a massive prompt that degrades LLM
+        # output quality.  Cap to a configurable number while always keeping
         # currently tracked symbols and symbols with open positions.
-        MAX_LLM_CANDIDATES = 80
-        if len(shortlist) > MAX_LLM_CANDIDATES:
+        # Non-priority slots are allocated across asset classes (stocks, ETFs,
+        # BTPs) using a round-robin approach sorted by composite score to
+        # ensure diversification and equal priority.
+        max_candidates = settings.MAX_LLM_CANDIDATES
+        if len(shortlist) > max_candidates:
             priority = set()
             for entry in self.current_symbols:
                 priority.add(entry["symbol"])
             for sym in self.positions:
                 priority.add(sym)
+
             priority_in_list = [s for s in shortlist if s in priority]
             others = [s for s in shortlist if s not in priority]
-            shortlist = priority_in_list + others[:MAX_LLM_CANDIDATES - len(priority_in_list)]
+            total_before_cap = len(shortlist)
+
+            # Categorize and sort non-priority candidates by composite score
+            stock_others = sorted(
+                [s for s in others if s in stock_pairs and s not in etf_pairs],
+                key=lambda x: composite_scores.get(x, 0.0),
+                reverse=True
+            )
+            etf_others = sorted(
+                [s for s in others if s in etf_pairs],
+                key=lambda x: composite_scores.get(x, 0.0),
+                reverse=True
+            )
+            btp_others = sorted(
+                [s for s in others if s in btp_pairs],
+                key=lambda x: composite_scores.get(x, 0.0),
+                reverse=True
+            )
+
+            remaining_slots = max_candidates - len(priority_in_list)
+            selected_others = []
+
+            # Round-robin pick across asset classes to ensure diversification
+            idx_stock, idx_etf, idx_btp = 0, 0, 0
+            while remaining_slots > 0:
+                picked = False
+                if idx_stock < len(stock_others):
+                    selected_others.append(stock_others[idx_stock])
+                    idx_stock += 1
+                    remaining_slots -= 1
+                    picked = True
+                if remaining_slots > 0 and idx_etf < len(etf_others):
+                    selected_others.append(etf_others[idx_etf])
+                    idx_etf += 1
+                    remaining_slots -= 1
+                    picked = True
+                if remaining_slots > 0 and idx_btp < len(btp_others):
+                    selected_others.append(btp_others[idx_btp])
+                    idx_btp += 1
+                    remaining_slots -= 1
+                    picked = True
+                if not picked:
+                    break  # no more candidates available
+
+            shortlist = priority_in_list + selected_others
             logger.info(
-                f"Capped LLM candidate list from {len(seen)} to {len(shortlist)} symbols "
-                f"(priority: {len(priority_in_list)} current/position symbols)."
+                f"Capped LLM candidate list from {total_before_cap} to {len(shortlist)} symbols "
+                f"(priority: {len(priority_in_list)}, stocks: {idx_stock}, "
+                f"etfs: {idx_etf}, btps: {idx_btp})."
             )
 
         sample_pairs = shortlist

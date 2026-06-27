@@ -54,6 +54,17 @@ class Settings(BaseSettings):
             raise ValueError("MAX_SYMBOLS must be at least 1")
         return v
 
+    # Maximum number of candidate symbols to send to the LLM for stock selection.
+    # Sending too many symbols can overwhelm the LLM and degrade output quality.
+    MAX_LLM_CANDIDATES: int = 80
+
+    @field_validator("MAX_LLM_CANDIDATES")
+    @classmethod
+    def validate_max_llm_candidates(cls, v: int) -> int:
+        if v < 10:
+            raise ValueError("MAX_LLM_CANDIDATES must be at least 10")
+        return v
+
     # Symbol selection limits
     SYMBOL_SELECTION_MIN_SENTIMENT: float = -1.0   # -1.0 = disabled
 
