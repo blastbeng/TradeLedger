@@ -48,18 +48,31 @@ def _get_ollama_response(prompt: str, system_prompt: str = "", model: str = None
                 logger.info("LLM response (ollama): %.500s...", data["message"]["content"])
                 return data["message"]["content"]
         except httpx.HTTPStatusError as e:
-            if e.response.status_code in (429, 500, 502, 503, 504) and attempt < max_retries - 1:
+            if e.response.status_code not in (429, 500, 502, 503, 504):
+                logger.error(
+                    "Ollama request failed with HTTP %d (non-retryable). "
+                    "URL: %s\nResponse body: %s\nRequest payload model: %s, messages count: %d",
+                    e.response.status_code,
+                    str(e.request.url),
+                    e.response.text[:2000],
+                    payload.get("model"),
+                    len(payload.get("messages", [])),
+                    exc_info=True,
+                )
+                raise RuntimeError(f"Ollama request failed with HTTP {e.response.status_code}: {e.response.text[:500]}") from e
+            if attempt < max_retries - 1:
                 wait_time = 2 ** attempt
-                logger.warning(f"Ollama request failed with HTTP {e.response.status_code}. Retrying in {wait_time}s...")
+                logger.warning(f"Ollama request failed with HTTP {e.response.status_code}. Response: {e.response.text[:500]}. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
                 continue
-            raise RuntimeError(f"Ollama request failed: {e}") from e
+            raise RuntimeError(f"Ollama request failed: {e.response.status_code} - {e.response.text[:500]}") from e
         except httpx.HTTPError as e:
             if attempt < max_retries - 1:
                 wait_time = 2 ** attempt
-                logger.warning(f"Ollama request failed with network error: {e}. Retrying in {wait_time}s...")
+                logger.warning(f"Ollama request failed with network error: {e}. Retrying in {wait_time}s...", exc_info=True)
                 time.sleep(wait_time)
                 continue
+            logger.error("Ollama request failed with network error after all retries: %s", e, exc_info=True)
             raise RuntimeError(f"Ollama request failed: {e}") from e
     raise RuntimeError("Ollama request failed after all retries")
 
@@ -76,10 +89,7 @@ def _get_openai_response(prompt: str, system_prompt: str = "", model: str = None
 
     messages = []
     if system_prompt:
-        msg = {"role": "system", "content": system_prompt}
-        # Enable OpenAI prompt caching to reduce costs for repeated system messages
-        msg["cache_control"] = {"type": "ephemeral"}
-        messages.append(msg)
+        messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
     payload = {
@@ -105,18 +115,32 @@ def _get_openai_response(prompt: str, system_prompt: str = "", model: str = None
                 logger.info("LLM response (openai): %.500s...", data["choices"][0]["message"]["content"])
                 return data["choices"][0]["message"]["content"]
         except httpx.HTTPStatusError as e:
-            if e.response.status_code in (429, 500, 502, 503, 504) and attempt < max_retries - 1:
+            # Log the full response body for non-retryable errors (especially 400)
+            if e.response.status_code not in (429, 500, 502, 503, 504):
+                logger.error(
+                    "OpenAI request failed with HTTP %d (non-retryable). "
+                    "URL: %s\nResponse body: %s\nRequest payload model: %s, messages count: %d",
+                    e.response.status_code,
+                    str(e.request.url),
+                    e.response.text[:2000],
+                    payload.get("model"),
+                    len(payload.get("messages", [])),
+                    exc_info=True,
+                )
+                raise RuntimeError(f"OpenAI request failed with HTTP {e.response.status_code}: {e.response.text[:500]}") from e
+            if attempt < max_retries - 1:
                 wait_time = 2 ** attempt
-                logger.warning(f"OpenAI request failed with HTTP {e.response.status_code}. Retrying in {wait_time}s...")
+                logger.warning(f"OpenAI request failed with HTTP {e.response.status_code}. Response: {e.response.text[:500]}. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
                 continue
-            raise RuntimeError(f"OpenAI request failed: {e}") from e
+            raise RuntimeError(f"OpenAI request failed: {e.response.status_code} - {e.response.text[:500]}") from e
         except httpx.HTTPError as e:
             if attempt < max_retries - 1:
                 wait_time = 2 ** attempt
-                logger.warning(f"OpenAI request failed with network error: {e}. Retrying in {wait_time}s...")
+                logger.warning(f"OpenAI request failed with network error: {e}. Retrying in {wait_time}s...", exc_info=True)
                 time.sleep(wait_time)
                 continue
+            logger.error("OpenAI request failed with network error after all retries: %s", e, exc_info=True)
             raise RuntimeError(f"OpenAI request failed: {e}") from e
     raise RuntimeError("OpenAI request failed after all retries")
 

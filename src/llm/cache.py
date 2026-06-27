@@ -89,6 +89,7 @@ def get_cached_llm_response(
         if not response_text or not response_text.strip():
             raise RuntimeError("LLM returned an empty response")
     except Exception as e:
+        logger.error("LLM primary call failed (provider=%s, model=%s, model_type=%s): %s", provider, model, model_type, e, exc_info=True)
         if provider == "ollama":
             # --- Fallback to OpenAI-compatible provider ---
             fallback_model = settings.OPENAI_MIND_MODEL if model_type == "mind" else settings.OPENAI_ACTUATOR_MODEL
@@ -112,7 +113,7 @@ def get_cached_llm_response(
                     used_provider = "openai"
                     used_model = fallback_model
                 except Exception as fallback_e:
-                    logger.error("OpenAI fallback also failed: %s", fallback_e)
+                    logger.error("OpenAI fallback also failed: %s", fallback_e, exc_info=True)
                     raise
             else:
                 logger.warning(
@@ -143,7 +144,7 @@ def get_cached_llm_response(
                     used_provider = "ollama"
                     used_model = fallback_model
                 except Exception as fallback_e:
-                    logger.error("Ollama fallback also failed: %s", fallback_e)
+                    logger.error("Ollama fallback also failed: %s", fallback_e, exc_info=True)
                     raise
             else:
                 logger.warning(
