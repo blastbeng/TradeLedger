@@ -23,6 +23,7 @@ from src.utils.redis_client import get_redis_client
 from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close_prices
 
 logger = logging.getLogger(__name__)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 _get_quotes_lock = threading.Lock()
 
