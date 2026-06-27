@@ -3518,7 +3518,9 @@ class TradingEngine:
                     for item in stocks_list:
                         if isinstance(item, dict) and "symbol" in item:
                             sym = item["symbol"]
-                            if sym in sample_pairs:
+                            normalized = self._normalize_llm_symbol(sym, sample_pairs)
+                            if normalized:
+                                sym = normalized
                                 tf = item.get("timeframe")
                                 if tf not in settings.OHLCV_TIMEFRAMES:
                                     tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
@@ -3531,15 +3533,18 @@ class TradingEngine:
                                     entry["max_tenure_hours"] = mth
                                 new_symbols.append(entry)
                         elif isinstance(item, str):
-                            if item in sample_pairs:
+                            normalized = self._normalize_llm_symbol(item, sample_pairs)
+                            if normalized:
                                 default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
-                                new_symbols.append({"symbol": item, "timeframe": default_tf})
+                                new_symbols.append({"symbol": normalized, "timeframe": default_tf})
                 elif isinstance(parsed, list):
                     # Old format: plain list of objects or strings
                     for item in parsed:
                         if isinstance(item, dict) and "symbol" in item:
                             sym = item["symbol"]
-                            if sym in sample_pairs:
+                            normalized = self._normalize_llm_symbol(sym, sample_pairs)
+                            if normalized:
+                                sym = normalized
                                 tf = item.get("timeframe")
                                 if tf not in settings.OHLCV_TIMEFRAMES:
                                     tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
@@ -3552,9 +3557,10 @@ class TradingEngine:
                                     entry["max_tenure_hours"] = mth
                                 new_symbols.append(entry)
                         elif isinstance(item, str):
-                            if item in sample_pairs:
+                            normalized = self._normalize_llm_symbol(item, sample_pairs)
+                            if normalized:
                                 default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
-                                new_symbols.append({"symbol": item, "timeframe": default_tf})
+                                new_symbols.append({"symbol": normalized, "timeframe": default_tf})
                 else:
                     logger.error("LLM symbol selection response is neither a list nor a dict.")
 
@@ -11098,6 +11104,26 @@ class TradingEngine:
                     parts[2] == timeframe):
                     return True
         return False
+
+    def _normalize_llm_symbol(self, sym: str, sample_pairs: list) -> Optional[str]:
+        """Normalize an LLM-returned symbol to match the format in sample_pairs.
+
+        The LLM may return symbols without the /EUR suffix (e.g., 'ENI.MI' instead
+        of 'ENI.MI/EUR'). This method tries multiple formats to find a match.
+        Returns the matched pair string, or None if no match is found.
+        """
+        if sym in sample_pairs:
+            return sym
+        # Try adding /{base_currency} suffix
+        with_suffix = f"{sym}/{self.base_currency}"
+        if with_suffix in sample_pairs:
+            return with_suffix
+        # Try matching by base symbol (strip any suffix the LLM may have added)
+        base = sym.split("/")[0]
+        for pair in sample_pairs:
+            if pair.split("/")[0] == base:
+                return pair
+        return None
 
     async def _is_market_open(self) -> bool:
         """Return True if the Italian market (Borsa Italiana) is currently open."""
