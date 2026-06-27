@@ -923,8 +923,6 @@ class TradingEngine:
                         )
                     self._force_reeval = True
                     self._reeval_trigger.set()
-                    await asyncio.to_thread(self.redis.set, last_triggered_key, str(time.time()))
-                    await asyncio.to_thread(self.redis.expire, last_triggered_key, 7200)
             except Exception as e:
                 logger.error(f"Market condition check error: {e}", exc_info=True)
             await asyncio.sleep(300)  # check every 5 minutes
@@ -2622,7 +2620,10 @@ class TradingEngine:
         # Pre-market re-evaluations are always allowed (they are time-critical).
         # Forced re-evaluations (explicit user or critical condition requests) always bypass
         # the cooldown since they are intentionally requested.
-        if force and not self._pre_market_reeval and not self._user_forced_reeval:
+        # Capture whether this is a market-condition trigger before clearing flags
+        is_market_condition_trigger = force and not self._pre_market_reeval and not self._user_forced_reeval
+
+        if is_market_condition_trigger:
             # Check if this was triggered by the market condition monitor (not a user action).
             # The market condition monitor sets _force_reeval directly without going through
             # trigger_symbol_reevaluation, so we check the triggered cooldown key.
@@ -4148,6 +4149,14 @@ class TradingEngine:
             logger.info(f"No symbols selected – next re‑evaluation in {self._symbol_reevaluation_interval}s")
         # else: keep the current interval (may have been set by LLM via
         # stock_revaluation_interval_seconds, or the default SYMBOL_REEVALUATION_INTERVAL)
+
+        # Set the triggered cooldown key AFTER a successful market-condition-triggered
+        # re-evaluation to prevent the market condition monitor from firing again too soon.
+        # This must be set at the END, not at the trigger point, otherwise the re-evaluation
+        # itself would see the cooldown as active and skip itself.
+        if is_market_condition_trigger:
+            await asyncio.to_thread(self.redis.set, "trading:last_triggered_reeval", str(time.time()))
+            await asyncio.to_thread(self.redis.expire, "trading:last_triggered_reeval", 7200)
 
         logger.info("Re-evaluation complete: %d symbols selected.", len(self.current_symbols))
         await asyncio.to_thread(self.redis.set, last_key, now)
