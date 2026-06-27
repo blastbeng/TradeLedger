@@ -144,6 +144,7 @@ class TradingEngine:
         self._symbol_reeval_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
         self._force_reeval: bool = False
+        self._user_forced_reeval: bool = False
         self._pre_market_reeval: bool = False
         self._running = True
         self._last_state_save = 0
@@ -224,6 +225,7 @@ class TradingEngine:
         logger.info(f"Re-evaluation triggered (force={force})")
         if force:
             self._force_reeval = True
+            self._user_forced_reeval = True
             # Invalidate correlation matrix cache on forced re-evaluation
             # so the LLM sees fresh correlations after significant market changes
             try:
@@ -2620,10 +2622,11 @@ class TradingEngine:
         # Pre-market re-evaluations are always allowed (they are time-critical).
         # Forced re-evaluations (explicit user or critical condition requests) always bypass
         # the cooldown since they are intentionally requested.
-        if force and not self._pre_market_reeval:
+        if force and not self._pre_market_reeval and not self._user_forced_reeval:
             # Check if this was triggered by the market condition monitor (not a user action).
             # The market condition monitor sets _force_reeval directly without going through
             # trigger_symbol_reevaluation, so we check the triggered cooldown key.
+            # User-initiated forced re-evaluations (from the web UI or Telegram) bypass this cooldown.
             last_triggered = await asyncio.to_thread(self.redis.get, "trading:last_triggered_reeval")
             if last_triggered:
                 elapsed = time.time() - float(last_triggered)
@@ -2632,6 +2635,8 @@ class TradingEngine:
                     return
         # Clear the pre-market flag after reading it
         self._pre_market_reeval = False
+        # Clear the user-forced flag after reading it
+        self._user_forced_reeval = False
 
         # Only re-evaluate every SYMBOL_REVALUATION_INTERVAL
         last_key = "trading:last_symbol_eval"
