@@ -398,7 +398,8 @@ def build_stock_selection_prompt(
     news_section = ""
     if settings.NEWS_ENABLED:
         news_lines = []
-        symbols_to_check = available_symbols
+        # Limit news to top 20 candidates to avoid exceeding LLM context window
+        symbols_to_check = available_symbols[:20]
         batch_news = get_news_for_symbols(symbols_to_check, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
         for sym in symbols_to_check:
             articles = batch_news.get(sym, [])
@@ -469,7 +470,7 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
 
     prompt += f"""
 Available symbols with market data and minimum trade cost (in {base_currency}):
-{json.dumps(ticker_summary, indent=2)}
+{json.dumps(ticker_summary)}
 
 Select between 0 and {max_symbols} assets (stocks, ETFs, or BTP bonds) to trade. The available symbols may include Italian BTP bonds identified by their ISIN (e.g., IT0001234567). The `name` field in the market data contains the bond's description, including maturity and coupon (e.g., 'Btp-1nv26 7,25%' means November 2026 maturity, 7.25% coupon). You can select them alongside stocks. If market conditions are extremely unfavorable (e.g., high losses, poor momentum, negative sentiment), you may select 0 assets to pause trading until the next evaluation. **You should actively try to select as many symbols as possible up to {max_symbols} when there are profitable opportunities.** Do not default to selecting only 2–3 symbols when you have {max_symbols} slots available — each unused slot is a missed opportunity. Use small position_size_fraction values (e.g., 0.02–0.05) to fit more symbols within your available capital. You MUST only select assets where your total available balance ({base_balance:.2f} {base_currency}) is greater than or equal to the asset's min_trade_cost. Since you decide position_size_fraction dynamically, you can allocate any portion of your total balance to any asset — the equal-share budget is NOT a constraint. Skip only assets whose min_trade_cost exceeds your total available balance. **Stocks, ETFs, and BTPs all have EQUAL priority.** Do not favor stocks over ETFs or BTPs, or vice versa. Evaluate each asset on its own merits (trend, momentum, sentiment, fundamentals) regardless of its asset class. Consider a mix of stocks, ETFs, and BTP bonds for diversification. BTPs offer lower volatility and steady income, making them excellent for capital preservation or hedging against market volatility. ETFs provide broad market exposure. Do not ignore BTPs and ETFs just because they have lower volume than individual stocks; include them in your portfolio when they offer a favorable risk/reward profile or when market conditions warrant a more conservative stance. You may keep some current assets if they are still promising and meet the budget requirement, or replace them. **Prefer to keep assets that have been tracked for a while** – they have more historical data and the bot has already invested in learning their behaviour. Only drop an asset if it shows clear deterioration (e.g., negative momentum on all timeframes, poor win rate, or strongly negative sentiment). For assets already being tracked, re-evaluate their assigned timeframe. If the market regime has changed (e.g., a stock that was trending on 1d is now choppy and better suited to 1w), update the timeframe. If you change the timeframe for an asset with an open position, the bot will switch to managing the position using the new timeframe.
 
@@ -546,7 +547,7 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
                 prompt += f"  {sym}: {symbol_trend_scores[sym]:.3f}\n"
         prompt += "High trend quality (>0.7) = strong, clean trend suitable for momentum/breakout strategies. Low score (<0.3) = choppy or ranging, better for mean reversion or avoid.\n"
     if ohlcv_summary:
-        prompt += f"\nMulti-timeframe OHLCV summary (price change %, high, low, volume):\n{json.dumps(ohlcv_summary, indent=2)}\n"
+        prompt += f"\nMulti-timeframe OHLCV summary (price change %, high, low, volume):\n{json.dumps(ohlcv_summary)}\n"
     else:
         prompt += (
             "\n**Note:** No OHLCV data is available for any candidate symbol. "
@@ -556,23 +557,26 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
         )
     if correlation_matrix:
         # Trim to only include symbols that appear in the candidate list
+        candidate_set = set(available_symbols)
         trimmed = {}
         for sym_a, row in correlation_matrix.items():
-            trimmed[sym_a] = {sym_b: v for sym_b, v in row.items()}
-        prompt += (
-            "\nPairwise correlation matrix (Pearson correlation of daily returns, range -1 to +1):\n"
-            f"{json.dumps(trimmed, indent=2)}\n"
-        )
-    if historical_ohlcv_summary:
-        prompt += (
-            "\nHistorical OHLCV summary from database (up to 2 years, price change %, high, low, volume, candle count):\n"
-            f"{json.dumps(historical_ohlcv_summary, indent=2)}\n"
-        )
+            if sym_a not in candidate_set:
+                continue
+            trimmed[sym_a] = {sym_b: v for sym_b, v in row.items() if sym_b in candidate_set}
+        if trimmed:
+            prompt += (
+                "\nPairwise correlation matrix (Pearson correlation of daily returns, range -1 to +1):\n"
+                f"{json.dumps(trimmed)}\n"
+            )
     if symbol_indicators:
         prompt += "\nTechnical indicators for candidate assets (stocks, ETFs, BTPs):\n"
+        # Only include key long-term timeframes to keep prompt size manageable
+        key_timeframes = {"5Y", "3Y", "1Y", "6M", "3M", "1M", "1w"}
         for sym, tf_indicators in symbol_indicators.items():
             lines = [f"{sym}:"]
             for tf, ind in tf_indicators.items():
+                if tf not in key_timeframes:
+                    continue
                 lines.append(f"  [{tf}]")
                 if ind.get('rsi') is not None:
                     lines.append(f"    RSI(14)={ind['rsi']:.2f}")
@@ -637,8 +641,8 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
         perf_text = f"""
 Historical Performance Data:
 Overall equity curve: {json.dumps(performance.get('equity_curve', {}))}
-Per-stock performance (win rate, avg P&L, total trades): {json.dumps(performance.get('stock_performance', {}), indent=2)}
-Per-strategy performance: {json.dumps(performance.get('strategy_performance', {}), indent=2)}
+Per-stock performance (win rate, avg P&L, total trades): {json.dumps(performance.get('stock_performance', {}))}
+Per-strategy performance: {json.dumps(performance.get('strategy_performance', {}))}
 """
         prompt += perf_text
         if daily_pnl is not None:
