@@ -42,7 +42,7 @@ class TelegramBot:
                 [KeyboardButton("💰 Profit"), KeyboardButton("🚀 Performance")],
                 [KeyboardButton("⚠️ Risk"), KeyboardButton("📰 News")],
                 [KeyboardButton("⏸️ Pause"), KeyboardButton("▶️ Resume")],
-                [KeyboardButton("🌐 Market"), KeyboardButton("💸 Sell All")],
+                [KeyboardButton("🔄 Re-eval"), KeyboardButton("💸 Sell All")],
             ],
             resize_keyboard=True,
         )
@@ -105,8 +105,8 @@ class TelegramBot:
             await self.cmd_news(update, context)
         elif text == "⚠️ Risk":
             await self.cmd_risk(update, context)
-        elif text == "🌐 Market":
-            await self.cmd_market(update, context)
+        elif text == "🔄 Re-eval":
+            await self.cmd_force_reeval(update, context)
         elif text == "💸 Sell All":
             await self.cmd_sell(update, context)
         else:
@@ -243,6 +243,23 @@ class TelegramBot:
         queued_count = len(self.engine.queued_orders)
         if queued_count > 0:
             msg += f"\n<b>⏳ Queued Orders:</b> {queued_count}\n"
+
+        # Market status
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "market:status")
+            if raw:
+                data = json.loads(raw)
+                msg += "\n<b>🌐 Market Status</b>\n"
+                if data.get("market_breadth"):
+                    mb = data["market_breadth"]
+                    msg += f"  📊 Breadth (candidates): {mb['positive_pct']}% positive ({mb['positive_count']}/{mb['total_count']})\n"
+                if data.get("full_market_breadth"):
+                    fmb = data["full_market_breadth"]
+                    msg += f"  🌐 Full Breadth: {fmb['positive_pct']}% positive ({fmb['positive_count']}/{fmb['total_count']})\n"
+                if data.get("spy_price") is not None:
+                    msg += f"  📈 Benchmark: {data['spy_price']:.2f}\n"
+        except Exception:
+            pass
 
         await update.message.reply_text(msg, parse_mode='HTML', reply_markup=self.keyboard)
 
@@ -559,6 +576,12 @@ class TelegramBot:
             f"🟢 Avg Win: {metrics['avg_win']:.2f}  🔴 Avg Loss: {metrics['avg_loss']:.2f}"
         )
         await update.message.reply_text(msg, parse_mode='HTML', reply_markup=self.keyboard)
+
+    async def cmd_force_reeval(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._is_authorized(update):
+            return
+        self.engine.trigger_symbol_reevaluation(force=True)
+        await update.message.reply_text("🔄 Forced symbol re-evaluation triggered.", reply_markup=self.keyboard)
 
     async def cmd_market(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):

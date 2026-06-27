@@ -438,6 +438,11 @@
             </div>
 
             <div class="card card-full">
+                <h2>🌐 Market Status</h2>
+                <div id="market-status">-</div>
+            </div>
+
+            <div class="card card-full">
                 <h2>📰 News <button id="btn-refresh-news" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Refresh</button></h2>
                 <div id="news" style="max-height: 400px; overflow-y: auto;">-</div>
             </div>
@@ -925,6 +930,26 @@
                 .then(risk => updateRiskUI(risk))
                 .catch(() => {});
 
+            // Market Status
+            const marketStatusDiv = document.getElementById('market-status');
+            if (marketStatusDiv) {
+                if (data.market_status) {
+                    const ms = data.market_status;
+                    let html = '';
+                    if (ms.market_breadth) {
+                        html += `<strong>📊 Market Breadth (candidates):</strong> ${ms.market_breadth.positive_pct}% positive (${ms.market_breadth.positive_count}/${ms.market_breadth.total_count})<br>`;
+                    }
+                    if (ms.full_market_breadth) {
+                        html += `<strong>🌐 Full Market Breadth:</strong> ${ms.full_market_breadth.positive_pct}% positive (${ms.full_market_breadth.positive_count}/${ms.full_market_breadth.total_count})<br>`;
+                    }
+                    if (ms.spy_price != null) {
+                        html += `<strong>📈 Benchmark Price:</strong> ${ms.spy_price.toFixed(2)}<br>`;
+                    }
+                    marketStatusDiv.innerHTML = html || 'Market data not available yet.';
+                } else {
+                    marketStatusDiv.textContent = 'Market data not available yet.';
+                }
+            }
 
         }
 

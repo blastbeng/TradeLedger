@@ -469,6 +469,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     market_open = await engine._is_market_open()
 
+                    # Fetch market status from Redis
+                    market_status = None
+                    try:
+                        market_status_raw = await asyncio.to_thread(redis.get, "market:status")
+                        if market_status_raw:
+                            market_status = json.loads(market_status_raw)
+                    except Exception:
+                        pass
+
                     payload = {
                         "current_symbols": current_symbols,
                         "positions": positions,
@@ -479,6 +488,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "pause_info": pause_info,
                         "queued_orders": queued_orders_payload,
                         "market_open": market_open,
+                        "market_status": market_status,
                     }
                     _ws_payload_cache = payload
                     _ws_payload_cache_time = now
