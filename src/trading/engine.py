@@ -2637,6 +2637,7 @@ class TradingEngine:
                 if elapsed < TRIGGERED_REEVALUATION_COOLDOWN:
                     logger.info(f"Forced re-evaluation skipped: triggered cooldown active ({TRIGGERED_REEVALUATION_COOLDOWN - elapsed:.0f}s remaining)")
                     return
+        is_user_forced = self._user_forced_reeval
         # Clear the pre-market flag after reading it
         self._pre_market_reeval = False
         # Clear the user-forced flag after reading it
@@ -4144,7 +4145,8 @@ class TradingEngine:
                 else:
                     status_str = "active"
                     emoji = "▶️"
-            pause_msg = f"{emoji} Reevaluation has been manually forced – Bot is currently {status_str}"
+            forced_by = "manually forced" if is_user_forced else "forced by market conditions"
+            pause_msg = f"{emoji} Reevaluation has been {forced_by} – Bot is currently {status_str}"
             if pause_reason:
                 pause_msg += f" – {pause_reason}"
 
