@@ -1041,31 +1041,37 @@ class TradingEngine:
                         self._pre_market_reeval = True
                         self._reeval_trigger.set()
                 else:
-                    # Market open – resume trading if paused, and trigger re-evaluation only on transition
+                    # Market open – resume trading only if paused due to market closure.
+                    # Respect LLM-initiated and manual pauses while the market is open.
                     paused = await asyncio.to_thread(self.redis.get, "trading:paused")
                     if paused:
-                        # Delete all pause-related keys unconditionally
-                        pause_keys = [
-                            "trading:paused",
-                            "trading:pause_source",
-                            "trading:pause_start",
-                            "trading:pause_duration",
-                            "trading:pause_reason",
-                            "trading:llm_pause_time",
-                            "trading:market_next_open",
-                        ]
-                        for key in pause_keys:
-                            await asyncio.to_thread(self.redis.delete, key)
-                        logger.info("Market opened, resuming trading (any pause cleared).")
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                "▶️ Market opened, trading resumed.",
-                                summary={"action": "RESUME", "reason": "Market opened"}
-                            )
-                        # Invalidate correlation matrix cache on market open
-                        await asyncio.to_thread(self.redis.delete, "reeval:correlation_matrix")
-                        # Only trigger re-evaluation when we actually resumed from a pause
-                        self._reeval_trigger.set()
+                        source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
+                        source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
+                        if source == "market_closed":
+                            # Only clear market-closed pauses; respect LLM and manual pauses
+                            pause_keys = [
+                                "trading:paused",
+                                "trading:pause_source",
+                                "trading:pause_start",
+                                "trading:pause_duration",
+                                "trading:pause_reason",
+                                "trading:llm_pause_time",
+                                "trading:market_next_open",
+                            ]
+                            for key in pause_keys:
+                                await asyncio.to_thread(self.redis.delete, key)
+                            logger.info("Market opened, clearing market-closed pause (trading resumed).")
+                            if self.notifier:
+                                await self.notifier.send_notification(
+                                    "▶️ Market opened, trading resumed.",
+                                    summary={"action": "RESUME", "reason": "Market opened"}
+                                )
+                            # Invalidate correlation matrix cache on market open
+                            await asyncio.to_thread(self.redis.delete, "reeval:correlation_matrix")
+                            # Only trigger re-evaluation when we actually resumed from a pause
+                            self._reeval_trigger.set()
+                        else:
+                            logger.debug("Market open, but trading paused by '%s' – not clearing.", source)
                     else:
                         logger.debug("Market open, trading already active.")
                         # Do NOT trigger re-evaluation when already active — let the normal
