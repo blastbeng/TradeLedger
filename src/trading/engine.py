@@ -3435,10 +3435,10 @@ class TradingEngine:
                         f"LLM symbol selection timed out (attempt {attempt+1}/{max_retries+1}). Retrying..."
                     )
                     logger.info("Re-evaluation: LLM retry attempt %d/%d...", attempt + 2, max_retries + 1)
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(5 * (attempt + 1))
                 else:
                     logger.warning(
-                        "LLM symbol selection timed out after all retries. Falling back to volume-based selection."
+                        "LLM symbol selection timed out after all retries."
                     )
             except Exception as e:
                 if attempt < max_retries:
@@ -3446,10 +3446,10 @@ class TradingEngine:
                         f"LLM symbol selection failed with error: {e}. Retrying..."
                     )
                     logger.info("Re-evaluation: LLM retry attempt %d/%d...", attempt + 2, max_retries + 1)
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(5 * (attempt + 1))
                 else:
                     logger.error(
-                        f"LLM symbol selection failed after all retries: {e}. Falling back to volume-based selection."
+                        f"LLM symbol selection failed after all retries: {e}."
                     )
         logger.info("Re-evaluation: LLM response received (%d chars), parsing...", len(response) if response else 0)
         if response:
@@ -3467,6 +3467,16 @@ class TradingEngine:
                 )
         else:
             logger.info("LLM stock selection returned empty response")
+            if self.notifier:
+                await self.notifier.send_notification(
+                    "⚠️ LLM symbol selection failed after all retries. " +
+                    ("Keeping previously tracked symbols." if old_symbols else "Will attempt fallback selection."),
+                    summary={
+                        "action": "ERROR",
+                        "reason": "LLM symbol selection failed after all retries",
+                        "model_type": "mind",
+                    }
+                )
 
         # Initialize variables that may be used later even if LLM fails
         parsed = {}
@@ -3940,6 +3950,15 @@ class TradingEngine:
         # Fallback: if LLM returned no symbols AND did NOT explicitly pause, pick top affordable symbols by composite score
         if not self.current_symbols and pause_trading is not True:
             logger.warning("LLM returned no symbols without pausing – using composite-score-based fallback.")
+            if self.notifier:
+                await self.notifier.send_notification(
+                    "⚠️ LLM returned no symbols. Using composite-score-based fallback selection.",
+                    summary={
+                        "action": "FALLBACK",
+                        "reason": "LLM returned no symbols, using fallback",
+                        "model_type": "mind",
+                    }
+                )
             # Sort sample_pairs by composite score (already computed above)
             sorted_pairs = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
             fallback_symbols: List[Dict[str, str]] = []
