@@ -5517,8 +5517,8 @@ class TradingEngine:
             preliminary_signal.llm_model = llm_model
 
             # --- Step 2: Run backtest(s) and ask LLM for final decision ---
-            # Only run backtest if preliminary action is BUY (long-only strategy)
-            if preliminary_signal.action == "BUY":
+            # Run backtests for BUY and HOLD decisions to validate strategy parameters
+            if preliminary_signal.action in ("BUY", "HOLD"):
                 # Determine which variant param sets to backtest
                 variants_to_test = []
                 if preliminary_signal.backtest_variants:
@@ -12019,7 +12019,7 @@ class TradingEngine:
             except Exception as e2:
                 return {"error": f"Failed to parse LLM response after retry: {e2}", "raw_response": step1_response}
 
-        if preliminary_signal.action == "BUY":
+        if preliminary_signal.action in ("BUY", "HOLD"):
             # Determine which variant param sets to backtest
             variants_to_test = []
             if preliminary_signal.backtest_variants:
@@ -12081,7 +12081,7 @@ class TradingEngine:
             return {
                 "step1_response": step1_response,
                 "action": preliminary_signal.action,
-                "backtest_summary": "No backtest performed (action is not BUY)",
+                "backtest_summary": "No backtest performed (action is SELL)",
             }
 
     async def simulate_decision(self, symbol: str) -> Dict[str, Any]:
@@ -12136,12 +12136,12 @@ class TradingEngine:
             except Exception as e2:
                 return {"error": f"Failed to parse LLM Step 1 response after retry: {e2}", "raw_response": step1_response}
 
-        if preliminary_signal.action != "BUY":
+        if preliminary_signal.action == "SELL":
             return {
                 "step1_response": step1_response,
-                "step2_response": "N/A (Step 1 action is not BUY)",
+                "step2_response": "N/A (Step 1 action is SELL)",
                 "action": preliminary_signal.action,
-                "backtest_summary": "No backtest performed (action is not BUY)",
+                "backtest_summary": "No backtest performed (action is SELL)",
             }
 
         # Determine which variant param sets to backtest
