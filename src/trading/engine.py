@@ -3137,12 +3137,44 @@ class TradingEngine:
         seen = set()
         shortlist = [s for s in shortlist if not (s in seen or seen.add(s))]
 
-        # --- Do NOT limit the final candidate list ---
-        # The LLM must evaluate ALL symbols that have a valid quote in cache/DB.
-        # sample_pairs already contains only symbols with valid quotes (filtered above).
-        # shortlist includes sample_pairs plus current symbols, ETFs, and BTPs.
+        # --- Limit the candidate list to avoid overwhelming the LLM ---
+        # Sending 200+ symbols produces a massive prompt that degrades LLM
+        # output quality.  Cap to a reasonable number while always keeping
+        # currently tracked symbols and symbols with open positions.
+        MAX_LLM_CANDIDATES = 80
+        if len(shortlist) > MAX_LLM_CANDIDATES:
+            priority = set()
+            for entry in self.current_symbols:
+                priority.add(entry["symbol"])
+            for sym in self.positions:
+                priority.add(sym)
+            priority_in_list = [s for s in shortlist if s in priority]
+            others = [s for s in shortlist if s not in priority]
+            shortlist = priority_in_list + others[:MAX_LLM_CANDIDATES - len(priority_in_list)]
+            logger.info(
+                f"Capped LLM candidate list from {len(seen)} to {len(shortlist)} symbols "
+                f"(priority: {len(priority_in_list)} current/position symbols)."
+            )
+
         sample_pairs = shortlist
-        logger.info(f"LLM candidate list: {len(sample_pairs)} symbols (all symbols with valid quotes)")
+        logger.info(f"LLM candidate list: {len(sample_pairs)} symbols")
+
+        # --- Ensure tickers dict covers all symbols in the final shortlist ---
+        # The tickers dict was built from the original sample_pairs before
+        # shortlist added ETFs, BTPs, and historical best symbols.  Re-fetch
+        # quotes for any shortlist entries missing from tickers so the LLM
+        # prompt includes them in the ticker_summary section.
+        missing_tickers = [s for s in sample_pairs if s not in tickers or not tickers.get(s, {}).get('last')]
+        if missing_tickers:
+            missing_plain = [s.split("/")[0] for s in missing_tickers]
+            try:
+                extra_raw = await asyncio.to_thread(get_quotes_cached, missing_plain)
+                for pair in missing_tickers:
+                    base = pair.split("/")[0]
+                    if base in extra_raw and extra_raw[base].get('last'):
+                        tickers[pair] = extra_raw[base]
+            except Exception as e:
+                logger.warning(f"Failed to fetch missing tickers for shortlist: {e}")
 
         # --- Detect upcoming corporate events from news (parallelized) ---
         symbol_events: Dict[str, Dict[str, Any]] = {}
@@ -3437,7 +3469,7 @@ class TradingEngine:
                     for item in stocks_list:
                         if isinstance(item, dict) and "symbol" in item:
                             sym = item["symbol"]
-                            if sym in available_pairs:
+                            if sym in sample_pairs:
                                 tf = item.get("timeframe")
                                 if tf not in settings.OHLCV_TIMEFRAMES:
                                     tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
@@ -3450,7 +3482,7 @@ class TradingEngine:
                                     entry["max_tenure_hours"] = mth
                                 new_symbols.append(entry)
                         elif isinstance(item, str):
-                            if item in available_pairs:
+                            if item in sample_pairs:
                                 default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
                                 new_symbols.append({"symbol": item, "timeframe": default_tf})
                 elif isinstance(parsed, list):
@@ -3458,7 +3490,7 @@ class TradingEngine:
                     for item in parsed:
                         if isinstance(item, dict) and "symbol" in item:
                             sym = item["symbol"]
-                            if sym in available_pairs:
+                            if sym in sample_pairs:
                                 tf = item.get("timeframe")
                                 if tf not in settings.OHLCV_TIMEFRAMES:
                                     tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
@@ -3471,7 +3503,7 @@ class TradingEngine:
                                     entry["max_tenure_hours"] = mth
                                 new_symbols.append(entry)
                         elif isinstance(item, str):
-                            if item in available_pairs:
+                            if item in sample_pairs:
                                 default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
                                 new_symbols.append({"symbol": item, "timeframe": default_tf})
                 else:
