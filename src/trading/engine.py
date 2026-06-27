@@ -261,7 +261,7 @@ class TradingEngine:
                 # Download timeframes in the exact order defined in OHLCV_TIMEFRAMES (longest to shortest)
                 for tf in settings.OHLCV_TIMEFRAMES:
                     try:
-                        inserted = await self._backfill_ohlcv(pair, tf, start_ms, now_ms, force=True)
+                        inserted = await self._backfill_ohlcv(pair, tf, start_ms, now_ms, force=True, quiet=True)
                         if inserted > 0:
                             await self._fill_gaps(pair, tf)
                         # Always compute indicators for force download
@@ -1421,7 +1421,7 @@ class TradingEngine:
             display += f" ({timeframe})"
         return display
 
-    async def _backfill_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, max_candles: int = None, ignore_existing: bool = False, force: bool = False) -> int:
+    async def _backfill_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, max_candles: int = None, ignore_existing: bool = False, force: bool = False, quiet: bool = False) -> int:
         """Fetch and store all missing OHLCV candles between start_ms and end_ms.
         Returns the number of candles inserted."""
         logger.debug(f"Backfill started for {symbol} {timeframe}: {start_ms} → {end_ms}")
@@ -1484,6 +1484,8 @@ class TradingEngine:
 
         if total_inserted >= max_candles:
             logger.debug(f"Backfill partial for {symbol} {timeframe}: {total_inserted} candles inserted (limit reached)")
+        elif quiet:
+            logger.debug(f"Backfill complete for {symbol} {timeframe}: {total_inserted} candles inserted")
         else:
             logger.info(f"Backfill complete for {symbol} {timeframe}: {total_inserted} candles inserted")
         return total_inserted
@@ -1628,7 +1630,7 @@ class TradingEngine:
                     loop = asyncio.get_running_loop()
                     for tf in settings.OHLCV_TIMEFRAMES:
                         try:
-                            inserted = await self._backfill_ohlcv(pair, tf, start_ms, now_ms)
+                            inserted = await self._backfill_ohlcv(pair, tf, start_ms, now_ms, quiet=True)
                             if inserted > 0:
                                 await self._fill_gaps(pair, tf)
                                 # Compute and store indicators after candles are downloaded
