@@ -38,11 +38,11 @@ def get_cached_llm_response(
         provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
 
     if provider == "openai":
-        model = settings.OPENAI_MIND_MODEL if model_type == "mind" else settings.OPENAI_ACTUATOR_MODEL
+        model = (settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL) if model_type == "mind" else (settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL)
         base_url = (settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL) if model_type == "mind" else (settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL)
         api_key = (settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY) if model_type == "mind" else (settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY)
     else:  # ollama
-        model = settings.OLLAMA_MIND_MODEL if model_type == "mind" else settings.OLLAMA_ACTUATOR_MODEL
+        model = (settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL) if model_type == "mind" else (settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL)
         base_url = (settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL) if model_type == "mind" else (settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL)
         api_key = (settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY) if model_type == "mind" else (settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY)
 
