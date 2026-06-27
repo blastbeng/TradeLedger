@@ -1,8 +1,11 @@
 import asyncio
 import copy
 import logging
+import queue
 import signal
 import sys
+import threading
+import time as _time
 import uvicorn
 import uvicorn.config
 from src.web.app import app
@@ -46,13 +49,22 @@ import json as _json
 from datetime import datetime, timezone
 
 class RedisLogHandler(logging.Handler):
-    """Push log records to a Redis list for the web dashboard."""
+    """Push log records to a Redis list for the web dashboard.
+
+    Uses a bounded in-memory queue and a background daemon thread to avoid
+    blocking the event loop with synchronous Redis I/O on every log record.
+    """
     def __init__(self, max_entries=200):
         super().__init__()
         self.max_entries = max_entries
         self.setLevel(logging.INFO)   # only INFO and above to keep the list manageable
         self._seen_keys: set = set()
         self._seen_keys_max = 500
+        self._queue: queue.Queue = queue.Queue(maxsize=1000)
+        self._thread = threading.Thread(
+            target=self._flush_loop, daemon=True, name="redis-log-flusher"
+        )
+        self._thread.start()
 
     def emit(self, record):
         try:
@@ -68,18 +80,34 @@ class RedisLogHandler(logging.Handler):
             if len(self._seen_keys) > self._seen_keys_max:
                 self._seen_keys.clear()
 
-            redis_client = get_redis_client()
             entry = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "level": record.levelname,
                 "logger": record.name,
                 "message": self.format(record),
             }
-            redis_client.lpush("logs:recent", _json.dumps(entry))
-            redis_client.ltrim("logs:recent", 0, self.max_entries - 1)
+            # Non-blocking put: if the queue is full, drop the entry
+            try:
+                self._queue.put_nowait(entry)
+            except queue.Full:
+                pass
         except Exception:
             # Never let a logging handler break the application
             pass
+
+    def _flush_loop(self):
+        """Background thread that drains the queue and writes to Redis."""
+        while True:
+            try:
+                entry = self._queue.get(timeout=1.0)
+                redis_client = get_redis_client()
+                redis_client.lpush("logs:recent", _json.dumps(entry))
+                redis_client.ltrim("logs:recent", 0, self.max_entries - 1)
+            except queue.Empty:
+                continue
+            except Exception:
+                # Sleep briefly to avoid a tight error loop if Redis is down
+                _time.sleep(0.5)
 
 # Create and attach the handler
 redis_log_handler = RedisLogHandler(max_entries=200)
