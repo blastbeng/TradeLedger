@@ -697,6 +697,7 @@ def build_final_selection_prompt(
     vix: Optional[float] = None,
     min_viable_trade_amount: float = 0.0,
     available_timeframes: Optional[List[str]] = None,
+    market_limits: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> str:
     """Build a prompt for the final symbol selection from chunk results.
 
@@ -709,14 +710,20 @@ def build_final_selection_prompt(
         stocks = chunk.get("stocks", [])
         reasoning = chunk.get("reasoning", "")
         for stock in stocks:
+            sym = stock.get("symbol")
             entry = {
-                "symbol": stock.get("symbol"),
+                "symbol": sym,
                 "timeframe": stock.get("timeframe"),
                 "sector": stock.get("sector"),
                 "chunk_reasoning": reasoning[:200] if reasoning else "",
             }
             if stock.get("max_tenure_hours") is not None:
                 entry["max_tenure_hours"] = stock.get("max_tenure_hours")
+            # Include min_trade_cost so the LLM can avoid selecting unaffordable symbols
+            if market_limits and sym in market_limits:
+                min_cost = market_limits[sym].get("min_cost")
+                if min_cost is not None:
+                    entry["min_trade_cost"] = min_cost
             shortlist.append(entry)
 
     # Deduplicate by symbol

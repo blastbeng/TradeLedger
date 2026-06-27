@@ -2969,14 +2969,6 @@ class TradingEngine:
             if sym not in symbol_trend_scores:
                 symbol_trend_scores[sym] = 0.0
 
-        logger.info("Re-evaluation step 9/12: Batch-fetching historical OHLCV summaries...")
-        historical_ohlcv_summary = {}
-        if settings.OHLCV_TIMEFRAMES:
-            since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
-            historical_ohlcv_summary = await asyncio.to_thread(
-                get_ohlcv_summary_for_symbols, sorted_by_vol, settings.OHLCV_TIMEFRAMES, since_ms
-            )
-
         # Use asset info for minimum order size constraints
         market_limits = {}
         for symbol in sample_pairs:
@@ -3332,7 +3324,6 @@ class TradingEngine:
                 market_trend=market_trend,
                 symbol_indicators=chunk_symbol_indicators,
                 daily_pnl=perf["equity_curve"].get("daily_pnl"),
-                historical_ohlcv_summary=historical_ohlcv_summary,
                 correlation_matrix=chunk_corr if chunk_corr else None,
                 session_info=session_info,
                 sentiment_trend=chunk_sentiment_trend,
@@ -3461,7 +3452,10 @@ class TradingEngine:
                 vix=vix,
                 min_viable_trade_amount=min_viable_amount,
                 available_timeframes=settings.OHLCV_TIMEFRAMES,
+                market_limits=market_limits,
             )
+            if auto_resume_note:
+                final_prompt += "\n" + auto_resume_note
 
             for attempt in range(max_retries + 1):
                 try:
