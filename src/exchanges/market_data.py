@@ -1087,7 +1087,55 @@ def get_tradable_assets() -> List[str]:
             base_symbols = hardcoded
 
     if not base_symbols:
-        logger.warning("No tickers discovered from Wikipedia, Euronext, or news feeds.")
+        logger.warning("No tickers discovered from Wikipedia, Euronext, or news feeds. Checking Redis cache and DB for previously discovered symbols...")
+        # Try Redis cache first (may have symbols from a previous successful run)
+        redis_client = get_redis_client()
+        cache_key = f"tradable_assets:{settings.TARGET_COUNTRY}"
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                import json
+                cached_list = json.loads(cached)
+                # Merge with DB-saved symbols
+                try:
+                    from src.database import get_all_discovered_symbols
+                    db_symbols = get_all_discovered_symbols()
+                    existing_set = set(cached_list)
+                    for db_entry in db_symbols:
+                        db_sym = db_entry["symbol"]
+                        if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
+                            if db_sym not in existing_set:
+                                cached_list.append(db_sym)
+                                existing_set.add(db_sym)
+                        else:
+                            candidate = f"{db_sym}{suffix}" if suffix and not db_sym.endswith(suffix) else db_sym
+                            if candidate not in existing_set:
+                                cached_list.append(candidate)
+                                existing_set.add(candidate)
+                    logger.info(f"Discovery failed but recovered {len(cached_list)} symbols from Redis cache + DB")
+                except Exception as e:
+                    logger.warning(f"Failed to merge DB symbols with cached list: {e}")
+                if cached_list:
+                    return cached_list
+        except Exception:
+            pass
+        # No Redis cache — try DB only
+        try:
+            from src.database import get_all_discovered_symbols
+            db_symbols = get_all_discovered_symbols()
+            if db_symbols:
+                db_only_list = []
+                for db_entry in db_symbols:
+                    db_sym = db_entry["symbol"]
+                    if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
+                        db_only_list.append(db_sym)
+                    else:
+                        candidate = f"{db_sym}{suffix}" if suffix and not db_sym.endswith(suffix) else db_sym
+                        db_only_list.append(candidate)
+                logger.info(f"Discovery failed but recovered {len(db_only_list)} symbols from DB only")
+                return db_only_list
+        except Exception as e:
+            logger.warning(f"Failed to recover symbols from DB: {e}")
         return []
 
     # Save discovered symbols to DB (ISINs will be fetched on demand)
