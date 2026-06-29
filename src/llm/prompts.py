@@ -1389,26 +1389,28 @@ Maximum symbols to trade: {max_symbols}
 
     # --- Multi-timeframe OHLCV summary and indicators ---
     if multi_tf_raw_candles:
-        prompt += "\nMulti-timeframe OHLCV summary (price change %, high, low, volume, candle count):\n"
+        tf_summaries = []
         for tf in settings.OHLCV_TIMEFRAMES:
             if tf in multi_tf_raw_candles:
                 summary = _summarize_ohlcv(multi_tf_raw_candles[tf])
                 if summary:
-                    prompt += (
+                    tf_summaries.append(
                         f"  [{tf}] change={summary['change_pct']}%, "
                         f"high={summary['high']}, low={summary['low']}, "
-                        f"volume={summary['volume']}, candles={summary['candle_count']}\n"
+                        f"volume={summary['volume']}, candles={summary['candle_count']}"
                     )
-        prompt += (
-            "Use these summaries to assess momentum and trend across timeframes. "
-            "**CRITICAL: The longest available timeframes (5Y, 3Y, 1Y, 6M, 3M, 1M) are your PRIMARY timeframes and the most important** — they show the dominant long-term trends that drive the largest profits. "
-            "The 1w (weekly) timeframe provides secondary confirmation. "
-            "The 1d (daily) and 1h timeframes provide additional context for entry and exit timing only. "
-            "You MUST always align your trading decision with the longest-term trend direction.\n"
-        )
+        if tf_summaries:
+            prompt += "\nMulti-timeframe OHLCV summary (price change %, high, low, volume, candle count):\n"
+            prompt += "\n".join(tf_summaries) + "\n"
+            prompt += (
+                "Use these summaries to assess momentum and trend across timeframes. "
+                "**CRITICAL: The longest available timeframes (5Y, 3Y, 1Y, 6M, 3M, 1M) are your PRIMARY timeframes and the most important** — they show the dominant long-term trends that drive the largest profits. "
+                "The 1w (weekly) timeframe provides secondary confirmation. "
+                "The 1d (daily) and 1h timeframes provide additional context for entry and exit timing only. "
+                "You MUST always align your trading decision with the longest-term trend direction.\n"
+            )
     if multi_tf_indicators:
-        prompt += "\nComputed technical indicators per timeframe:\n"
-        prompt += "**CRITICAL: Pay closest attention to the PRIMARY timeframes ([5Y], [3Y], [1Y], [6M], [3M], [1M]) — they define the primary long-term trend and must drive your decision.**\n"
+        ind_lines = []
         for tf in settings.OHLCV_TIMEFRAMES:
             if tf in multi_tf_indicators:
                 ind = multi_tf_indicators[tf]
@@ -1456,7 +1458,13 @@ Maximum symbols to trade: {max_symbols}
                     kc = ind['keltner_channels']
                     ind_compact['kc'] = {"u": round(kc['upper'], 6), "m": round(kc['middle'], 6), "l": round(kc['lower'], 6)}
                 
-                prompt += f"[{tf}] {json.dumps(ind_compact)}\n"
+                if not ind_compact:
+                    continue
+                ind_lines.append(f"[{tf}] {json.dumps(ind_compact)}")
+        if ind_lines:
+            prompt += "\nComputed technical indicators per timeframe:\n"
+            prompt += "**CRITICAL: Pay closest attention to the PRIMARY timeframes ([5Y], [3Y], [1Y], [6M], [3M], [1M]) — they define the primary long-term trend and must drive your decision.**\n"
+            prompt += "\n".join(ind_lines) + "\n"
     elif raw_candles:
         summary = _summarize_ohlcv(raw_candles)
         if summary:
