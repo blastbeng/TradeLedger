@@ -11715,6 +11715,7 @@ class TradingEngine:
                                                 "reason": "Stop triggered, OCO pair cancelled",
                                             }
                                         )
+                                    self._state_dirty = True
 
                     # Determine how much has been filled since the last check
                     filled_qty = float(paper_order.filled_qty) if paper_order.filled_qty else 0.0
