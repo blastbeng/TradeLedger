@@ -12029,7 +12029,7 @@ class TradingEngine:
         adx_series = None
         rsi_series = None
         macd_hist_series = None
-        if bt_candles and len(bt_candles) >= 15:
+        if bt_candles and len(bt_candles) >= 2:
             def _compute_bt_indicator_series():
                 _atr_series = None
                 _adx_series = None
