@@ -3,6 +3,66 @@ import numpy as np
 import talib
 
 
+def _compute_simple_atr(candles: List[List], period: int = 14) -> Optional[float]:
+    """Compute a simple average True Range when there aren't enough candles for Wilder's ATR.
+
+    Uses the same True Range formula but averages over available candles instead of
+    applying Wilder's smoothing. This provides a reasonable ATR estimate for long
+    timeframes (5Y, 3Y, etc.) where only a few candles are available.
+    """
+    if not candles:
+        return None
+    if len(candles) == 1:
+        tr = candles[0][2] - candles[0][3]
+        return tr if tr > 0 else None
+
+    true_ranges = []
+    for i in range(len(candles)):
+        high = candles[i][2]
+        low = candles[i][3]
+        if i == 0:
+            tr = high - low
+        else:
+            prev_close = candles[i - 1][4]
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        true_ranges.append(tr)
+
+    use_period = min(period, len(true_ranges))
+    recent_trs = true_ranges[-use_period:]
+    avg_tr = sum(recent_trs) / len(recent_trs)
+    return avg_tr if avg_tr > 0 else None
+
+
+def _compute_simple_atr_series(candles: List[List], period: int = 14) -> List[Optional[float]]:
+    """Compute simple average True Range series when there aren't enough candles for Wilder's ATR.
+
+    Returns a full-length list (one value per candle) with no None warmup,
+    since the simple average can be computed from the first candle onward.
+    """
+    if not candles:
+        return []
+
+    true_ranges = []
+    for i in range(len(candles)):
+        high = candles[i][2]
+        low = candles[i][3]
+        if i == 0:
+            tr = high - low
+        else:
+            prev_close = candles[i - 1][4]
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        true_ranges.append(tr)
+
+    result = []
+    for i in range(len(candles)):
+        start = max(0, i - period + 1)
+        window = true_ranges[start:i + 1]
+        avg = sum(window) / len(window)
+        result.append(avg if avg > 0 else None)
+
+    return result
+
+
 def compute_atr(candles: List[List], period: int = 14) -> Optional[float]:
     """Compute Average True Range from OHLCV candles using Wilder's smoothing."""
     if len(candles) < period + 1:
@@ -33,9 +93,13 @@ def compute_ema(data: List[float], period: int) -> List[Optional[float]]:
 
 
 def compute_atr_series(candles: List[List], period: int = 14) -> List[Optional[float]]:
-    """Compute ATR series (full-length list with None warmup)."""
+    """Compute ATR series (full-length list with None warmup).
+
+    Falls back to simple average True Range when there aren't enough candles
+    for Wilder's smoothing (e.g., long timeframes like 5Y with only a few candles).
+    """
     if len(candles) < period + 1:
-        return []
+        return _compute_simple_atr_series(candles, period)
     highs = np.array([c[2] for c in candles], dtype=float)
     lows = np.array([c[3] for c in candles], dtype=float)
     closes = np.array([c[4] for c in candles], dtype=float)
@@ -328,8 +392,10 @@ def compute_all_indicators(
     if len(candles) < 2:
         return ind
 
-    # ATR
+    # ATR — fall back to simple average True Range for long timeframes with few candles
     ind['atr'] = compute_atr(candles)
+    if ind['atr'] is None and len(candles) >= 2:
+        ind['atr'] = _compute_simple_atr(candles)
 
     rsi_period = config.get('rsi_period', 14)
     macd_fast = config.get('macd_fast', 12)
@@ -463,6 +529,8 @@ def compute_keltner_channels(
         return None
     candles = [[0, 0, h, l, c, 0] for h, l, c in zip(highs, lows, closes)]
     atr = compute_atr(candles, period)
+    if atr is None:
+        atr = _compute_simple_atr(candles, period)
     if atr is None:
         return None
     upper = middle + atr_mult * atr
