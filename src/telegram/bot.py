@@ -53,6 +53,19 @@ class TelegramBot:
             return False
         return update.effective_chat.id == self.allowed_chat_id
 
+    async def _send_long_reply(self, update: Update, text: str, parse_mode: str = None, reply_markup=None):
+        """Send a message, splitting it into chunks if it exceeds Telegram's 4096 char limit."""
+        max_len = 4000
+        if len(text) <= max_len:
+            await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            return
+        
+        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
+        for i, chunk in enumerate(chunks):
+            # Only attach reply_markup to the last message
+            markup = reply_markup if i == len(chunks) - 1 else None
+            await update.message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup)
+
     def _register_handlers(self):
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler("menu", self.cmd_menu))
@@ -261,7 +274,7 @@ class TelegramBot:
         except Exception:
             pass
 
-        await update.message.reply_text(msg, parse_mode='HTML', reply_markup=self.keyboard)
+        await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
 
     async def cmd_trades(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
@@ -459,7 +472,7 @@ class TelegramBot:
 
                 msg += line + "\n"
 
-        await update.message.reply_text(msg, parse_mode='HTML', reply_markup=self.keyboard)
+        await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
 
     async def cmd_performance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
@@ -517,7 +530,7 @@ class TelegramBot:
             logger.error(f"Failed to get performance summary: {e}", exc_info=True)
             msg = "⚠️ Could not retrieve performance summary. Please try again later."
 
-        await update.message.reply_text(msg, parse_mode='HTML', reply_markup=self.keyboard)
+        await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
 
     async def cmd_news_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
@@ -543,7 +556,7 @@ class TelegramBot:
         formatted = await asyncio.to_thread(_format_news_for_prompt, articles)
         msg = f"*{symbol}*\n{formatted}"
         # Send as plain text to avoid Markdown parsing errors
-        await update.message.reply_text(msg, parse_mode=None, reply_markup=self.keyboard)
+        await self._send_long_reply(update, msg, parse_mode=None, reply_markup=self.keyboard)
 
     async def cmd_risk(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
@@ -575,7 +588,7 @@ class TelegramBot:
             f"📊 Profit Factor: {pf_str}\n"
             f"🟢 Avg Win: {metrics['avg_win']:.2f}  🔴 Avg Loss: {metrics['avg_loss']:.2f}"
         )
-        await update.message.reply_text(msg, parse_mode='HTML', reply_markup=self.keyboard)
+        await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
 
     async def cmd_force_reeval(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
@@ -606,7 +619,7 @@ class TelegramBot:
             msg += f"<b>🌐 Full Market Breadth:</b> {fmb['positive_pct']}% positive ({fmb['positive_count']}/{fmb['total_count']})\n"
         if data.get("spy_price") is not None:
             msg += f"<b>📈 Benchmark Price:</b> {data['spy_price']:.2f}\n"
-        await update.message.reply_text(msg, parse_mode='HTML', reply_markup=self.keyboard)
+        await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
 
     async def cmd_news(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
@@ -643,12 +656,7 @@ class TelegramBot:
 
             full_text = "\n\n".join(messages)
 
-            # Split if too long for Telegram
-            if len(full_text) > 4000:
-                for i in range(0, len(full_text), 4000):
-                    await update.message.reply_text(full_text[i:i+4000], parse_mode='HTML')
-            else:
-                await update.message.reply_text(full_text, parse_mode='HTML')
+            await self._send_long_reply(update, full_text, parse_mode='HTML')
         except Exception as e:
             logger.error(f"Failed to generate news summaries: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve news.", reply_markup=self.keyboard)
@@ -672,7 +680,7 @@ class TelegramBot:
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                 articles = await asyncio.to_thread(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
                 msg += f"<b>{ns_display}</b>: {len(articles)} articles\n"
-            await update.message.reply_text(msg, parse_mode='HTML', reply_markup=self.keyboard)
+            await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
         except Exception as e:
             logger.error(f"Failed to get news status: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve news status.", reply_markup=self.keyboard)
@@ -779,7 +787,7 @@ class TelegramBot:
             logger.error(f"Failed to get profit summary: {e}", exc_info=True)
             msg = "⚠️ Could not retrieve profit summary. Please try again later."
 
-        await update.message.reply_text(msg, parse_mode='HTML', reply_markup=self.keyboard)
+        await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
 
     def _write_notification_log(self, log_path: Path, summary: dict):
         """Write a summary dict as a JSON line to log_path, rotating if > MAX_LOG_SIZE."""
@@ -923,11 +931,21 @@ class TelegramBot:
                     if action not in ("BUY", "SELL"):
                         disable_notification = True
 
-                await self.app.bot.send_message(
-                    chat_id=int(chat_id),
-                    text=message,
-                    disable_notification=disable_notification,
-                )
+                max_len = 4000
+                if len(message) <= max_len:
+                    await self.app.bot.send_message(
+                        chat_id=int(chat_id),
+                        text=message,
+                        disable_notification=disable_notification,
+                    )
+                else:
+                    chunks = [message[i:i+max_len] for i in range(0, len(message), max_len)]
+                    for chunk in chunks:
+                        await self.app.bot.send_message(
+                            chat_id=int(chat_id),
+                            text=chunk,
+                            disable_notification=disable_notification,
+                        )
                 logger.debug(f"Notification sent successfully (silent={disable_notification}).")
             except Exception as e:
                 logger.error(f"Failed to send Telegram notification: {e}", exc_info=True)
