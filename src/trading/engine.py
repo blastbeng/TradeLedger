@@ -2415,6 +2415,16 @@ class TradingEngine:
                 )
                 del self.positions[symbol]
 
+        # Initialize trailing stop tracking fields for positions with trailing stops.
+        # This ensures _highest_price is not set to a pre-entry price on the first
+        # check after a restart (which would make the trailing stop too tight).
+        for symbol, pos in self.positions.items():
+            if pos.get("trailing_stop"):
+                if "_highest_price" not in pos:
+                    pos["_highest_price"] = pos.get("price", 0.0)
+                if "_last_trailing_check_ts" not in pos:
+                    pos["_last_trailing_check_ts"] = time.time()
+
         self.trade_history = get_all_trades()
         self.queued_orders = state.get("queued_orders", [])
         for q in self.queued_orders:
@@ -7251,25 +7261,26 @@ class TradingEngine:
                         # may miss brief highs between checks).
                         candidate_prices = [current_price]
                         tf = pos.get("timeframe")
+                        if not tf:
+                            # Fallback to the assigned timeframe from current_symbols
+                            for entry in self.current_symbols:
+                                if entry["symbol"] == symbol:
+                                    tf = entry.get("timeframe")
+                                    break
                         if tf:
                             try:
                                 last_check_ts = pos.get("_last_trailing_check_ts", 0)
-                                # On the first check, use the position's entry timestamp
-                                # instead of looking back 24h (which could set
-                                # _highest_price to a value from before the position
-                                # was opened, making the trailing stop too tight).
+                                # Only look back at OHLCV candles when we have a previous check
+                                # timestamp. On the first check (e.g., after restart), _highest_price
+                                # is initialized to the entry price in _load_state, so we skip the
+                                # OHLCV lookback to avoid setting _highest_price to a value from
+                                # before the position was opened.
                                 if last_check_ts > 0:
                                     since_ms = int(last_check_ts * 1000)
-                                else:
-                                    entry_ts = pos.get("timestamp", 0) / 1000.0
-                                    if entry_ts > 0:
-                                        since_ms = int(entry_ts * 1000)
-                                    else:
-                                        since_ms = int((time.time() - 3600) * 1000)  # 1 hour fallback
-                                db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, since_ms=since_ms, limit=200)
-                                if db_candles:
-                                    candle_high = max(c["high"] for c in db_candles)
-                                    candidate_prices.append(candle_high)
+                                    db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, since_ms=since_ms, limit=200)
+                                    if db_candles:
+                                        candle_high = max(c["high"] for c in db_candles)
+                                        candidate_prices.append(candle_high)
                             except Exception as e:
                                 logger.debug(f"Failed to fetch OHLCV for trailing stop on {symbol}: {e}")
                         pos["_last_trailing_check_ts"] = time.time()
