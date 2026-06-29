@@ -212,9 +212,9 @@ def _normalize_for_hash(obj, depth=0):
     if isinstance(obj, list):
         return [_normalize_for_hash(item, depth + 1) for item in obj]
     if isinstance(obj, float):
-        # Round to 6 decimal places — enough precision for prices/indicators,
+        # Round to 8 decimal places — enough precision for prices/indicators,
         # but filters out floating-point noise that changes every cycle.
-        return round(obj, 6)
+        return round(obj, 8)
     if obj is None:
         return "null"
     return obj
