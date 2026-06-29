@@ -861,7 +861,7 @@ class TradingEngine:
                 logger.error(f"Full market breadth computation error: {e}", exc_info=True)
             finally:
                 self._full_breadth_running = False
-            await asyncio.sleep(600)  # every 10 minutes
+            await asyncio.sleep(1800)  # every 30 minutes (medium/long-term)
 
     async def _periodic_market_condition_check(self):
         """Check for market conditions that warrant more frequent symbol re-evaluation.
@@ -993,7 +993,7 @@ class TradingEngine:
                     self._reeval_trigger.set()
             except Exception as e:
                 logger.error(f"Market condition check error: {e}", exc_info=True)
-            await asyncio.sleep(300)  # check every 5 minutes
+            await asyncio.sleep(1800)  # check every 30 minutes (medium/long-term)
 
     async def _market_clock_monitor(self):
         """Periodically check market clock and pause/resume trading based on market open/close."""
@@ -1097,9 +1097,9 @@ class TradingEngine:
                         self._last_market_closed_notify_time = now_ts
 
                     # "Opening soon" alert when less than 5 minutes remain
-                    if 0 < remaining_seconds <= 300 and not self._market_opening_soon_notified:
+                    if 0 < remaining_seconds <= 900 and not self._market_opening_soon_notified:
                         minutes_left = int(remaining_seconds // 60)
-                        soon_msg = f"⏰ Market opens in {minutes_left} minute(s) – trading will resume automatically."
+                        soon_msg = f"⏰ Market opens in ~{minutes_left} minute(s) – trading will resume automatically."
                         if self.notifier:
                             await self.notifier.send_notification(
                                 soon_msg,
@@ -1155,7 +1155,7 @@ class TradingEngine:
                     self._last_market_closed_notify_time = 0.0
             except Exception as e:
                 logger.error(f"Market clock monitor error: {e}", exc_info=True)
-            await asyncio.sleep(60)  # check every 60 seconds
+            await asyncio.sleep(300)  # check every 5 minutes (medium/long-term)
 
     async def _get_sentiment_str(self, symbol: str) -> str:
         """Get a short news sentiment string for notifications, including an LLM summary."""
@@ -1851,7 +1851,7 @@ class TradingEngine:
                     )
             except Exception as e:
                 logger.error(f"Ticker discovery refresh error: {e}", exc_info=True)
-            await asyncio.sleep(1800)  # every 30 minutes
+            await asyncio.sleep(3600)  # every 60 minutes (medium/long-term)
 
     def _ensure_cost_basis(self):
         """If positions lack cost_basis, compute it from amount and price (backward compat)."""
