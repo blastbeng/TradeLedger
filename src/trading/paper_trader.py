@@ -249,6 +249,7 @@ class PaperTrader:
         order.status = "filled"
         self._balances_dirty = True
         self._save_orders()
+        self._save_balances()
         logger.info(
             f"Paper order filled: {order.side} {order.symbol} "
             f"qty={order.filled_qty:.6f} @ {fill_price:.4f}"
