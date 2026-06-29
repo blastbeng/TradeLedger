@@ -4749,7 +4749,6 @@ class TradingEngine:
         adx: Optional[float],
         plus_di: Optional[float],
         minus_di: Optional[float],
-        is_btp: bool,
     ) -> Dict[str, Any]:
         """Gather all additional market context needed for the strategy prompt."""
         # ATR multi-TF
@@ -4899,11 +4898,11 @@ class TradingEngine:
         session_info = self._get_session_info()
 
         # Compute minutes until market close
-        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Rome"))
+        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
         weekday = now_rome.weekday()
         if weekday < 5:
             rome_minutes = now_rome.hour * 60 + now_rome.minute
-            close_minutes = 17 * 60 + 30
+            close_minutes = settings.MARKET_CLOSE_HOUR * 60 + settings.MARKET_CLOSE_MINUTE
             minutes_to_market_close = close_minutes - rome_minutes
             if minutes_to_market_close < 0:
                 minutes_to_market_close = 0
@@ -5815,7 +5814,6 @@ class TradingEngine:
                 adx=adx,
                 plus_di=plus_di,
                 minus_di=minus_di,
-                is_btp=is_btp,
             )
             atr_multi_tf = _ctx["atr_multi_tf"]
             atr_percentile = _ctx["atr_percentile"]
