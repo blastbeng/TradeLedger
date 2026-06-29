@@ -1469,6 +1469,52 @@ class TradingEngine:
         """Convert a timeframe string (e.g., '5m', '1h') to seconds."""
         return self._timeframe_to_ms(timeframe) // 1000
 
+    def _get_effective_refresh_interval(self, base_interval: int, loop_type: str = "data") -> int:
+        """Scale refresh interval based on the longest tracked timeframe.
+
+        For long-term timeframes (1Y+), use much longer refresh cycles to
+        avoid wasting bandwidth and API calls on data that barely changes.
+
+        loop_type: "quotes" for quote refresh, "data" for OHLCV downloads,
+                   "news" for news downloads.
+        """
+        if not self.current_symbols:
+            return base_interval
+
+        max_tf_seconds = 0
+        for entry in self.current_symbols:
+            tf = entry.get("timeframe", "1d")
+            tf_secs = self._timeframe_to_seconds(tf)
+            if tf_secs > max_tf_seconds:
+                max_tf_seconds = tf_secs
+
+        if loop_type == "quotes":
+            # Quotes: even for long timeframes, prices still move intraday
+            if max_tf_seconds >= 31_536_000:  # 1Y+
+                return max(base_interval, 3600)  # 1 hour
+            elif max_tf_seconds >= 2_592_000:  # 1M+
+                return max(base_interval, 1800)  # 30 minutes
+            return base_interval
+        elif loop_type == "news":
+            # News: daily is sufficient for long-term trading
+            if max_tf_seconds >= 31_536_000:  # 1Y+
+                return max(base_interval, 86400)  # daily
+            elif max_tf_seconds >= 2_592_000:  # 1M+
+                return max(base_interval, 43200)  # 12 hours
+            return base_interval
+        else:  # "data" – OHLCV downloads
+            if max_tf_seconds >= 31_536_000:  # 1Y+
+                return max(base_interval, 86400)  # daily
+            elif max_tf_seconds >= 15_552_000:  # 6M+
+                return max(base_interval, 43200)  # 12 hours
+            elif max_tf_seconds >= 7_776_000:  # 3M+
+                return max(base_interval, 21600)  # 6 hours
+            elif max_tf_seconds >= 2_592_000:  # 1M+
+                return max(base_interval, 10800)  # 3 hours
+            elif max_tf_seconds >= 604_800:  # 1w+
+                return max(base_interval, 3600)  # 1 hour
+            return base_interval
+
     async def _get_stock_name(self, symbol: str) -> str:
         """Return the human-readable company name for a symbol, cached in Redis.
 
@@ -1668,7 +1714,7 @@ class TradingEngine:
         while self._running:
             if self._market_data_running:
                 logger.warning("Market data download still running; skipping this cycle.")
-                await asyncio.sleep(settings.MARKET_DATA_REFRESH_SECONDS)
+                await asyncio.sleep(self._get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, "data"))
                 continue
             self._market_data_running = True
             try:
@@ -1709,7 +1755,7 @@ class TradingEngine:
             finally:
                 self._market_data_running = False
 
-            await asyncio.sleep(settings.MARKET_DATA_REFRESH_SECONDS)
+            await asyncio.sleep(self._get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, "data"))
 
     async def _download_all_assets_data_loop(self):
         """Periodically download OHLCV for ALL tradable assets (stocks, ETFs, BTPs)."""
@@ -1717,7 +1763,7 @@ class TradingEngine:
         while self._running:
             if self._full_download_running:
                 logger.info("Full download already running (likely force download); skipping this cycle.")
-                await asyncio.sleep(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS)
+                await asyncio.sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
                 continue
             self._full_download_running = True
             try:
@@ -1733,7 +1779,7 @@ class TradingEngine:
                 all_pairs = stock_pairs + btp_pairs
                 if not all_pairs:
                     logger.info("No tradable assets found; skipping full download.")
-                    await asyncio.sleep(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS)
+                    await asyncio.sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
                     continue
 
                 now_ms = int(time.time() * 1000)
@@ -1776,7 +1822,7 @@ class TradingEngine:
                 self._full_download_running = False
 
             # Wait before next full download
-            await asyncio.sleep(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS)
+            await asyncio.sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
 
     async def _cleanup_yf_cache_loop(self):
         """No-op: yfinance manages its own cache. External deletion caused SQLite errors."""
@@ -1801,7 +1847,7 @@ class TradingEngine:
                 all_pairs = stock_pairs + btp_pairs
                 if not all_pairs:
                     logger.info("No tradable assets found; skipping full news download.")
-                    await asyncio.sleep(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS)
+                    await asyncio.sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, "news"))
                     continue
 
                 # Prioritize currently tracked symbols first, then the rest.
@@ -1825,7 +1871,7 @@ class TradingEngine:
             except Exception as e:
                 logger.error(f"Full asset news download loop error: {e}", exc_info=True)
 
-            await asyncio.sleep(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS)
+            await asyncio.sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, "news"))
 
     async def _refresh_all_quotes_loop(self):
         """Periodically fetch quotes for all tradable assets and cache them in Redis."""
@@ -1833,7 +1879,7 @@ class TradingEngine:
         while self._running:
             if self._quotes_fetch_running:
                 logger.info("Quotes fetch already running (likely re-evaluation or breadth); skipping this cycle.")
-                await asyncio.sleep(settings.QUOTE_REFRESH_INTERVAL_SECONDS)
+                await asyncio.sleep(self._get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, "quotes"))
                 continue
             self._quotes_fetch_running = True
             try:
@@ -1850,7 +1896,7 @@ class TradingEngine:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
             finally:
                 self._quotes_fetch_running = False
-            await asyncio.sleep(settings.QUOTE_REFRESH_INTERVAL_SECONDS)
+            await asyncio.sleep(self._get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, "quotes"))
 
     async def _refresh_ticker_discovery_loop(self):
         """Periodically discover tickers from news RSS feeds and trending stocks.
