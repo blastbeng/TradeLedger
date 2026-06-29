@@ -104,7 +104,7 @@ def validate_signal(
         # Enforce a minimum max hold time relative to the candle timeframe
         if timeframe_seconds is not None:
             # Cap the minimum hold time to avoid absurd values for very long timeframes (e.g., 5Y)
-            min_hold = min(min_hold_time_mult * timeframe_seconds, 31_536_000)  # cap at ~1 year
+            min_hold = min(min_hold_time_mult * timeframe_seconds, 157_680_000)  # cap at ~5 years
             if mht < min_hold:
                 return Signal(
                     action="HOLD",
