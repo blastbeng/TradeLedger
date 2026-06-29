@@ -624,7 +624,41 @@ class Settings(BaseSettings):
             raise ValueError("BTP_MIN_FEE must be >= 0")
         return v
 
+    @field_validator("STOCK_FEE_PERC")
+    @classmethod
+    def validate_stock_fee_perc(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("STOCK_FEE_PERC must be >= 0")
+        return v
+
+    @field_validator("STOCK_FEE_MIN")
+    @classmethod
+    def validate_stock_fee_min(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("STOCK_FEE_MIN must be >= 0")
+        return v
+
+    @field_validator("STOCK_FEE_FIXED")
+    @classmethod
+    def validate_stock_fee_fixed(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("STOCK_FEE_FIXED must be >= 0")
+        return v
+
+    @field_validator("TOBIN_TAX_RATE")
+    @classmethod
+    def validate_tobin_tax_rate(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("TOBIN_TAX_RATE must be >= 0")
+        return v
+
     BTP_IS_PRIMARY_ISSUANCE: bool = False
+
+    # Standard stock/ETF fee parameters (Intesa Sanpaolo Investo defaults)
+    STOCK_FEE_PERC: float = 0.0024
+    STOCK_FEE_MIN: float = 3.50
+    STOCK_FEE_FIXED: float = 2.50
+    TOBIN_TAX_RATE: float = 0.0012
 
     # Banca d'Italia BCE comunicati scraping for BTP news
     BANCA_D_ITALIA_BTP_NEWS_ENABLED: bool = False

@@ -19,6 +19,8 @@ def calculate_transaction_costs(operation_type: str, stock_price: float, quantit
     Returns:
         dict with keys: 'gross_value', 'bank_fee', 'tobin_tax', 'total_costs', 'net_value'
     """
+    from src.config.settings import settings
+
     operation_type = operation_type.upper()
     if operation_type not in ("BUY", "SELL"):
         raise ValueError("operation_type must be 'BUY' or 'SELL'")
@@ -28,7 +30,6 @@ def calculate_transaction_costs(operation_type: str, stock_price: float, quantit
     # --- BTP Bond Fee Logic ---
     is_btp = symbol is not None and re.match(r'^IT[A-Z0-9]{10}$', symbol.split("/")[0]) is not None
     if is_btp:
-        from src.config.settings import settings
         if settings.BTP_IS_PRIMARY_ISSUANCE:
             bank_fee = 0.0
         else:
@@ -54,11 +55,11 @@ def calculate_transaction_costs(operation_type: str, stock_price: float, quantit
 
     # --- Standard Stock/ETF Fee Logic ---
     # Bank Commission (Intesa Sanpaolo Investo Standard Profile)
-    percentage_commission = gross_value * 0.0024
-    bank_fee = max(3.50, percentage_commission) + 2.50
+    percentage_commission = gross_value * settings.STOCK_FEE_PERC
+    bank_fee = max(settings.STOCK_FEE_MIN, percentage_commission) + settings.STOCK_FEE_FIXED
 
     # State Tax (Italian Tobin Tax)
-    tobin_tax = (gross_value * 0.0012) if operation_type == "BUY" else 0.0
+    tobin_tax = (gross_value * settings.TOBIN_TAX_RATE) if operation_type == "BUY" else 0.0
 
     total_costs = bank_fee + tobin_tax
 
