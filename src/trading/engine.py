@@ -11585,55 +11585,55 @@ class TradingEngine:
                         else:
                             scaled_timeout = base_timeout
                         if time.time() - queued_at > scaled_timeout:
-                        logger.warning(
-                            f"Queued order {order_id} for {queued['symbol']} timed out "
-                            f"after {settings.QUEUED_ORDER_TIMEOUT_SECONDS}s. Cancelling."
-                        )
-                        try:
-                            await asyncio.to_thread(self.trader.cancel_order, order_id)
-                        except Exception as e:
-                            logger.error(f"Failed to cancel timed-out order {order_id}: {e}")
-                        # Remove from queue regardless of cancel success
-                        self.queued_orders.remove(queued)
-                        # If this was an exit order, cancel its OCO pair
-                        if queued.get("is_exit_order"):
-                            oco_pair_id = queued.get("oco_pair")
-                            if oco_pair_id:
-                                try:
-                                    await asyncio.to_thread(self.trader.cancel_order, oco_pair_id)
-                                    logger.info(f"Cancelled OCO pair {oco_pair_id} for timed-out exit order {order_id}")
-                                except Exception as e:
-                                    logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
-                                async with self._queued_orders_lock:
-                                    self.queued_orders = [
-                                        q for q in self.queued_orders
-                                        if q.get("order_id") != oco_pair_id
-                                    ]
-                            # Clear exit order IDs from position
-                            pos = self.positions.get(queued["symbol"])
-                            if pos:
-                                pos.pop("stop_loss_order_id", None)
-                                pos.pop("take_profit_order_id", None)
-                            if self.notifier:
-                                stock_name = await self._get_stock_name(queued["symbol"])
-                                display_symbol = self._format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
-                                await self.notifier.send_notification(
-                                    f"🔗 OCO pair {oco_pair_id} cancelled for {display_symbol} (main order timed out).",
-                                    summary={"symbol": queued["symbol"], "action": "CANCEL", "reason": "OCO pair cancelled due to timeout"}
-                                )
-                        if self.notifier:
-                            stock_name = await self._get_stock_name(queued['symbol'])
-                            tf = queued.get('timeframe')
-                            display = self._format_symbol_display(queued['symbol'], stock_name, tf)
-                            await self.notifier.send_notification(
-                                f"⏰ Queued {queued['side']} order for {display} timed out and was cancelled.",
-                                summary={
-                                    "symbol": queued['symbol'],
-                                    "action": "CANCEL",
-                                    "reason": "Queued order timeout",
-                                }
+                            logger.warning(
+                                f"Queued order {order_id} for {queued['symbol']} timed out "
+                                f"after {scaled_timeout}s. Cancelling."
                             )
-                        continue
+                            try:
+                                await asyncio.to_thread(self.trader.cancel_order, order_id)
+                            except Exception as e:
+                                logger.error(f"Failed to cancel timed-out order {order_id}: {e}")
+                            # Remove from queue regardless of cancel success
+                            self.queued_orders.remove(queued)
+                            # If this was an exit order, cancel its OCO pair
+                            if queued.get("is_exit_order"):
+                                oco_pair_id = queued.get("oco_pair")
+                                if oco_pair_id:
+                                    try:
+                                        await asyncio.to_thread(self.trader.cancel_order, oco_pair_id)
+                                        logger.info(f"Cancelled OCO pair {oco_pair_id} for timed-out exit order {order_id}")
+                                    except Exception as e:
+                                        logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
+                                    async with self._queued_orders_lock:
+                                        self.queued_orders = [
+                                            q for q in self.queued_orders
+                                            if q.get("order_id") != oco_pair_id
+                                        ]
+                                # Clear exit order IDs from position
+                                pos = self.positions.get(queued["symbol"])
+                                if pos:
+                                    pos.pop("stop_loss_order_id", None)
+                                    pos.pop("take_profit_order_id", None)
+                                if self.notifier:
+                                    stock_name = await self._get_stock_name(queued["symbol"])
+                                    display_symbol = self._format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
+                                    await self.notifier.send_notification(
+                                        f"🔗 OCO pair {oco_pair_id} cancelled for {display_symbol} (main order timed out).",
+                                        summary={"symbol": queued["symbol"], "action": "CANCEL", "reason": "OCO pair cancelled due to timeout"}
+                                    )
+                            if self.notifier:
+                                stock_name = await self._get_stock_name(queued['symbol'])
+                                tf = queued.get('timeframe')
+                                display = self._format_symbol_display(queued['symbol'], stock_name, tf)
+                                await self.notifier.send_notification(
+                                    f"⏰ Queued {queued['side']} order for {display} timed out and was cancelled.",
+                                    summary={
+                                        "symbol": queued['symbol'],
+                                        "action": "CANCEL",
+                                        "reason": "Queued order timeout",
+                                    }
+                                )
+                            continue
 
                     paper_order = await asyncio.to_thread(self.trader.get_order, order_id)
                     if paper_order is None:
