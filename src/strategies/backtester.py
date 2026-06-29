@@ -26,6 +26,39 @@ def _compute_intesa_fees(trade_value: float, side: str, is_btp: bool = False) ->
     return commission + fixed_fee + tobin_tax
 
 
+def _compute_dynamic_slippage(
+    candle_index: int,
+    candles: List[List],
+    avg_volumes: List[Optional[float]],
+    atr_values: Optional[List[Optional[float]]],
+    base_pct: float,
+    max_pct: float,
+) -> float:
+    """Compute dynamic slippage based on relative volume and volatility at a given candle.
+
+    - Low relative volume (current < average) → wider spread → higher slippage (up to 3× base).
+    - High ATR% → more price movement between signal and fill → higher slippage.
+    """
+    slippage = base_pct
+
+    # Volume adjustment
+    current_vol = candles[candle_index][5] if candle_index < len(candles) else 0.0
+    avg_vol = avg_volumes[candle_index] if candle_index < len(avg_volumes) else None
+    if avg_vol is not None and avg_vol > 0 and current_vol > 0:
+        vol_ratio = avg_vol / current_vol
+        if vol_ratio > 1.0:
+            slippage *= min(vol_ratio, 3.0)
+
+    # Volatility adjustment
+    atr = atr_values[candle_index] if atr_values and candle_index < len(atr_values) else None
+    close = candles[candle_index][4] if candle_index < len(candles) else 0.0
+    if atr is not None and atr > 0 and close > 0:
+        atr_pct = atr / close
+        slippage += atr_pct * 0.05
+
+    return min(slippage, max_pct)
+
+
 def backtest_strategy(
     candles: List[List],
     stop_loss_pct: float,
@@ -52,6 +85,9 @@ def backtest_strategy(
     max_trades: int = 200,
     cooldown_after_loss_seconds: Optional[int] = None,
     slippage_pct: float = 0.0,
+    slippage_model: str = "fixed",
+    slippage_base_pct: float = 0.001,
+    slippage_max_pct: float = 0.01,
     trend_filter_ema_period: int = 0,
     rsi_values: Optional[List[Optional[float]]] = None,
     max_rsi: float = 100.0,
@@ -169,6 +205,16 @@ def backtest_strategy(
         closes = [c[4] for c in candles]
         ema_values = compute_ema(closes, entry_ema_period)
 
+    # Pre-compute rolling average volume for dynamic slippage
+    avg_volume_series: List[Optional[float]] = []
+    if slippage_model == "dynamic":
+        vol_period = 20
+        volumes = [c[5] for c in candles]
+        for idx in range(len(candles)):
+            start_idx = max(0, idx - vol_period + 1)
+            window = volumes[start_idx:idx + 1]
+            avg_volume_series.append(sum(window) / len(window) if window else None)
+
     while i < len(candles) - 1 and len(trades) < max_trades:
         # --- Configurable entry filters ---
         filter_results = []
@@ -282,6 +328,15 @@ def backtest_strategy(
             candle_low = candle[3]
             candle_close = candle[4]
 
+            # Compute effective slippage for this candle
+            if slippage_model == "dynamic" and avg_volume_series:
+                effective_slippage = _compute_dynamic_slippage(
+                    j, candles, avg_volume_series, atr_values,
+                    slippage_base_pct, slippage_max_pct,
+                )
+            else:
+                effective_slippage = slippage_pct
+
             hold_time = (candle_ts - entry_ts) / 1000.0
 
             # Check max hold time
@@ -371,7 +426,7 @@ def backtest_strategy(
                         if candle[1] >= target_exit:
                             exit_price = candle[1]
                         else:
-                            exit_price = target_exit * (1 + slippage_pct)
+                            exit_price = target_exit * (1 + effective_slippage)
                         exit_ts = candle_ts
                         exit_reason = "max_unrealized_loss"
                         exit_index = j
@@ -384,7 +439,7 @@ def backtest_strategy(
                         if candle[1] <= target_exit:
                             exit_price = candle[1]
                         else:
-                            exit_price = target_exit * (1 - slippage_pct)
+                            exit_price = target_exit * (1 - effective_slippage)
                         exit_ts = candle_ts
                         exit_reason = "max_unrealized_loss"
                         exit_index = j
@@ -403,10 +458,10 @@ def backtest_strategy(
                     tp_triggered = (candle_high >= tp_target) if not is_short else (candle_low <= tp_target)
                     if tp_triggered:
                         if is_short:
-                            actual_tp_fill = candle[1] if candle[1] <= tp_target else tp_target * (1 + slippage_pct)
+                            actual_tp_fill = candle[1] if candle[1] <= tp_target else tp_target * (1 + effective_slippage)
                             partial_gross = (entry_price - actual_tp_fill) / entry_price * lvl_frac
                         else:
-                            actual_tp_fill = candle[1] if candle[1] >= tp_target else tp_target * (1 - slippage_pct)
+                            actual_tp_fill = candle[1] if candle[1] >= tp_target else tp_target * (1 - effective_slippage)
                             partial_gross = (actual_tp_fill - entry_price) / entry_price * lvl_frac
                         if fee_model == "intesa" and trade_value and trade_value > 0:
                             entry_fee_pct = 0.0
@@ -448,12 +503,12 @@ def backtest_strategy(
                     if candle[1] >= current_stop:
                         exit_price = candle[1]
                     else:
-                        exit_price = current_stop * (1 + slippage_pct)
+                        exit_price = current_stop * (1 + effective_slippage)
                 else:
                     if candle[1] <= current_stop:
                         exit_price = candle[1]
                     else:
-                        exit_price = current_stop * (1 - slippage_pct)
+                        exit_price = current_stop * (1 - effective_slippage)
                 exit_ts = candle_ts
                 exit_reason = "stop_loss"
                 exit_index = j
@@ -469,12 +524,12 @@ def backtest_strategy(
                     if candle[1] <= take_profit_price:
                         exit_price = candle[1]
                     else:
-                        exit_price = take_profit_price * (1 + slippage_pct)
+                        exit_price = take_profit_price * (1 + effective_slippage)
                 else:
                     if candle[1] >= take_profit_price:
                         exit_price = candle[1]
                     else:
-                        exit_price = take_profit_price * (1 - slippage_pct)
+                        exit_price = take_profit_price * (1 - effective_slippage)
                 exit_ts = candle_ts
                 exit_reason = "take_profit"
                 exit_index = j

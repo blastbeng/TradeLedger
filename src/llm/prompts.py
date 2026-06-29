@@ -1527,6 +1527,7 @@ Maximum symbols to trade: {max_symbols}
             "- `logic` (\"and\" or \"or\", default \"and\"): combine all enabled filters with AND or OR logic.\n"
             "Example: `{\"backtest_entry_config\": {\"ema_period\": 21, \"ema_direction\": \"above\", \"min_adx\": 25, \"max_rsi\": 65, \"macd_filter\": \"positive\", \"logic\": \"and\"}}`\n"
             "If you omit `backtest_entry_config`, the default (enter every candle) is used. **Always specify `backtest_entry_config` to match your intended entry strategy so the backtest results are accurate.**\n"
+            "**Slippage Model:** The backtester uses **dynamic slippage** based on each candle's relative volume and volatility (ATR%). Low-volume candles incur higher slippage (up to 3× base), and high-volatility candles add proportional slippage. This means strategies that trade in thin or volatile markets will show more realistic execution costs. The base slippage is 0.1%, capped at 1%.\n"
             "Your goal is to find parameters that would have been profitable given your chosen entry logic.\n"
             "**Key Recommendations:**\n"
             "- Prefer ATR-based stops and take-profits to adapt to volatility.\n"
