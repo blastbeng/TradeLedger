@@ -13008,14 +13008,14 @@ class TradingEngine:
             ) if backtest_results else "No backtest performed"
 
             return {
-                "step1_response": step1_response,
+                "step1_response": step1b_response,
                 "action": preliminary_signal.action,
                 "backtest_summary": combined_bt_summary,
                 "backtest_results": backtest_results,
             }
         else:
             return {
-                "step1_response": step1_response,
+                "step1_response": step1b_response,
                 "action": preliminary_signal.action,
                 "backtest_summary": "No backtest performed (action is SELL)",
             }
@@ -13199,7 +13199,7 @@ class TradingEngine:
             step2_response = step2_result["response"]
         except Exception as e:
             return {
-                "step1_response": step1_response,
+                "step1_response": step1b_response,
                 "error": f"LLM Step 2 call failed: {e}",
                 "action": preliminary_signal.action,
                 "backtest_summary": combined_bt_summary,
@@ -13231,7 +13231,7 @@ class TradingEngine:
                 final_strategy = create_strategy_from_llm(step2_response)
             except Exception as e2:
                 return {
-                    "step1_response": step1_response,
+                    "step1_response": step1b_response,
                     "step2_response": step2_response,
                     "error": f"Failed to parse LLM Step 2 response after retry: {e2}",
                     "action": preliminary_signal.action,
@@ -13241,7 +13241,7 @@ class TradingEngine:
         final_signal = final_strategy.generate_signal({})
 
         return {
-            "step1_response": step1_response,
+            "step1_response": step1b_response,
             "step2_response": step2_response,
             "action": final_signal.action,
             "backtest_summary": combined_bt_summary,
