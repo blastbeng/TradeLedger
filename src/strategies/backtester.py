@@ -11,6 +11,7 @@ import logging
 from typing import Dict, Any, Optional, List
 
 from src.indicators import compute_ema
+from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +19,11 @@ logger = logging.getLogger(__name__)
 def _compute_intesa_fees(trade_value: float, side: str, is_btp: bool = False) -> float:
     """Compute Intesa Sanpaolo Investo fees for a trade."""
     if is_btp:
-        commission = max(3.50, trade_value * 0.0024)
+        commission = max(settings.BTP_MIN_FEE, trade_value * settings.BTP_FEE_PERC)
         return commission  # no fixed fee, no Tobin tax
-    commission = max(3.50, trade_value * 0.0024)
-    fixed_fee = 2.50
-    tobin_tax = trade_value * 0.0012 if side == "buy" else 0.0
+    commission = max(settings.STOCK_FEE_MIN, trade_value * settings.STOCK_FEE_PERC)
+    fixed_fee = settings.STOCK_FEE_FIXED
+    tobin_tax = trade_value * settings.TOBIN_TAX_RATE if side == "buy" else 0.0
     return commission + fixed_fee + tobin_tax
 
 
