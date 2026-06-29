@@ -2101,7 +2101,7 @@ Example: {{"backtest_entry_config": {{"ema_period": 21, "ema_direction": "above"
 **Entry Condition (REQUIRED for every BUY):**
 Include an `entry_condition` object. Supported types: limit_price, rsi_threshold, delay, indicator_combo.
 Example: {{"type": "limit_price", "price": 1.23, "timeout_seconds": 3600}}
-Minimum timeout: max(300, {settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT} × candle timeframe seconds).
+Minimum timeout: max(300, {_settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT} × candle timeframe seconds).
 
 **Output ONLY the raw JSON object as specified.**
 
