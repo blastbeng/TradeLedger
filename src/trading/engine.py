@@ -5346,6 +5346,7 @@ class TradingEngine:
             "min_stop_atr_mult": min_stop_atr_mult,
             "min_hold_time_mult": min_hold_time_mult,
             "global_min_rr": global_min_rr,
+            "historical_backtest_results": historical_backtest_results,
         }
 
     @staticmethod
@@ -6305,6 +6306,7 @@ class TradingEngine:
             min_stop_atr_mult = _ctx["min_stop_atr_mult"]
             min_hold_time_mult = _ctx["min_hold_time_mult"]
             global_min_rr = _ctx["global_min_rr"]
+            historical_backtest_results = _ctx["historical_backtest_results"]
 
             # --- Compute portfolio exposure summary for the prompt ---
             _portfolio = await self._compute_portfolio_exposure_summary(base_balance)
