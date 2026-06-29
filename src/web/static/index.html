@@ -1081,25 +1081,91 @@
                             const cur = s.base_currency || 'EUR';
                             const amtStr = (s.trade_amount != null && s.trade_amount > 0)
                                 ? s.trade_amount.toFixed(2) + ' ' + cur : '—';
-                            smTitle.textContent = `${s.display_symbol || s.symbol} — ${actionLabel}`;
-                            let extraInfo = '';
+
+                            // Parse display_symbol: "BASE[Name] (timeframe)" → ticker code + name
+                            let tickerCode = s.symbol || '';
+                            let tickerName = s.stock_name || '';
+                            let tickerTf = s.timeframe || '';
+                            if (s.display_symbol) {
+                                const m = s.display_symbol.match(/^([A-Z0-9.]+)\[([^\]]*)\](?:\s*\(([^)]+)\))?/);
+                                if (m) {
+                                    tickerCode = m[1];
+                                    if (!tickerName) tickerName = m[2];
+                                    if (!tickerTf && m[3]) tickerTf = m[3];
+                                }
+                            }
+
+                            smTitle.textContent = `${tickerCode} — ${actionLabel}`;
+
+                            let bodyHtml = `<strong>Time:</strong> ${time}\n`;
+                            bodyHtml += `<strong>Ticker:</strong> ${tickerCode}\n`;
+                            if (tickerName && tickerName !== tickerCode) {
+                                bodyHtml += `<strong>Name:</strong> ${tickerName}\n`;
+                            }
+                            if (tickerTf) {
+                                bodyHtml += `<strong>Timeframe:</strong> ${tickerTf}\n`;
+                            }
+                            bodyHtml += `<strong>Action:</strong> ${actionLabel}\n`;
+                            bodyHtml += `<strong>Amount:</strong> ${amtStr}\n`;
+                            bodyHtml += `<strong>Confidence:</strong> ${(s.confidence ?? 0).toFixed(2)}\n`;
+                            bodyHtml += `<strong>Model:</strong> ${s.model_type || '—'}\n`;
+                            bodyHtml += `<strong>Provider:</strong> ${s.llm_provider || '—'}\n`;
+                            bodyHtml += `<strong>Model Name:</strong> ${s.llm_model || '—'}\n`;
+
+                            // Entry condition
+                            if (s.entry_condition) {
+                                bodyHtml += `\n<strong>⏳ Entry Condition:</strong> ${s.entry_condition}\n`;
+                            } else if (s.action === 'BUY') {
+                                bodyHtml += `\n<strong>⏳ Entry Condition:</strong> Execute immediately at market price\n`;
+                            }
+
+                            // Strategy parameters
+                            if (s.action === 'BUY' || s.action === 'SELL') {
+                                bodyHtml += `\n<strong>📋 Strategy Parameters:</strong>\n`;
+                                if (s.stop_loss) {
+                                    bodyHtml += `  🛑 Stop-Loss: ${s.stop_loss}\n`;
+                                }
+                                if (s.take_profit) {
+                                    bodyHtml += `  🎯 Take-Profit: ${s.take_profit}\n`;
+                                }
+                                if (s.position_size_fraction != null) {
+                                    bodyHtml += `  💰 Position Size: ${(s.position_size_fraction * 100).toFixed(1)}% of balance\n`;
+                                }
+                                if (s.trailing_stop) {
+                                    let trailStr = `  🚶 Trailing Stop: enabled`;
+                                    if (s.trailing_stop_distance_pct != null) {
+                                        trailStr += ` (${(s.trailing_stop_distance_pct * 100).toFixed(1)}%)`;
+                                    }
+                                    bodyHtml += trailStr + `\n`;
+                                }
+                                if (s.max_hold_time_seconds != null) {
+                                    const holdH = s.max_hold_time_seconds / 3600;
+                                    if (holdH >= 1) {
+                                        bodyHtml += `  ⏰ Max Hold: ${holdH.toFixed(1)}h\n`;
+                                    } else {
+                                        bodyHtml += `  ⏰ Max Hold: ${s.max_hold_time_seconds}s\n`;
+                                    }
+                                }
+                                if (s.cooldown_after_loss_seconds != null && s.cooldown_after_loss_seconds > 0) {
+                                    bodyHtml += `  ❄️ Cooldown after loss: ${s.cooldown_after_loss_seconds}s\n`;
+                                }
+                                if (s.order_type && s.order_type !== 'market') {
+                                    bodyHtml += `  📝 Order Type: ${s.order_type}\n`;
+                                }
+                                if (s.limit_price != null) {
+                                    bodyHtml += `  🏷️ Limit Price: ${s.limit_price}\n`;
+                                }
+                            }
+
                             if (s.news_sentiment) {
-                                extraInfo += `\n<strong>News Sentiment:</strong> ${s.news_sentiment}\n`;
+                                bodyHtml += `\n<strong>📰 News Sentiment:</strong> ${s.news_sentiment}\n`;
                             }
                             if (s.backtest_summary) {
-                                extraInfo += `\n<strong>Backtest Results:</strong>\n${s.backtest_summary}\n`;
+                                bodyHtml += `\n<strong>📈 Backtest Results:</strong>\n${s.backtest_summary}\n`;
                             }
-                            smBody.innerHTML =
-                                `<strong>Time:</strong> ${time}\n` +
-                                `<strong>Ticker:</strong> ${s.display_symbol || s.symbol}\n` +
-                                `<strong>Action:</strong> ${actionLabel}\n` +
-                                `<strong>Amount:</strong> ${amtStr}\n` +
-                                `<strong>Confidence:</strong> ${(s.confidence ?? 0).toFixed(2)}\n` +
-                                `<strong>Model:</strong> ${s.model_type || '—'}\n` +
-                                `<strong>Provider:</strong> ${s.llm_provider || '—'}\n` +
-                                `<strong>Model Name:</strong> ${s.llm_model || '—'}\n` +
-                                extraInfo +
-                                `\n<strong>Reasoning:</strong>\n${fullReasoning}`;
+                            bodyHtml += `\n<strong>Reasoning:</strong>\n${fullReasoning}`;
+
+                            smBody.innerHTML = bodyHtml;
                             sm.style.display = 'flex';
                         };
                     });
