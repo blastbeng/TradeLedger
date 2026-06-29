@@ -373,6 +373,7 @@ async def ticker(symbol: str):
         "bid": None,
         "ask": None,
         "change_24h": None,
+        "percentage": None,
     }
 
 @app.get("/api/tickers")

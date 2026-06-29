@@ -373,8 +373,8 @@ def discover_trending_stocks(
     gainers = []
     for sym in sample:
         q = quotes.get(sym)
-        if q and q.get("change_24h") is not None:
-            gainers.append((sym, q["change_24h"]))
+        if q and q.get("percentage") is not None:
+            gainers.append((sym, q["percentage"]))
     # Sort by change descending (biggest gainers first)
     gainers.sort(key=lambda x: x[1], reverse=True)
 
