@@ -419,8 +419,6 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
                         "bid": last_price,
                         "ask": last_price,
                         "volume": vol,
-                        "change_24h": None,
-                        "percentage": None,
                         "quoteVolume": vol,
                         "last_update": int(time.time() * 1000),
                         "source": "borsa_italiana",

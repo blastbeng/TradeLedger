@@ -1271,7 +1271,7 @@ def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict
                 "change_24h": row["change_24h"],
                 "percentage": row["percentage"],
                 "quoteVolume": row["quotevolume"],
-                "name": None,
+                "name": row["name"],
                 "coupon": row["coupon"],
                 "maturity": row["maturity"],
                 "last_update": int(row["updated_at"] * 1000) if row["updated_at"] else None,
