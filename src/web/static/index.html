@@ -494,26 +494,53 @@
         </div>
     </div>
 
-    <!-- Chart Modal -->
-    <div id="chart-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:1000; justify-content:center; align-items:center;">
-        <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius); padding:24px; width:90%; max-width:900px; max-height:90vh; overflow-y:auto; position:relative;">
-            <button id="close-modal" style="position:absolute; top:12px; right:16px; background:none; border:none; color:var(--text); font-size:1.5rem; cursor:pointer;">&times;</button>
+    <div id="chart-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; justify-content:center; align-items:center;">
+        <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius); padding:24px; width:95%; max-width:1200px; max-height:95vh; overflow-y:auto; position:relative;">
+            <button id="close-modal" style="position:absolute; top:12px; right:16px; background:none; border:none; color:var(--text); font-size:1.5rem; cursor:pointer; z-index:1;">&times;</button>
             <h2 id="chart-title" style="margin-bottom:16px; color:var(--accent);"></h2>
-            <div style="margin-bottom:12px;">
-                <label for="timeframe-select" style="margin-right:8px;">Timeframe:</label>
-                <select id="timeframe-select" style="background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px;">
-                    <option value="5Y" selected>5Y</option>
-                    <option value="3Y">3Y</option>
-                    <option value="1Y">1Y</option>
-                    <option value="6M">6M</option>
-                    <option value="3M">3M</option>
-                    <option value="1M">1M</option>
-                    <option value="1w">1w</option>
-                    <option value="1d">1d</option>
-                    <option value="1h">1h</option>
-                </select>
+            <div style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; align-items:flex-end;">
+                <div>
+                    <label for="timeframe-select" style="margin-right:8px; font-size:0.9rem;">Timeframe:</label>
+                    <select id="timeframe-select" style="background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px;">
+                        <option value="5Y" selected>5Y</option>
+                        <option value="3Y">3Y</option>
+                        <option value="1Y">1Y</option>
+                        <option value="6M">6M</option>
+                        <option value="3M">3M</option>
+                        <option value="1M">1M</option>
+                        <option value="1w">1w</option>
+                        <option value="1d">1d</option>
+                        <option value="1h">1h</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="chart-limit" style="margin-right:8px; font-size:0.9rem;">Limit:</label>
+                    <select id="chart-limit" style="background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px;">
+                        <option value="48">48</option>
+                        <option value="100">100</option>
+                        <option value="200" selected>200</option>
+                        <option value="500">500</option>
+                        <option value="1000">1000</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="chart-from-date" style="margin-right:8px; font-size:0.9rem;">From:</label>
+                    <input type="date" id="chart-from-date" style="background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px;">
+                </div>
+                <div>
+                    <label for="chart-to-date" style="margin-right:8px; font-size:0.9rem;">To:</label>
+                    <input type="date" id="chart-to-date" style="background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px;">
+                </div>
+                <div style="display:flex; align-items:center; gap:4px;">
+                    <input type="checkbox" id="chart-show-volume" checked style="accent-color:var(--accent);">
+                    <label for="chart-show-volume" style="font-size:0.9rem; cursor:pointer;">Volume</label>
+                </div>
+                <button id="chart-apply-filters" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.9rem;">Apply</button>
             </div>
-            <canvas id="ohlcv-chart" width="800" height="400"></canvas>
+            <div id="chart-stats" style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:12px; font-size:0.85rem; color:var(--text-secondary);"></div>
+            <div style="position:relative; width:100%; height:450px;">
+                <canvas id="ohlcv-chart"></canvas>
+            </div>
         </div>
     </div>
 
@@ -1046,7 +1073,16 @@
                         row.style.cursor = 'pointer';
                         const time = new Date(s.timestamp * 1000).toLocaleString();
                         row.insertCell().textContent = time;
-                        row.insertCell().textContent = s.display_symbol || s.symbol;
+                        const tickerCell = row.insertCell();
+                        const tickerSpan = document.createElement('span');
+                        tickerSpan.textContent = s.display_symbol || s.symbol;
+                        tickerSpan.className = 'clickable-symbol';
+                        tickerSpan.style.cursor = 'pointer';
+                        tickerSpan.onclick = (e) => {
+                            e.stopPropagation();
+                            openChart(s.symbol, s.timeframe || '1d');
+                        };
+                        tickerCell.appendChild(tickerSpan);
                         const actionCell = row.insertCell();
                         actionCell.textContent = s.action;
                         actionCell.className = s.action === 'BUY' ? 'green' : s.action === 'SELL' ? 'red' : '';
@@ -1370,11 +1406,22 @@
         timeframeSelect.onchange = () => {
             if (currentSymbol) fetchAndRenderChart(currentSymbol, timeframeSelect.value);
         };
+        document.getElementById('chart-apply-filters').addEventListener('click', () => {
+            if (currentSymbol) fetchAndRenderChart(currentSymbol, timeframeSelect.value);
+        });
+        document.getElementById('chart-limit').addEventListener('change', () => {
+            if (currentSymbol) fetchAndRenderChart(currentSymbol, timeframeSelect.value);
+        });
+        document.getElementById('chart-show-volume').addEventListener('change', () => {
+            if (currentSymbol) fetchAndRenderChart(currentSymbol, timeframeSelect.value);
+        });
 
         async function openChart(symbol, timeframe = '1h') {
             currentSymbol = symbol;
             chartTitle.textContent = symbol;
             timeframeSelect.value = timeframe;
+            document.getElementById('chart-from-date').value = '';
+            document.getElementById('chart-to-date').value = '';
             modal.style.display = 'flex';
             await fetchAndRenderChart(symbol, timeframe);
             
@@ -1391,48 +1438,137 @@
 
         async function fetchAndRenderChart(symbol, timeframe) {
             const baseSymbol = symbol.split('/')[0];
+            const limitSelect = document.getElementById('chart-limit');
+            const limit = limitSelect ? parseInt(limitSelect.value, 10) : 200;
+            const fromDate = document.getElementById('chart-from-date')?.value;
+            const toDate = document.getElementById('chart-to-date')?.value;
+            const showVolume = document.getElementById('chart-show-volume')?.checked !== false;
+
             try {
-                const resp = await fetch(`/api/ohlcv/${encodeURIComponent(baseSymbol)}?timeframe=${timeframe}&limit=48`);
+                const resp = await fetch(`/api/ohlcv/${encodeURIComponent(baseSymbol)}?timeframe=${timeframe}&limit=${limit}`);
                 if (!resp.ok) throw new Error('Failed to fetch OHLCV data');
                 const json = await resp.json();
-                const data = json.data || [];
+                let data = json.data || [];
+
+                // Client-side date filtering
+                if (fromDate) {
+                    const fromTs = new Date(fromDate).getTime();
+                    data = data.filter(d => d.timestamp >= fromTs);
+                }
+                if (toDate) {
+                    const toTs = new Date(toDate).getTime() + 86400000;
+                    data = data.filter(d => d.timestamp <= toTs);
+                }
+
                 const labels = data.map(d => new Date(d.timestamp).toLocaleString());
                 const closes = data.map(d => d.close);
+                const volumes = data.map(d => d.volume);
+
+                // Update stats
+                const statsDiv = document.getElementById('chart-stats');
+                if (statsDiv && data.length > 0) {
+                    const first = data[0];
+                    const last = data[data.length - 1];
+                    const high = Math.max(...data.map(d => d.high || 0));
+                    const low = Math.min(...data.map(d => d.low || 0));
+                    const totalVol = volumes.reduce((a, b) => a + (b || 0), 0);
+                    const changePct = first.close ? ((last.close - first.close) / first.close * 100) : 0;
+                    const changeClass = changePct >= 0 ? 'green' : 'red';
+                    statsDiv.innerHTML = `
+                        <span>📊 <strong>${data.length}</strong> candles</span>
+                        <span>📈 Open: <strong>${first.open?.toFixed(4) ?? '—'}</strong></span>
+                        <span>🔒 Close: <strong>${last.close?.toFixed(4) ?? '—'}</strong></span>
+                        <span>⬆️ High: <strong>${high.toFixed(4)}</strong></span>
+                        <span>⬇️ Low: <strong>${low.toFixed(4)}</strong></span>
+                        <span class="${changeClass}">📊 Change: <strong>${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%</strong></span>
+                        <span>📦 Vol: <strong>${totalVol.toLocaleString(undefined, {maximumFractionDigits: 0})}</strong></span>
+                    `;
+                } else if (statsDiv) {
+                    statsDiv.innerHTML = '<span>No data available for the selected filters.</span>';
+                }
 
                 if (chartInstance) {
                     chartInstance.data.labels = labels;
                     chartInstance.data.datasets[0].data = closes;
+                    if (showVolume && volumes.some(v => v > 0)) {
+                        if (chartInstance.data.datasets.length > 1 && chartInstance.data.datasets[1].label === 'Volume') {
+                            chartInstance.data.datasets[1].data = volumes;
+                        } else {
+                            chartInstance.data.datasets.push({
+                                label: 'Volume',
+                                data: volumes,
+                                type: 'bar',
+                                backgroundColor: 'rgba(139,148,158,0.3)',
+                                borderColor: 'rgba(139,148,158,0.3)',
+                                yAxisID: 'y1',
+                                order: 2,
+                            });
+                        }
+                    } else {
+                        chartInstance.data.datasets = chartInstance.data.datasets.filter(ds => ds.label !== 'Volume');
+                    }
+                    chartInstance.options.scales.y1.display = showVolume && volumes.some(v => v > 0);
                     chartInstance.update();
                 } else {
                     const ctx = document.getElementById('ohlcv-chart').getContext('2d');
+                    const datasets = [{
+                        label: symbol + ' Close',
+                        data: closes,
+                        borderColor: '#58a6ff',
+                        backgroundColor: 'rgba(88,166,255,0.1)',
+                        fill: true,
+                        tension: 0.2,
+                        yAxisID: 'y',
+                        order: 1,
+                    }];
+                    if (showVolume && volumes.some(v => v > 0)) {
+                        datasets.push({
+                            label: 'Volume',
+                            data: volumes,
+                            type: 'bar',
+                            backgroundColor: 'rgba(139,148,158,0.3)',
+                            borderColor: 'rgba(139,148,158,0.3)',
+                            yAxisID: 'y1',
+                            order: 2,
+                        });
+                    }
                     chartInstance = new Chart(ctx, {
                         type: 'line',
-                        data: {
-                            labels: labels,
-                            datasets: [{
-                                label: symbol + ' Close',
-                                data: closes,
-                                borderColor: '#58a6ff',
-                                backgroundColor: 'rgba(88,166,255,0.1)',
-                                fill: true,
-                                tension: 0.2,
-                            }]
-                        },
+                        data: { labels: labels, datasets: datasets },
                         options: {
                             responsive: true,
                             maintainAspectRatio: false,
+                            interaction: { mode: 'index', intersect: false },
                             plugins: {
-                                legend: { display: false }
+                                legend: { display: true, labels: { color: '#8b949e' } },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(ctx) {
+                                            if (ctx.dataset.label === 'Volume') {
+                                                return `Vol: ${ctx.parsed.y?.toLocaleString() ?? 0}`;
+                                            }
+                                            return `Close: ${ctx.parsed.y?.toFixed(4) ?? '—'}`;
+                                        }
+                                    }
+                                }
                             },
                             scales: {
-                                x: { ticks: { color: '#8b949e' } },
-                                y: { ticks: { color: '#8b949e' } }
+                                x: { ticks: { color: '#8b949e', maxTicksLimit: 12 } },
+                                y: { ticks: { color: '#8b949e' }, position: 'left' },
+                                y1: {
+                                    ticks: { color: '#8b949e' },
+                                    position: 'right',
+                                    grid: { drawOnChartArea: false },
+                                    display: showVolume && volumes.some(v => v > 0),
+                                }
                             }
                         }
                     });
                 }
             } catch (err) {
                 console.error(err);
+                const statsDiv = document.getElementById('chart-stats');
+                if (statsDiv) statsDiv.innerHTML = '<span style="color:var(--red);">Failed to load chart data.</span>';
             }
         }
 
