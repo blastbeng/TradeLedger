@@ -594,40 +594,45 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
             for tf, ind in tf_indicators.items():
                 if tf not in key_timeframes:
                     continue
-                lines.append(f"  [{tf}]")
+                tf_lines = []
                 if ind.get('rsi') is not None:
-                    lines.append(f"    RSI(14)={ind['rsi']:.2f}")
+                    tf_lines.append(f"    RSI(14)={ind['rsi']:.2f}")
                 if ind.get('macd') is not None:
-                    lines.append(f"    MACD={ind['macd']:.4f} Signal={ind['macd_signal']:.4f} Hist={ind['macd_hist']:.4f}")
+                    tf_lines.append(f"    MACD={ind['macd']:.4f} Signal={ind['macd_signal']:.4f} Hist={ind['macd_hist']:.4f}")
                 if ind.get('bb_upper') is not None:
-                    lines.append(f"    BB Upper={ind['bb_upper']:.4f} Middle={ind['bb_middle']:.4f} Lower={ind['bb_lower']:.4f}")
+                    tf_lines.append(f"    BB Upper={ind['bb_upper']:.4f} Middle={ind['bb_middle']:.4f} Lower={ind['bb_lower']:.4f}")
                 if ind.get('ema_9') is not None:
-                    lines.append(f"    EMA9={ind['ema_9']:.4f} EMA21={ind['ema_21']:.4f}")
+                    tf_lines.append(f"    EMA9={ind['ema_9']:.4f} EMA21={ind['ema_21']:.4f}")
                 if ind.get('stochastic_k') is not None:
                     d_str = f"{ind['stochastic_d']:.2f}" if ind['stochastic_d'] is not None else "N/A"
-                    lines.append(f"    Stoch %K={ind['stochastic_k']:.2f} %D={d_str}")
+                    tf_lines.append(f"    Stoch %K={ind['stochastic_k']:.2f} %D={d_str}")
                 if ind.get('adx') is not None:
-                    lines.append(f"    ADX(14)={ind['adx']:.2f} +DI={ind['plus_di']:.2f} -DI={ind['minus_di']:.2f}")
+                    tf_lines.append(f"    ADX(14)={ind['adx']:.2f} +DI={ind['plus_di']:.2f} -DI={ind['minus_di']:.2f}")
                 if ind.get('obv') is not None:
-                    lines.append(f"    OBV={ind['obv']:.2f}")
+                    tf_lines.append(f"    OBV={ind['obv']:.2f}")
                 if ind.get('mfi') is not None:
-                    lines.append(f"    MFI(14)={ind['mfi']:.2f}")
+                    tf_lines.append(f"    MFI(14)={ind['mfi']:.2f}")
                 if ind.get('cci') is not None:
-                    lines.append(f"    CCI(20)={ind['cci']:.2f}")
+                    tf_lines.append(f"    CCI(20)={ind['cci']:.2f}")
                 if ind.get('williams_r') is not None:
-                    lines.append(f"    Williams %R(14)={ind['williams_r']:.2f}")
+                    tf_lines.append(f"    Williams %R(14)={ind['williams_r']:.2f}")
                 if ind.get('ichimoku') is not None:
                     ich = ind['ichimoku']
-                    lines.append(f"    Ichimoku: Tenkan={ich['tenkan_sen']:.4f} Kijun={ich['kijun_sen']:.4f} SpanA={ich['senkou_span_a']:.4f} SpanB={ich['senkou_span_b']:.4f} Cloud={ich['cloud_bottom']:.4f}-{ich['cloud_top']:.4f}")
+                    tf_lines.append(f"    Ichimoku: Tenkan={ich['tenkan_sen']:.4f} Kijun={ich['kijun_sen']:.4f} SpanA={ich['senkou_span_a']:.4f} SpanB={ich['senkou_span_b']:.4f} Cloud={ich['cloud_bottom']:.4f}-{ich['cloud_top']:.4f}")
                 if ind.get('donchian_channels') is not None:
                     dc = ind['donchian_channels']
-                    lines.append(f"    Donchian: Upper={dc['upper']:.4f} Middle={dc['middle']:.4f} Lower={dc['lower']:.4f}")
+                    tf_lines.append(f"    Donchian: Upper={dc['upper']:.4f} Middle={dc['middle']:.4f} Lower={dc['lower']:.4f}")
                 if ind.get('parabolic_sar') is not None:
-                    lines.append(f"    SAR={ind['parabolic_sar']:.6f}")
+                    tf_lines.append(f"    SAR={ind['parabolic_sar']:.6f}")
                 if ind.get('keltner_channels') is not None:
                     kc = ind['keltner_channels']
-                    lines.append(f"    Keltner: Upper={kc['upper']:.6f} Middle={kc['middle']:.6f} Lower={kc['lower']:.6f}")
-            prompt += "\n".join(lines) + "\n"
+                    tf_lines.append(f"    Keltner: Upper={kc['upper']:.6f} Middle={kc['middle']:.6f} Lower={kc['lower']:.6f}")
+                
+                if tf_lines:
+                    lines.append(f"  [{tf}]")
+                    lines.extend(tf_lines)
+            if len(lines) > 1:
+                prompt += "\n".join(lines) + "\n"
     if market_trend:
         prompt += f"\nOverall market trend ({market_trend['symbol']}): daily change {market_trend.get('change_24h')}%, last price {market_trend.get('last')}\n"
     if session_info:
