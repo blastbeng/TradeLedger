@@ -1225,7 +1225,7 @@ def save_quotes_batch(quotes: Dict[str, Dict[str, Any]]):
                 rows.append((
                     sym, q.get("last"), q.get("bid"), q.get("ask"),
                     q.get("volume"), q.get("change_24h"), q.get("percentage"),
-                    q.get("quoteVolume"), None, q.get("coupon"),
+                    q.get("quoteVolume"), q.get("name"), q.get("coupon"),
                     q.get("maturity"), now
                 ))
         if rows:
