@@ -10712,6 +10712,7 @@ class TradingEngine:
         sl_ot = signal.stop_loss_order_type
         sl_price = exit_prices.get("stop_loss_price")
         sl_order_id = None
+        actual_sl_ot = None
         if sl_ot in ("stop", "stop_limit") and sl_price is not None:
             actual_sl_ot = sl_ot
             try:
@@ -12638,6 +12639,7 @@ class TradingEngine:
             if tf_atr is not None and tf_atr > 0:
                 atr_multi_tf[tf] = tf_atr
 
+        atr_percentile = None
         if atr is not None and atr > 0:
             atr_percentile_key = f"atr_percentile:{symbol}"
             try:
