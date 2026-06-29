@@ -1870,7 +1870,18 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
 
     Scrapes the 'Info Strumento' section of the Borsa Italiana BTP page
     to extract the Scadenza (maturity), coupon rate, and denomination.
+    Results are cached in Redis for 24 hours.
     """
+    # Check Redis cache first
+    redis_client = get_redis_client()
+    cache_key = f"btp_details:{isin}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
     url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/obbligazioni-in-euro/scheda/{isin}-MOTX.html?lang=it"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -1881,19 +1892,12 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
 
-            # Find "Info Strumento" header
-            info_header = soup.find(["h3", "h2", "h4"], string=re.compile("Info Strumento", re.I))
-            if not info_header:
-                return {}
-
-            # Find the parent container with the tables
-            container = info_header.find_parent("div")
-            if not container:
-                return {}
-
-            tables = container.find_all("table")
             details: Dict[str, Optional[Any]] = {}
-            for table in tables:
+
+            # Robust approach: find ALL tables on the page and look for the
+            # relevant keys in any of them. The "Info Strumento" section is
+            # the only place with "Scadenza" and "Tasso Cedola" fields.
+            for table in soup.find_all("table"):
                 for row in table.find_all("tr"):
                     cells = row.find_all("td")
                     if len(cells) >= 2:
@@ -1909,6 +1913,13 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
                                 details["coupon"] = val
                         elif "Denominazione" in key:
                             details["name"] = val
+
+            # Cache the result for 24 hours (bond details rarely change)
+            if details:
+                try:
+                    redis_client.set(cache_key, json.dumps(details), ex=86400)
+                except Exception:
+                    pass
 
             return details
     except Exception as e:
@@ -1929,6 +1940,8 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
             bonds = json.loads(cached)
     except Exception:
         pass
+
+    _btp_list_was_cached = bonds is not None
 
     if bonds is None:
         url = settings.BTP_URL
@@ -1995,22 +2008,29 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
         # Only cache non-empty results so failed scrapes retry on next call
         if bonds:
             try:
-                redis_client.set(cache_key, json.dumps(bonds), ex=300)
+                redis_client.set(cache_key, json.dumps(bonds), ex=1800)
             except Exception as e:
                 logger.warning(f"Failed to cache BTP bonds: {e}")
 
-    # Fetch individual BTP details (maturity, coupon) from each BTP's page
-    for bond in bonds:
-        isin = bond["isin"]
-        details = _fetch_btp_details(isin)
-        if details:
-            if details.get("maturity"):
-                bond["maturity"] = details["maturity"]
-            if details.get("coupon") is not None:
-                bond["coupon"] = details["coupon"]
-            if details.get("name"):
-                bond["name"] = details["name"]
-        time.sleep(0.2)  # small delay to avoid rate limiting
+    # Only fetch individual BTP details when the list was freshly scraped
+    # (not from Redis cache). Bonds that already have maturity/coupon from
+    # the list page are skipped. Individual page fetches are cached in Redis
+    # for 24 hours by _fetch_btp_details itself.
+    if not _btp_list_was_cached:
+        for bond in bonds:
+            isin = bond["isin"]
+            # Skip if maturity and coupon are already present from the list page
+            if bond.get("maturity") and bond.get("coupon") is not None:
+                continue
+            details = _fetch_btp_details(isin)
+            if details:
+                if details.get("maturity"):
+                    bond["maturity"] = details["maturity"]
+                if details.get("coupon") is not None:
+                    bond["coupon"] = details["coupon"]
+                if details.get("name"):
+                    bond["name"] = details["name"]
+            time.sleep(0.2)  # small delay to avoid rate limiting
 
     # Always save BTP bonds to DB (idempotent upsert — ensures DB stays populated)
     if bonds:
