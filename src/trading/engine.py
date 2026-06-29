@@ -433,12 +433,25 @@ class TradingEngine:
             logger.warning(f"Quote fetch failed for {len(symbols)} symbols: {e}")
             return {}
 
-    async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 45.0, chunk_size: int = 5) -> Dict[str, Dict[str, Any]]:
-        """Fetch quotes for a large list of symbols in a single call.
-        Concurrency is handled by a lock inside get_quotes to prevent rate limiting."""
+    async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 45.0, chunk_size: int = 50) -> Dict[str, Dict[str, Any]]:
+        """Fetch quotes for a large list of symbols in batches to avoid yfinance timeouts.
+
+        Splits symbols into chunks of ``chunk_size`` and fetches each chunk
+        sequentially.  ``get_quotes`` uses a global lock internally, so
+        concurrent calls would queue behind the lock and potentially time out.
+        """
         if not symbols:
             return {}
-        return await self._get_quotes_async(symbols, timeout=timeout_per_chunk)
+
+        if len(symbols) <= chunk_size:
+            return await self._get_quotes_async(symbols, timeout=timeout_per_chunk)
+
+        result: Dict[str, Dict[str, Any]] = {}
+        for i in range(0, len(symbols), chunk_size):
+            chunk = symbols[i:i + chunk_size]
+            chunk_result = await self._get_quotes_async(chunk, timeout=timeout_per_chunk)
+            result.update(chunk_result)
+        return result
 
     async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Return aggregate news sentiment, cached for 60 seconds to reduce DB load."""
