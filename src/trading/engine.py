@@ -9773,8 +9773,6 @@ class TradingEngine:
                     # Skip entry signal monitoring for very long timeframes (>= 1 month)
                     # where short-term crossovers are irrelevant.
                     tf_seconds = self._timeframe_to_seconds(tf)
-                    if tf_seconds >= 2_592_000:  # 30 days (1M)
-                        continue
                     # Avoid re‑triggering too often – enforce a cooldown of at least
                     # the normal strategy interval.
                     # Use a short, dedicated cooldown so the bot reacts quickly to new signals
@@ -9900,6 +9898,63 @@ class TradingEngine:
         except Exception:
             pass
 
+        prev_close = prev.get("close")
+
+        # --- Long-term timeframe detection (>= 1 month) ---
+        # Use trend reversal and regime shift logic instead of short-term
+        # crossovers, which fire on every candle for long timeframes because
+        # indicators change dramatically between candles (e.g., RSI 20→80).
+        tf_seconds = self._timeframe_to_seconds(timeframe)
+        if tf_seconds >= 2_592_000:  # >= 1 month (1M, 3M, 6M, 1Y, 3Y, 5Y)
+            # 1. Trend direction reversal: +DI crosses above -DI
+            prev_plus_di = prev.get("plus_di")
+            prev_minus_di = prev.get("minus_di")
+            if (prev_plus_di is not None and prev_minus_di is not None
+                    and plus_di is not None and minus_di is not None
+                    and prev_plus_di <= prev_minus_di and plus_di > minus_di):
+                return True
+
+            # 2. Trend initiation: ADX crosses above moderate threshold
+            prev_adx = prev.get("adx")
+            if (prev_adx is not None and adx is not None
+                    and prev_adx <= adx_moderate and adx > adx_moderate
+                    and plus_di is not None and minus_di is not None
+                    and plus_di > minus_di):
+                return True
+
+            # 3. Major breakout: price breaks above Donchian upper channel
+            donchian = ind.get("donchian_channels")
+            if (donchian is not None and prev_close is not None
+                    and current_close is not None):
+                dc_upper = donchian.get("upper")
+                if dc_upper is not None and prev_close <= dc_upper and current_close > dc_upper:
+                    return True
+
+            # 4. Ichimoku cloud breakout: price crosses above cloud top
+            prev_cloud_top = prev.get("ichimoku_cloud_top")
+            if (prev_cloud_top is not None and ichimoku is not None
+                    and prev_close is not None and current_close is not None):
+                cloud_top = ichimoku.get("cloud_top")
+                if cloud_top is not None and prev_close <= cloud_top and current_close > cloud_top:
+                    return True
+
+            # 5. MACD zero-line crossover (long-term momentum shift)
+            prev_macd_val = prev.get("macd_val")
+            if (prev_macd_val is not None and macd_val is not None
+                    and prev_macd_val <= 0 and macd_val > 0):
+                return True
+
+            # 6. EMA golden cross (valid for long timeframes — major trend shift)
+            prev_ema_9 = prev.get("ema_9")
+            prev_ema_21 = prev.get("ema_21")
+            if (prev_ema_9 is not None and prev_ema_21 is not None
+                    and ema_9 is not None and ema_21 is not None
+                    and prev_ema_9 <= prev_ema_21 and ema_9 > ema_21):
+                return True
+
+            # No long-term entry signal detected
+            return False
+
         # --- Condition checks ---
         # 1. RSI oversold
         if rsi is not None and rsi < rsi_oversold:
@@ -9957,8 +10012,6 @@ class TradingEngine:
                 and ema_9 is not None and ema_21 is not None
                 and prev_ema_9 <= prev_ema_21 and ema_9 > ema_21):
             return True
-
-        prev_close = prev.get("close")
 
         # 11. Parabolic SAR flip (from above price to below price → uptrend)
         prev_sar = prev.get("parabolic_sar")
