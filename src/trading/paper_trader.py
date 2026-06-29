@@ -4,9 +4,10 @@ import uuid
 from typing import Dict, List, Optional, Any
 
 from src.config.settings import settings
-from src.database import load_paper_balances, save_paper_balances, load_paper_orders, save_paper_orders
+from src.database import load_paper_balances, save_paper_balances, load_paper_orders, save_paper_orders, get_ohlcv
 from src.exchanges.market_data import get_quotes, get_quotes_cached
 from src.exchanges.fees import calculate_transaction_costs
+from src.indicators import compute_atr
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,8 @@ class PaperTrader:
         self.base_currency = settings.BASE_CURRENCY
         self._balances: Dict[str, float] = {}
         self._orders: Dict[str, PaperOrder] = {}
-        self.market_slippage_pct = 0.001  # 0.1% adverse slippage on market orders
+        self.slippage_base_pct = 0.001  # 0.1% base slippage
+        self.slippage_max_pct = 0.01    # 1.0% max slippage
         self._balances_dirty = False
         self._load_balances()
 
@@ -168,6 +170,43 @@ class PaperTrader:
             logger.warning(f"Failed to fetch price for {symbol}: {e}")
             return None
 
+    def _get_dynamic_slippage(self, symbol: str, price: float) -> float:
+        """Compute dynamic slippage based on recent volume and volatility.
+        
+        Adapts the backtester's dynamic slippage model to live trading by using
+        the most recent daily candle and a 20-day average volume.
+        """
+        try:
+            candles = get_ohlcv(symbol, "1d", limit=21)
+            if not candles or len(candles) < 5:
+                return self.slippage_base_pct
+            
+            # Use the most recent completed candle for current volume
+            current_vol = candles[-2]["volume"] if len(candles) >= 2 else 0.0
+            volumes = [c["volume"] for c in candles[:-2]]
+            avg_vol = sum(volumes) / len(volumes) if volumes else 0.0
+            
+            slippage = self.slippage_base_pct
+            if avg_vol > 0 and current_vol > 0:
+                vol_ratio = avg_vol / current_vol
+                if vol_ratio > 1.0:
+                    slippage *= min(vol_ratio, 3.0)
+            
+            # Compute ATR for volatility adjustment
+            candle_list = [
+                [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
+                for c in candles
+            ]
+            atr = compute_atr(candle_list, period=14)
+            if atr and atr > 0 and price > 0:
+                atr_pct = atr / price
+                slippage += atr_pct * 0.05
+                
+            return min(slippage, self.slippage_max_pct)
+        except Exception as e:
+            logger.warning(f"Failed to compute dynamic slippage for {symbol}: {e}")
+            return self.slippage_base_pct
+
     @staticmethod
     def _generate_order_id() -> str:
         return str(uuid.uuid4())
@@ -198,10 +237,11 @@ class PaperTrader:
         """Fill an open order and update balances."""
         # Apply slippage to stop-order fills (they execute at market)
         if order.order_type in ("stop", "trailing_stop"):
+            slippage_pct = self._get_dynamic_slippage(order.symbol, fill_price)
             if order.side == "buy":
-                fill_price = fill_price * (1 + self.market_slippage_pct)
+                fill_price = fill_price * (1 + slippage_pct)
             else:
-                fill_price = fill_price * (1 - self.market_slippage_pct)
+                fill_price = fill_price * (1 - slippage_pct)
 
         if order.side == "buy":
             # amount is in quote currency
@@ -297,8 +337,9 @@ class PaperTrader:
         else:
             fill_price = price
 
-        # Apply slippage to market order fills
-        fill_price = fill_price * (1 + self.market_slippage_pct)
+        # Apply dynamic slippage to market order fills
+        slippage_pct = self._get_dynamic_slippage(symbol, fill_price)
+        fill_price = fill_price * (1 + slippage_pct)
 
         base_amount = amount / fill_price
         costs = calculate_transaction_costs("BUY", fill_price, base_amount, symbol=symbol)
@@ -384,8 +425,9 @@ class PaperTrader:
         else:
             fill_price = price
 
-        # Apply slippage to market order fills
-        fill_price = fill_price * (1 - self.market_slippage_pct)
+        # Apply dynamic slippage to market order fills
+        slippage_pct = self._get_dynamic_slippage(symbol, fill_price)
+        fill_price = fill_price * (1 - slippage_pct)
 
         base_balance = self._balances.get(base, 0.0)
         if amount > base_balance:
