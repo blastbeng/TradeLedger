@@ -58,11 +58,8 @@ logger = logging.getLogger(__name__)
 SYMBOL_REEVALUATION_INTERVAL = 14400  # seconds (4 hours) – medium/long-term
 DEFAULT_STRATEGY_INTERVAL = 3600   # fallback when no timeframe or no symbols (1 hour)
 MIN_SYMBOL_REEVALUATION_INTERVAL = 3600  # 1 hour – prevents rapid toggling
-MIN_LLM_PAUSE_DURATION = 1800  # seconds (30 min) – LLM cannot resume before this
-TRIGGERED_REEVALUATION_COOLDOWN = 1800  # 30 min – minimum between condition-triggered re-evaluations
 MAX_STOP_LOSS_REVIEWS = 10   # force-sell after this many consecutive stop-loss reviews
 MAX_TAKE_PROFIT_REVIEWS = 10   # force-sell after this many consecutive take-profit reviews
-DUST_KEEP_TIMEOUT_SECONDS = 7 * 24 * 3600  # 7 days – max time dust can be kept before auto-sell
 
 
 @dataclass
@@ -683,7 +680,7 @@ class TradingEngine:
                         # --- Fallback if no pause_duration was set ---
                         if not pause_duration_raw:
                             # No LLM-set duration → resume after the LLM-decided minimum pause duration
-                            default_max_pause = MIN_LLM_PAUSE_DURATION
+                            default_max_pause = settings.MIN_LLM_PAUSE_DURATION
                             try:
                                 raw = await asyncio.to_thread(self.redis.get, "trading:min_llm_pause_duration")
                                 if raw:
@@ -848,7 +845,7 @@ class TradingEngine:
                 last_triggered = await asyncio.to_thread(self.redis.get, last_triggered_key)
                 if last_triggered:
                     elapsed = time.time() - float(last_triggered)
-                    if elapsed < TRIGGERED_REEVALUATION_COOLDOWN:
+                    if elapsed < settings.TRIGGERED_REEVALUATION_COOLDOWN:
                         await asyncio.sleep(300)
                         continue
 
@@ -2706,8 +2703,8 @@ class TradingEngine:
             last_triggered = await asyncio.to_thread(self.redis.get, "trading:last_triggered_reeval")
             if last_triggered:
                 elapsed = time.time() - float(last_triggered)
-                if elapsed < TRIGGERED_REEVALUATION_COOLDOWN:
-                    logger.info(f"Forced re-evaluation skipped: triggered cooldown active ({TRIGGERED_REEVALUATION_COOLDOWN - elapsed:.0f}s remaining)")
+                if elapsed < settings.TRIGGERED_REEVALUATION_COOLDOWN:
+                    logger.info(f"Forced re-evaluation skipped: triggered cooldown active ({settings.TRIGGERED_REEVALUATION_COOLDOWN - elapsed:.0f}s remaining)")
                     return
         is_user_forced = self._user_forced_reeval
         # Clear the pre-market flag after reading it
@@ -3951,7 +3948,7 @@ class TradingEngine:
                                 await asyncio.to_thread(self.redis.set, "trading:llm_pause_time", str(time.time()))
                                 # Fallback if LLM did not provide pause_duration_seconds
                                 if pause_duration is None:
-                                    _min_pause = MIN_LLM_PAUSE_DURATION
+                                    _min_pause = settings.MIN_LLM_PAUSE_DURATION
                                     try:
                                         raw = await asyncio.to_thread(self.redis.get, "trading:min_llm_pause_duration")
                                         if raw:
@@ -4462,7 +4459,7 @@ class TradingEngine:
                 fail_key = "trading:pause:llm_fail_count"
                 current_fails = await asyncio.to_thread(self.redis.incr, fail_key)
                 await asyncio.to_thread(self.redis.expire, fail_key, 3600)
-                _min_pause = MIN_LLM_PAUSE_DURATION
+                _min_pause = settings.MIN_LLM_PAUSE_DURATION
                 try:
                     raw = await asyncio.to_thread(self.redis.get, "trading:min_llm_pause_duration")
                     if raw:
@@ -5015,14 +5012,13 @@ class TradingEngine:
             else:
                 # Fallback: use the preliminary signal's own params as a single variant
                 variants_to_test.append(preliminary_signal.strategy_params or {})
-            # Safety cap: limit to 10 variants to prevent excessive backtest time
-            MAX_BACKTEST_VARIANTS = 10
-            if len(variants_to_test) > MAX_BACKTEST_VARIANTS:
+            # Safety cap: limit to configured max variants to prevent excessive backtest time
+            if len(variants_to_test) > settings.MAX_BACKTEST_VARIANTS:
                 logger.warning(
                     f"LLM returned {len(variants_to_test)} backtest variants for {symbol}, "
-                    f"capping to {MAX_BACKTEST_VARIANTS}"
+                    f"capping to {settings.MAX_BACKTEST_VARIANTS}"
                 )
-                variants_to_test = variants_to_test[:MAX_BACKTEST_VARIANTS]
+                variants_to_test = variants_to_test[:settings.MAX_BACKTEST_VARIANTS]
 
             # Limit number of variants based on available data length
             source_candles = historical_ohlcv or raw_candles or []
@@ -7497,7 +7493,7 @@ class TradingEngine:
                     if is_dust:
                         # Check if dust has been kept past the timeout
                         dust_keep_since = pos.get("_dust_keep_since")
-                        if dust_keep_since is not None and (time.time() - dust_keep_since) > DUST_KEEP_TIMEOUT_SECONDS:
+                        if dust_keep_since is not None and (time.time() - dust_keep_since) > settings.DUST_KEEP_TIMEOUT_SECONDS:
                             logger.info(
                                 f"Dust keep timeout reached for {symbol} "
                                 f"(kept for {(time.time() - dust_keep_since) / 3600:.1f}h), force-selling."
@@ -7505,7 +7501,7 @@ class TradingEngine:
                             if self.notifier:
                                 await self.notifier.send_notification(
                                     f"🧹 Dust keep timeout for {display_symbol} – auto-selling "
-                                    f"after {DUST_KEEP_TIMEOUT_SECONDS // 3600:.0f}h.",
+                                    f"after {settings.DUST_KEEP_TIMEOUT_SECONDS // 3600:.0f}h.",
                                     summary={
                                         "symbol": symbol,
                                         "action": "SELL",
@@ -9141,11 +9137,10 @@ class TradingEngine:
         # Always call if enough time has passed (3× the effective interval)
         # For medium/long-term, be more patient before forcing an evaluation
         effective_interval = timeframe_seconds * settings.STRATEGY_INTERVAL_MULTIPLIER
-        # Cap the safety net at 7 days so the bot never skips LLM evaluations
-        # indefinitely, even for very long timeframes (e.g., 1Y, 3Y, 5Y where
-        # 3× the interval would be ~3 years).
-        max_skip_interval = 604_800  # 7 days in seconds
-        if now - last_time > min(3 * effective_interval, max_skip_interval):
+        # Cap the safety net at the configured max skip interval so the bot
+        # never skips LLM evaluations indefinitely, even for very long
+        # timeframes (e.g., 1Y, 3Y, 5Y where 3× the interval would be ~3 years).
+        if now - last_time > min(3 * effective_interval, settings.MAX_SKIP_INTERVAL_SECONDS):
             return False
 
         # Fetch LLM-driven skip thresholds from Redis.
@@ -12520,14 +12515,13 @@ class TradingEngine:
                 variants_to_test = list(preliminary_signal.backtest_variants)
             else:
                 variants_to_test.append(preliminary_signal.strategy_params or {})
-            # Safety cap: limit to 10 variants to prevent excessive backtest time
-            MAX_BACKTEST_VARIANTS = 10
-            if len(variants_to_test) > MAX_BACKTEST_VARIANTS:
+            # Safety cap: limit to configured max variants to prevent excessive backtest time
+            if len(variants_to_test) > settings.MAX_BACKTEST_VARIANTS:
                 logger.warning(
                     f"LLM returned {len(variants_to_test)} backtest variants for {symbol}, "
-                    f"capping to {MAX_BACKTEST_VARIANTS}"
+                    f"capping to {settings.MAX_BACKTEST_VARIANTS}"
                 )
-                variants_to_test = variants_to_test[:MAX_BACKTEST_VARIANTS]
+                variants_to_test = variants_to_test[:settings.MAX_BACKTEST_VARIANTS]
 
             # Limit number of variants based on available data length
             source_candles = data.get("historical_ohlcv") or data.get("raw_candles") or []
@@ -12644,14 +12638,13 @@ class TradingEngine:
             variants_to_test = list(preliminary_signal.backtest_variants)
         else:
             variants_to_test.append(preliminary_signal.strategy_params or {})
-        # Safety cap: limit to 10 variants to prevent excessive backtest time
-        MAX_BACKTEST_VARIANTS = 10
-        if len(variants_to_test) > MAX_BACKTEST_VARIANTS:
+        # Safety cap: limit to configured max variants to prevent excessive backtest time
+        if len(variants_to_test) > settings.MAX_BACKTEST_VARIANTS:
             logger.warning(
                 f"LLM returned {len(variants_to_test)} backtest variants for {symbol}, "
-                f"capping to {MAX_BACKTEST_VARIANTS}"
+                f"capping to {settings.MAX_BACKTEST_VARIANTS}"
             )
-            variants_to_test = variants_to_test[:MAX_BACKTEST_VARIANTS]
+            variants_to_test = variants_to_test[:settings.MAX_BACKTEST_VARIANTS]
 
         # Limit number of variants based on available data length
         source_candles = data.get("historical_ohlcv") or data.get("raw_candles") or []

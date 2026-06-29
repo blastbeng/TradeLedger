@@ -114,15 +114,45 @@ class Settings(BaseSettings):
             raise ValueError("PAUSE_FORCE_RESUME_RISK_MULTIPLIER must be between 0.0 and 1.0")
         return v
 
+    # Minimum LLM pause duration (seconds) – LLM cannot resume before this
+    MIN_LLM_PAUSE_DURATION: int = 1800
+
+    @field_validator("MIN_LLM_PAUSE_DURATION")
+    @classmethod
+    def validate_min_llm_pause_duration(cls, v: int) -> int:
+        if v < 300:
+            raise ValueError("MIN_LLM_PAUSE_DURATION must be >= 300")
+        return v
+
     # Maximum number of consecutive partial take-profit reviews before force-executing
     MAX_PARTIAL_TP_REVIEWS: int = 10
 
     # Maximum number of consecutive dust sweep reviews before force-selling
     MAX_DUST_SWEEP_REVIEWS: int = 10
 
+    # Maximum time (seconds) dust can be kept before auto-selling
+    DUST_KEEP_TIMEOUT_SECONDS: int = 604800  # 7 days
+
+    @field_validator("DUST_KEEP_TIMEOUT_SECONDS")
+    @classmethod
+    def validate_dust_keep_timeout(cls, v: int) -> int:
+        if v < 3600:
+            raise ValueError("DUST_KEEP_TIMEOUT_SECONDS must be >= 3600")
+        return v
+
     # Minimum seconds between forced LLM evaluations triggered by the entry signal monitor.
     # Keeps the bot responsive without spamming the LLM.
     ENTRY_SIGNAL_COOLDOWN_SECONDS: int = 300
+
+    # Minimum seconds between condition-triggered re-evaluations
+    TRIGGERED_REEVALUATION_COOLDOWN: int = 1800
+
+    @field_validator("TRIGGERED_REEVALUATION_COOLDOWN")
+    @classmethod
+    def validate_triggered_reevaluation_cooldown(cls, v: int) -> int:
+        if v < 300:
+            raise ValueError("TRIGGERED_REEVALUATION_COOLDOWN must be >= 300")
+        return v
 
     # Minimum entry condition timeout as a multiple of the candle timeframe.
     # e.g., 2.0 means the timeout must be at least 2 × the candle period.
@@ -139,10 +169,36 @@ class Settings(BaseSettings):
     # 1 means evaluate every candle period (e.g., 1w → every week, 1M → every month).
     STRATEGY_INTERVAL_MULTIPLIER: int = 1
 
+    # Maximum interval (seconds) to skip LLM evaluation before forcing a re-evaluation
+    MAX_SKIP_INTERVAL_SECONDS: int = 604800  # 7 days
+
+    @field_validator("MAX_SKIP_INTERVAL_SECONDS")
+    @classmethod
+    def validate_max_skip_interval(cls, v: int) -> int:
+        if v < 3600:
+            raise ValueError("MAX_SKIP_INTERVAL_SECONDS must be >= 3600")
+        return v
+
     # Active period settings – during these windows, the bot evaluates more frequently
     # to catch opening/closing opportunities.
     MARKET_OPEN_ACTIVE_MINUTES: int = 60
+
+    @field_validator("MARKET_OPEN_ACTIVE_MINUTES")
+    @classmethod
+    def validate_market_open_active_minutes(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("MARKET_OPEN_ACTIVE_MINUTES must be > 0")
+        return v
+
     MARKET_CLOSE_ACTIVE_MINUTES: int = 30
+
+    @field_validator("MARKET_CLOSE_ACTIVE_MINUTES")
+    @classmethod
+    def validate_market_close_active_minutes(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("MARKET_CLOSE_ACTIVE_MINUTES must be > 0")
+        return v
+
     ACTIVE_PERIOD_INTERVAL_SECONDS: int = 900  # 15 minutes
 
     # Entry signal monitor interval (seconds) – how often to scan for entry signals.
@@ -174,9 +230,33 @@ class Settings(BaseSettings):
     # OHLCV download staggering (delay between symbols)
     OHLCV_DOWNLOAD_SYMBOL_DELAY_SECONDS: float = 2.0
 
+    @field_validator("OHLCV_DOWNLOAD_SYMBOL_DELAY_SECONDS")
+    @classmethod
+    def validate_ohlcv_download_symbol_delay(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("OHLCV_DOWNLOAD_SYMBOL_DELAY_SECONDS must be >= 0")
+        return v
+
     # Maximum number of OHLCV candles to insert in a single backfill call.
     # Prevents memory exhaustion and timeouts when backfilling large ranges.
     BACKFILL_MAX_CANDLES_PER_CALL: int = 5000
+
+    @field_validator("BACKFILL_MAX_CANDLES_PER_CALL")
+    @classmethod
+    def validate_backfill_max_candles(cls, v: int) -> int:
+        if v < 100:
+            raise ValueError("BACKFILL_MAX_CANDLES_PER_CALL must be >= 100")
+        return v
+
+    # Maximum number of backtest variants per cycle
+    MAX_BACKTEST_VARIANTS: int = 10
+
+    @field_validator("MAX_BACKTEST_VARIANTS")
+    @classmethod
+    def validate_max_backtest_variants(cls, v: int) -> int:
+        if v < 1 or v > 50:
+            raise ValueError("MAX_BACKTEST_VARIANTS must be between 1 and 50")
+        return v
 
     @field_validator("OHLCV_TIMEFRAMES")
     @classmethod
@@ -515,7 +595,23 @@ class Settings(BaseSettings):
 
     # BTP Bond Fees (Intesa Sanpaolo Investo)
     BTP_FEE_PERC: float = 0.0024
+
+    @field_validator("BTP_FEE_PERC")
+    @classmethod
+    def validate_btp_fee_perc(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("BTP_FEE_PERC must be >= 0")
+        return v
+
     BTP_MIN_FEE: float = 3.50
+
+    @field_validator("BTP_MIN_FEE")
+    @classmethod
+    def validate_btp_min_fee(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("BTP_MIN_FEE must be >= 0")
+        return v
+
     BTP_IS_PRIMARY_ISSUANCE: bool = False
 
     # Banca d'Italia BCE comunicati scraping for BTP news
