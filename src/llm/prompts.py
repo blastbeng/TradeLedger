@@ -1074,6 +1074,14 @@ Maximum symbols to trade: {max_symbols}
                 "or total stop-loss risk is elevated, reduce your position_size_fraction or output HOLD. "
                 "If you have low exposure and low risk, you may allocate more capital to high-conviction trades.\n"
             )
+    prompt += (
+        "\n**Position Sizing — Single Hard Ceiling:** Your `position_size_fraction` is the PRIMARY driver. "
+        "The engine computes a single hard ceiling from all portfolio risk caps (exposure limit, stop-loss risk limit, "
+        "per-trade risk limit, remaining cycle budget) and caps your trade at that amount. "
+        "The global risk multiplier and per-symbol multiplier scale your desired amount. "
+        "Check the available capital and exposure/risk budgets above to ensure your fraction results in a "
+        "profitable trade after fees. If the available capital is too small for a profitable trade, output HOLD.\n"
+    )
     # --- Dynamic portfolio risk adjustment ---
     prompt += (
         "\n**Dynamic Portfolio Risk Adjustment:**\n"

@@ -8112,246 +8112,133 @@ class TradingEngine:
                     f"adjusted amount={desired_amount:.2f}"
                 )
 
-            # Fetch all position tickers once for risk calculations
+            # --- Consolidated position sizing: single hard ceiling from all caps ---
+            # All risk caps are computed into one hard_max. The LLM's desired_amount
+            # (position_size_fraction × balance × confidence_sizing × global_mult ×
+            # per_symbol_mult) is then capped at hard_max. This replaces 8+ sequential
+            # multiplier/cap layers with a single min() check the LLM can reason about.
             pos_tickers = await self._get_all_position_tickers()
 
-            # Apply max risk per trade cap if provided
-            max_risk_pct = params.get("max_risk_per_trade_pct")
-            if max_risk_pct is not None and sl_pct > 0:
-                total_value = quote_balance
-                for sym, pos in self.positions.items():
-                    try:
-                        t = pos_tickers.get(sym)
-                        if t and t.get('last'):
-                            total_value += pos['amount'] * t['last']
-                    except Exception:
-                        pass
-                max_risk_amount = total_value * max_risk_pct
-                max_allowed_amount = max_risk_amount / sl_pct
-                desired_amount = min(desired_amount, max_allowed_amount)
-                logger.info(f"Max risk per trade: {max_risk_pct:.2%} of {total_value:.2f} = {max_risk_amount:.2f}, max allowed amount = {max_allowed_amount:.2f}")
+            # Compute current portfolio state once
+            total_value = quote_balance
+            total_open_exposure = 0.0
+            total_open_stop_risk = 0.0
+            for sym, pos in self.positions.items():
+                try:
+                    t = pos_tickers.get(sym)
+                    price = t['last'] if t and t.get('last') else 0.0
+                    pos_value = pos['amount'] * price
+                    total_open_exposure += pos_value
+                    total_value += pos_value
+                    stop_loss = pos.get('stop_loss')
+                    if stop_loss is not None and price > 0:
+                        loss_if_stop = pos_value * (price - stop_loss) / price
+                        total_open_stop_risk += max(0, loss_if_stop)
+                except Exception:
+                    pass
 
-            # Apply max portfolio risk cap if provided
-            max_portfolio_risk_pct = params.get("max_portfolio_risk_pct")
-            if max_portfolio_risk_pct is not None and sl_pct > 0:
-                total_value = quote_balance
-                total_open_risk = 0.0
-                for sym, pos in self.positions.items():
-                    try:
-                        t = pos_tickers.get(sym)
-                        price = t['last'] if t and t.get('last') else 0.0
-                        pos_value = pos['amount'] * price
-                        total_value += pos_value
-                        stop_loss = pos.get('stop_loss')
-                        if stop_loss is not None and price > 0:
-                            loss_if_stop = pos_value * (price - stop_loss) / price
-                            total_open_risk += loss_if_stop
-                    except Exception:
-                        pass
-                
-                max_allowed_portfolio_risk = total_value * max_portfolio_risk_pct
-                available_risk_budget = max(0.0, max_allowed_portfolio_risk - total_open_risk)
-                
-                # Potential loss of the new trade at current desired_amount
-                new_trade_risk = desired_amount * sl_pct
-                total_portfolio_risk = total_open_risk + new_trade_risk
-                
-                if total_portfolio_risk > max_allowed_portfolio_risk:
-                    # Try to reduce position size to fit within the remaining risk budget
-                    if available_risk_budget > 0 and sl_pct > 0:
-                        max_allowed_amount = available_risk_budget / sl_pct
-                        if max_allowed_amount > 0:
-                            old_amount = desired_amount
-                            desired_amount = min(desired_amount, max_allowed_amount)
-                            logger.info(
-                                f"Reducing BUY {symbol} amount from {old_amount:.2f} to {desired_amount:.2f} "
-                                f"to fit max portfolio risk ({max_portfolio_risk_pct:.2%})"
-                            )
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"⚠️ Reducing BUY {display_symbol} size to fit portfolio risk "
-                                    f"({old_amount:.2f} -> {desired_amount:.2f})",
-                                    summary={
-                                        "symbol": symbol,
-                                        "action": "INFO",
-                                        "reason": "Position size reduced to fit max portfolio risk",
-                                        "original_amount": old_amount,
-                                        "reduced_amount": desired_amount,
-                                    }
-                                )
-                        else:
-                            logger.info(
-                                f"Skipping BUY {symbol}: no available risk budget "
-                                f"(open risk {total_open_risk:.2f} >= max {max_allowed_portfolio_risk:.2f})"
-                            )
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"⚠️ Skipping BUY {display_symbol}: portfolio risk budget exhausted",
-                                    summary={
-                                        "symbol": symbol,
-                                        "action": "SKIP",
-                                        "reason": "Portfolio risk budget exhausted",
-                                        "total_open_risk": total_open_risk,
-                                        "max_portfolio_risk": max_allowed_portfolio_risk,
-                                    }
-                                )
-                            return
-                    else:
-                        logger.info(
-                            f"Skipping BUY {symbol}: total portfolio risk {total_portfolio_risk:.2f} "
-                            f"exceeds LLM max {max_allowed_portfolio_risk:.2f} and no risk budget left"
-                        )
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⚠️ Skipping BUY {display_symbol}: total portfolio risk too high "
-                                f"({total_portfolio_risk:.2f} > {max_allowed_portfolio_risk:.2f})",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "SKIP",
-                                    "reason": "Total portfolio risk too high",
-                                    "total_portfolio_risk": total_portfolio_risk,
-                                    "max_portfolio_risk": max_allowed_portfolio_risk,
-                                }
-                            )
-                        return
-                else:
-                    logger.info(f"Portfolio risk check passed: {total_portfolio_risk:.2f} <= {max_allowed_portfolio_risk:.2f}")
-
-            # --- Hard enforce LLM portfolio exposure and stop risk limits ---
-            max_port_exp_raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_exposure_pct")
-            max_port_exp = float(max_port_exp_raw) if max_port_exp_raw else None
-            max_port_risk_raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_stop_risk_pct")
-            max_port_risk = float(max_port_risk_raw) if max_port_risk_raw else None
-
-            if max_port_exp is not None or max_port_risk is not None:
-                total_value = quote_balance
-                total_open_exposure = 0.0
-                total_open_stop_risk = 0.0
-                for sym, pos in self.positions.items():
-                    try:
-                        t = pos_tickers.get(sym)
-                        price = t['last'] if t and t.get('last') else 0.0
-                        pos_value = pos['amount'] * price
-                        total_open_exposure += pos_value
-                        total_value += pos_value
-                        stop_loss = pos.get('stop_loss')
-                        if stop_loss is not None and price > 0:
-                            loss_if_stop = pos_value * (price - stop_loss) / price
-                            total_open_stop_risk += max(0, loss_if_stop)
-                    except Exception:
-                        pass
-
-                # Check exposure limit
-                if max_port_exp is not None and total_value > 0:
-                    new_trade_exposure = desired_amount
-                    new_total_exposure_pct = (total_open_exposure + new_trade_exposure) / total_value
-                    if new_total_exposure_pct > max_port_exp:
-                        # Try to reduce position size to fit within the remaining exposure budget
-                        available_exposure_budget = max(0.0, (max_port_exp * total_value) - total_open_exposure)
-                        if available_exposure_budget > 0:
-                            old_amount = desired_amount
-                            desired_amount = min(desired_amount, available_exposure_budget)
-                            logger.info(
-                                f"Reducing BUY {symbol} amount from {old_amount:.2f} to {desired_amount:.2f} "
-                                f"to fit max portfolio exposure ({max_port_exp:.2%})"
-                            )
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"⚠️ Reducing BUY {display_symbol} size to fit portfolio exposure "
-                                    f"({old_amount:.2f} -> {desired_amount:.2f})",
-                                    summary={
-                                        "symbol": symbol,
-                                        "action": "INFO",
-                                        "reason": "Position size reduced to fit max portfolio exposure",
-                                        "original_amount": old_amount,
-                                        "reduced_amount": desired_amount,
-                                    }
-                                )
-                        else:
-                            logger.info(
-                                f"Skipping BUY {symbol}: portfolio exposure budget exhausted "
-                                f"({total_open_exposure:.2f} >= {max_port_exp * total_value:.2f})"
-                            )
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"⚠️ Skipping BUY {display_symbol}: portfolio exposure budget exhausted",
-                                    summary={
-                                        "symbol": symbol,
-                                        "action": "SKIP",
-                                        "reason": "Portfolio exposure budget exhausted",
-                                        "total_open_exposure": total_open_exposure,
-                                        "max_portfolio_exposure": max_port_exp * total_value,
-                                    }
-                                )
-                            return
-
-                # Check stop risk limit
-                if max_port_risk is not None and sl_pct > 0 and total_value > 0:
-                    new_trade_risk = desired_amount * sl_pct
-                    new_total_stop_risk = total_open_stop_risk + new_trade_risk
-                    max_allowed_stop_risk = total_value * max_port_risk
-                    if new_total_stop_risk > max_allowed_stop_risk:
-                        # Try to reduce position size to fit within the remaining risk budget
-                        available_risk_budget = max(0.0, max_allowed_stop_risk - total_open_stop_risk)
-                        if available_risk_budget > 0:
-                            old_amount = desired_amount
-                            desired_amount = min(desired_amount, available_risk_budget / sl_pct)
-                            logger.info(
-                                f"Reducing BUY {symbol} amount from {old_amount:.2f} to {desired_amount:.2f} "
-                                f"to fit max portfolio stop risk ({max_port_risk:.2%})"
-                            )
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"⚠️ Reducing BUY {display_symbol} size to fit portfolio stop risk "
-                                    f"({old_amount:.2f} -> {desired_amount:.2f})",
-                                    summary={
-                                        "symbol": symbol,
-                                        "action": "INFO",
-                                        "reason": "Position size reduced to fit max portfolio stop risk",
-                                        "original_amount": old_amount,
-                                        "reduced_amount": desired_amount,
-                                    }
-                                )
-                        else:
-                            logger.info(
-                                f"Skipping BUY {symbol}: portfolio stop risk budget exhausted "
-                                f"({total_open_stop_risk:.2f} >= {max_allowed_stop_risk:.2f})"
-                            )
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"⚠️ Skipping BUY {display_symbol}: portfolio stop risk budget exhausted",
-                                    summary={
-                                        "symbol": symbol,
-                                        "action": "SKIP",
-                                        "reason": "Portfolio stop risk budget exhausted",
-                                        "total_open_stop_risk": total_open_stop_risk,
-                                        "max_portfolio_stop_risk": max_allowed_stop_risk,
-                                    }
-                                )
-                            return
-
-            # Apply global risk multiplier if set by LLM in symbol selection
+            # Apply global risk multiplier to desired amount (scales all positions)
             global_mult = await self._get_global_risk_multiplier()
             if global_mult is not None and 0.0 <= global_mult <= 1.0:
                 desired_amount *= global_mult
-                logger.info(f"Applied global risk multiplier {global_mult}: desired_amount={desired_amount:.2f}")
 
-            # Apply per-symbol position size multiplier if set by LLM in strategy params
+            # Apply per-symbol position size multiplier to desired amount
             per_symbol_mult = params.get("position_size_multiplier")
             if per_symbol_mult is not None:
                 try:
                     per_symbol_mult = float(per_symbol_mult)
                     if 0.0 <= per_symbol_mult <= 1.0:
                         desired_amount *= per_symbol_mult
-                        logger.info(f"Applied per-symbol position multiplier {per_symbol_mult}: desired_amount={desired_amount:.2f}")
                 except (ValueError, TypeError):
                     pass
+
+            # Compute single hard ceiling from all risk caps
+            hard_max = float('inf')
+
+            # Cap 1: max_risk_per_trade_pct (per-trade risk from LLM strategy params)
+            max_risk_pct = params.get("max_risk_per_trade_pct")
+            if max_risk_pct is not None and sl_pct > 0:
+                hard_max = min(hard_max, (total_value * max_risk_pct) / sl_pct)
+
+            # Cap 2: max_portfolio_risk_pct (portfolio risk from LLM strategy params)
+            max_portfolio_risk_pct = params.get("max_portfolio_risk_pct")
+            if max_portfolio_risk_pct is not None and sl_pct > 0:
+                available_risk_budget = max(0.0, (total_value * max_portfolio_risk_pct) - total_open_stop_risk)
+                hard_max = min(hard_max, available_risk_budget / sl_pct)
+
+            # Cap 3: max_portfolio_exposure_pct (global LLM setting from stock selection)
+            max_port_exp_raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_exposure_pct")
+            max_port_exp = float(max_port_exp_raw) if max_port_exp_raw else None
+            if max_port_exp is not None and total_value > 0:
+                available_exposure = max(0.0, (max_port_exp * total_value) - total_open_exposure)
+                hard_max = min(hard_max, available_exposure)
+
+            # Cap 4: max_portfolio_stop_risk_pct (global LLM setting from stock selection)
+            max_port_risk_raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_stop_risk_pct")
+            max_port_risk = float(max_port_risk_raw) if max_port_risk_raw else None
+            if max_port_risk is not None and sl_pct > 0 and total_value > 0:
+                available_stop_risk_budget = max(0.0, (total_value * max_port_risk) - total_open_stop_risk)
+                hard_max = min(hard_max, available_stop_risk_budget / sl_pct)
+
+            # Cap at remaining cycle budget
+            available = max(0.0, quote_balance - self._cycle_spent)
+            hard_max = min(hard_max, available)
+
+            # Final amount: min of LLM's desired amount and the single hard ceiling
+            amount = min(desired_amount, hard_max)
+
+            if amount <= 0:
+                logger.info(f"Skipping BUY {symbol}: position size reduced to 0 by portfolio constraints")
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"⚠️ Skipping BUY {display_symbol}: portfolio constraints leave no room for new position",
+                        summary={
+                            "symbol": symbol,
+                            "action": "SKIP",
+                            "reason": "Portfolio constraints exhausted",
+                            "desired_amount": desired_amount,
+                            "hard_max": 0.0,
+                        }
+                    )
+                return
+
+            if amount < desired_amount:
+                # Single consolidated notification about which cap was binding
+                cap_reasons = []
+                if max_risk_pct is not None and sl_pct > 0:
+                    cap_reasons.append(f"max_risk_per_trade={max_risk_pct:.2%}")
+                if max_portfolio_risk_pct is not None:
+                    cap_reasons.append(f"max_portfolio_risk={max_portfolio_risk_pct:.2%}")
+                if max_port_exp is not None:
+                    cap_reasons.append(f"max_exposure={max_port_exp:.2%}")
+                if max_port_risk is not None:
+                    cap_reasons.append(f"max_stop_risk={max_port_risk:.2%}")
+                if global_mult is not None and global_mult < 1.0:
+                    cap_reasons.append(f"global_risk_mult={global_mult:.2f}")
+                if per_symbol_mult is not None and per_symbol_mult < 1.0:
+                    cap_reasons.append(f"position_size_mult={per_symbol_mult:.2f}")
+                reason_str = ", ".join(cap_reasons) if cap_reasons else "portfolio constraints"
+                logger.info(
+                    f"Position size capped for {symbol}: {desired_amount:.2f} -> {amount:.2f} "
+                    f"({reason_str})"
+                )
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"⚠️ {display_symbol}: position capped {desired_amount:.2f} → {amount:.2f} ({reason_str})",
+                        summary={
+                            "symbol": symbol,
+                            "action": "INFO",
+                            "reason": f"Position size capped: {reason_str}",
+                            "desired_amount": desired_amount,
+                            "capped_amount": amount,
+                        }
+                    )
 
             # --- Minimum absolute profit check (LLM‑defined) ---
             if settings.ENFORCE_MIN_PROFIT_PER_TRADE:
                 min_profit = params.get("min_profit_per_trade")
                 if min_profit is not None and min_profit > 0:
-                    expected_gross_profit = desired_amount * tp_pct
+                    expected_gross_profit = amount * tp_pct
                     if expected_gross_profit < min_profit:
                         logger.info(
                             f"Skipping BUY {symbol}: expected gross profit {expected_gross_profit:.4f} {quote} "
@@ -8369,23 +8256,6 @@ class TradingEngine:
                                 }
                             )
                         return
-
-            # Cap at remaining available balance in this cycle
-            available = max(0.0, quote_balance - self._cycle_spent)
-            amount = min(desired_amount, available)
-
-            if amount <= 0:
-                logger.info(f"Insufficient {quote} to buy {symbol}")
-                if self.notifier:
-                    await self.notifier.send_notification(
-                        f"⚠️ Insufficient {quote} to buy {display_symbol}",
-                        summary={
-                            "symbol": symbol,
-                            "action": "SKIP",
-                            "reason": "Insufficient balance",
-                        }
-                    )
-                return
 
             # No hardcoded minimum viable trade amount gate.
             # The LLM decides the trade amount dynamically.
