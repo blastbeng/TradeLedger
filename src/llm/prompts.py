@@ -382,7 +382,7 @@ def build_stock_selection_prompt(
             limits = market_limits.get(symbol, {})
             ticker_summary[symbol] = {
                 "last": t.get("last"),
-                "change_24h": t.get("percentage"),
+                "percentage_24h": t.get("percentage"),
                 "volume": t.get("quoteVolume"),
                 "min_trade_cost": limits.get("min_cost"),  # now always a number
                 "name": t.get("name"),

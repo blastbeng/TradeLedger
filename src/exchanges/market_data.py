@@ -1367,18 +1367,18 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     prev_close = db_candles[sym].get("prev_close")
                     volume = db_candles[sym].get("volume")
 
-                    change = None
+                    abs_change = None
                     pct = None
                     if prev_close and prev_close > 0:
-                        change = ((last - prev_close) / prev_close) * 100
-                        pct = round(change, 4)
+                        abs_change = last - prev_close
+                        pct = round((abs_change / prev_close) * 100, 4)
 
                     result[sym] = {
                         "last": last,
                         "bid": last,
                         "ask": last,
                         "volume": volume,
-                        "change_24h": pct,
+                        "change_24h": abs_change,
                         "percentage": pct,
                         "quoteVolume": volume,
                         "last_update": db_candles[sym].get("candle_timestamp"),
@@ -1463,9 +1463,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                         if prev_close is not None and not pd.isna(prev_close) and prev_close > 0:
                             last_val = result[sym].get("last")
                             if last_val is not None:
-                                change = ((last_val - prev_close) / prev_close) * 100
-                                result[sym]["change_24h"] = change
-                                result[sym]["percentage"] = change
+                                result[sym]["change_24h"] = last_val - prev_close
+                                result[sym]["percentage"] = ((last_val - prev_close) / prev_close) * 100
                 except Exception:
                     pass
         except Exception as e:
@@ -1588,18 +1587,18 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                     prev_close = db_candles[sym].get("prev_close")
                     volume = db_candles[sym].get("volume")
 
-                    change = None
+                    abs_change = None
                     pct = None
                     if prev_close and prev_close > 0:
-                        change = ((last - prev_close) / prev_close) * 100
-                        pct = round(change, 4)
+                        abs_change = last - prev_close
+                        pct = round((abs_change / prev_close) * 100, 4)
 
                     result[sym] = {
                         "last": last,
                         "bid": last,
                         "ask": last,
                         "volume": volume,
-                        "change_24h": pct,
+                        "change_24h": abs_change,
                         "percentage": pct,
                         "quoteVolume": volume,
                         "last_update": db_candles[sym].get("candle_timestamp"),

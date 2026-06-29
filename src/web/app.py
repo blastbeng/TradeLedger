@@ -363,6 +363,7 @@ async def ticker(symbol: str):
                 "bid": q.get("bid"),
                 "ask": q.get("ask"),
                 "change_24h": q.get("change_24h"),
+                "percentage": q.get("percentage"),
             }
     except Exception as e:
         logger.warning(f"REST ticker fetch failed for {symbol}: {e}")
@@ -393,13 +394,14 @@ async def tickers(symbols: str = ""):
                     "bid": q.get("bid"),
                     "ask": q.get("ask"),
                     "change_24h": q.get("change_24h"),
+                    "percentage": q.get("percentage"),
                 }
             else:
-                result[full_sym] = {"last": None, "bid": None, "ask": None, "change_24h": None}
+                result[full_sym] = {"last": None, "bid": None, "ask": None, "change_24h": None, "percentage": None}
     except Exception as e:
         logger.warning(f"REST tickers fetch failed: {e}")
         for full_sym in full_symbol_list:
-            result[full_sym] = {"last": None, "bid": None, "ask": None, "change_24h": None}
+            result[full_sym] = {"last": None, "bid": None, "ask": None, "change_24h": None, "percentage": None}
     return result
 
 @app.websocket("/ws")
