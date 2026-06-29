@@ -1865,13 +1865,13 @@ def get_bars_range(
     return []
 
 
-def _fetch_btp_details(isin: str, market_code: str) -> Dict[str, Optional[Any]]:
+def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
     """Fetch BTP details (maturity, coupon, name) from the individual BTP page.
 
     Scrapes the 'Info Strumento' section of the Borsa Italiana BTP page
     to extract the Scadenza (maturity), coupon rate, and denomination.
     """
-    url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-{market_code}.html?lang=it"
+    url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/obbligazioni-in-euro/scheda/{isin}-MOTX.html?lang=it"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -2000,10 +2000,9 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
                 logger.warning(f"Failed to cache BTP bonds: {e}")
 
     # Fetch individual BTP details (maturity, coupon) from each BTP's page
-    market_code = settings.MARKET_CODE
     for bond in bonds:
         isin = bond["isin"]
-        details = _fetch_btp_details(isin, market_code)
+        details = _fetch_btp_details(isin)
         if details:
             if details.get("maturity"):
                 bond["maturity"] = details["maturity"]
