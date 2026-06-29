@@ -4619,6 +4619,38 @@ class TradingEngine:
             else:
                 logger.warning(f"Invalid resume_trading value in LLM response: {resume_trading}")
 
+    async def _compute_portfolio_exposure_summary(self, base_balance: float) -> Dict[str, float]:
+        """Compute portfolio exposure, stop-loss risk, and available capital for the prompt."""
+        portfolio_total_value = base_balance
+        portfolio_exposure = 0.0
+        portfolio_stop_risk = 0.0
+        pos_tickers = await self._get_all_position_tickers()
+        for sym, pos in self.positions.items():
+            try:
+                t = pos_tickers.get(sym)
+                price = t['last'] if t and t.get('last') else 0.0
+                pos_value = pos['amount'] * price
+                portfolio_exposure += pos_value
+                portfolio_total_value += pos_value
+                stop_loss = pos.get('stop_loss')
+                if stop_loss is not None and price > 0:
+                    loss_if_stop = pos_value * (price - stop_loss) / price
+                    portfolio_stop_risk += max(0, loss_if_stop)
+            except Exception:
+                pass
+        portfolio_exposure_pct = (portfolio_exposure / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
+        portfolio_stop_risk_pct = (portfolio_stop_risk / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
+        async with self._cycle_spent_lock:
+            portfolio_available_capital = max(0.0, base_balance - self._cycle_spent)
+        return {
+            "portfolio_total_value": portfolio_total_value,
+            "portfolio_exposure": portfolio_exposure,
+            "portfolio_stop_risk": portfolio_stop_risk,
+            "portfolio_exposure_pct": portfolio_exposure_pct,
+            "portfolio_stop_risk_pct": portfolio_stop_risk_pct,
+            "portfolio_available_capital": portfolio_available_capital,
+        }
+
     async def _process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False):
         """Fetch market data, get LLM strategy, validate, and execute."""
         symbol = symbol_entry["symbol"]
@@ -5060,27 +5092,13 @@ class TradingEngine:
                 unrealized_pnl = (current_price - entry_price) * amount
 
             # --- Compute portfolio exposure summary for the prompt ---
-            portfolio_total_value = base_balance
-            portfolio_exposure = 0.0
-            portfolio_stop_risk = 0.0
-            pos_tickers = await self._get_all_position_tickers()
-            for sym, pos in self.positions.items():
-                try:
-                    t = pos_tickers.get(sym)
-                    price = t['last'] if t and t.get('last') else 0.0
-                    pos_value = pos['amount'] * price
-                    portfolio_exposure += pos_value
-                    portfolio_total_value += pos_value
-                    stop_loss = pos.get('stop_loss')
-                    if stop_loss is not None and price > 0:
-                        loss_if_stop = pos_value * (price - stop_loss) / price
-                        portfolio_stop_risk += max(0, loss_if_stop)
-                except Exception:
-                    pass
-            portfolio_exposure_pct = (portfolio_exposure / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
-            portfolio_stop_risk_pct = (portfolio_stop_risk / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
-            async with self._cycle_spent_lock:
-                portfolio_available_capital = max(0.0, base_balance - self._cycle_spent)
+            _portfolio = await self._compute_portfolio_exposure_summary(base_balance)
+            portfolio_total_value = _portfolio["portfolio_total_value"]
+            portfolio_exposure = _portfolio["portfolio_exposure"]
+            portfolio_stop_risk = _portfolio["portfolio_stop_risk"]
+            portfolio_exposure_pct = _portfolio["portfolio_exposure_pct"]
+            portfolio_stop_risk_pct = _portfolio["portfolio_stop_risk_pct"]
+            portfolio_available_capital = _portfolio["portfolio_available_capital"]
 
             # Recent trade outcomes (last 5 closed trades)
             recent_trades = [
