@@ -374,7 +374,7 @@ class TradingEngine:
             missing.append(sym.split("/")[0])
         if missing:
             try:
-                raw = await self._get_quotes_batched(missing, timeout_per_chunk=300.0)
+                raw = await self._get_quotes_batched(missing, timeout_per_chunk=45.0)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
@@ -414,7 +414,7 @@ class TradingEngine:
         self._balance_cache_time = now
         return balance
 
-    async def _get_quotes_async(self, symbols: List[str], timeout: float = 30.0) -> Dict[str, Dict[str, Any]]:
+    async def _get_quotes_async(self, symbols: List[str], timeout: float = 45.0) -> Dict[str, Dict[str, Any]]:
         """Fetch quotes using the dedicated quote thread pool with a timeout.
         This prevents slow yfinance calls from blocking the default asyncio thread pool."""
         loop = asyncio.get_running_loop()
@@ -430,7 +430,7 @@ class TradingEngine:
             logger.warning(f"Quote fetch failed for {len(symbols)} symbols: {e}")
             return {}
 
-    async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 30.0, chunk_size: int = 5) -> Dict[str, Dict[str, Any]]:
+    async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 45.0, chunk_size: int = 5) -> Dict[str, Dict[str, Any]]:
         """Fetch quotes for a large list of symbols in a single call.
         Concurrency is handled by a lock inside get_quotes to prevent rate limiting."""
         if not symbols:
@@ -885,7 +885,7 @@ class TradingEngine:
                         plain_assets = await self._get_tradable_assets()
                         sample_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets[:50]]
                         plain_sample = [s.split("/")[0] for s in sample_pairs]
-                        quotes = await self._get_quotes_batched(plain_sample, timeout_per_chunk=300.0)
+                        quotes = await self._get_quotes_batched(plain_sample, timeout_per_chunk=45.0)
                         large_movers = sum(
                             1 for q in quotes.values()
                             if abs(q.get("percentage") or 0) > 5.0
@@ -1352,7 +1352,7 @@ class TradingEngine:
                     # (limit to 200 to avoid excessive API calls)
                     sample_for_vol = available_pairs[:200]
                     plain_sample = [s.split("/")[0] for s in sample_for_vol]
-                    raw_quotes = await self._get_quotes_batched(plain_sample, timeout_per_chunk=300.0)
+                    raw_quotes = await self._get_quotes_batched(plain_sample, timeout_per_chunk=45.0)
                     tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_for_vol}
                     def _vol(sym):
                         t = tickers.get(sym, {})
@@ -1782,7 +1782,7 @@ class TradingEngine:
                 plain_assets = await self._get_tradable_assets()
                 if plain_assets:
                     # Fetch all quotes in a single call (get_quotes uses a lock internally)
-                    await self._get_quotes_async(plain_assets, timeout=600.0)
+                    await self._get_quotes_async(plain_assets, timeout=90.0)
             except Exception as e:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
             finally:
@@ -2300,7 +2300,7 @@ class TradingEngine:
                 # External sell detected
                 sold_amount = recorded_amount - actual_balance
                 try:
-                    tickers_map = await self._get_quotes_async([symbol.split("/")[0]], timeout=300.0)
+                    tickers_map = await self._get_quotes_async([symbol.split("/")[0]], timeout=45.0)
                     ticker = tickers_map.get(symbol.split("/")[0])
                     current_price = ticker['last'] if ticker else pos.get("price", 0.0)
                 except Exception:
@@ -4334,7 +4334,7 @@ class TradingEngine:
             # Gather minimal market context
             benchmark_price = None
             try:
-                tickers_map = await self._get_quotes_async([settings.BENCHMARK_SYMBOL], timeout=300.0)
+                tickers_map = await self._get_quotes_async([settings.BENCHMARK_SYMBOL], timeout=45.0)
                 benchmark_ticker = tickers_map.get(settings.BENCHMARK_SYMBOL)
                 benchmark_price = benchmark_ticker.get("last") if benchmark_ticker else None
             except Exception:
@@ -5613,7 +5613,7 @@ class TradingEngine:
         try:
             async with self._exchange_semaphore:
                 base = symbol.split("/")[0]
-                quotes = await self._get_quotes_async([base], timeout=300.0)
+                quotes = await self._get_quotes_async([base], timeout=45.0)
                 ticker = quotes.get(base)
             if ticker is None:
                 logger.warning(f"No ticker data for {symbol}, skipping.")
@@ -7215,7 +7215,7 @@ class TradingEngine:
             missing_risk.append(sym.split("/")[0])
         if missing_risk:
             try:
-                raw = await self._get_quotes_batched(missing_risk, timeout_per_chunk=300.0)
+                raw = await self._get_quotes_batched(missing_risk, timeout_per_chunk=45.0)
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
@@ -7922,7 +7922,7 @@ class TradingEngine:
 
             # Fetch current price early for position sizing and stop calculations
             base = symbol.split("/")[0]
-            quotes = await self._get_quotes_async([base], timeout=300.0)
+            quotes = await self._get_quotes_async([base], timeout=45.0)
             ticker = quotes.get(base)
             current_price = ticker['last'] if ticker else None
             if current_price is None or current_price <= 0:
@@ -8697,7 +8697,7 @@ class TradingEngine:
             ticker = None
             try:
                 base = symbol.split("/")[0]
-                quotes = await self._get_quotes_async([base], timeout=300.0)
+                quotes = await self._get_quotes_async([base], timeout=45.0)
                 ticker = quotes.get(base)
                 price = ticker['last']
                 # Fetch minimum order size from asset info
@@ -9377,7 +9377,7 @@ class TradingEngine:
         if etype == "limit_price":
             target_price = condition["price"]
             try:
-                tickers_map = await self._get_quotes_async([symbol.split("/")[0]], timeout=300.0)
+                tickers_map = await self._get_quotes_async([symbol.split("/")[0]], timeout=45.0)
                 ticker = tickers_map.get(symbol.split("/")[0])
             except Exception:
                 return False
@@ -10822,7 +10822,7 @@ class TradingEngine:
 
         try:
             base = symbol.split("/")[0]
-            quotes = await self._get_quotes_async([base], timeout=300.0)
+            quotes = await self._get_quotes_async([base], timeout=45.0)
             ticker = quotes.get(base)
             price = ticker["last"]
         except Exception as e:
@@ -11019,7 +11019,7 @@ class TradingEngine:
                             # Fetch current price
                             try:
                                 base = queued["symbol"].split("/")[0]
-                                quotes = await self._get_quotes_async([base], timeout=300.0)
+                                quotes = await self._get_quotes_async([base], timeout=45.0)
                                 ticker = quotes.get(base)
                             except Exception:
                                 pass
@@ -11926,7 +11926,7 @@ class TradingEngine:
         is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
 
         async with self._exchange_semaphore:
-            quotes = await self._get_quotes_async([base_symbol], timeout=300.0)
+            quotes = await self._get_quotes_async([base_symbol], timeout=45.0)
             ticker = quotes.get(base_symbol)
         if ticker is None:
             return {"error": "No ticker data"}

@@ -56,8 +56,8 @@ _yf_last_error_time = 0.0
 _yf_circuit_open_until = 0.0
 _yf_lock = threading.Lock()
 
-YF_MAX_ERRORS = 10
-YF_CIRCUIT_COOLDOWN = 3600  # 1 hour
+YF_MAX_ERRORS = 20
+YF_CIRCUIT_COOLDOWN = 300  # 5 minutes
 
 def _check_yf_circuit() -> bool:
     """Return True if the circuit is open (yfinance should be skipped)."""
