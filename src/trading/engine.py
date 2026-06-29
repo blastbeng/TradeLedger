@@ -7490,8 +7490,6 @@ class TradingEngine:
                         min_amount = None
                     if min_amount is not None and amount < min_amount:
                         is_dust = True
-                    elif min_amount is not None and current_price and amount * current_price < min_amount * current_price:
-                        is_dust = True
 
                     if is_dust:
                         # Check if dust has been kept past the timeout
@@ -7539,8 +7537,6 @@ class TradingEngine:
                     except Exception:
                         min_amount = None
                     if min_amount is not None and amount < min_amount:
-                        is_dust = True
-                    elif min_amount is not None and current_price and amount * current_price < min_amount * current_price:
                         is_dust = True
                     if not is_dust:
                         pos.pop("_dust_sweep_triggered", None)
