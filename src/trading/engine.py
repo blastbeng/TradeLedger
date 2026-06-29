@@ -8940,17 +8940,25 @@ class TradingEngine:
                 fee_currency = fee.get('currency', '')
 
                 net_quote = order['cost'] - (fee_cost if fee_currency == quote else 0.0)
+                is_partial_sell = order.get("remaining_order_id") is not None
                 if pos:
                     cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
-                    realized_pnl = net_quote - cost_basis
+                    net_base = pos.get("net_base", pos["amount"])
+                    if is_partial_sell and net_base > 0:
+                        # Prorate cost basis for the sold portion
+                        prorated_cost_basis = cost_basis * (order['amount'] / net_base)
+                        realized_pnl = net_quote - prorated_cost_basis
+                        order["cost_basis"] = prorated_cost_basis
+                    else:
+                        realized_pnl = net_quote - cost_basis
+                        order["cost_basis"] = cost_basis
                 else:
                     realized_pnl = 0.0
+                    order["cost_basis"] = 0.0
                 order["realized_pnl"] = realized_pnl
-                order["cost_basis"] = pos.get("cost_basis", 0.0) if pos else 0.0
                 # Track loss timestamps for cooldown
                 if realized_pnl < 0:
                     self.last_loss_time[symbol] = time.time()
-                    # Store the cooldown duration from the position (set by LLM at BUY time)
                     cd = pos.get("cooldown_after_loss_seconds", 0) if pos else 0
                     self.cooldown_durations[symbol] = cd
                 tf = timeframe or (pos.get("timeframe") if pos else None)
@@ -8966,20 +8974,67 @@ class TradingEngine:
                     order["hold_time_seconds"] = hold_time
                 else:
                     order["hold_time_seconds"] = None
-                # Clear any stop-loss review flags before removing the position
+                # Clear any stop-loss review flags
                 if pos:
                     pos.pop("_stop_loss_triggered", None)
                     pos.pop("_stop_loss_review_count", None)
-                # Remove position
-                async with self._positions_lock:
-                    self.positions.pop(symbol, None)
-                self._strategy_intervals.pop(symbol, None)
-                self._last_strategy_eval.pop(symbol, None)
-                self._last_decisions.pop(symbol, None)
-                self._pending_entries.pop(symbol, None)
-                await self._remove_symbol_if_paused(symbol)
+
+                if is_partial_sell and pos:
+                    # Partial sell: reduce position instead of removing it
+                    remaining_amount = pos["amount"] - order['amount']
+                    remaining_cost_basis = cost_basis - order["cost_basis"]
+                    remaining_net_base = net_base - order['amount']
+                    if remaining_amount <= 0 or remaining_net_base <= 0:
+                        async with self._positions_lock:
+                            self.positions.pop(symbol, None)
+                        self._strategy_intervals.pop(symbol, None)
+                        self._last_strategy_eval.pop(symbol, None)
+                        self._last_decisions.pop(symbol, None)
+                        self._pending_entries.pop(symbol, None)
+                        await self._remove_symbol_if_paused(symbol)
+                    else:
+                        async with self._positions_lock:
+                            self.positions[symbol]["amount"] = remaining_amount
+                            self.positions[symbol]["cost_basis"] = remaining_cost_basis
+                            self.positions[symbol]["net_base"] = remaining_net_base
+                            self.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
+                        # Place replacement exit orders for the remaining position
+                        from src.strategies.base import Signal as _Signal
+                        _dummy_params = {
+                            "trailing_take_profit": self.positions[symbol].get("trailing_take_profit", False),
+                            "partial_take_profit_levels": self.positions[symbol].get("partial_take_profit_levels"),
+                            "partial_take_profit_pct": self.positions[symbol].get("partial_take_profit_pct"),
+                        }
+                        _dummy_signal = _Signal(
+                            action="BUY",
+                            confidence=1.0,
+                            reasoning="Replacing exit orders after partial sell",
+                            stop_loss_order_type=self.positions[symbol].get("stop_loss_order_type"),
+                            stop_loss_stop_price=self.positions[symbol].get("stop_loss"),
+                            stop_loss_limit_price=None,
+                            take_profit_order_type=self.positions[symbol].get("take_profit_order_type"),
+                            take_profit_limit_price=self.positions[symbol].get("take_profit"),
+                            strategy_params=_dummy_params,
+                        )
+                        _exit_prices = {
+                            "stop_loss_price": self.positions[symbol].get("stop_loss"),
+                            "take_profit_price": self.positions[symbol].get("take_profit"),
+                        }
+                        try:
+                            await self._place_exit_orders(symbol, _dummy_signal, _exit_prices, self.positions[symbol].get("timeframe"))
+                        except Exception as _e:
+                            logger.warning(f"Failed to place replacement exit orders after partial sell for {symbol}: {_e}")
+                else:
+                    # Full sell: remove position
+                    async with self._positions_lock:
+                        self.positions.pop(symbol, None)
+                    self._strategy_intervals.pop(symbol, None)
+                    self._last_strategy_eval.pop(symbol, None)
+                    self._last_decisions.pop(symbol, None)
+                    self._pending_entries.pop(symbol, None)
+                    await self._remove_symbol_if_paused(symbol)
                 self.trade_history.append(order)
-                self._balance_cache = None  # force refresh on next fetch
+                self._balance_cache = None
                 await asyncio.to_thread(insert_trade, order)
                 await self._save_state()
                 if self.notifier:
@@ -9002,10 +9057,11 @@ class TradingEngine:
                     # Use the timeframe from the position or the passed parameter
                     tf = timeframe or (pos.get("timeframe") if pos else None)
                     display_symbol = self._format_symbol_display(symbol, stock_name, tf)
-                    sell_msg = f"🔴 SELL{reason_str} {display_symbol}: {order['amount']:.6f} @ {order['price']:.4f}"
+                    partial_str = " (partial)" if is_partial_sell else ""
+                    sell_msg = f"🔴 SELL{reason_str}{partial_str} {display_symbol}: {order['amount']:.6f} @ {order['price']:.4f}"
                     # Add profit/loss info
                     if pos:
-                        pnl_pct = (realized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+                        pnl_pct = (realized_pnl / order["cost_basis"] * 100) if order["cost_basis"] > 0 else 0.0
                         sell_msg += f" | P&L: {realized_pnl:+.4f} ({pnl_pct:+.2f}%)"
                     sell_summary = {
                         "symbol": symbol,
