@@ -269,18 +269,15 @@ def _get_proxies() -> Optional[str]:
 
 
 def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
-    """Fetch the ISIN code for a symbol, using Redis cache first, then yfinance as fallback."""
-    redis_client = get_redis_client()
-    cache_key = f"isin:{base_symbol}"
-    try:
-        cached = redis_client.get(cache_key)
-        if cached:
-            return cached
-    except Exception:
-        pass
+    """Fetch the ISIN code for a symbol, using DB first, then yfinance as fallback."""
+    from src.database import get_isin_from_db, save_discovered_symbol
+
+    # Check DB first (not Redis)
+    cached = get_isin_from_db(base_symbol)
+    if cached:
+        return cached
 
     # If yfinance circuit is open, we can't fetch the ISIN from yfinance.
-    # Return None to indicate the ISIN is not available.
     if _check_yf_circuit():
         return None
 
@@ -290,8 +287,9 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
         ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
         isin = ticker.isin
         if isin:
+            # Save to DB (not Redis)
             try:
-                redis_client.set(cache_key, isin, ex=7 * 24 * 3600)
+                save_discovered_symbol(base_symbol, isin, "stock", "")
             except Exception:
                 pass
             return isin
@@ -827,7 +825,8 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
                             isin = isins[i].strip().upper()
                             if re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", isin):
                                 try:
-                                    redis_client.set(f"isin:{base}", isin, ex=7 * 24 * 3600)
+                                    from src.database import save_discovered_symbol
+                                    save_discovered_symbol(base, isin, "stock", "")
                                 except Exception:
                                     pass
                 
@@ -954,10 +953,49 @@ def discover_italian_ucits_etfs() -> List[str]:
             redis_client.set(cache_key, json.dumps(base_symbols), ex=86400)
         except Exception:
             pass
+        # Save ETF symbols to DB
+        try:
+            from src.database import save_discovered_symbols_batch
+            symbols_to_save = [
+                {"symbol": sym, "isin": None, "asset_type": "etf", "name": ""}
+                for sym in base_symbols
+            ]
+            if symbols_to_save:
+                save_discovered_symbols_batch(symbols_to_save)
+        except Exception as e:
+            logger.warning(f"Failed to save ETF symbols to DB: {e}")
         return base_symbols
     except Exception as e:
         logger.warning(f"Failed to discover Italian UCITS ETFs: {e}")
         return []
+
+
+def _save_discovered_assets_to_db(base_symbols: List[str], etf_symbols: List[str] = None):
+    """Save discovered stock/ETF base symbols to the database. ISINs are fetched on demand."""
+    from src.database import save_discovered_symbols_batch, get_isin_from_db
+    etf_set = set(etf_symbols or [])
+    symbols_to_save = []
+    for sym in base_symbols:
+        base = sym.split(".")[0] if "." in sym else sym
+        if re.match(r'^IT[A-Z0-9]{10}$', base):
+            continue  # BTPs are saved separately
+        # Check if already in DB with ISIN
+        existing_isin = get_isin_from_db(base)
+        if existing_isin:
+            continue
+        asset_type = "etf" if base in etf_set else "stock"
+        symbols_to_save.append({
+            "symbol": base,
+            "isin": None,
+            "asset_type": asset_type,
+            "name": "",
+        })
+    if symbols_to_save:
+        try:
+            save_discovered_symbols_batch(symbols_to_save)
+            logger.info(f"Saved {len(symbols_to_save)} discovered symbols to database")
+        except Exception as e:
+            logger.warning(f"Failed to save discovered symbols to database: {e}")
 
 
 def get_tradable_assets() -> List[str]:
@@ -1047,6 +1085,16 @@ def get_tradable_assets() -> List[str]:
         logger.warning("No tickers discovered from Wikipedia, Euronext, or news feeds.")
         return []
 
+    # Save discovered symbols to DB (ISINs will be fetched on demand)
+    try:
+        etf_set = set()
+        if settings.FINANCEDATABASE_TICKER_DISCOVERY_ENABLED:
+            etf_set.update(_discover_financedatabase_tickers())
+        etf_set.update(discover_italian_ucits_etfs())
+        _save_discovered_assets_to_db(base_symbols, list(etf_set))
+    except Exception as e:
+        logger.warning(f"Failed to save discovered assets to DB: {e}")
+
     suffix = settings.TICKER_SUFFIX
     candidates = []
     for sym in base_symbols:
@@ -1062,7 +1110,26 @@ def get_tradable_assets() -> List[str]:
         cached = redis_client.get(cache_key)
         if cached:
             import json
-            return json.loads(cached)
+            cached_list = json.loads(cached)
+            # Merge with DB-saved symbols even on cache hit
+            try:
+                from src.database import get_all_discovered_symbols
+                db_symbols = get_all_discovered_symbols()
+                existing_set = set(cached_list)
+                for db_entry in db_symbols:
+                    db_sym = db_entry["symbol"]
+                    if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
+                        if db_sym not in existing_set:
+                            cached_list.append(db_sym)
+                            existing_set.add(db_sym)
+                    else:
+                        candidate = f"{db_sym}{suffix}" if suffix and not db_sym.endswith(suffix) else db_sym
+                        if candidate not in existing_set:
+                            cached_list.append(candidate)
+                            existing_set.add(candidate)
+            except Exception as e:
+                logger.warning(f"Failed to merge DB symbols with cached list: {e}")
+            return cached_list
     except Exception:
         pass
 
@@ -1100,6 +1167,28 @@ def get_tradable_assets() -> List[str]:
         redis_client.set(cache_key, json.dumps(filtered), ex=86400)
     except Exception as e:
         logger.warning(f"Failed to cache tradable assets: {e}")
+
+    # Merge with previously discovered symbols from DB so nothing is lost
+    try:
+        from src.database import get_all_discovered_symbols
+        db_symbols = get_all_discovered_symbols()
+        existing_set = set(filtered)
+        for db_entry in db_symbols:
+            db_sym = db_entry["symbol"]
+            if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
+                # BTP ISIN — add as-is (no suffix)
+                if db_sym not in existing_set:
+                    filtered.append(db_sym)
+                    existing_set.add(db_sym)
+            else:
+                # Stock/ETF — add with suffix
+                candidate = f"{db_sym}{suffix}" if suffix and not db_sym.endswith(suffix) else db_sym
+                if candidate not in existing_set:
+                    filtered.append(candidate)
+                    existing_set.add(candidate)
+        logger.info(f"Merged {len(db_symbols)} symbols from DB, total: {len(filtered)}")
+    except Exception as e:
+        logger.warning(f"Failed to merge discovered symbols from DB: {e}")
 
     logger.info(f"Tradable assets for {settings.TARGET_COUNTRY}: {len(filtered)} symbols")
     return filtered
@@ -1515,7 +1604,24 @@ def get_multi_timeframe_bars(
                     pass
             continue
 
-        # --- 2. Also fetch from yfinance (not just fallback — always merge) ---
+        # Check if we have ISIN in DB
+        from src.database import get_isin_from_db
+        db_isin = get_isin_from_db(symbol)
+        has_isin = db_isin is not None
+
+        # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
+        if has_isin:
+            if borsa_candles:
+                result[tf] = borsa_candles[-limit:] if limit else borsa_candles
+                try:
+                    redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
+                except Exception:
+                    pass
+            else:
+                result[tf] = []
+            continue
+
+        # No ISIN — use yfinance as fallback
         yf_candles: List[List] = []
         if not _check_yf_circuit():
             yf_symbol = symbol
@@ -1544,7 +1650,7 @@ def get_multi_timeframe_bars(
             except Exception as e:
                 logger.debug(f"yfinance fetch failed for {symbol} {tf}: {e}")
 
-        # --- 3. Merge both sources ---
+        # Merge both sources
         merged = _merge_candles(borsa_candles, yf_candles)
         if merged:
             result[tf] = merged[-limit:] if limit else merged
@@ -1599,7 +1705,24 @@ def get_bars_range(
             return borsa_candles
         return []
 
-    # --- 2. Also fetch from yfinance (not just fallback — always merge) ---
+    # Check if we have ISIN in DB
+    from src.database import get_isin_from_db
+    db_isin = get_isin_from_db(symbol)
+    has_isin = db_isin is not None
+
+    # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
+    if has_isin:
+        if borsa_candles:
+            if limit and len(borsa_candles) > limit:
+                borsa_candles = borsa_candles[-limit:]
+            try:
+                redis_client.set(cache_key, json.dumps(borsa_candles), ex=300)
+            except Exception:
+                pass
+            return borsa_candles
+        return []
+
+    # No ISIN — use yfinance as fallback
     yf_candles: List[List] = []
     if not _check_yf_circuit():
         yf_symbol = symbol
@@ -1630,7 +1753,7 @@ def get_bars_range(
         except Exception as e:
             logger.debug(f"yfinance fetch failed for {symbol} {timeframe}: {e}")
 
-    # --- 3. Merge both sources ---
+    # Merge both sources
     merged = _merge_candles(borsa_candles, yf_candles)
 
     if merged:
@@ -1723,5 +1846,17 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
         redis_client.set(cache_key, json.dumps(bonds), ex=300)  # Cache for 5 minutes
     except Exception as e:
         logger.warning(f"Failed to cache BTP bonds: {e}")
+
+    # Save BTP bonds to DB
+    try:
+        from src.database import save_discovered_symbols_batch
+        symbols_to_save = [
+            {"symbol": b["isin"], "isin": b["isin"], "asset_type": "btp", "name": b.get("name", "")}
+            for b in bonds
+        ]
+        if symbols_to_save:
+            save_discovered_symbols_batch(symbols_to_save)
+    except Exception as e:
+        logger.warning(f"Failed to save BTP bonds to DB: {e}")
 
     return bonds

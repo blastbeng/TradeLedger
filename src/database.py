@@ -280,6 +280,15 @@ def init_db():
                     updated_at DOUBLE PRECISION NOT NULL
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS discovered_symbols (
+                    symbol TEXT PRIMARY KEY,
+                    isin TEXT,
+                    asset_type TEXT,
+                    name TEXT,
+                    discovered_at DOUBLE PRECISION NOT NULL
+                )
+                """,
             ]
             for stmt in statements:
                 conn.execute(stmt)
@@ -376,6 +385,14 @@ def init_db():
                     coupon REAL,
                     maturity TEXT,
                     updated_at REAL NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS discovered_symbols (
+                    symbol TEXT PRIMARY KEY,
+                    isin TEXT,
+                    asset_type TEXT,
+                    name TEXT,
+                    discovered_at REAL NOT NULL
                 );
             """)
         conn.commit()
@@ -1339,6 +1356,85 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     if row["timeframe"] == result[db_base]["timeframe"]:
                         result[db_base]["prev_close"] = float(row["close"])
         return result
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, name: str = ""):
+    """Insert or update a discovered symbol with its ISIN."""
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (symbol) DO UPDATE SET isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
+                "asset_type = EXCLUDED.asset_type, name = EXCLUDED.name, "
+                "discovered_at = EXCLUDED.discovered_at"
+            )
+        else:
+            sql = _adapt_sql(
+                "INSERT OR REPLACE INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
+                "VALUES (%s, %s, %s, %s, %s)"
+            )
+        conn.execute(sql, (symbol, isin, asset_type, name, time.time()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def save_discovered_symbols_batch(symbols: List[Dict[str, Any]]):
+    """Batch insert or update discovered symbols."""
+    if not symbols:
+        return
+    conn = get_connection()
+    try:
+        now = time.time()
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (symbol) DO UPDATE SET isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
+                "asset_type = EXCLUDED.asset_type, name = EXCLUDED.name, "
+                "discovered_at = EXCLUDED.discovered_at"
+            )
+        else:
+            sql = _adapt_sql(
+                "INSERT OR REPLACE INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
+                "VALUES (%s, %s, %s, %s, %s)"
+            )
+        rows = [(s["symbol"], s.get("isin"), s.get("asset_type", ""), s.get("name", ""), now) for s in symbols]
+        conn.executemany(sql, rows)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_all_discovered_symbols() -> List[Dict[str, Any]]:
+    """Return all discovered symbols from the database."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql("SELECT symbol, isin, asset_type, name FROM discovered_symbols")
+        rows = conn.execute(sql).fetchall()
+        return [
+            {"symbol": row["symbol"], "isin": row["isin"], "asset_type": row["asset_type"], "name": row["name"]}
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+def get_isin_from_db(symbol: str) -> Optional[str]:
+    """Return the ISIN for a symbol from the database, or None if not found."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql("SELECT isin FROM discovered_symbols WHERE symbol = %s")
+        row = conn.execute(sql, (symbol,)).fetchone()
+        if row and row["isin"]:
+            return row["isin"]
+        return None
     finally:
         conn.close()
 

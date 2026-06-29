@@ -243,7 +243,7 @@ class TradingEngine:
             plain_assets = await self._get_tradable_assets()
             stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
-            btp_bonds = await asyncio.to_thread(discover_btp_bonds)
+            btp_bonds = await self._get_btp_bonds()
             btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
             all_pairs = stock_pairs + btp_pairs
@@ -303,6 +303,24 @@ class TradingEngine:
         if self._btp_bonds_cache and (now - self._btp_bonds_cache_time) < 1800:
             return self._btp_bonds_cache
         bonds = await asyncio.to_thread(discover_btp_bonds)
+        # Merge with DB-saved BTPs so nothing is lost between runs
+        try:
+            from src.database import get_all_discovered_symbols
+            db_symbols = get_all_discovered_symbols()
+            existing_isins = {b["isin"] for b in bonds}
+            for db_entry in db_symbols:
+                if db_entry.get("asset_type") == "btp" and db_entry["symbol"] not in existing_isins:
+                    bonds.append({
+                        "isin": db_entry["symbol"],
+                        "name": db_entry.get("name", db_entry["symbol"]),
+                        "last_price": None,
+                        "change_pct": 0.0,
+                        "coupon": None,
+                        "maturity": None,
+                    })
+                    existing_isins.add(db_entry["symbol"])
+        except Exception as e:
+            logger.warning(f"Failed to merge BTPs from DB: {e}")
         self._btp_bonds_cache = bonds
         self._btp_bonds_cache_time = now
         return bonds
@@ -1611,7 +1629,7 @@ class TradingEngine:
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
                 # 2. Get all BTP symbols
-                btp_bonds = await asyncio.to_thread(discover_btp_bonds)
+                btp_bonds = await self._get_btp_bonds()
                 btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
                 all_pairs = stock_pairs + btp_pairs
@@ -1678,7 +1696,7 @@ class TradingEngine:
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
                 # 2. Get all BTP symbols
-                btp_bonds = await asyncio.to_thread(discover_btp_bonds)
+                btp_bonds = await self._get_btp_bonds()
                 btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
                 all_pairs = stock_pairs + btp_pairs
