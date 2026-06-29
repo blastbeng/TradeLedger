@@ -5780,6 +5780,7 @@ class TradingEngine:
                 self.positions[symbol].pop("_dust_sweep_triggered", None)
                 if self.positions[symbol].get("_dust_keep_since") is None:
                     self.positions[symbol]["_dust_keep_since"] = time.time()
+            self._state_dirty = True
             logger.info(f"LLM decided to hold dust for {symbol}")
             if self.notifier:
                 await self.notifier.send_notification(
