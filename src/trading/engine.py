@@ -7744,10 +7744,6 @@ class TradingEngine:
 
         for symbol, pos in list(self.positions.items()):
             try:
-                # Skip positions that don't have LLM-defined risk parameters yet
-                if pos.get("stop_loss") is None or pos.get("take_profit") is None:
-                    continue
-
                 # Skip if there is already a queued order for this symbol
                 async with self._queued_orders_lock:
                     has_queued = any(q['symbol'] == symbol for q in self.queued_orders)
@@ -7758,6 +7754,46 @@ class TradingEngine:
                 if ticker is None:
                     continue  # no real-time data yet, skip this check
                 current_price = ticker['last']
+
+                # --- Format symbol for notifications ---
+                stock_name = await self._get_stock_name(symbol)
+                display_symbol = self._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+
+                # --- Hard stop: maximum total loss regardless of LLM decisions ---
+                # Checked BEFORE the stop_loss/take_profit skip so positions
+                # awaiting LLM risk parameters (_needs_risk_params) are still
+                # protected against catastrophic loss during the re-evaluation window.
+                entry_price = pos["price"]
+                if entry_price > 0:
+                    unrealized_loss_pct = (entry_price - current_price) / entry_price
+                    if unrealized_loss_pct >= HARD_MAX_LOSS_PCT:
+                        logger.warning(
+                            f"Hard max loss threshold reached for {symbol}: "
+                            f"unrealized loss {unrealized_loss_pct:.2%} >= {HARD_MAX_LOSS_PCT:.2%}. Forcing SELL."
+                        )
+                        if self.notifier:
+                            await self.notifier.send_notification(
+                                f"⛔ Hard stop for {display_symbol}: unrealized loss {unrealized_loss_pct:.2%} "
+                                f"exceeds maximum {HARD_MAX_LOSS_PCT:.2%} – force selling.",
+                                summary={
+                                    "symbol": symbol,
+                                    "action": "SELL",
+                                    "reason": "Hard maximum loss threshold",
+                                    "price": current_price,
+                                    "unrealized_loss_pct": round(unrealized_loss_pct, 4),
+                                    "exit_reason": "hard_max_loss",
+                                }
+                            )
+                        await self._execute_signal(
+                            symbol,
+                            Signal(action="SELL", confidence=1.0, reasoning="Hard maximum loss threshold exceeded"),
+                            exit_reason="hard_max_loss"
+                        )
+                        continue
+
+                # Skip positions that don't have LLM-defined risk parameters yet
+                if pos.get("stop_loss") is None or pos.get("take_profit") is None:
+                    continue
 
                 # Trailing stop update (only if enabled)
                 # Skip if a native trailing-stop order is already handling it
@@ -7884,10 +7920,6 @@ class TradingEngine:
                             if new_stop - pos["stop_loss"] >= min_improvement:
                                 pos["stop_loss"] = new_stop
                                 logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
-
-                # --- Format symbol for notifications ---
-                stock_name = await self._get_stock_name(symbol)
-                display_symbol = self._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
 
                 # --- Trailing take-profit ---
                 if pos.get("trailing_take_profit") and pos.get("trailing_take_profit_distance_pct"):
@@ -8145,35 +8177,6 @@ class TradingEngine:
                             symbol,
                             Signal(action="SELL", confidence=1.0, reasoning="Max unrealized loss"),
                             exit_reason="max_unrealized_loss"
-                        )
-                        continue
-
-                # --- Hard stop: maximum total loss regardless of LLM decisions ---
-                entry_price = pos["price"]
-                if entry_price > 0:
-                    unrealized_loss_pct = (entry_price - current_price) / entry_price
-                    if unrealized_loss_pct >= HARD_MAX_LOSS_PCT:
-                        logger.warning(
-                            f"Hard max loss threshold reached for {symbol}: "
-                            f"unrealized loss {unrealized_loss_pct:.2%} >= {HARD_MAX_LOSS_PCT:.2%}. Forcing SELL."
-                        )
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⛔ Hard stop for {display_symbol}: unrealized loss {unrealized_loss_pct:.2%} "
-                                f"exceeds maximum {HARD_MAX_LOSS_PCT:.2%} – force selling.",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "SELL",
-                                    "reason": "Hard maximum loss threshold",
-                                    "price": current_price,
-                                    "unrealized_loss_pct": round(unrealized_loss_pct, 4),
-                                    "exit_reason": "hard_max_loss",
-                                }
-                            )
-                        await self._execute_signal(
-                            symbol,
-                            Signal(action="SELL", confidence=1.0, reasoning="Hard maximum loss threshold exceeded"),
-                            exit_reason="hard_max_loss"
                         )
                         continue
 
