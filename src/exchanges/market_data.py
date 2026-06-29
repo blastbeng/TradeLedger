@@ -294,7 +294,7 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
         if isin:
             # Save to DB with the base symbol (no suffix)
             try:
-                save_discovered_symbol(db_symbol, isin, "stock", "")
+                save_discovered_symbol(db_symbol, isin, None, "")
             except Exception:
                 pass
             return isin
@@ -314,8 +314,23 @@ BORSA_TIMEFRAME_MAP = {
     "5Y": "5Y",       # 5-Year
 }
 
+# --- Borsa Italiana token cache ---
+_borsa_token_cache: Dict[str, tuple] = {}  # {cache_key: (timestamp, token)}
+_borsa_token_cache_lock = threading.Lock()
+_BORSA_TOKEN_CACHE_TTL = 300  # 5 minutes
+
+
 def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
-    """Dynamically fetch the bearer token from the Borsa Italiana summary chart page."""
+    """Dynamically fetch the bearer token from the Borsa Italiana summary chart page, with caching."""
+    cache_key = f"{isin}-{market_code}"
+    now = time.time()
+
+    # Check cache first
+    with _borsa_token_cache_lock:
+        cached = _borsa_token_cache.get(cache_key)
+        if cached and (now - cached[0]) < _BORSA_TOKEN_CACHE_TTL:
+            return cached[1]
+
     url = f"https://grafici.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -327,7 +342,11 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
             # Extract token from <chart-allinone ... token="..." ...>
             match = re.search(r'<chart-allinone[^>]*token="([^"]+)"', response.text)
             if match:
-                return match.group(1)
+                token = match.group(1)
+                # Cache the token
+                with _borsa_token_cache_lock:
+                    _borsa_token_cache[cache_key] = (now, token)
+                return token
             logger.warning(f"Could not find Borsa Italiana token for {isin}-{market_code}")
             return None
     except Exception as e:

@@ -1375,8 +1375,8 @@ def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, na
             "VALUES (%s, %s, %s, %s, %s) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
-            "asset_type = EXCLUDED.asset_type, "
-            "name = EXCLUDED.name, "
+            "asset_type = COALESCE(EXCLUDED.asset_type, discovered_symbols.asset_type), "
+            "name = COALESCE(NULLIF(EXCLUDED.name, ''), discovered_symbols.name), "
             "discovered_at = EXCLUDED.discovered_at"
         )
         conn.execute(sql, (symbol, isin, asset_type, name, time.time()))
@@ -1402,8 +1402,8 @@ def save_discovered_symbols_batch(symbols: List[Dict[str, Any]]):
             "VALUES (%s, %s, %s, %s, %s) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
-            "asset_type = EXCLUDED.asset_type, "
-            "name = EXCLUDED.name, "
+            "asset_type = COALESCE(EXCLUDED.asset_type, discovered_symbols.asset_type), "
+            "name = COALESCE(NULLIF(EXCLUDED.name, ''), discovered_symbols.name), "
             "discovered_at = EXCLUDED.discovered_at"
         )
         rows = [(s["symbol"], s.get("isin"), s.get("asset_type", ""), s.get("name", ""), now) for s in symbols]
