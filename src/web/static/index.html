@@ -568,8 +568,12 @@
                 setTimeout(connect, 3000);
             };
             ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                updateUI(data);
+                try {
+                    const data = JSON.parse(event.data);
+                    updateUI(data);
+                } catch (err) {
+                    console.error("Error processing WebSocket message:", err);
+                }
             };
         }
 
@@ -796,8 +800,6 @@
                     }
                 }
 
-                // Immediately fetch prices for the current set
-                fetchPositionPrices();
             } else {
                 // No positions data – clear everything
                 for (const sym of Object.keys(positionsMap)) {
@@ -1467,6 +1469,17 @@
                 if (toDate) {
                     const toTs = new Date(toDate).getTime() + 86400000;
                     data = data.filter(d => d.timestamp <= toTs);
+                }
+
+                if (data.length === 0) {
+                    const statsDiv = document.getElementById('chart-stats');
+                    if (statsDiv) statsDiv.innerHTML = '<span>No data available for the selected filters.</span>';
+                    if (chartInstance) {
+                        chartInstance.data.labels = [];
+                        chartInstance.data.datasets.forEach(ds => ds.data = []);
+                        chartInstance.update();
+                    }
+                    return;
                 }
 
                 const labels = data.map(d => new Date(d.timestamp).toLocaleString());
