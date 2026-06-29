@@ -3196,10 +3196,11 @@ class TradingEngine:
             if ohlcv_data and settings.OHLCV_TIMEFRAMES:
                 # Try timeframes from longest to shortest. For long timeframes
                 # (5Y, 3Y, 1Y) with very few candles, fall back to shorter
-                # timeframes that have more candles. Use lowered minimum
-                # thresholds so correlation can be computed even with sparse data.
-                MIN_CANDLES = 4
-                MIN_RETURNS = 3
+                # timeframes that have more candles. Require a minimum of 20
+                # data points so the Pearson correlation is statistically
+                # significant.
+                MIN_CANDLES = 20
+                MIN_RETURNS = 19
 
                 returns_series: Dict[str, List[float]] = {}
                 used_tf = None
