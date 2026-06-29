@@ -5377,6 +5377,11 @@ class TradingEngine:
                     logger.error(f"LLM Step 2 call failed for {symbol}: {e}. Using preliminary decision.")
                     signal = preliminary_signal
                     signal.backtest_summary = combined_bt_summary
+                    # Preserve provider/model from Step 1b as fallback
+                    if llm_provider is None:
+                        llm_provider = preliminary_signal.llm_provider
+                    if llm_model is None:
+                        llm_model = preliminary_signal.llm_model
             else:
                 logger.info(f"Insufficient data for any backtest for {symbol}. Using preliminary decision.")
                 signal = preliminary_signal
