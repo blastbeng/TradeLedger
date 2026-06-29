@@ -11961,63 +11961,41 @@ class TradingEngine:
         # Fetch indicator config from position if exists
         ind_cfg = self.positions.get(symbol, {}).get('indicator_config') if symbol in self.positions else None
 
-        multi_tf_indicators = {}
-        multi_tf_raw_candles = {}
-        atr = rsi = macd = macd_signal = macd_hist = None
-        bb_upper = bb_middle = bb_lower = ema_9 = ema_21 = None
-        stochastic_k = stochastic_d = adx = plus_di = minus_di = None
-        obv = mfi = cci = williams_r = ichimoku = donchian_channels = None
-        parabolic_sar = keltner_channels = vwap = daily_pivot_points = None
+        _inds = await self._compute_multi_tf_indicators(symbol, ohlcv_data, assigned_tf)
+        multi_tf_indicators = _inds["multi_tf_indicators"]
+        multi_tf_raw_candles = _inds["multi_tf_raw_candles"]
+        atr = _inds["atr"]
+        rsi = _inds["rsi"]
+        macd = _inds["macd"]
+        macd_signal = _inds["macd_signal"]
+        macd_hist = _inds["macd_hist"]
+        bb_upper = _inds["bb_upper"]
+        bb_middle = _inds["bb_middle"]
+        bb_lower = _inds["bb_lower"]
+        ema_9 = _inds["ema_9"]
+        ema_21 = _inds["ema_21"]
+        stochastic_k = _inds["stochastic_k"]
+        stochastic_d = _inds["stochastic_d"]
+        adx = _inds["adx"]
+        plus_di = _inds["plus_di"]
+        minus_di = _inds["minus_di"]
+        obv = _inds["obv"]
+        mfi = _inds["mfi"]
+        cci = _inds["cci"]
+        williams_r = _inds["williams_r"]
+        ichimoku = _inds["ichimoku"]
+        donchian_channels = _inds["donchian_channels"]
+        parabolic_sar = _inds["parabolic_sar"]
+        keltner_channels = _inds["keltner_channels"]
+        vwap = _inds["vwap"]
+        daily_pivot_points = _inds["daily_pivot_points"]
+
         atr_multi_tf = {}
-        atr_percentile = None
-
-        # Batch-fetch all indicators for this symbol in a single DB query
-        sim_batch_inds = await asyncio.to_thread(get_indicators_for_symbols, [symbol], settings.OHLCV_TIMEFRAMES)
-        sim_symbol_inds = sim_batch_inds.get(symbol, {})
-
-        for tf in settings.OHLCV_TIMEFRAMES:
-            if tf in ohlcv_data and ohlcv_data[tf]:
-                candles = ohlcv_data[tf]
-                multi_tf_raw_candles[tf] = candles
-                ind = sim_symbol_inds.get(tf)
-                if ind:
-                    multi_tf_indicators[tf] = ind
-                    if tf == assigned_tf:
-                        atr = ind.get('atr')
-                        rsi = ind.get('rsi')
-                        macd = ind.get('macd')
-                        macd_signal = ind.get('macd_signal')
-                        macd_hist = ind.get('macd_hist')
-                        bb_upper = ind.get('bb_upper')
-                        bb_middle = ind.get('bb_middle')
-                        bb_lower = ind.get('bb_lower')
-                        ema_9 = ind.get('ema_9')
-                        ema_21 = ind.get('ema_21')
-                        stochastic_k = ind.get('stochastic_k')
-                        stochastic_d = ind.get('stochastic_d')
-                        adx = ind.get('adx')
-                        plus_di = ind.get('plus_di')
-                        minus_di = ind.get('minus_di')
-                        obv = ind.get('obv')
-                        mfi = ind.get('mfi')
-                        cci = ind.get('cci')
-                        williams_r = ind.get('williams_r')
-                        ichimoku = ind.get('ichimoku')
-                        donchian_channels = ind.get('donchian_channels')
-                        parabolic_sar = ind.get('parabolic_sar')
-                        keltner_channels = ind.get('keltner_channels')
-                        vwap = compute_vwap(candles)
-
         for tf in settings.OHLCV_TIMEFRAMES:
             ind = multi_tf_indicators.get(tf, {})
             tf_atr = ind.get('atr')
             if tf_atr is not None and tf_atr > 0:
                 atr_multi_tf[tf] = tf_atr
-
-        if "1d" in multi_tf_raw_candles and len(multi_tf_raw_candles["1d"]) >= 2:
-            daily_candles = multi_tf_raw_candles["1d"]
-            prev_daily = daily_candles[-2]
-            daily_pivot_points = compute_pivot_points(prev_daily[2], prev_daily[3], prev_daily[4])
 
         if atr is not None and atr > 0:
             atr_percentile_key = f"atr_percentile:{symbol}"
@@ -12132,26 +12110,13 @@ class TradingEngine:
         if position_info:
             unrealized_pnl = (current_price - position_info['price']) * position_info['amount']
 
-        portfolio_total_value = base_balance
-        portfolio_exposure = 0.0
-        portfolio_stop_risk = 0.0
-        pos_tickers = await self._get_all_position_tickers()
-        for sym, pos in self.positions.items():
-            try:
-                t = pos_tickers.get(sym)
-                price = t['last'] if t and t.get('last') else 0.0
-                pos_value = pos['amount'] * price
-                portfolio_exposure += pos_value
-                portfolio_total_value += pos_value
-                stop_loss = pos.get('stop_loss')
-                if stop_loss is not None and price > 0:
-                    loss_if_stop = pos_value * (price - stop_loss) / price
-                    portfolio_stop_risk += max(0, loss_if_stop)
-            except Exception:
-                pass
-        portfolio_exposure_pct = (portfolio_exposure / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
-        portfolio_stop_risk_pct = (portfolio_stop_risk / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
-        portfolio_available_capital = max(0.0, base_balance - self._cycle_spent)
+        _portfolio = await self._compute_portfolio_exposure_summary(base_balance)
+        portfolio_total_value = _portfolio["portfolio_total_value"]
+        portfolio_exposure = _portfolio["portfolio_exposure"]
+        portfolio_stop_risk = _portfolio["portfolio_stop_risk"]
+        portfolio_exposure_pct = _portfolio["portfolio_exposure_pct"]
+        portfolio_stop_risk_pct = _portfolio["portfolio_stop_risk_pct"]
+        portfolio_available_capital = _portfolio["portfolio_available_capital"]
 
         recent_trades = [t for t in self.trade_history if t.get("side") == "sell"][-5:]
         recent_trades_summary = [
