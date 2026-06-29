@@ -162,3 +162,67 @@ def get_llm_response(prompt: str, system_prompt: str = "", model_type: str = "ac
         # but guard against unexpected None.
         raise RuntimeError("LLM returned an empty response")
     return result["response"]
+
+
+def check_llm_health() -> dict:
+    """Check if the configured LLM provider is reachable.
+
+    Returns a dict with keys:
+        - "mind": {"status": "connected"|"disconnected", "provider": str, "model": str, "error": str|None}
+        - "actuator": {"status": "connected"|"disconnected", "provider": str, "model": str, "error": str|None}
+    """
+    results = {}
+
+    for role in ("mind", "actuator"):
+        if role == "mind":
+            provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
+        else:
+            provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
+
+        if provider == "openai":
+            model = (settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL) if role == "mind" else (settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL)
+            base_url = (settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL) if role == "mind" else (settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL)
+            api_key = (settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY) if role == "mind" else (settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY)
+        else:
+            model = (settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL) if role == "mind" else (settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL)
+            base_url = (settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL) if role == "mind" else (settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL)
+            api_key = (settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY) if role == "mind" else (settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY)
+
+        if not base_url:
+            results[role] = {
+                "status": "disconnected",
+                "provider": provider,
+                "model": model or "unknown",
+                "error": "No base URL configured",
+            }
+            continue
+
+        try:
+            headers = {}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            if provider == "ollama":
+                url = f"{base_url.rstrip('/')}/api/tags"
+            else:
+                url = f"{base_url.rstrip('/')}/models"
+
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(url, headers=headers)
+                response.raise_for_status()
+
+            results[role] = {
+                "status": "connected",
+                "provider": provider,
+                "model": model or "unknown",
+                "error": None,
+            }
+        except Exception as e:
+            results[role] = {
+                "status": "disconnected",
+                "provider": provider,
+                "model": model or "unknown",
+                "error": str(e)[:200],
+            }
+
+    return results

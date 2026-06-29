@@ -63,9 +63,16 @@ async def root():
 @app.get("/health")
 async def health():
     redis_ok = check_redis_connection()
+    from src.llm.llm_client import check_llm_health
+    llm_health = await run_in_threadpool(check_llm_health)
+    mind_ok = llm_health.get("mind", {}).get("status") == "connected"
+    actuator_ok = llm_health.get("actuator", {}).get("status") == "connected"
+    all_ok = redis_ok and mind_ok and actuator_ok
     return {
-        "status": "ok" if redis_ok else "degraded",
+        "status": "ok" if all_ok else "degraded",
         "redis": "connected" if redis_ok else "disconnected",
+        "llm_mind": llm_health.get("mind", {}),
+        "llm_actuator": llm_health.get("actuator", {}),
     }
 
 @app.get("/api/status")
