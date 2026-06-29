@@ -1929,6 +1929,214 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
     return prompt
 
 
+def build_analysis_prompt(**kwargs) -> str:
+    """Build a focused prompt for Step 1a: Market analysis only.
+
+    Reuses build_strategy_prompt for all market data context,
+    but replaces the output format section with a simpler one
+    that asks only for action, confidence, reasoning, and strategy_direction.
+    No trading parameters, backtest variants, or entry conditions are requested.
+    """
+    full_prompt = build_strategy_prompt(**kwargs)
+
+    # Truncate at the output format marker and replace with a simpler one
+    marker = "**Output ONLY the raw JSON object as specified.**\n\n"
+    idx = full_prompt.rfind(marker)
+    if idx >= 0:
+        market_data_section = full_prompt[:idx]
+    else:
+        market_data_section = full_prompt
+
+    analysis_output = (
+        "**Output ONLY a raw JSON object with these fields:**\n"
+        '- "action": one of BUY, SELL, HOLD\n'
+        '- "confidence": a float between 0.0 and 1.0\n'
+        '- "reasoning": a string explaining your analysis. Include the key factors '
+        '(indicators, sentiment, market regime, fundamentals, news, portfolio context) '
+        'that led to your decision. You MUST include the current market price in the reasoning.\n'
+        '- "strategy_direction": a short string describing your intended strategy approach '
+        '(e.g., "momentum_breakout", "mean_reversion", "trend_following", "range_trading", "hold")\n\n'
+        "Focus ONLY on analyzing the market data and deciding the direction. "
+        "Do NOT output trading parameters, backtest variants, or entry conditions — "
+        "those will be requested in the next step.\n\n"
+        "Output ONLY the raw JSON object."
+    )
+
+    return market_data_section + analysis_output
+
+
+def build_backtest_variants_prompt(
+    symbol: str,
+    analysis: Dict[str, Any],
+    ticker: Dict[str, Any],
+    current_price: float,
+    atr: Optional[float],
+    assigned_timeframe: str,
+    base_currency: str,
+    base_balance: float,
+    per_symbol_budget: float,
+    min_order_amount: Optional[float] = None,
+    min_order_cost: Optional[float] = None,
+    remaining_balance: Optional[float] = None,
+    portfolio_total_value: Optional[float] = None,
+    portfolio_exposure_pct: Optional[float] = None,
+    portfolio_stop_risk_pct: Optional[float] = None,
+    portfolio_available_capital: Optional[float] = None,
+    max_portfolio_exposure_pct: Optional[float] = None,
+    max_portfolio_stop_risk_pct: Optional[float] = None,
+    global_risk_multiplier: Optional[float] = None,
+    min_stop_atr_mult: float = 1.0,
+    min_hold_time_mult: float = 1.0,
+    trading_paused: bool = False,
+    has_position: bool = False,
+) -> str:
+    """Build a focused prompt for Step 1b: Parameter selection and backtest variants.
+
+    Given the analysis from Step 1a, asks the LLM to propose backtest variants
+    with full parameters, entry conditions, and preliminary strategy parameters.
+    The LLM does not need to re-analyze the market — it translates its analysis
+    into concrete trading parameters.
+    """
+    from src.config.settings import settings as _settings
+    import re as _re
+    import time as _time
+
+    tf_seconds = _timeframe_to_seconds(assigned_timeframe)
+
+    # Cap validator minimum for long timeframes
+    if assigned_timeframe in ("3Y", "5Y"):
+        validator_min = 31_536_000
+    elif assigned_timeframe in ("1Y", "6M"):
+        validator_min = min(int(min_hold_time_mult * tf_seconds), 31_536_000)
+    else:
+        validator_min = int(min_hold_time_mult * tf_seconds)
+
+    # Detect BTP for fee calculation
+    _is_btp = bool(_re.match(r'^IT[A-Z0-9]{10}', symbol.split("/")[0]))
+    trade_value = min(per_symbol_budget, remaining_balance if remaining_balance is not None else per_symbol_budget)
+
+    prompt = f"""**Step 1b: Parameter Selection & Backtest Variants**
+
+Symbol: {symbol}
+Current price: {current_price}
+Assigned timeframe: {assigned_timeframe}
+Base currency: {base_currency}
+
+**Your Step 1a Analysis (you already made this decision):**
+- Action: {analysis.get("action", "HOLD")}
+- Confidence: {analysis.get("confidence", 0.0)}
+- Reasoning: {analysis.get("reasoning", "")}
+- Strategy Direction: {analysis.get("strategy_direction", "unknown")}
+
+**Key Market Context for Parameter Selection:**
+- ATR (14-period, {assigned_timeframe}): {atr:.6f if atr else 'N/A'}
+"""
+    if atr is not None and current_price and current_price > 0:
+        atr_pct = atr / current_price
+        min_sl = min_stop_atr_mult * atr_pct
+        prompt += f"- ATR%: {atr_pct:.4%}\n"
+        prompt += f"- Minimum stop-loss (validator enforces): {min_sl:.4%} ({min_stop_atr_mult} × ATR%)\n"
+
+    prompt += f"- Total {base_currency} balance: {base_balance:.2f}\n"
+    prompt += f"- Suggested per-symbol budget: {per_symbol_budget:.2f} {base_currency}\n"
+    if remaining_balance is not None:
+        prompt += f"- Remaining available for this symbol: {remaining_balance:.2f} {base_currency}\n"
+    if portfolio_total_value is not None:
+        prompt += f"- Total portfolio value: {portfolio_total_value:.2f} {base_currency}\n"
+    if portfolio_exposure_pct is not None:
+        prompt += f"- Current capital deployed: {portfolio_exposure_pct:.1f}%\n"
+    if portfolio_stop_risk_pct is not None:
+        prompt += f"- Total stop-loss risk: {portfolio_stop_risk_pct:.2f}%\n"
+    if portfolio_available_capital is not None:
+        prompt += f"- Available capital: {portfolio_available_capital:.2f} {base_currency}\n"
+    if max_portfolio_exposure_pct is not None:
+        prompt += f"- Max portfolio exposure: {max_portfolio_exposure_pct*100:.0f}%\n"
+    if max_portfolio_stop_risk_pct is not None:
+        prompt += f"- Max portfolio stop risk: {max_portfolio_stop_risk_pct*100:.0f}%\n"
+    if global_risk_multiplier is not None and global_risk_multiplier < 1.0:
+        prompt += f"- Global risk multiplier: {global_risk_multiplier}\n"
+    if min_order_amount is not None:
+        prompt += f"- Min order amount: {min_order_amount}\n"
+    if min_order_cost is not None:
+        prompt += f"- Min order cost: {min_order_cost:.2f} {base_currency}\n"
+
+    # Transaction cost break-even
+    if trade_value > 0:
+        if _is_btp:
+            if _settings.BTP_IS_PRIMARY_ISSUANCE:
+                buy_fee = 0.0
+                sell_fee = 0.0
+            else:
+                buy_fee = max(_settings.BTP_MIN_FEE, trade_value * _settings.BTP_FEE_PERC)
+                sell_fee = max(_settings.BTP_MIN_FEE, trade_value * _settings.BTP_FEE_PERC)
+        else:
+            buy_fee = max(3.50, trade_value * 0.0024) + 2.50 + (trade_value * 0.0012)
+            sell_fee = max(3.50, trade_value * 0.0024) + 2.50
+        total_fees = buy_fee + sell_fee
+        break_even_pct = total_fees / trade_value
+        prompt += (
+            f"\n**Transaction Cost Break-Even:**\n"
+            f"  Trade size: ~{trade_value:.2f} {base_currency}\n"
+            f"  Total round-trip fees: {total_fees:.2f} {base_currency} ({break_even_pct*100:.2f}%)\n"
+            f"  Your take_profit_pct MUST be > {break_even_pct*100:.2f}% to be profitable.\n"
+        )
+
+    prompt += f"""
+**Validator Constraints:**
+- Minimum max_hold_time_seconds for {assigned_timeframe}: {validator_min} seconds
+- Minimum stop-loss: {min_stop_atr_mult} × ATR% (if ATR available)
+- take_profit_pct MUST be strictly greater than stop_loss_pct
+
+**Position Sizing:**
+- position_size_fraction represents a fraction of your total {base_currency} balance (0.01 to 1.0)
+- The sum of position_size_fraction across all stocks must not exceed 1.0
+- Use small fractions (0.01–0.05) for low conviction, larger for high conviction
+- If remaining balance is too small for a profitable trade after fees, set action to HOLD
+
+**Backtest Entry Logic:**
+Include a `backtest_entry_config` object in each variant to match your intended entry strategy.
+Supported fields: ema_period, ema_direction, min_adx, max_rsi, min_rsi, macd_filter, logic.
+Example: {{"backtest_entry_config": {{"ema_period": 21, "ema_direction": "above", "min_adx": 25, "max_rsi": 65, "macd_filter": "positive", "logic": "and"}}}}
+
+**Entry Condition (REQUIRED for every BUY):**
+Include an `entry_condition` object. Supported types: limit_price, rsi_threshold, delay, indicator_combo.
+Example: {{"type": "limit_price", "price": 1.23, "timeout_seconds": 3600}}
+Minimum timeout: max(300, {settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT} × candle timeframe seconds).
+
+**Output ONLY the raw JSON object as specified.**
+
+Return a JSON object with these **required** fields:
+- `action`: one of BUY, SELL, HOLD (should match your Step 1a analysis)
+- `confidence`: a float between 0.0 and 1.0 (should match your Step 1a analysis)
+- `reasoning`: a string explaining your parameter choices. You MUST include the current market price.
+- `strategy`: an object containing `type` (string) and `parameters` (object).
+  The `parameters` object MUST include ALL required trading parameters:
+  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`,
+  `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`, etc.
+- `backtest_variants`: a JSON array of objects, each containing a complete set of strategy parameters
+  for backtesting. Each variant MUST include at minimum: `stop_loss_pct`, `take_profit_pct`,
+  `max_hold_time_seconds`, `trailing_stop`, `position_size_fraction`, and `backtest_period_days`.
+  You decide how many variants to return (minimum 1, recommended 3–5, maximum {_settings.MAX_BACKTEST_VARIANTS}).
+  Each variant should explore a different hypothesis based on your Step 1a analysis.
+- `entry_condition`: REQUIRED for every BUY action. An object specifying the exact moment to enter.
+- `limit_price`: optional, a specific limit price for the order.
+- `time_in_force`: optional, "day" or "gtc". Default "day".
+"""
+    if has_position:
+        prompt += (
+            "\n**You currently hold a position in this symbol.** "
+            "If you output BUY, you will ADD to the existing position (scale in). "
+            "If you output SELL, you will close the ENTIRE position.\n"
+        )
+    if trading_paused:
+        prompt += (
+            "\n**Trading is currently PAUSED.** BUY signals will NOT be executed; "
+            "they will only be sent as notifications. SELL signals for existing positions "
+            "will be executed normally if the market is open.\n"
+        )
+    return prompt
+
+
 def build_final_decision_prompt(
     symbol: str,
     ticker: Dict[str, Any],

@@ -23,6 +23,8 @@ from src.llm.prompts import (
     build_stock_selection_prompt,
     build_final_selection_prompt,
     build_strategy_prompt,
+    build_analysis_prompt,
+    build_backtest_variants_prompt,
     build_final_decision_prompt,
     _format_news_for_prompt,
     compact_prompt,
@@ -6023,8 +6025,9 @@ class TradingEngine:
             async with self._cycle_spent_lock:
                 remaining = max(0.0, base_balance - self._cycle_spent)
 
-            prompt = await asyncio.to_thread(
-                build_strategy_prompt,
+            # --- Step 1a: Analysis call (focused on market analysis only) ---
+            analysis_prompt = await asyncio.to_thread(
+                build_analysis_prompt,
                 symbol=symbol,
                 ticker=ticker,
                 balance=balance,
@@ -6121,7 +6124,7 @@ class TradingEngine:
             # Add quote staleness warning if the price data is outdated
             staleness_warning = self._get_quote_staleness_warning(ticker)
             if staleness_warning:
-                prompt += staleness_warning
+                analysis_prompt += staleness_warning
             # Add auto-resume note so the LLM sees this context in per-symbol decisions
             last_auto_resume_raw = await asyncio.to_thread(self.redis.get, "trading:last_auto_resume")
             if last_auto_resume_raw:
@@ -6130,7 +6133,7 @@ class TradingEngine:
                     seconds_since = time.time() - last_auto_resume_ts
                     if seconds_since < self._symbol_reevaluation_interval * 2:
                         minutes_since = seconds_since / 60
-                        prompt += (
+                        analysis_prompt += (
                             f"\n**NOTE:** Trading was auto‑resumed {minutes_since:.1f} minutes ago after a pause. "
                             "Market conditions may not have changed significantly. "
                             "Consider whether conditions have actually improved enough to justify trading. "
@@ -6139,7 +6142,7 @@ class TradingEngine:
                         )
                 except (ValueError, TypeError):
                     pass
-            logger.info(f"LLM prompt for {symbol}: {len(prompt)} chars")
+            logger.info(f"LLM Step 1a analysis prompt for {symbol}: {len(analysis_prompt)} chars")
             # Build a market snapshot dict for caching (per-symbol)
             market_snapshot = {
                 "symbol": symbol,
@@ -6308,11 +6311,13 @@ class TradingEngine:
             )
             effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity)
 
+            # --- Step 1a: Call LLM for analysis ---
+            analysis_result = None
             try:
-                strategy_result = await asyncio.wait_for(
+                step1a_result = await asyncio.wait_for(
                     asyncio.to_thread(
                         get_cached_llm_response,
-                        compact_prompt(prompt),
+                        compact_prompt(analysis_prompt),
                         COMPACTED_SYSTEM_PROMPT,
                         60,
                         market_hash=market_hash,
@@ -6321,18 +6326,39 @@ class TradingEngine:
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
-                response = strategy_result["response"]
-                llm_provider = strategy_result["provider"]
-                llm_model = strategy_result["model"]
-                logger.info(f"LLM call completed for {symbol} (provider={llm_provider}, model={llm_model})")
+                step1a_response = step1a_result["response"]
+                llm_provider = step1a_result["provider"]
+                llm_model = step1a_result["model"]
+                logger.info(f"LLM Step 1a (analysis) completed for {symbol} (provider={llm_provider}, model={llm_model})")
+                analysis_result = self._parse_analysis_response(step1a_response)
+                if analysis_result is None:
+                    logger.warning(f"Failed to parse Step 1a analysis response for {symbol}. Retrying with correction.")
+                    correction_prompt = (
+                        "Your previous response was not valid JSON. "
+                        "You MUST output ONLY a single JSON object with fields: "
+                        '"action", "confidence", "reasoning", "strategy_direction". '
+                        "No markdown fences, no explanations, no extra text. "
+                        "Here is the original request:\n\n" + analysis_prompt
+                    )
+                    retry_result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            get_cached_llm_response,
+                            compact_prompt(correction_prompt),
+                            COMPACTED_SYSTEM_PROMPT, 30,
+                            model_type="actuator",
+                            temperature=effective_temp,
+                        ),
+                        timeout=settings.LLM_TIMEOUT
+                    )
+                    analysis_result = self._parse_analysis_response(retry_result["response"])
+                    llm_provider = retry_result["provider"]
+                    llm_model = retry_result["model"]
                 # Update snapshot after a real LLM call
                 self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist)
-                # Clear any force‑eval flag for this symbol
                 self._force_eval.pop(symbol, None)
             except asyncio.TimeoutError:
-                logger.warning(f"LLM strategy call timed out for {symbol}.")
-                # If a critical decision is pending, force a SELL immediately to protect capital.
-                if max_hold_expired or stop_loss_triggered or take_profit_triggered or partial_tp_triggered or dust_sweep_triggered:
+                logger.warning(f"LLM Step 1a (analysis) timed out for {symbol}.")
+                if is_critical:
                     reason = "LLM timeout"
                     if max_hold_expired:
                         reason = "Max hold expired, LLM timeout"
@@ -6356,112 +6382,183 @@ class TradingEngine:
                         exit_reason=reason.replace(" ", "_").lower()
                     )
                     return
-                # No critical flag – safe to skip this cycle.
                 if self.notifier:
                     await self.notifier.send_notification(
-                        f"⏱️ LLM timeout for {display_symbol}, skipping.",
+                        f"⏱️ LLM Step 1a timeout for {display_symbol}, skipping.",
                         summary={
                             "symbol": symbol,
                             "action": "SKIP",
-                            "reason": "LLM timeout",
+                            "reason": "LLM Step 1a timeout",
+                            "model_type": strategy_model_type,
+                        }
+                    )
+                self._force_eval.pop(symbol, None)
+                return
+            except Exception as e:
+                logger.error(f"LLM Step 1a failed for {symbol}: {e}")
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"⚠️ LLM Step 1a failed for {display_symbol}: {e}",
+                        summary={
+                            "symbol": symbol,
+                            "action": "SKIP",
+                            "reason": f"LLM Step 1a error: {str(e)[:200]}",
                             "model_type": strategy_model_type,
                         }
                     )
                 self._force_eval.pop(symbol, None)
                 return
 
-            if response is None:
-                logger.warning(f"LLM returned None for {symbol}.")
-                # If a critical decision is pending, force a SELL immediately to protect capital.
-                if max_hold_expired or stop_loss_triggered or take_profit_triggered or partial_tp_triggered or dust_sweep_triggered:
-                    reason = "LLM returned None"
-                    if max_hold_expired:
-                        reason = "Max hold expired, LLM returned None"
-                    elif stop_loss_triggered:
-                        reason = "Stop-loss triggered, LLM returned None"
-                    elif take_profit_triggered:
-                        reason = "Take-profit triggered, LLM returned None"
-                    elif partial_tp_triggered:
-                        reason = "Partial TP triggered, LLM returned None"
-                    elif dust_sweep_triggered:
-                        reason = "Dust sweep triggered, LLM returned None"
-                    logger.warning(f"Forcing SELL for {symbol} due to {reason}")
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"⚠️ LLM returned empty response for {display_symbol} with critical flag – forcing SELL.",
-                            summary={"symbol": symbol, "action": "SELL", "reason": reason, "model_type": strategy_model_type}
-                        )
-                    await self._execute_signal(
-                        symbol,
-                        Signal(action="SELL", confidence=1.0, reasoning=reason),
-                        exit_reason=reason.replace(" ", "_").lower()
-                    )
-                    return
-                # No critical flag – safe to skip this cycle.
-                if self.notifier:
-                    await self.notifier.send_notification(
-                        f"⚠️ LLM returned empty response for {display_symbol}, skipping.",
-                        summary={
-                            "symbol": symbol,
-                            "action": "SKIP",
-                            "reason": "LLM returned None",
-                            "model_type": strategy_model_type,
-                        }
-                    )
+            if analysis_result is None:
+                logger.warning(f"Step 1a analysis parsing failed for {symbol} after retry. Skipping.")
                 self._force_eval.pop(symbol, None)
                 return
 
-            # --- Step 1: Parse preliminary decision ---
-            try:
-                preliminary_strategy = create_strategy_from_llm(response)
-            except ValueError as e:
-                logger.warning(f"LLM Step 1 response parse failed for {symbol}: {e}. Retrying with correction prompt.")
-                correction_prompt = (
-                    "Your previous response was not valid JSON. "
-                    "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
-                    "Here is the original request:\n\n" + prompt
+            # If analysis says HOLD with no position, skip parameter selection entirely
+            if analysis_result.get("action") == "HOLD" and not has_position:
+                logger.info(f"Step 1a analysis returned HOLD with no position for {symbol}. Skipping Step 1b.")
+                # Create a minimal preliminary signal for the notification flow
+                preliminary_signal = Signal(
+                    action="HOLD",
+                    confidence=analysis_result.get("confidence", 0.0),
+                    reasoning=analysis_result.get("reasoning", ""),
                 )
+                preliminary_signal.model_type = strategy_model_type
+                preliminary_signal.llm_provider = llm_provider
+                preliminary_signal.llm_model = llm_model
+                # Skip backtests and Step 2 — go directly to notification
+                signal = preliminary_signal
+                combined_bt_summary = ""
+                _skip_backtest = True
+            else:
+                _skip_backtest = False
+
+            if not _skip_backtest:
+                # --- Step 1b: Call LLM for backtest variants and parameters ---
+                variants_prompt = await asyncio.to_thread(
+                    build_backtest_variants_prompt,
+                    symbol=symbol,
+                    analysis=analysis_result,
+                    ticker=ticker,
+                    current_price=current_price,
+                    atr=atr,
+                    assigned_timeframe=assigned_tf,
+                    base_currency=self.base_currency,
+                    base_balance=base_balance,
+                    per_symbol_budget=per_symbol_budget,
+                    min_order_amount=min_order_amount,
+                    min_order_cost=min_order_cost,
+                    remaining_balance=remaining,
+                    portfolio_total_value=portfolio_total_value,
+                    portfolio_exposure_pct=portfolio_exposure_pct,
+                    portfolio_stop_risk_pct=portfolio_stop_risk_pct,
+                    portfolio_available_capital=portfolio_available_capital,
+                    max_portfolio_exposure_pct=max_port_exp,
+                    max_portfolio_stop_risk_pct=max_port_risk,
+                    global_risk_multiplier=global_risk_mult,
+                    min_stop_atr_mult=min_stop_atr_mult,
+                    min_hold_time_mult=min_hold_time_mult,
+                    trading_paused=trading_paused,
+                    has_position=has_position,
+                )
+                logger.info(f"LLM Step 1b variants prompt for {symbol}: {len(variants_prompt)} chars")
+
+                # Use a different market hash for Step 1b (include analysis to differentiate)
+                variants_market_hash = compute_market_hash({
+                    **market_snapshot,
+                    "step": "1b",
+                    "analysis": analysis_result,
+                })
+
                 try:
-                    response2 = await asyncio.wait_for(
+                    step1b_result = await asyncio.wait_for(
                         asyncio.to_thread(
-                            get_cached_llm_response, compact_prompt(correction_prompt), COMPACTED_SYSTEM_PROMPT, 30,
-                            model_type="actuator",
+                            get_cached_llm_response,
+                            compact_prompt(variants_prompt),
+                            COMPACTED_SYSTEM_PROMPT,
+                            60,
+                            market_hash=variants_market_hash,
+                            model_type=strategy_model_type,
                             temperature=effective_temp,
                         ),
                         timeout=settings.LLM_TIMEOUT
                     )
-                    self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist)
-                    preliminary_strategy = create_strategy_from_llm(response2["response"])
-                    response = response2["response"]
-                    llm_provider = response2["provider"]
-                    llm_model = response2["model"]
-                except Exception as e2:
-                    logger.error(f"LLM Step 1 response still invalid after retry for {symbol}: {e2}")
-                    preliminary_strategy = LLMStrategy(Signal(action="HOLD", confidence=0.0, reasoning="Failed to parse LLM Step 1 response after retry"))
-            
-            preliminary_signal = preliminary_strategy.generate_signal({})
-            preliminary_signal.model_type = strategy_model_type
-            preliminary_signal.llm_provider = llm_provider
-            preliminary_signal.llm_model = llm_model
+                    step1b_response = step1b_result["response"]
+                    llm_provider = step1b_result["provider"]
+                    llm_model = step1b_result["model"]
+                    logger.info(f"LLM Step 1b (variants) completed for {symbol} (provider={llm_provider}, model={llm_model})")
+                except asyncio.TimeoutError:
+                    logger.warning(f"LLM Step 1b (variants) timed out for {symbol}. Using Step 1a analysis as fallback.")
+                    step1b_response = json.dumps({
+                        "action": analysis_result.get("action", "HOLD"),
+                        "confidence": analysis_result.get("confidence", 0.0),
+                        "reasoning": analysis_result.get("reasoning", ""),
+                        "strategy": {
+                            "type": "fallback",
+                            "parameters": {},
+                        },
+                    })
+                except Exception as e:
+                    logger.error(f"LLM Step 1b failed for {symbol}: {e}. Using Step 1a analysis as fallback.")
+                    step1b_response = json.dumps({
+                        "action": analysis_result.get("action", "HOLD"),
+                        "confidence": analysis_result.get("confidence", 0.0),
+                        "reasoning": analysis_result.get("reasoning", ""),
+                        "strategy": {
+                            "type": "fallback",
+                            "parameters": {},
+                        },
+                    })
 
-            # --- Step 2: Run backtest(s) and ask LLM for final decision ---
-            signal, combined_bt_summary, llm_provider, llm_model = await self._run_backtest_and_final_decision(
-                symbol=symbol,
-                assigned_tf=assigned_tf,
-                tf_seconds=tf_seconds,
-                current_price=current_price,
-                atr=atr,
-                historical_ohlcv=historical_ohlcv,
-                raw_candles=raw_candles,
-                base_balance=base_balance,
-                is_btp=is_btp,
-                trading_paused=trading_paused,
-                strategy_model_type=strategy_model_type,
-                effective_temp=effective_temp,
-                preliminary_signal=preliminary_signal,
-                display_symbol=display_symbol,
-                ticker=ticker,
-            )
+                # --- Parse Step 1b response ---
+                try:
+                    preliminary_strategy = create_strategy_from_llm(step1b_response)
+                except ValueError as e:
+                    logger.warning(f"LLM Step 1b response parse failed for {symbol}: {e}. Retrying with correction prompt.")
+                    correction_prompt = (
+                        "Your previous response was not valid JSON. "
+                        "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
+                        "Here is the original request:\n\n" + variants_prompt
+                    )
+                    try:
+                        response2 = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                get_cached_llm_response, compact_prompt(correction_prompt), COMPACTED_SYSTEM_PROMPT, 30,
+                                model_type="actuator",
+                                temperature=effective_temp,
+                            ),
+                            timeout=settings.LLM_TIMEOUT
+                        )
+                        preliminary_strategy = create_strategy_from_llm(response2["response"])
+                        llm_provider = response2["provider"]
+                        llm_model = response2["model"]
+                    except Exception as e2:
+                        logger.error(f"LLM Step 1b response still invalid after retry for {symbol}: {e2}")
+                        preliminary_strategy = LLMStrategy(Signal(action="HOLD", confidence=0.0, reasoning="Failed to parse LLM Step 1b response after retry"))
+
+                preliminary_signal = preliminary_strategy.generate_signal({})
+                preliminary_signal.model_type = strategy_model_type
+                preliminary_signal.llm_provider = llm_provider
+                preliminary_signal.llm_model = llm_model
+
+                # --- Step 2: Run backtest(s) and ask LLM for final decision ---
+                signal, combined_bt_summary, llm_provider, llm_model = await self._run_backtest_and_final_decision(
+                    symbol=symbol,
+                    assigned_tf=assigned_tf,
+                    tf_seconds=tf_seconds,
+                    current_price=current_price,
+                    atr=atr,
+                    historical_ohlcv=historical_ohlcv,
+                    raw_candles=raw_candles,
+                    base_balance=base_balance,
+                    is_btp=is_btp,
+                    trading_paused=trading_paused,
+                    strategy_model_type=strategy_model_type,
+                    effective_temp=effective_temp,
+                    preliminary_signal=preliminary_signal,
+                    display_symbol=display_symbol,
+                    ticker=ticker,
+                )
 
             current_price = ticker['last']
 
@@ -10194,6 +10291,28 @@ class TradingEngine:
             "macd_hist": macd_hist,
         }
 
+    def _parse_analysis_response(self, response: str) -> Optional[Dict[str, Any]]:
+        """Parse the Step 1a analysis LLM response into a dict.
+
+        Expected fields: action, confidence, reasoning, strategy_direction.
+        Returns None if parsing fails.
+        """
+        try:
+            parsed = json.loads(response)
+            if not isinstance(parsed, dict):
+                return None
+            action = parsed.get("action", "").upper()
+            if action not in ("BUY", "SELL", "HOLD"):
+                return None
+            return {
+                "action": action,
+                "confidence": float(parsed.get("confidence", 0.0)),
+                "reasoning": parsed.get("reasoning", ""),
+                "strategy_direction": parsed.get("strategy_direction", ""),
+            }
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
+
     async def _get_global_risk_multiplier(self) -> Optional[float]:
         """Return the global risk multiplier, falling back to persisted value if Redis key expired."""
         raw = await asyncio.to_thread(self.redis.get, "trading:global_risk_multiplier")
@@ -12580,7 +12699,7 @@ class TradingEngine:
         remaining = max(0.0, base_balance - self._cycle_spent)
 
         prompt = await asyncio.to_thread(
-            build_strategy_prompt,
+            build_analysis_prompt,
             symbol=symbol, ticker=ticker, balance=balance, open_positions=open_positions,
             per_symbol_budget=per_symbol_budget, max_symbols=self.effective_max_symbols,
             base_currency=self.base_currency, performance=perf, ohlcv_data=ohlcv_data,
@@ -12734,65 +12853,108 @@ class TradingEngine:
         market_hash = compute_market_hash(market_snapshot)
 
         return {
-            "ticker": ticker, "prompt": prompt, "atr": atr, "assigned_tf": assigned_tf,
+            "ticker": ticker, "analysis_prompt": prompt, "atr": atr, "assigned_tf": assigned_tf,
             "tf_seconds": tf_seconds, "historical_ohlcv": historical_ohlcv,
             "raw_candles": raw_candles, "current_price": current_price,
             "base_balance": base_balance, "is_btp": is_btp,
             "model_type": strategy_model_type, "temperature": effective_temp,
             "market_hash": market_hash,
+            "per_symbol_budget": per_symbol_budget,
+            "min_order_amount": min_order_amount,
+            "min_order_cost": min_order_cost,
+            "remaining_balance": remaining,
+            "portfolio_total_value": portfolio_total_value,
+            "portfolio_exposure_pct": portfolio_exposure_pct,
+            "portfolio_stop_risk_pct": portfolio_stop_risk_pct,
+            "portfolio_available_capital": portfolio_available_capital,
+            "max_portfolio_exposure_pct": max_port_exp,
+            "max_portfolio_stop_risk_pct": max_port_risk,
+            "global_risk_multiplier": global_risk_mult,
+            "min_stop_atr_mult": sim_min_stop_atr_mult,
+            "min_hold_time_mult": sim_min_hold_time_mult,
+            "has_position": symbol in self.positions,
         }
 
     async def simulate_backtest(self, symbol: str) -> Dict[str, Any]:
-        """Simulate Step 1 (LLM strategy proposal) and run backtest without executing trades."""
+        """Simulate Step 1a (analysis), Step 1b (variants), and run backtest without executing trades."""
         data = await self._prepare_simulation_data(symbol)
         if "error" in data:
             return data
-        
+
         model_type = data.get("model_type", "mind")
         temperature = data.get("temperature", 0.2)
         market_hash = data.get("market_hash")
 
+        # Step 1a: Analysis
         try:
-            result = await asyncio.wait_for(
+            step1a_result = await asyncio.wait_for(
                 asyncio.to_thread(
                     get_cached_llm_response,
-                    compact_prompt(data["prompt"]),
-                    COMPACTED_SYSTEM_PROMPT,
-                    60,
+                    compact_prompt(data["analysis_prompt"]),
+                    COMPACTED_SYSTEM_PROMPT, 60,
                     market_hash=market_hash,
                     model_type=model_type,
                     temperature=temperature,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
-            step1_response = result["response"]
+            step1a_response = step1a_result["response"]
         except Exception as e:
-            return {"error": f"LLM call failed: {e}"}
+            return {"error": f"LLM Step 1a call failed: {e}"}
+
+        analysis = self._parse_analysis_response(step1a_response)
+        if analysis is None:
+            return {"error": "Failed to parse Step 1a analysis response", "raw_response": step1a_response}
+
+        # Step 1b: Backtest variants
+        variants_prompt = await asyncio.to_thread(
+            build_backtest_variants_prompt,
+            symbol=symbol,
+            analysis=analysis,
+            ticker=data["ticker"],
+            current_price=data["current_price"],
+            atr=data["atr"],
+            assigned_timeframe=data["assigned_tf"],
+            base_currency=self.base_currency,
+            base_balance=data["base_balance"],
+            per_symbol_budget=data["per_symbol_budget"],
+            min_order_amount=data.get("min_order_amount"),
+            min_order_cost=data.get("min_order_cost"),
+            remaining_balance=data.get("remaining_balance"),
+            portfolio_total_value=data.get("portfolio_total_value"),
+            portfolio_exposure_pct=data.get("portfolio_exposure_pct"),
+            portfolio_stop_risk_pct=data.get("portfolio_stop_risk_pct"),
+            portfolio_available_capital=data.get("portfolio_available_capital"),
+            max_portfolio_exposure_pct=data.get("max_portfolio_exposure_pct"),
+            max_portfolio_stop_risk_pct=data.get("max_portfolio_stop_risk_pct"),
+            global_risk_multiplier=data.get("global_risk_multiplier"),
+            min_stop_atr_mult=data.get("min_stop_atr_mult", 1.0),
+            min_hold_time_mult=data.get("min_hold_time_mult", 1.0),
+            trading_paused=False,
+            has_position=data.get("has_position", False),
+        )
 
         try:
-            preliminary_strategy = create_strategy_from_llm(step1_response)
+            step1b_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response,
+                    compact_prompt(variants_prompt),
+                    COMPACTED_SYSTEM_PROMPT, 60,
+                    market_hash=compute_market_hash({"step": "1b", "analysis": analysis}),
+                    model_type=model_type,
+                    temperature=temperature,
+                ),
+                timeout=settings.LLM_TIMEOUT
+            )
+            step1b_response = step1b_result["response"]
+        except Exception as e:
+            return {"error": f"LLM Step 1b call failed: {e}"}
+
+        try:
+            preliminary_strategy = create_strategy_from_llm(step1b_response)
             preliminary_signal = preliminary_strategy.generate_signal({})
         except ValueError as e:
-            # Retry with correction prompt
-            logger.warning(f"Simulation Step 1 parse failed for {symbol}: {e}. Retrying.")
-            correction_prompt = (
-                "Your previous response was not valid JSON. "
-                "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
-                "Here is the original request:\n\n" + data["prompt"]
-            )
-            try:
-                retry_result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        get_cached_llm_response, compact_prompt(correction_prompt), COMPACTED_SYSTEM_PROMPT, 30,
-                        model_type="actuator", temperature=temperature,
-                    ),
-                    timeout=settings.LLM_TIMEOUT
-                )
-                step1_response = retry_result["response"]
-                preliminary_strategy = create_strategy_from_llm(step1_response)
-                preliminary_signal = preliminary_strategy.generate_signal({})
-            except Exception as e2:
-                return {"error": f"Failed to parse LLM response after retry: {e2}", "raw_response": step1_response}
+            return {"error": f"Failed to parse Step 1b response: {e}", "raw_response": step1b_response}
 
         if preliminary_signal.action in ("BUY", "HOLD"):
             # Determine which variant param sets to backtest
@@ -12859,60 +13021,89 @@ class TradingEngine:
             }
 
     async def simulate_decision(self, symbol: str) -> Dict[str, Any]:
-        """Simulate Step 1 and Step 2 (final LLM decision) without executing trades."""
+        """Simulate Step 1a (analysis), Step 1b (variants), and Step 2 (final decision) without executing trades."""
         data = await self._prepare_simulation_data(symbol)
         if "error" in data:
             return data
-        
+
         model_type = data.get("model_type", "mind")
         temperature = data.get("temperature", 0.2)
         market_hash = data.get("market_hash")
 
+        # Step 1a: Analysis
         try:
-            result = await asyncio.wait_for(
+            step1a_result = await asyncio.wait_for(
                 asyncio.to_thread(
                     get_cached_llm_response,
-                    compact_prompt(data["prompt"]),
-                    COMPACTED_SYSTEM_PROMPT,
-                    60,
+                    compact_prompt(data["analysis_prompt"]),
+                    COMPACTED_SYSTEM_PROMPT, 60,
                     market_hash=market_hash,
                     model_type=model_type,
                     temperature=temperature,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
-            step1_response = result["response"]
+            step1a_response = step1a_result["response"]
         except Exception as e:
-            return {"error": f"LLM Step 1 call failed: {e}"}
+            return {"error": f"LLM Step 1a call failed: {e}"}
+
+        analysis = self._parse_analysis_response(step1a_response)
+        if analysis is None:
+            return {"error": "Failed to parse Step 1a analysis response", "raw_response": step1a_response}
+
+        # Step 1b: Backtest variants
+        variants_prompt = await asyncio.to_thread(
+            build_backtest_variants_prompt,
+            symbol=symbol,
+            analysis=analysis,
+            ticker=data["ticker"],
+            current_price=data["current_price"],
+            atr=data["atr"],
+            assigned_timeframe=data["assigned_tf"],
+            base_currency=self.base_currency,
+            base_balance=data["base_balance"],
+            per_symbol_budget=data["per_symbol_budget"],
+            min_order_amount=data.get("min_order_amount"),
+            min_order_cost=data.get("min_order_cost"),
+            remaining_balance=data.get("remaining_balance"),
+            portfolio_total_value=data.get("portfolio_total_value"),
+            portfolio_exposure_pct=data.get("portfolio_exposure_pct"),
+            portfolio_stop_risk_pct=data.get("portfolio_stop_risk_pct"),
+            portfolio_available_capital=data.get("portfolio_available_capital"),
+            max_portfolio_exposure_pct=data.get("max_portfolio_exposure_pct"),
+            max_portfolio_stop_risk_pct=data.get("max_portfolio_stop_risk_pct"),
+            global_risk_multiplier=data.get("global_risk_multiplier"),
+            min_stop_atr_mult=data.get("min_stop_atr_mult", 1.0),
+            min_hold_time_mult=data.get("min_hold_time_mult", 1.0),
+            trading_paused=False,
+            has_position=data.get("has_position", False),
+        )
 
         try:
-            preliminary_strategy = create_strategy_from_llm(step1_response)
+            step1b_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response,
+                    compact_prompt(variants_prompt),
+                    COMPACTED_SYSTEM_PROMPT, 60,
+                    market_hash=compute_market_hash({"step": "1b", "analysis": analysis}),
+                    model_type=model_type,
+                    temperature=temperature,
+                ),
+                timeout=settings.LLM_TIMEOUT
+            )
+            step1b_response = step1b_result["response"]
+        except Exception as e:
+            return {"error": f"LLM Step 1b call failed: {e}"}
+
+        try:
+            preliminary_strategy = create_strategy_from_llm(step1b_response)
             preliminary_signal = preliminary_strategy.generate_signal({})
         except ValueError as e:
-            # Retry with correction prompt
-            logger.warning(f"Simulation Step 1 parse failed for {symbol}: {e}. Retrying.")
-            correction_prompt = (
-                "Your previous response was not valid JSON. "
-                "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
-                "Here is the original request:\n\n" + data["prompt"]
-            )
-            try:
-                retry_result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        get_cached_llm_response, compact_prompt(correction_prompt), COMPACTED_SYSTEM_PROMPT, 30,
-                        model_type="actuator", temperature=temperature,
-                    ),
-                    timeout=settings.LLM_TIMEOUT
-                )
-                step1_response = retry_result["response"]
-                preliminary_strategy = create_strategy_from_llm(step1_response)
-                preliminary_signal = preliminary_strategy.generate_signal({})
-            except Exception as e2:
-                return {"error": f"Failed to parse LLM Step 1 response after retry: {e2}", "raw_response": step1_response}
+            return {"error": f"Failed to parse Step 1b response: {e}", "raw_response": step1b_response}
 
         if preliminary_signal.action == "SELL":
             return {
-                "step1_response": step1_response,
+                "step1_response": step1b_response,
                 "step2_response": "N/A (Step 1 action is SELL)",
                 "action": preliminary_signal.action,
                 "backtest_summary": "No backtest performed (action is SELL)",
