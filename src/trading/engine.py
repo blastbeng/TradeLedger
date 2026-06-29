@@ -12047,6 +12047,7 @@ class TradingEngine:
                 slippage_pct=0.001,
                 trend_filter_ema_period=50,
                 backtest_entry_config=bt_entry_config,
+                direction="long",
             )
             bt_summary = format_backtest_summary(backtest_stats)
             return backtest_stats, bt_summary

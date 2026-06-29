@@ -57,9 +57,11 @@ def backtest_strategy(
     max_rsi: float = 100.0,
     macd_hist_values: Optional[List[Optional[float]]] = None,
     backtest_entry_config: Optional[Dict[str, Any]] = None,
+    direction: str = "long",
+    _return_trades: bool = False,
 ) -> Dict[str, Any]:
     """
-    Backtest a long-only strategy on historical OHLCV candles.
+    Backtest a long, short, or both-direction strategy on historical OHLCV candles.
 
     Simulates entering a long position at the close of each candle, then tracks
     the position forward until stop-loss, take-profit, or max hold time is hit.
@@ -88,6 +90,64 @@ def backtest_strategy(
         stop_loss_pct = 0.02
     if take_profit_pct is None or take_profit_pct <= 0:
         take_profit_pct = 0.05
+
+    if direction not in ("long", "short", "both"):
+        direction = "long"
+
+    if direction == "both":
+        long_trades, _ = backtest_strategy(
+            candles=candles, stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
+            max_hold_time_seconds=max_hold_time_seconds, trailing_stop=trailing_stop,
+            trailing_stop_distance_pct=trailing_stop_distance_pct,
+            trailing_stop_activation_pct=trailing_stop_activation_pct,
+            partial_take_profit_levels=partial_take_profit_levels,
+            breakeven_activation_pct=breakeven_activation_pct,
+            trailing_take_profit=trailing_take_profit,
+            trailing_take_profit_distance_pct=trailing_take_profit_distance_pct,
+            trailing_stop_atr_multiple=trailing_stop_atr_multiple,
+            atr_values=atr_values, stop_loss_atr_multiple=stop_loss_atr_multiple,
+            take_profit_atr_multiple=take_profit_atr_multiple,
+            max_unrealized_loss_pct=max_unrealized_loss_pct,
+            adx_values=adx_values, min_adx=min_adx, fee_rate=fee_rate, fee_model=fee_model,
+            trade_value=trade_value, is_btp=is_btp, max_trades=max_trades,
+            cooldown_after_loss_seconds=cooldown_after_loss_seconds,
+            slippage_pct=slippage_pct, trend_filter_ema_period=trend_filter_ema_period,
+            rsi_values=rsi_values, max_rsi=max_rsi,
+            macd_hist_values=macd_hist_values,
+            backtest_entry_config=backtest_entry_config,
+            direction="long", _return_trades=True,
+        )
+        short_trades, _ = backtest_strategy(
+            candles=candles, stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
+            max_hold_time_seconds=max_hold_time_seconds, trailing_stop=trailing_stop,
+            trailing_stop_distance_pct=trailing_stop_distance_pct,
+            trailing_stop_activation_pct=trailing_stop_activation_pct,
+            partial_take_profit_levels=partial_take_profit_levels,
+            breakeven_activation_pct=breakeven_activation_pct,
+            trailing_take_profit=trailing_take_profit,
+            trailing_take_profit_distance_pct=trailing_take_profit_distance_pct,
+            trailing_stop_atr_multiple=trailing_stop_atr_multiple,
+            atr_values=atr_values, stop_loss_atr_multiple=stop_loss_atr_multiple,
+            take_profit_atr_multiple=take_profit_atr_multiple,
+            max_unrealized_loss_pct=max_unrealized_loss_pct,
+            adx_values=adx_values, min_adx=min_adx, fee_rate=fee_rate, fee_model=fee_model,
+            trade_value=trade_value, is_btp=is_btp, max_trades=max_trades,
+            cooldown_after_loss_seconds=cooldown_after_loss_seconds,
+            slippage_pct=slippage_pct, trend_filter_ema_period=trend_filter_ema_period,
+            rsi_values=rsi_values, max_rsi=max_rsi,
+            macd_hist_values=macd_hist_values,
+            backtest_entry_config=backtest_entry_config,
+            direction="short", _return_trades=True,
+        )
+        all_trades = long_trades + short_trades
+        buy_and_hold_pct = 0.0
+        if len(candles) >= 2 and candles[0][4] > 0:
+            buy_and_hold_pct = (candles[-1][4] - candles[0][4]) / candles[0][4]
+        if not all_trades:
+            return _empty_result()
+        return _compute_stats(all_trades, buy_and_hold_pct=buy_and_hold_pct)
+
+    is_short = direction == "short"
 
     # Parse configurable entry logic
     if backtest_entry_config is None:
@@ -174,18 +234,33 @@ def backtest_strategy(
 
         # Dynamic ATR-based stop-loss
         if stop_loss_atr_multiple is not None and atr_values is not None and i < len(atr_values) and atr_values[i] is not None and atr_values[i] > 0:
-            stop_loss_price = entry_price - (atr_values[i] * stop_loss_atr_multiple)
+            if is_short:
+                stop_loss_price = entry_price + (atr_values[i] * stop_loss_atr_multiple)
+            else:
+                stop_loss_price = entry_price - (atr_values[i] * stop_loss_atr_multiple)
         else:
-            stop_loss_price = entry_price * (1 - stop_loss_pct)
+            if is_short:
+                stop_loss_price = entry_price * (1 + stop_loss_pct)
+            else:
+                stop_loss_price = entry_price * (1 - stop_loss_pct)
 
         # Dynamic ATR-based take-profit
         if take_profit_atr_multiple is not None and atr_values is not None and i < len(atr_values) and atr_values[i] is not None and atr_values[i] > 0:
-            take_profit_price = entry_price + (atr_values[i] * take_profit_atr_multiple)
+            if is_short:
+                take_profit_price = entry_price - (atr_values[i] * take_profit_atr_multiple)
+            else:
+                take_profit_price = entry_price + (atr_values[i] * take_profit_atr_multiple)
         else:
-            take_profit_price = entry_price * (1 + take_profit_pct)
+            if is_short:
+                take_profit_price = entry_price * (1 - take_profit_pct)
+            else:
+                take_profit_price = entry_price * (1 + take_profit_pct)
 
         # Trailing stop state
-        highest_price = entry_price
+        if is_short:
+            lowest_price = entry_price
+        else:
+            highest_price = entry_price
         trailing_activated = False
         trailing_stop_price = stop_loss_price
 
@@ -222,10 +297,14 @@ def backtest_strategy(
                 trailing_stop_distance_pct is not None
                 or (trailing_stop_atr_multiple is not None and atr_values is not None)
             ):
-                if candle_high > highest_price:
-                    highest_price = candle_high
-
-                profit_pct = (highest_price - entry_price) / entry_price
+                if is_short:
+                    if candle_low < lowest_price:
+                        lowest_price = candle_low
+                    profit_pct = (entry_price - lowest_price) / entry_price
+                else:
+                    if candle_high > highest_price:
+                        highest_price = candle_high
+                    profit_pct = (highest_price - entry_price) / entry_price
 
                 if trailing_stop_activation_pct is not None:
                     if profit_pct >= trailing_stop_activation_pct:
@@ -235,13 +314,23 @@ def backtest_strategy(
                     if trailing_stop_atr_multiple is not None and atr_values is not None:
                         # ATR-based trailing stop (Chandelier Exit)
                         if j < len(atr_values) and atr_values[j] is not None and atr_values[j] > 0:
-                            new_ts = highest_price - (atr_values[j] * trailing_stop_atr_multiple)
+                            if is_short:
+                                new_ts = lowest_price + (atr_values[j] * trailing_stop_atr_multiple)
+                                if new_ts < trailing_stop_price:
+                                    trailing_stop_price = new_ts
+                            else:
+                                new_ts = highest_price - (atr_values[j] * trailing_stop_atr_multiple)
+                                if new_ts > trailing_stop_price:
+                                    trailing_stop_price = new_ts
+                    elif trailing_stop_distance_pct is not None:
+                        if is_short:
+                            new_ts = lowest_price * (1 + trailing_stop_distance_pct)
+                            if new_ts < trailing_stop_price:
+                                trailing_stop_price = new_ts
+                        else:
+                            new_ts = highest_price * (1 - trailing_stop_distance_pct)
                             if new_ts > trailing_stop_price:
                                 trailing_stop_price = new_ts
-                    elif trailing_stop_distance_pct is not None:
-                        new_ts = highest_price * (1 - trailing_stop_distance_pct)
-                        if new_ts > trailing_stop_price:
-                            trailing_stop_price = new_ts
 
                 current_stop = trailing_stop_price
             else:
@@ -249,32 +338,57 @@ def backtest_strategy(
 
             # --- Breakeven stop ---
             if breakeven_activation_pct is not None and breakeven_activation_pct > 0:
-                profit_pct = (candle_high - entry_price) / entry_price
+                if is_short:
+                    profit_pct = (entry_price - candle_low) / entry_price
+                else:
+                    profit_pct = (candle_high - entry_price) / entry_price
                 if profit_pct >= breakeven_activation_pct:
                     breakeven_stop = entry_price
-                    if breakeven_stop > current_stop:
-                        current_stop = breakeven_stop
+                    if is_short:
+                        if breakeven_stop < current_stop:
+                            current_stop = breakeven_stop
+                    else:
+                        if breakeven_stop > current_stop:
+                            current_stop = breakeven_stop
 
             # --- Trailing take-profit ---
             if trailing_take_profit and trailing_take_profit_distance_pct is not None:
-                new_tp = candle_high * (1 - trailing_take_profit_distance_pct)
-                if new_tp > take_profit_price:
-                    take_profit_price = new_tp
+                if is_short:
+                    new_tp = candle_low * (1 + trailing_take_profit_distance_pct)
+                    if new_tp < take_profit_price:
+                        take_profit_price = new_tp
+                else:
+                    new_tp = candle_high * (1 - trailing_take_profit_distance_pct)
+                    if new_tp > take_profit_price:
+                        take_profit_price = new_tp
 
             # --- Max unrealized loss (soft stop) ---
             if max_unrealized_loss_pct is not None and max_unrealized_loss_pct > 0:
-                unrealized_low = (candle_low - entry_price) / entry_price
-                if unrealized_low <= -max_unrealized_loss_pct:
-                    target_exit = entry_price * (1 - max_unrealized_loss_pct)
-                    # If the candle opens below the soft stop, the fill happens at the open price
-                    if candle[1] <= target_exit:
-                        exit_price = candle[1]
-                    else:
-                        exit_price = target_exit * (1 - slippage_pct)
-                    exit_ts = candle_ts
-                    exit_reason = "max_unrealized_loss"
-                    exit_index = j
-                    break
+                if is_short:
+                    unrealized_high = (candle_high - entry_price) / entry_price
+                    if unrealized_high >= max_unrealized_loss_pct:
+                        target_exit = entry_price * (1 + max_unrealized_loss_pct)
+                        if candle[1] >= target_exit:
+                            exit_price = candle[1]
+                        else:
+                            exit_price = target_exit * (1 + slippage_pct)
+                        exit_ts = candle_ts
+                        exit_reason = "max_unrealized_loss"
+                        exit_index = j
+                        break
+                else:
+                    unrealized_low = (candle_low - entry_price) / entry_price
+                    if unrealized_low <= -max_unrealized_loss_pct:
+                        target_exit = entry_price * (1 - max_unrealized_loss_pct)
+                        # If the candle opens below the soft stop, the fill happens at the open price
+                        if candle[1] <= target_exit:
+                            exit_price = candle[1]
+                        else:
+                            exit_price = target_exit * (1 - slippage_pct)
+                        exit_ts = candle_ts
+                        exit_reason = "max_unrealized_loss"
+                        exit_index = j
+                        break
 
             # --- Partial take-profit levels ---
             if partial_take_profit_levels:
@@ -285,11 +399,15 @@ def backtest_strategy(
                     lvl_frac = level.get("fraction", 0)
                     if lvl_pct <= 0 or lvl_frac <= 0 or lvl_frac >= 1:
                         continue
-                    tp_target = entry_price * (1 + lvl_pct)
-                    if candle_high >= tp_target:
-                        # If the candle opens above the target, the fill happens at the open price (gap up)
-                        actual_tp_fill = candle[1] if candle[1] >= tp_target else tp_target * (1 - slippage_pct)
-                        partial_gross = (actual_tp_fill - entry_price) / entry_price * lvl_frac
+                    tp_target = entry_price * (1 + lvl_pct) if not is_short else entry_price * (1 - lvl_pct)
+                    tp_triggered = (candle_high >= tp_target) if not is_short else (candle_low <= tp_target)
+                    if tp_triggered:
+                        if is_short:
+                            actual_tp_fill = candle[1] if candle[1] <= tp_target else tp_target * (1 + slippage_pct)
+                            partial_gross = (entry_price - actual_tp_fill) / entry_price * lvl_frac
+                        else:
+                            actual_tp_fill = candle[1] if candle[1] >= tp_target else tp_target * (1 - slippage_pct)
+                            partial_gross = (actual_tp_fill - entry_price) / entry_price * lvl_frac
                         if fee_model == "intesa" and trade_value and trade_value > 0:
                             entry_fee_pct = 0.0
                             if not entry_fee_charged:
@@ -321,24 +439,42 @@ def backtest_strategy(
                 break
 
             # Check stop-loss (conservative: assume stop hits first if both hit in same candle)
-            if candle_low <= current_stop:
-                # If the candle opens below the stop, the fill happens at the open price (gap down)
-                if candle[1] <= current_stop:
-                    exit_price = candle[1]
+            if is_short:
+                stop_triggered = candle_high >= current_stop
+            else:
+                stop_triggered = candle_low <= current_stop
+            if stop_triggered:
+                if is_short:
+                    if candle[1] >= current_stop:
+                        exit_price = candle[1]
+                    else:
+                        exit_price = current_stop * (1 + slippage_pct)
                 else:
-                    exit_price = current_stop * (1 - slippage_pct)
+                    if candle[1] <= current_stop:
+                        exit_price = candle[1]
+                    else:
+                        exit_price = current_stop * (1 - slippage_pct)
                 exit_ts = candle_ts
                 exit_reason = "stop_loss"
                 exit_index = j
                 break
 
             # Check take-profit
-            if candle_high >= take_profit_price:
-                # If the candle opens above the target, the fill happens at the open price (gap up)
-                if candle[1] >= take_profit_price:
-                    exit_price = candle[1]
+            if is_short:
+                tp_triggered = candle_low <= take_profit_price
+            else:
+                tp_triggered = candle_high >= take_profit_price
+            if tp_triggered:
+                if is_short:
+                    if candle[1] <= take_profit_price:
+                        exit_price = candle[1]
+                    else:
+                        exit_price = take_profit_price * (1 + slippage_pct)
                 else:
-                    exit_price = take_profit_price * (1 - slippage_pct)
+                    if candle[1] >= take_profit_price:
+                        exit_price = candle[1]
+                    else:
+                        exit_price = take_profit_price * (1 - slippage_pct)
                 exit_ts = candle_ts
                 exit_reason = "take_profit"
                 exit_index = j
@@ -364,12 +500,18 @@ def backtest_strategy(
                     entry_fee_charged = True
                 exit_trade_value = trade_value * remaining_fraction * (exit_price / entry_price)
                 exit_fee_pct = _compute_intesa_fees(exit_trade_value, "sell", is_btp) / trade_value
-                gross_pnl_pct = (exit_price - entry_price) / entry_price * remaining_fraction
+                if is_short:
+                    gross_pnl_pct = (entry_price - exit_price) / entry_price * remaining_fraction
+                else:
+                    gross_pnl_pct = (exit_price - entry_price) / entry_price * remaining_fraction
                 net_pnl_pct = gross_pnl_pct - entry_fee_pct - exit_fee_pct
             else:
                 entry_fee = entry_price * fee_rate
                 exit_fee = exit_price * fee_rate
-                gross_pnl_pct = (exit_price - entry_price) / entry_price * remaining_fraction
+                if is_short:
+                    gross_pnl_pct = (entry_price - exit_price) / entry_price * remaining_fraction
+                else:
+                    gross_pnl_pct = (exit_price - entry_price) / entry_price * remaining_fraction
                 net_pnl_pct = gross_pnl_pct - (entry_fee + exit_fee) / entry_price * remaining_fraction
 
             hold_time_seconds = (exit_ts - entry_ts) / 1000.0
@@ -401,9 +543,14 @@ def backtest_strategy(
         buy_and_hold_pct = (candles[-1][4] - candles[0][4]) / candles[0][4]
 
     if not trades:
+        if _return_trades:
+            return [], _empty_result()
         return _empty_result()
 
-    return _compute_stats(trades, buy_and_hold_pct=buy_and_hold_pct)
+    stats = _compute_stats(trades, buy_and_hold_pct=buy_and_hold_pct)
+    if _return_trades:
+        return trades, stats
+    return stats
 
 
 def _empty_result() -> Dict[str, Any]:
