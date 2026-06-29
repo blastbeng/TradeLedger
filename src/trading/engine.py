@@ -6483,9 +6483,9 @@ class TradingEngine:
                     }
                 )
 
-    def get_profit_summary(self) -> Dict[str, Any]:
+    async def get_profit_summary(self) -> Dict[str, Any]:
         """Return profit/loss summary including queued orders."""
-        balance = self.trader.fetch_balance()
+        balance = await asyncio.to_thread(self.trader.fetch_balance)
         current_balance = balance.get(self.base_currency, 0.0)
 
         # --- Early exit: no positions and no queued orders → nothing to compute ---
@@ -6511,7 +6511,7 @@ class TradingEngine:
             }
 
         open_value = 0.0
-        pos_tickers = self._get_all_position_tickers_sync()
+        pos_tickers = await asyncio.to_thread(self._get_all_position_tickers_sync)
         for sym, pos in self.positions.items():
             try:
                 t = pos_tickers.get(sym)
@@ -6540,7 +6540,7 @@ class TradingEngine:
                 queued_sell_symbols.append(q['symbol'])
 
         if queued_sell_symbols:
-            sell_tickers = self._get_tickers_for_symbols_sync(queued_sell_symbols)
+            sell_tickers = await asyncio.to_thread(self._get_tickers_for_symbols_sync, queued_sell_symbols)
         else:
             sell_tickers = {}
         for q in self.queued_orders:
@@ -6606,10 +6606,10 @@ class TradingEngine:
         """Return the most recent LLM signals for the web dashboard."""
         return self.recent_signals[-limit:]
 
-    def get_open_trades(self) -> List[Dict[str, Any]]:
+    async def get_open_trades(self) -> List[Dict[str, Any]]:
         """Return current open positions as trade-like dicts with unrealized P&L."""
         open_trades = []
-        pos_tickers = self._get_all_position_tickers_sync()
+        pos_tickers = await asyncio.to_thread(self._get_all_position_tickers_sync)
         for symbol, pos in self.positions.items():
             # Skip invalid positions (zero amount or zero price)
             if pos.get("amount", 0) <= 0 or pos.get("price", 0) <= 0:
@@ -6647,9 +6647,9 @@ class TradingEngine:
             })
         return open_trades
 
-    def get_performance_summary(self) -> Dict[str, Any]:
+    async def get_performance_summary(self) -> Dict[str, Any]:
         """Return performance summary grouped by symbol and timeframe from trade_history table."""
-        return get_performance()
+        return await asyncio.to_thread(get_performance)
 
     async def get_pause_status(self) -> Dict[str, Any]:
         """Return the current trading pause status, reason, remaining duration, and a formatted countdown."""
@@ -6748,9 +6748,9 @@ class TradingEngine:
             "market_time_str": market_time_str if is_paused and source == "market_closed" else None,
         }
 
-    def get_risk_metrics(self) -> Dict[str, Any]:
+    async def get_risk_metrics(self) -> Dict[str, Any]:
         """Return current risk/exposure metrics."""
-        balance = self.trader.fetch_balance()
+        balance = await asyncio.to_thread(self.trader.fetch_balance)
         total_balance = balance.get(self.base_currency, 0.0)
 
         pnl = total_balance - self.initial_balance
@@ -6760,7 +6760,7 @@ class TradingEngine:
         exposure = 0.0
         position_exposures = []
         total_stop_risk = 0.0
-        pos_tickers = self._get_all_position_tickers_sync()
+        pos_tickers = await asyncio.to_thread(self._get_all_position_tickers_sync)
         for sym, pos in self.positions.items():
             try:
                 t = pos_tickers.get(sym)
@@ -6783,7 +6783,7 @@ class TradingEngine:
         )
 
         # Drawdown from performance metrics
-        perf = self._compute_performance_metrics()
+        perf = await asyncio.to_thread(self._compute_performance_metrics)
         max_drawdown_pct = perf.get('equity_curve', {}).get('drawdown_pct', 0.0)
 
         # Trade statistics

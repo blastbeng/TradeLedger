@@ -267,7 +267,7 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         try:
-            open_trades = await asyncio.to_thread(self.engine.get_open_trades)
+            open_trades = await self.engine.get_open_trades()
         except Exception as e:
             logger.error(f"Failed to get open trades: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve open trades.", reply_markup=self.keyboard)
@@ -474,7 +474,7 @@ class TelegramBot:
             return
 
         try:
-            perf = await asyncio.to_thread(self.engine.get_performance_summary)
+            perf = await self.engine.get_performance_summary()
             rows = perf.get("rows", [])
             total = perf.get("total", {})
 
@@ -549,7 +549,7 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         try:
-            metrics = await asyncio.to_thread(self.engine.get_risk_metrics)
+            metrics = await self.engine.get_risk_metrics()
         except Exception as e:
             logger.error(f"Failed to get risk metrics: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve risk metrics.", reply_markup=self.keyboard)
@@ -729,7 +729,7 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         try:
-            summary = await asyncio.to_thread(self.engine.get_profit_summary)
+            summary = await self.engine.get_profit_summary()
             base_currency = summary.get('base_currency', '')
             pnl = summary['total_pnl']
             pnl_pct = summary['pnl_percent']

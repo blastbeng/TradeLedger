@@ -105,7 +105,7 @@ async def status():
 @app.get("/api/trades")
 async def trades(limit: int = 0):
     engine = get_engine()
-    open_trades = await run_in_threadpool(engine.get_open_trades)
+    open_trades = await engine.get_open_trades()
     for t in open_trades:
         t["display_symbol"] = await _get_display_symbol(engine, t["symbol"], t.get("timeframe"))
     return {"trades": open_trades}
@@ -113,12 +113,12 @@ async def trades(limit: int = 0):
 @app.get("/api/profit")
 async def profit():
     engine = get_engine()
-    return await run_in_threadpool(engine.get_profit_summary)
+    return await engine.get_profit_summary()
 
 @app.get("/api/performance")
 async def performance():
     engine = get_engine()
-    perf = await run_in_threadpool(engine.get_performance_summary)
+    perf = await engine.get_performance_summary()
     if perf.get("rows"):
         async def _add_display_to_row(row):
             row["display_symbol"] = await _get_display_symbol(engine, row["symbol"], row.get("timeframe"))
@@ -132,7 +132,7 @@ async def performance():
 @app.get("/api/risk")
 async def risk():
     engine = get_engine()
-    return await run_in_threadpool(engine.get_risk_metrics)
+    return await engine.get_risk_metrics()
 
 @app.get("/api/news")
 async def news():
@@ -442,7 +442,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     ) if engine.positions else []
                     positions = dict(position_results)
 
-                    perf = await run_in_threadpool(engine.get_performance_summary)
+                    perf = await engine.get_performance_summary()
                     if perf.get("rows"):
                         async def _add_display_to_row(row):
                             row["display_symbol"] = await _get_display_symbol(engine, row["symbol"], row.get("timeframe"))
@@ -455,7 +455,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         total["display_symbol"] = "TOTAL"
 
                     balances = await run_in_threadpool(engine.trader.fetch_balance)
-                    profit_summary = await run_in_threadpool(engine.get_profit_summary)
+                    profit_summary = await engine.get_profit_summary()
                     pause_info = await engine.get_pause_status()
 
                     # Strip large/unserializable fields from queued orders before sending
