@@ -2426,7 +2426,91 @@ class TradingEngine:
         available_pairs += [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
         etf_symbols = await self._get_etf_symbols()
         available_pairs += [f"{sym}/{self.base_currency}" for sym in etf_symbols]
-        for entry in list(self.current_symbols):
+
+        # Build BTP maturity map for maturity checking
+        btp_maturity_map: Dict[str, Optional[str]] = {}
+        for b in btp_bonds:
+            isin = b.get("isin")
+            maturity = b.get("maturity")
+            if isin and maturity:
+                btp_maturity_map[isin] = maturity
+
+    # --- Matured BTP bonds: close at par value (100.0) ---
+    now_dt = datetime.now(timezone.utc)
+    for entry in list(self.current_symbols):
+        symbol = entry["symbol"]
+        base = symbol.split("/")[0]
+        if not re.match(r'^IT[A-Z0-9]{10}$', base):
+            continue
+        maturity_str = btp_maturity_map.get(base)
+        if maturity_str is None:
+            continue
+        try:
+            maturity_str_clean = maturity_str.strip()
+            if "T" in maturity_str_clean:
+                maturity_dt = datetime.fromisoformat(maturity_str_clean.replace("Z", "+00:00"))
+            else:
+                maturity_dt = datetime.fromisoformat(maturity_str_clean)
+            if maturity_dt.tzinfo is None:
+                maturity_dt = maturity_dt.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            try:
+                maturity_dt = datetime.strptime(maturity_str, "%d/%m/%Y").replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                logger.debug(f"Could not parse maturity date '{maturity_str}' for BTP {symbol}")
+                continue
+        if now_dt < maturity_dt:
+            continue
+        # BTP has matured – close at par value
+        logger.info(f"BTP {symbol} has matured (maturity: {maturity_str}). Closing at par value.")
+        self.current_symbols.remove(entry)
+        async with self._queued_orders_lock:
+            self.queued_orders = [q for q in self.queued_orders if q['symbol'] != symbol]
+        if symbol in self.positions:
+            await self._cancel_exit_orders(symbol)
+            async with self._positions_lock:
+                pos = self.positions.pop(symbol)
+            par_value = 100.0
+            cost = pos["amount"] * par_value
+            from src.exchanges.fees import calculate_transaction_costs
+            costs = calculate_transaction_costs("SELL", par_value, pos["amount"], symbol=symbol)
+            fee_cost = costs["total_costs"]
+            cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
+            net_quote = cost - fee_cost
+            realized_pnl = net_quote - cost_basis
+            trade = {
+                "symbol": symbol,
+                "side": "sell",
+                "amount": pos["amount"],
+                "price": par_value,
+                "cost": cost,
+                "fee": {"cost": fee_cost, "currency": self.base_currency},
+                "timestamp": time.time() * 1000,
+                "note": "btp_matured",
+                "exit_reason": "btp_matured",
+                "realized_pnl": realized_pnl,
+                "cost_basis": cost_basis,
+            }
+            self.trade_history.append(trade)
+            await asyncio.to_thread(insert_trade, trade)
+            logger.info(f"Matured BTP {symbol}: closed {pos['amount']} at par value {par_value}.")
+            if self.notifier:
+                stock_name = await self._get_stock_name(symbol)
+                display_symbol = self._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+                await self.notifier.send_notification(
+                    f"💰 BTP {display_symbol} matured – closed at par value {par_value}. P&L: {realized_pnl:+.4f}",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SELL",
+                        "reason": "BTP matured",
+                        "price": par_value,
+                        "realized_pnl": realized_pnl,
+                        "exit_reason": "btp_matured",
+                    }
+                )
+            await self._remove_symbol_if_paused(symbol)
+
+    for entry in list(self.current_symbols):
             symbol = entry["symbol"]
             if symbol not in available_pairs:
                 logger.warning(f"Stock {symbol} no longer available. Removing from tracking.")
@@ -2439,22 +2523,41 @@ class TradingEngine:
                     async with self._positions_lock:
                         pos = self.positions.pop(symbol)
                     cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
+                    base = symbol.split("/")[0]
+                    is_btp = re.match(r'^IT[A-Z0-9]{10}$', base) is not None
+                    if is_btp:
+                        close_price = 100.0  # par value for delisted BTPs
+                        close_cost = pos["amount"] * close_price
+                        from src.exchanges.fees import calculate_transaction_costs
+                        costs = calculate_transaction_costs("SELL", close_price, pos["amount"], symbol=symbol)
+                        fee_cost = costs["total_costs"]
+                        net_quote = close_cost - fee_cost
+                        realized_pnl = net_quote - cost_basis
+                        note = "btp_delisted"
+                        exit_reason = "btp_delisted"
+                    else:
+                        close_price = 0.0
+                        close_cost = 0.0
+                        fee_cost = 0.0
+                        realized_pnl = -cost_basis
+                        note = "delisted"
+                        exit_reason = "delisted"
                     trade = {
                         "symbol": symbol,
                         "side": "sell",
                         "amount": pos["amount"],
-                        "price": 0.0,
-                        "cost": 0.0,
-                        "fee": {"cost": 0.0, "currency": self.base_currency},
+                        "price": close_price,
+                        "cost": close_cost,
+                        "fee": {"cost": fee_cost, "currency": self.base_currency},
                         "timestamp": time.time() * 1000,
-                        "note": "delisted",
-                        "exit_reason": "delisted",
-                        "realized_pnl": -cost_basis,
+                        "note": note,
+                        "exit_reason": exit_reason,
+                        "realized_pnl": realized_pnl,
                         "cost_basis": cost_basis,
                     }
                     self.trade_history.append(trade)
                     await asyncio.to_thread(insert_trade, trade)
-                    logger.warning(f"Delisted stock {symbol}: recorded forced sell of {pos['amount']} at 0.")
+                    logger.warning(f"Delisted {symbol}: recorded forced sell of {pos['amount']} at {close_price}.")
                     await self._remove_symbol_if_paused(symbol)
 
         # --- Externally modified balances ---
