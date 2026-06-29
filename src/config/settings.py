@@ -94,7 +94,7 @@ class Settings(BaseSettings):
 
     # Maximum number of consecutive "keep paused" LLM decisions before the engine
     # force‑resumes trading with a reduced risk multiplier.
-    PAUSE_MAX_CONSECUTIVE_KEEP: int = 2
+    PAUSE_MAX_CONSECUTIVE_KEEP: int = 3
 
     @field_validator("PAUSE_MAX_CONSECUTIVE_KEEP")
     @classmethod
@@ -112,6 +112,18 @@ class Settings(BaseSettings):
     def validate_pause_force_resume_risk_multiplier(cls, v: float) -> float:
         if not (0.0 <= v <= 1.0):
             raise ValueError("PAUSE_FORCE_RESUME_RISK_MULTIPLIER must be between 0.0 and 1.0")
+        return v
+
+    # Maximum account drawdown (%) at which force-resume is blocked.
+    # When drawdown exceeds this threshold, the engine keeps trading paused
+    # even after PAUSE_MAX_CONSECUTIVE_KEEP consecutive "keep paused" decisions.
+    PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT: float = 15.0
+
+    @field_validator("PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT")
+    @classmethod
+    def validate_pause_force_resume_max_drawdown(cls, v: float) -> float:
+        if v < 0 or v > 100:
+            raise ValueError("PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT must be between 0 and 100")
         return v
 
     # Minimum LLM pause duration (seconds) – LLM cannot resume before this

@@ -4756,6 +4756,32 @@ class TradingEngine:
                     if current_source and (current_source.decode() if isinstance(current_source, bytes) else current_source) != "llm":
                         logger.warning("Force-resume skipped: pause source changed to non-LLM.")
                         return
+
+                    # --- Drawdown circuit breaker: do not force-resume in significant drawdown ---
+                    max_drawdown = settings.PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT
+                    if drawdown_pct >= max_drawdown:
+                        logger.warning(
+                            f"Force-resume blocked: account drawdown {drawdown_pct:.2f}% "
+                            f"exceeds circuit breaker threshold {max_drawdown:.2f}%. "
+                            f"Keeping trading paused for safety."
+                        )
+                        if self.notifier:
+                            await self.notifier.send_notification(
+                                f"⛔ Force-resume blocked: drawdown {drawdown_pct:.2f}% exceeds "
+                                f"circuit breaker threshold {max_drawdown:.2f}%. "
+                                f"Trading stays paused to protect capital. "
+                                f"LLM has kept it paused {new_keep_count} time(s).",
+                                summary={
+                                    "action": "PAUSE",
+                                    "reason": f"Force-resume blocked by drawdown circuit breaker ({drawdown_pct:.2f}% >= {max_drawdown:.2f}%)",
+                                    "model_type": "actuator",
+                                    "llm_provider": llm_provider,
+                                    "llm_model": llm_model,
+                                }
+                            )
+                        # Do NOT force-resume; let the LLM continue deciding
+                        return
+
                     logger.warning(
                         f"LLM kept trading paused {new_keep_count} times consecutively – "
                         f"forcing resume with risk multiplier {force_resume_mult}."
