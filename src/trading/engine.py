@@ -2501,25 +2501,49 @@ class TradingEngine:
                     cost_basis = self.positions[symbol].get("cost_basis", 0.0)
                     self.positions[symbol]["price"] = cost_basis / actual_balance if actual_balance > 0 else 0.0
 
-        # --- Close positions that were loaded without LLM risk parameters ---
+        # --- Handle positions that were loaded without LLM risk parameters ---
         for symbol, pos in list(self.positions.items()):
-            if pos.get("_force_close"):
-                logger.info(f"Forcing close of {symbol} because it lacks LLM risk parameters.")
-                # --- Format symbol for notification ---
-                stock_name = await self._get_stock_name(symbol)
-                display_symbol = self._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
-                if self.notifier:
-                    await self.notifier.send_notification(
-                        f"🔻 Closing {display_symbol} – missing LLM risk parameters.",
-                        summary={
-                            "symbol": symbol,
-                            "action": "SELL",
-                            "reason": "Missing LLM risk parameters",
-                            "exit_reason": "force_close",
-                        }
+            if pos.get("_needs_risk_params"):
+                # Check if risk parameters have been populated by a re-evaluation
+                if pos.get("stop_loss") is not None and pos.get("take_profit") is not None:
+                    logger.info(f"Risk parameters obtained for {symbol}; clearing _needs_risk_params flag.")
+                    pos.pop("_needs_risk_params", None)
+                    pos.pop("_needs_risk_params_attempts", None)
+                    continue
+
+                # Risk parameters still missing — increment attempt counter
+                attempts = pos.get("_needs_risk_params_attempts", 0) + 1
+                pos["_needs_risk_params_attempts"] = attempts
+
+                # Force another re-evaluation so the LLM gets another chance
+                self._force_eval[symbol] = True
+                self._last_strategy_eval.pop(symbol, None)
+
+                max_attempts = 3  # ~15 minutes across 3 reconcile cycles (5 min each)
+                if attempts >= max_attempts:
+                    logger.warning(
+                        f"Force-closing {symbol}: missing LLM risk parameters after {attempts} "
+                        f"re-evaluation attempts."
                     )
-                signal = Signal(action="SELL", confidence=1.0, reasoning="Missing LLM risk parameters")
-                await self._execute_signal(symbol, signal, exit_reason="force_close")
+                    stock_name = await self._get_stock_name(symbol)
+                    display_symbol = self._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+                    if self.notifier:
+                        await self.notifier.send_notification(
+                            f"🔻 Closing {display_symbol} – missing LLM risk parameters after {attempts} attempts.",
+                            summary={
+                                "symbol": symbol,
+                                "action": "SELL",
+                                "reason": f"Missing LLM risk parameters after {attempts} attempts",
+                                "exit_reason": "force_close",
+                            }
+                        )
+                    signal = Signal(action="SELL", confidence=1.0, reasoning="Missing LLM risk parameters after re-evaluation attempts")
+                    await self._execute_signal(symbol, signal, exit_reason="force_close")
+                else:
+                    logger.info(
+                        f"Position {symbol} still missing risk parameters "
+                        f"(attempt {attempts}/{max_attempts}); forcing re-evaluation."
+                    )
 
         # Persist any changes made during reconciliation
         await self._save_state()
@@ -2543,9 +2567,13 @@ class TradingEngine:
             if "stop_loss" not in pos or "take_profit" not in pos:
                 logger.warning(
                     f"Position for {symbol} is missing stop_loss/take_profit. "
-                    f"It will be closed because all risk parameters must come from the LLM."
+                    f"Will attempt to re-evaluate to obtain LLM risk parameters before force-closing."
                 )
-                pos["_force_close"] = True
+                pos["_needs_risk_params"] = True
+                pos["_needs_risk_params_attempts"] = 0
+                # Force immediate re-evaluation so the LLM can provide risk parameters
+                self._force_eval[symbol] = True
+                self._last_strategy_eval.pop(symbol, None)
 
         # Discard positions with zero amount or zero price (corrupted state)
         for symbol in list(self.positions.keys()):
@@ -6683,6 +6711,15 @@ class TradingEngine:
             )
             validated.model_type = getattr(signal, 'model_type', None)
             validated.backtest_summary = getattr(signal, 'backtest_summary', None)
+
+            # Clear _needs_risk_params flag if the LLM has now provided risk parameters
+            if symbol in self.positions:
+                _pos = self.positions[symbol]
+                if _pos.get("_needs_risk_params"):
+                    if _pos.get("stop_loss") is not None and _pos.get("take_profit") is not None:
+                        _pos.pop("_needs_risk_params", None)
+                        _pos.pop("_needs_risk_params_attempts", None)
+                        logger.info(f"Risk parameters obtained for {symbol}; cleared _needs_risk_params flag.")
 
             # Log and notify the decision
             logger.info(f"Decision for {symbol}: {validated.action} (confidence: {validated.confidence:.2f})")
