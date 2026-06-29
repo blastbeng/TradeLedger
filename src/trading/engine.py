@@ -4513,7 +4513,7 @@ class TradingEngine:
                 if llm_pause_time_raw:
                     try:
                         llm_pause_time = float(llm_pause_time_raw)
-                        _min_pause = MIN_LLM_PAUSE_DURATION
+                        _min_pause = settings.MIN_LLM_PAUSE_DURATION
                         try:
                             raw = await asyncio.to_thread(self.redis.get, "trading:min_llm_pause_duration")
                             if raw:
