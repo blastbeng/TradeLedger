@@ -4838,7 +4838,17 @@ class TradingEngine:
                         f"Run a force-download via the dashboard or Telegram to populate market data."
                     )
 
-                if self.notifier:
+                no_ohlcv_notify_key = f"trading:no_ohlcv_notify:{symbol}"
+                should_notify = True
+                try:
+                    last_notify_raw = await asyncio.to_thread(self.redis.get, no_ohlcv_notify_key)
+                    if last_notify_raw:
+                        if (time.time() - float(last_notify_raw)) < 3600:
+                            should_notify = False
+                except Exception:
+                    pass
+
+                if should_notify and self.notifier:
                     await self.notifier.send_notification(
                         msg,
                         summary={
@@ -4849,6 +4859,11 @@ class TradingEngine:
                             "last_data_timeframe": last_data_tf,
                         }
                     )
+                    try:
+                        await asyncio.to_thread(self.redis.setex, no_ohlcv_notify_key, 3600, str(time.time()))
+                    except Exception:
+                        pass
+
                 self._force_eval.pop(symbol, None)
                 return
 
