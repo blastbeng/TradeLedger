@@ -5215,6 +5215,276 @@ class TradingEngine:
 
         return signal, combined_bt_summary, llm_provider, llm_model
 
+    async def _handle_triggered_flags(
+        self,
+        symbol: str,
+        display_symbol: str,
+        signal: Signal,
+        validated: Signal,
+        assigned_tf: str,
+        current_price: float,
+        atr: Optional[float],
+        ticker: Dict[str, Any],
+        max_hold_expired: bool,
+        stop_loss_triggered: bool,
+        take_profit_triggered: bool,
+        partial_tp_triggered: bool,
+        dust_sweep_triggered: bool,
+        strategy_model_type: str,
+        llm_provider: Optional[str],
+        llm_model: Optional[str],
+    ) -> bool:
+        """Handle triggered position flags (max hold, stop loss, take profit, partial TP, dust sweep).
+
+        Returns True if the caller should return immediately (flag was handled).
+        Returns False if the caller should continue with normal execution.
+        """
+        params = signal.strategy_params or {}
+
+        # --- Handle max‑hold‑expired LLM decision ---
+        if max_hold_expired and signal.action == "HOLD":
+            new_max_hold = params.get("max_hold_time_seconds") if params else None
+            if new_max_hold is not None and new_max_hold > 0:
+                logger.info(f"LLM extended max hold time for {symbol} to {new_max_hold}s")
+                if symbol in self.positions:
+                    async with self._positions_lock:
+                        self.positions[symbol]["max_hold_time_seconds"] = new_max_hold
+                        self.positions[symbol]["timestamp"] = int(time.time() * 1000)
+                        self.positions[symbol].pop("_max_hold_expired", None)
+                        self.positions[symbol].pop("_max_hold_expired_count", None)
+                for symbol_entry in self.current_symbols:
+                    if symbol_entry["symbol"] == symbol:
+                        symbol_entry["entry_time"] = time.time()
+                        break
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"⏰ Max hold time for {display_symbol} extended to {new_max_hold}s by LLM.\n"
+                        f"Reasoning: {validated.reasoning}",
+                        summary={
+                            "symbol": symbol,
+                            "action": "HOLD",
+                            "reason": validated.reasoning,
+                            "new_max_hold_seconds": new_max_hold,
+                            "model_type": strategy_model_type,
+                            "llm_provider": llm_provider,
+                            "llm_model": llm_model,
+                        }
+                    )
+                await self._update_position_params(
+                    symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
+                )
+            else:
+                logger.warning(
+                    f"LLM returned HOLD without new max_hold_time_seconds for {symbol} "
+                    f"after max hold expiry – forcing SELL."
+                )
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"⏰ LLM did not extend hold time for {display_symbol} – closing position.",
+                        summary={
+                            "symbol": symbol, "action": "SELL",
+                            "reason": "Max hold expired, LLM did not extend",
+                            "exit_reason": "max_hold_time_llm_no_extend",
+                            "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model,
+                        }
+                    )
+                await self._execute_signal(
+                    symbol, Signal(action="SELL", confidence=1.0, reasoning="Max hold expired, LLM did not extend"),
+                    exit_reason="max_hold_time_llm_no_extend"
+                )
+            return True
+
+        # --- Handle stop-loss-triggered LLM decision ---
+        if stop_loss_triggered and signal.action == "HOLD":
+            new_params = signal.strategy_params or {}
+            new_stop_method = new_params.get("stop_loss_method", "fixed")
+            new_stop_pct = None
+            if new_stop_method == "atr_multiple" and atr is not None and atr > 0:
+                atr_mult = new_params.get("stop_loss_atr_multiple")
+                if atr_mult is not None:
+                    new_stop_pct = (atr_mult * atr) / current_price
+            else:
+                new_stop_pct = new_params.get("stop_loss_pct")
+
+            if new_stop_pct is not None and new_stop_pct > 0:
+                logger.info(
+                    f"LLM decided to hold {symbol} after stop-loss trigger, "
+                    f"new stop_loss_pct={new_stop_pct:.4%}"
+                )
+                if symbol in self.positions:
+                    async with self._positions_lock:
+                        self.positions[symbol]["stop_loss"] = current_price * (1 - new_stop_pct)
+                        self.positions[symbol].pop("_stop_loss_triggered", None)
+                        self.positions[symbol].pop("_stop_loss_review_count", None)
+                    await self._update_position_params(
+                        symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
+                    )
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"🔄 {display_symbol}: LLM adjusted stop-loss to {new_stop_pct:.4%} – holding.\n"
+                        f"Reasoning: {validated.reasoning}",
+                        summary={
+                            "symbol": symbol, "action": "HOLD", "reason": validated.reasoning,
+                            "new_stop_loss_pct": new_stop_pct, "model_type": strategy_model_type,
+                            "llm_provider": llm_provider, "llm_model": llm_model,
+                        }
+                    )
+                return True
+            else:
+                logger.warning(
+                    f"LLM returned HOLD for {symbol} after stop-loss trigger but did not provide "
+                    f"a new stop-loss. Forcing SELL."
+                )
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"⛔ {display_symbol}: LLM did not provide new stop-loss – selling.",
+                        summary={
+                            "symbol": symbol, "action": "SELL",
+                            "reason": "Stop-loss triggered, LLM did not provide new stop",
+                            "exit_reason": "stop_loss_llm_no_action",
+                            "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model,
+                        }
+                    )
+                await self._execute_signal(
+                    symbol, Signal(action="SELL", confidence=1.0, reasoning="Stop-loss triggered, LLM did not provide new stop"),
+                    exit_reason="stop_loss_llm_no_action"
+                )
+                return True
+
+        elif stop_loss_triggered and signal.action == "SELL":
+            if symbol in self.positions:
+                async with self._positions_lock:
+                    self.positions[symbol].pop("_stop_loss_triggered", None)
+                    self.positions[symbol].pop("_stop_loss_review_count", None)
+            # Continue to normal SELL execution
+
+        # --- Handle take-profit-triggered LLM decision ---
+        if take_profit_triggered and signal.action == "HOLD":
+            new_params = signal.strategy_params or {}
+            new_tp_pct = new_params.get("take_profit_pct")
+            if new_tp_pct is not None and new_tp_pct > 0:
+                logger.info(
+                    f"LLM decided to hold {symbol} after take-profit trigger, "
+                    f"new take_profit_pct={new_tp_pct:.4%}"
+                )
+                if symbol in self.positions:
+                    async with self._positions_lock:
+                        self.positions[symbol]["take_profit"] = current_price * (1 + new_tp_pct)
+                        self.positions[symbol].pop("_take_profit_triggered", None)
+                        self.positions[symbol].pop("_take_profit_review_count", None)
+                    await self._update_position_params(
+                        symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
+                    )
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"🔄 {display_symbol}: LLM adjusted take-profit to {new_tp_pct:.4%} – holding.\n"
+                        f"Reasoning: {validated.reasoning}",
+                        summary={
+                            "symbol": symbol, "action": "HOLD", "reason": validated.reasoning,
+                            "new_take_profit_pct": new_tp_pct, "model_type": strategy_model_type,
+                            "llm_provider": llm_provider, "llm_model": llm_model,
+                        }
+                    )
+                return True
+            else:
+                logger.warning(
+                    f"LLM returned HOLD for {symbol} after take-profit trigger but did not provide "
+                    f"a new take-profit. Forcing SELL."
+                )
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"🎯 {display_symbol}: LLM did not provide new take-profit – selling.",
+                        summary={
+                            "symbol": symbol, "action": "SELL",
+                            "reason": "Take-profit triggered, LLM did not provide new take-profit",
+                            "exit_reason": "take_profit_llm_no_action",
+                            "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model,
+                        }
+                    )
+                await self._execute_signal(
+                    symbol, Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered, LLM did not provide new take-profit"),
+                    exit_reason="take_profit_llm_no_action"
+                )
+                return True
+
+        elif take_profit_triggered and signal.action == "SELL":
+            if symbol in self.positions:
+                async with self._positions_lock:
+                    self.positions[symbol].pop("_take_profit_triggered", None)
+                    self.positions[symbol].pop("_take_profit_review_count", None)
+            # Continue to normal SELL execution
+
+        # --- Handle partial TP triggered ---
+        if partial_tp_triggered and signal.action == "HOLD":
+            new_levels = params.get("partial_take_profit_levels") if params else None
+            if new_levels is not None:
+                async with self._positions_lock:
+                    self.positions[symbol]["partial_take_profit_levels"] = new_levels
+                    self.positions[symbol].pop("_partial_tp_triggered", None)
+                    self.positions[symbol].pop("_partial_tp_triggered_single", None)
+                    self.positions[symbol].pop("_partial_tp_review_count", None)
+                    self.positions[symbol].pop("_partial_tp_single_review_count", None)
+                    self.positions[symbol].pop("_partial_tp_triggered_levels", None)
+                    self.positions[symbol]["partial_tp_levels_triggered"] = []
+                    self.positions[symbol]["partial_tp_depth_wait_start"] = {}
+                logger.info(f"LLM updated partial TP levels for {symbol}")
+                await self._update_position_params(
+                    symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
+                )
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"🔄 {display_symbol}: LLM adjusted partial TP levels – holding.",
+                        summary={"symbol": symbol, "action": "HOLD", "reason": "Partial TP levels adjusted by LLM", "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model}
+                    )
+                return True
+            else:
+                logger.info(f"LLM did not update partial TP levels for {symbol}, executing triggered level(s)")
+                if self.positions[symbol].get("_partial_tp_triggered_single"):
+                    await self._execute_partial_tp_single(symbol, current_price, None, ticker)
+                    async with self._positions_lock:
+                        self.positions[symbol].pop("_partial_tp_triggered_single", None)
+                        self.positions[symbol].pop("_partial_tp_single_review_count", None)
+                if self.positions[symbol].get("_partial_tp_triggered"):
+                    for lvl in self.positions[symbol].get("_partial_tp_triggered_levels", []):
+                        await self._execute_partial_tp_level(symbol, lvl, current_price, None, ticker)
+                    async with self._positions_lock:
+                        self.positions[symbol].pop("_partial_tp_triggered", None)
+                        self.positions[symbol].pop("_partial_tp_review_count", None)
+                        self.positions[symbol].pop("_partial_tp_triggered_levels", None)
+                return True
+
+        elif partial_tp_triggered and signal.action == "SELL":
+            async with self._positions_lock:
+                self.positions[symbol].pop("_partial_tp_triggered", None)
+                self.positions[symbol].pop("_partial_tp_triggered_single", None)
+                self.positions[symbol].pop("_partial_tp_review_count", None)
+                self.positions[symbol].pop("_partial_tp_single_review_count", None)
+                self.positions[symbol].pop("_partial_tp_triggered_levels", None)
+            # Continue to normal SELL execution
+
+        # --- Handle dust sweep triggered ---
+        if dust_sweep_triggered and signal.action == "HOLD":
+            async with self._positions_lock:
+                self.positions[symbol].pop("_dust_sweep_triggered", None)
+                if self.positions[symbol].get("_dust_keep_since") is None:
+                    self.positions[symbol]["_dust_keep_since"] = time.time()
+            logger.info(f"LLM decided to hold dust for {symbol}")
+            if self.notifier:
+                await self.notifier.send_notification(
+                    f"🧹 {display_symbol}: LLM decided to keep dust – holding.",
+                    summary={"symbol": symbol, "action": "HOLD", "reason": "Dust kept by LLM"}
+                )
+            return True
+        elif dust_sweep_triggered and signal.action == "SELL":
+            async with self._positions_lock:
+                self.positions[symbol].pop("_dust_sweep_triggered", None)
+                self.positions[symbol].pop("_dust_sweep_review_count", None)
+            logger.info(f"LLM decided to sell dust for {symbol}")
+            await self._sweep_dust(symbol)
+            return True
+
+        return False
+
     async def _process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False):
         """Fetch market data, get LLM strategy, validate, and execute."""
         symbol = symbol_entry["symbol"]
@@ -6197,312 +6467,25 @@ class TradingEngine:
 
             params = signal.strategy_params or {}
 
-            # --- Handle max‑hold‑expired LLM decision ---
-            if max_hold_expired and signal.action == "HOLD":
-                new_max_hold = params.get("max_hold_time_seconds") if params else None
-                if new_max_hold is not None and new_max_hold > 0:
-                    # LLM decided to extend – update position and clear the flag
-                    logger.info(f"LLM extended max hold time for {symbol} to {new_max_hold}s")
-                    if symbol in self.positions:
-                        async with self._positions_lock:
-                            self.positions[symbol]["max_hold_time_seconds"] = new_max_hold
-                            # IMPORTANT: Reset the entry timestamp so the new hold period starts now
-                            self.positions[symbol]["timestamp"] = int(time.time() * 1000)
-                            self.positions[symbol].pop("_max_hold_expired", None)
-                            self.positions[symbol].pop("_max_hold_expired_count", None)
-                    # Also update current_symbols entry_time for consistency
-                    for symbol_entry in self.current_symbols:
-                        if symbol_entry["symbol"] == symbol:
-                            symbol_entry["entry_time"] = time.time()
-                            break
-                    # Notify the user about the extension
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"⏰ Max hold time for {display_symbol} extended to {new_max_hold}s by LLM.\n"
-                            f"Reasoning: {validated.reasoning}",
-                            summary={
-                                "symbol": symbol,
-                                "action": "HOLD",
-                                "reason": validated.reasoning,
-                                "new_max_hold_seconds": new_max_hold,
-                                "model_type": strategy_model_type,
-                                "llm_provider": llm_provider,
-                                "llm_model": llm_model,
-                            }
-                        )
-                    # Also apply any other updated parameters from the LLM
-                    await self._update_position_params(
-                        symbol,
-                        params,
-                        signal.indicator_config,
-                        assigned_tf,
-                        current_price,
-                        atr,
-                    )
-                else:
-                    # LLM did not provide a new max_hold_time_seconds → treat as SELL
-                    logger.warning(
-                        f"LLM returned HOLD without new max_hold_time_seconds for {symbol} "
-                        f"after max hold expiry – forcing SELL."
-                    )
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"⏰ LLM did not extend hold time for {display_symbol} – closing position.",
-                            summary={
-                                "symbol": symbol,
-                                "action": "SELL",
-                                "reason": "Max hold expired, LLM did not extend",
-                                "exit_reason": "max_hold_time_llm_no_extend",
-                                "model_type": strategy_model_type,
-                                "llm_provider": llm_provider,
-                                "llm_model": llm_model,
-                            }
-                        )
-                    await self._execute_signal(
-                        symbol,
-                        Signal(action="SELL", confidence=1.0, reasoning="Max hold expired, LLM did not extend"),
-                        exit_reason="max_hold_time_llm_no_extend"
-                    )
-                    return   # stop further processing for this symbol
-
-            # --- Handle stop-loss-triggered LLM decision ---
-            if stop_loss_triggered and signal.action == "HOLD":
-                # LLM decided to keep holding – must provide a new stop-loss
-                new_params = signal.strategy_params or {}
-                new_stop_method = new_params.get("stop_loss_method", "fixed")
-                new_stop_pct = None
-                if new_stop_method == "atr_multiple" and atr is not None and atr > 0:
-                    atr_mult = new_params.get("stop_loss_atr_multiple")
-                    if atr_mult is not None:
-                        new_stop_pct = (atr_mult * atr) / current_price
-                else:
-                    new_stop_pct = new_params.get("stop_loss_pct")
-
-                if new_stop_pct is not None and new_stop_pct > 0:
-                    # LLM provided a new stop – update position and clear the trigger flag
-                    logger.info(
-                        f"LLM decided to hold {symbol} after stop-loss trigger, "
-                        f"new stop_loss_pct={new_stop_pct:.4%}"
-                    )
-                    if symbol in self.positions:
-                        async with self._positions_lock:
-                            self.positions[symbol]["stop_loss"] = current_price * (1 - new_stop_pct)
-                            self.positions[symbol].pop("_stop_loss_triggered", None)
-                            self.positions[symbol].pop("_stop_loss_review_count", None)
-                        # Also apply any other updated parameters from the LLM
-                        await self._update_position_params(
-                            symbol,
-                            new_params,
-                            signal.indicator_config,
-                            assigned_tf,
-                            current_price,
-                            atr,
-                        )
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"🔄 {display_symbol}: LLM adjusted stop-loss to {new_stop_pct:.4%} – holding.\n"
-                            f"Reasoning: {validated.reasoning}",
-                            summary={
-                                "symbol": symbol,
-                                "action": "HOLD",
-                                "reason": validated.reasoning,
-                                "new_stop_loss_pct": new_stop_pct,
-                                "model_type": strategy_model_type,
-                                "llm_provider": llm_provider,
-                                "llm_model": llm_model,
-                            }
-                        )
-                    # Skip further processing for this symbol (do not execute a trade)
-                    return
-                else:
-                    # LLM returned HOLD but did not provide a new stop-loss → force SELL
-                    logger.warning(
-                        f"LLM returned HOLD for {symbol} after stop-loss trigger but did not provide "
-                        f"a new stop-loss. Forcing SELL."
-                    )
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"⛔ {display_symbol}: LLM did not provide new stop-loss – selling.",
-                            summary={
-                                "symbol": symbol,
-                                "action": "SELL",
-                                "reason": "Stop-loss triggered, LLM did not provide new stop",
-                                "exit_reason": "stop_loss_llm_no_action",
-                                "model_type": strategy_model_type,
-                                "llm_provider": llm_provider,
-                                "llm_model": llm_model,
-                            }
-                        )
-                    await self._execute_signal(
-                        symbol,
-                        Signal(action="SELL", confidence=1.0, reasoning="Stop-loss triggered, LLM did not provide new stop"),
-                        exit_reason="stop_loss_llm_no_action"
-                    )
-                    return
-
-            elif stop_loss_triggered and signal.action == "SELL":
-                # LLM decided to sell – clear the flag and let the normal SELL execution proceed
-                if symbol in self.positions:
-                    async with self._positions_lock:
-                        self.positions[symbol].pop("_stop_loss_triggered", None)
-                        self.positions[symbol].pop("_stop_loss_review_count", None)
-                # Continue to the normal SELL execution below (do not return)
-
-            # --- Handle take-profit-triggered LLM decision ---
-            if take_profit_triggered and signal.action == "HOLD":
-                # LLM decided to keep holding – must provide a new take-profit
-                new_params = signal.strategy_params or {}
-                new_tp_pct = new_params.get("take_profit_pct")
-                if new_tp_pct is not None and new_tp_pct > 0:
-                    # LLM provided a new take-profit – update position and clear the trigger flag
-                    logger.info(
-                        f"LLM decided to hold {symbol} after take-profit trigger, "
-                        f"new take_profit_pct={new_tp_pct:.4%}"
-                    )
-                    if symbol in self.positions:
-                        async with self._positions_lock:
-                            self.positions[symbol]["take_profit"] = current_price * (1 + new_tp_pct)
-                            self.positions[symbol].pop("_take_profit_triggered", None)
-                            self.positions[symbol].pop("_take_profit_review_count", None)
-                        # Also apply any other updated parameters from the LLM
-                        await self._update_position_params(
-                            symbol,
-                            new_params,
-                            signal.indicator_config,
-                            assigned_tf,
-                            current_price,
-                            atr,
-                        )
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"🔄 {display_symbol}: LLM adjusted take-profit to {new_tp_pct:.4%} – holding.\n"
-                            f"Reasoning: {validated.reasoning}",
-                            summary={
-                                "symbol": symbol,
-                                "action": "HOLD",
-                                "reason": validated.reasoning,
-                                "new_take_profit_pct": new_tp_pct,
-                                "model_type": strategy_model_type,
-                                "llm_provider": llm_provider,
-                                "llm_model": llm_model,
-                            }
-                        )
-                    # Skip further processing for this symbol
-                    return
-                else:
-                    # LLM returned HOLD but did not provide a new take-profit → force SELL
-                    logger.warning(
-                        f"LLM returned HOLD for {symbol} after take-profit trigger but did not provide "
-                        f"a new take-profit. Forcing SELL."
-                    )
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"🎯 {display_symbol}: LLM did not provide new take-profit – selling.",
-                            summary={
-                                "symbol": symbol,
-                                "action": "SELL",
-                                "reason": "Take-profit triggered, LLM did not provide new take-profit",
-                                "exit_reason": "take_profit_llm_no_action",
-                                "model_type": strategy_model_type,
-                                "llm_provider": llm_provider,
-                                "llm_model": llm_model,
-                            }
-                        )
-                    await self._execute_signal(
-                        symbol,
-                        Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered, LLM did not provide new take-profit"),
-                        exit_reason="take_profit_llm_no_action"
-                    )
-                    return
-
-            elif take_profit_triggered and signal.action == "SELL":
-                # LLM decided to sell – clear the flag and let the normal SELL execution proceed
-                if symbol in self.positions:
-                    async with self._positions_lock:
-                        self.positions[symbol].pop("_take_profit_triggered", None)
-                        self.positions[symbol].pop("_take_profit_review_count", None)
-                # Continue to the normal SELL execution below (do not return)
-
-            # --- Handle partial TP triggered ---
-            if partial_tp_triggered and signal.action == "HOLD":
-                new_levels = params.get("partial_take_profit_levels") if params else None
-                if new_levels is not None:
-                    # LLM provided updated levels – apply them and clear triggers
-                    async with self._positions_lock:
-                        self.positions[symbol]["partial_take_profit_levels"] = new_levels
-                        self.positions[symbol].pop("_partial_tp_triggered", None)
-                        self.positions[symbol].pop("_partial_tp_triggered_single", None)
-                        self.positions[symbol].pop("_partial_tp_review_count", None)
-                        self.positions[symbol].pop("_partial_tp_single_review_count", None)
-                        self.positions[symbol].pop("_partial_tp_triggered_levels", None)
-                        self.positions[symbol]["partial_tp_levels_triggered"] = []
-                        self.positions[symbol]["partial_tp_depth_wait_start"] = {}
-                    logger.info(f"LLM updated partial TP levels for {symbol}")
-                    # Also apply any other updated parameters from the LLM
-                    await self._update_position_params(
-                        symbol,
-                        params,
-                        signal.indicator_config,
-                        assigned_tf,
-                        current_price,
-                        atr,
-                    )
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"🔄 {display_symbol}: LLM adjusted partial TP levels – holding.",
-                            summary={"symbol": symbol, "action": "HOLD", "reason": "Partial TP levels adjusted by LLM", "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model}
-                        )
-                    return
-                else:
-                    # LLM did not provide new levels – execute the triggered partial sell(s)
-                    logger.info(f"LLM did not update partial TP levels for {symbol}, executing triggered level(s)")
-                    if self.positions[symbol].get("_partial_tp_triggered_single"):
-                        await self._execute_partial_tp_single(symbol, current_price, None, ticker)
-                        async with self._positions_lock:
-                            self.positions[symbol].pop("_partial_tp_triggered_single", None)
-                            self.positions[symbol].pop("_partial_tp_single_review_count", None)
-                    if self.positions[symbol].get("_partial_tp_triggered"):
-                        for lvl in self.positions[symbol].get("_partial_tp_triggered_levels", []):
-                            await self._execute_partial_tp_level(symbol, lvl, current_price, None, ticker)
-                        async with self._positions_lock:
-                            self.positions[symbol].pop("_partial_tp_triggered", None)
-                            self.positions[symbol].pop("_partial_tp_review_count", None)
-                            self.positions[symbol].pop("_partial_tp_triggered_levels", None)
-                    return
-
-            elif partial_tp_triggered and signal.action == "SELL":
-                # LLM decided to sell the entire position – clear partial TP flags and let normal SELL proceed
-                async with self._positions_lock:
-                    self.positions[symbol].pop("_partial_tp_triggered", None)
-                    self.positions[symbol].pop("_partial_tp_triggered_single", None)
-                    self.positions[symbol].pop("_partial_tp_review_count", None)
-                    self.positions[symbol].pop("_partial_tp_single_review_count", None)
-                    self.positions[symbol].pop("_partial_tp_triggered_levels", None)
-                # continue to normal SELL execution below
-
-            # --- Handle dust sweep triggered ---
-            if dust_sweep_triggered and signal.action == "HOLD":
-                async with self._positions_lock:
-                    self.positions[symbol].pop("_dust_sweep_triggered", None)
-                    # Record when the LLM first decided to keep the dust (for time-based auto-sell)
-                    if self.positions[symbol].get("_dust_keep_since") is None:
-                        self.positions[symbol]["_dust_keep_since"] = time.time()
-                # Do NOT reset _dust_sweep_review_count — let it accumulate so
-                # max_dust_sweep_reviews eventually forces a sell if the LLM
-                # keeps saying HOLD.
-                logger.info(f"LLM decided to hold dust for {symbol}")
-                if self.notifier:
-                    await self.notifier.send_notification(
-                        f"🧹 {display_symbol}: LLM decided to keep dust – holding.",
-                        summary={"symbol": symbol, "action": "HOLD", "reason": "Dust kept by LLM"}
-                    )
-                return
-            elif dust_sweep_triggered and signal.action == "SELL":
-                async with self._positions_lock:
-                    self.positions[symbol].pop("_dust_sweep_triggered", None)
-                    self.positions[symbol].pop("_dust_sweep_review_count", None)
-                logger.info(f"LLM decided to sell dust for {symbol}")
-                await self._sweep_dust(symbol)
+            # --- Handle triggered position flags (max hold, stop loss, take profit, partial TP, dust sweep) ---
+            if await self._handle_triggered_flags(
+                symbol=symbol,
+                display_symbol=display_symbol,
+                signal=signal,
+                validated=validated,
+                assigned_tf=assigned_tf,
+                current_price=current_price,
+                atr=atr,
+                ticker=ticker,
+                max_hold_expired=max_hold_expired,
+                stop_loss_triggered=stop_loss_triggered,
+                take_profit_triggered=take_profit_triggered,
+                partial_tp_triggered=partial_tp_triggered,
+                dust_sweep_triggered=dust_sweep_triggered,
+                strategy_model_type=strategy_model_type,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+            ):
                 return
 
             # --- LLM‑controlled trade filters ---
