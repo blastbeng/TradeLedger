@@ -8018,38 +8018,48 @@ class TradingEngine:
                         logger.info(f"Dust condition cleared for {symbol}")
 
                 # --- News sentiment exit ---
+                # Skip for long-term timeframes (>= 1 week): short-term sentiment
+                # (15–30 min TTL) should not trigger exits on positions held
+                # for weeks or months.
                 news_threshold = pos.get("news_sentiment_exit_threshold")
                 if news_threshold is not None and settings.NEWS_ENABLED:
-                    # Clamp to non-positive: a positive threshold would trigger
-                    # an exit even when sentiment is mildly positive, which is
-                    # almost certainly not the LLM's intent.  Only negative
-                    # compound scores should trigger a sentiment-based exit.
-                    effective_threshold = min(float(news_threshold), 0.0)
-                    try:
-                        agg = await self._get_cached_sentiment(symbol)
-                        if agg and agg["avg_compound"] < effective_threshold:
-                            logger.info(
-                                f"News sentiment exit for {symbol}: compound {agg['avg_compound']:.2f} < threshold {effective_threshold}"
-                            )
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"📰 Negative news exit for {display_symbol} (sentiment {agg['avg_compound']:.2f})",
-                                    summary={
-                                        "symbol": symbol,
-                                        "action": "SELL",
-                                        "reason": "News sentiment exit",
-                                        "sentiment": agg,
-                                        "exit_reason": "news_sentiment_exit",
-                                    }
+                    pos_tf = pos.get("timeframe")
+                    if pos_tf and self._timeframe_to_seconds(pos_tf) >= 604_800:
+                        logger.debug(
+                            f"Skipping news sentiment exit for {symbol}: "
+                            f"long-term timeframe ({pos_tf}) ignores short-term sentiment."
+                        )
+                    else:
+                        # Clamp to non-positive: a positive threshold would trigger
+                        # an exit even when sentiment is mildly positive, which is
+                        # almost certainly not the LLM's intent.  Only negative
+                        # compound scores should trigger a sentiment-based exit.
+                        effective_threshold = min(float(news_threshold), 0.0)
+                        try:
+                            agg = await self._get_cached_sentiment(symbol)
+                            if agg and agg["avg_compound"] < effective_threshold:
+                                logger.info(
+                                    f"News sentiment exit for {symbol}: compound {agg['avg_compound']:.2f} < threshold {effective_threshold}"
                                 )
-                            await self._execute_signal(
-                                symbol,
-                                Signal(action="SELL", confidence=1.0, reasoning="News sentiment exit"),
-                                exit_reason="news_sentiment_exit"
-                            )
-                            continue  # skip further checks for this symbol
-                    except Exception as e:
-                        logger.info(f"News sentiment check failed for {symbol}: {e}")
+                                if self.notifier:
+                                    await self.notifier.send_notification(
+                                        f"📰 Negative news exit for {display_symbol} (sentiment {agg['avg_compound']:.2f})",
+                                        summary={
+                                            "symbol": symbol,
+                                            "action": "SELL",
+                                            "reason": "News sentiment exit",
+                                            "sentiment": agg,
+                                            "exit_reason": "news_sentiment_exit",
+                                        }
+                                    )
+                                await self._execute_signal(
+                                    symbol,
+                                    Signal(action="SELL", confidence=1.0, reasoning="News sentiment exit"),
+                                    exit_reason="news_sentiment_exit"
+                                )
+                                continue  # skip further checks for this symbol
+                        except Exception as e:
+                            logger.info(f"News sentiment check failed for {symbol}: {e}")
 
                 # --- Soft stop: max unrealized loss ---
                 max_ul_pct = pos.get("max_unrealized_loss_pct")
