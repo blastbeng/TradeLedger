@@ -241,6 +241,15 @@ def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List[Dict[
     if name:
         search_terms.append(name)
 
+    # Also use the name from the discovered_symbols table if available
+    try:
+        from src.database import get_symbol_name_from_db
+        db_name = get_symbol_name_from_db(base_symbol)
+        if db_name and db_name not in search_terms:
+            search_terms.append(db_name)
+    except Exception:
+        pass
+
     start_time = time.time()
     logger.debug(f"Fetching news for {symbol} (base symbol: {base_symbol}, name: {name})...")
 

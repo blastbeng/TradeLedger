@@ -1440,6 +1440,24 @@ def get_isin_from_db(symbol: str) -> Optional[str]:
         conn.close()
 
 
+def get_symbol_name_from_db(symbol: str) -> Optional[str]:
+    """Return the name for a symbol from the discovered_symbols table, or None if not found."""
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+    # Strip ticker suffix for DB lookup (DB stores base symbols without suffix)
+    suffix = settings.TICKER_SUFFIX
+    if suffix and base.endswith(suffix):
+        base = base[:-len(suffix)]
+    conn = get_connection()
+    try:
+        sql = _adapt_sql("SELECT name FROM discovered_symbols WHERE symbol = %s AND name IS NOT NULL AND name != ''")
+        row = conn.execute(sql, (base,)).fetchone()
+        if row and row["name"]:
+            return row["name"]
+        return None
+    finally:
+        conn.close()
+
+
 def get_isin_map_from_db(symbols: List[str]) -> Dict[str, Optional[str]]:
     """Return a dict mapping symbol -> ISIN for multiple symbols in a single query."""
     if not symbols:
