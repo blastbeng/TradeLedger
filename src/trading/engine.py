@@ -51,7 +51,7 @@ from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary
 from src.utils.redis_client import get_redis_client
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl
 
 logger = logging.getLogger(__name__)
 
@@ -1737,6 +1737,7 @@ class TradingEngine:
                 # Clean up old data
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(self._db_executor, cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
+                await loop.run_in_executor(self._db_executor, cleanup_old_position_pnl, 90)
                 logger.info("Full asset OHLCV download cycle complete.")
             except Exception as e:
                 logger.error(f"Full asset download loop error: {e}", exc_info=True)
@@ -7231,6 +7232,43 @@ class TradingEngine:
         logger.info(f"Manual trade logged: {side} {quantity} {symbol} @ {price:.4f}")
         return {"status": "ok", "trade": trade}
 
+    async def _record_position_pnl_snapshots(self):
+        """Record P&L snapshots for all open positions to the database."""
+        if not self.positions:
+            return
+        pos_tickers = await self._get_all_position_tickers_sync()
+        now_ms = int(time.time() * 1000)
+        for symbol, pos in self.positions.items():
+            try:
+                t = pos_tickers.get(symbol)
+                current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
+                amount = pos.get('amount', 0.0)
+                entry_price = pos.get('price', 0.0)
+                cost_basis = pos.get('cost_basis', amount * entry_price)
+                position_value = amount * current_price
+                unrealized_pnl = (current_price - entry_price) * amount
+                pnl_pct = (unrealized_pnl / cost_basis) if cost_basis > 0 else 0.0
+                # Realized P&L: sum of all closed sell trades for this symbol
+                realized_pnl = sum(
+                    t.get("realized_pnl", 0.0)
+                    for t in self.trade_history
+                    if t.get("symbol") == symbol and t.get("side") == "sell"
+                )
+                await asyncio.to_thread(
+                    insert_position_pnl_snapshot,
+                    symbol=symbol,
+                    timestamp=now_ms,
+                    unrealized_pnl=round(unrealized_pnl, 6),
+                    realized_pnl=round(realized_pnl, 6),
+                    position_value=round(position_value, 6),
+                    cost_basis=round(cost_basis, 6),
+                    amount=amount,
+                    current_price=current_price,
+                    pnl_pct=round(pnl_pct, 6),
+                )
+            except Exception as e:
+                logger.debug(f"Failed to record P&L snapshot for {symbol}: {e}")
+
     async def _check_risk_management(self):
         """Check open positions and close if stop-loss, take-profit, or trailing stop is hit."""
         # --- Notify mode: no automated risk management ---
@@ -7904,6 +7942,9 @@ class TradingEngine:
                         )
             except Exception as e:
                 logger.error(f"Risk check failed for {symbol}: {e}")
+
+        # Record position-level P&L snapshots for all open positions
+        await self._record_position_pnl_snapshots()
 
     async def _execute_signal(self, symbol: str, signal, timeframe: str = None, exit_reason: str = None, atr: Optional[float] = None):
         """Execute a BUY or SELL signal."""

@@ -318,6 +318,22 @@ def init_db():
                     discovered_at DOUBLE PRECISION NOT NULL
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS position_pnl (
+                    id SERIAL PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    timestamp BIGINT NOT NULL,
+                    unrealized_pnl REAL,
+                    realized_pnl REAL,
+                    position_value REAL,
+                    cost_basis REAL,
+                    amount REAL,
+                    current_price REAL,
+                    pnl_pct REAL
+                )
+                """,
+                "CREATE INDEX IF NOT EXISTS idx_position_pnl_symbol ON position_pnl(symbol)",
+                "CREATE INDEX IF NOT EXISTS idx_position_pnl_timestamp ON position_pnl(timestamp)",
             ]
             for stmt in statements:
                 conn.execute(stmt)
@@ -425,6 +441,22 @@ def init_db():
                     coupon REAL,
                     discovered_at REAL NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS position_pnl (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    unrealized_pnl REAL,
+                    realized_pnl REAL,
+                    position_value REAL,
+                    cost_basis REAL,
+                    amount REAL,
+                    current_price REAL,
+                    pnl_pct REAL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_position_pnl_symbol ON position_pnl(symbol);
+                CREATE INDEX IF NOT EXISTS idx_position_pnl_timestamp ON position_pnl(timestamp);
             """)
         conn.commit()
     finally:
@@ -469,6 +501,136 @@ def insert_trade(trade: Dict[str, Any]):
             trade.get("buy_confidence"),
         ))
         conn.commit()
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def insert_position_pnl_snapshot(
+    symbol: str,
+    timestamp: int,
+    unrealized_pnl: float,
+    realized_pnl: float,
+    position_value: float,
+    cost_basis: float,
+    amount: float,
+    current_price: float,
+    pnl_pct: float,
+):
+    """Insert a position-level P&L snapshot into the position_pnl table."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            INSERT INTO position_pnl (
+                symbol, timestamp, unrealized_pnl, realized_pnl,
+                position_value, cost_basis, amount, current_price, pnl_pct
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+        )
+        conn.execute(sql, (
+            symbol, timestamp, unrealized_pnl, realized_pnl,
+            position_value, cost_basis, amount, current_price, pnl_pct,
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_position_pnl_history(symbol: str, limit: int = 100) -> List[Dict[str, Any]]:
+    """Retrieve position P&L snapshots for a symbol, ordered by timestamp ascending."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            SELECT symbol, timestamp, unrealized_pnl, realized_pnl,
+                   position_value, cost_basis, amount, current_price, pnl_pct
+            FROM position_pnl
+            WHERE symbol = %s
+            ORDER BY timestamp DESC
+            LIMIT %s
+            """
+        )
+        rows = conn.execute(sql, (symbol, limit)).fetchall()
+        result = []
+        for row in rows:
+            result.append({
+                "symbol": row["symbol"],
+                "timestamp": row["timestamp"],
+                "unrealized_pnl": row["unrealized_pnl"],
+                "realized_pnl": row["realized_pnl"],
+                "position_value": row["position_value"],
+                "cost_basis": row["cost_basis"],
+                "amount": row["amount"],
+                "current_price": row["current_price"],
+                "pnl_pct": row["pnl_pct"],
+            })
+        result.reverse()  # chronological order (oldest first)
+        return result
+    finally:
+        conn.close()
+
+
+def get_all_position_pnl_latest() -> List[Dict[str, Any]]:
+    """Retrieve the latest P&L snapshot for each symbol that has a recorded snapshot."""
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                """
+                SELECT DISTINCT ON (symbol) symbol, timestamp, unrealized_pnl,
+                       realized_pnl, position_value, cost_basis, amount,
+                       current_price, pnl_pct
+                FROM position_pnl
+                ORDER BY symbol, timestamp DESC
+                """
+            )
+            rows = conn.execute(sql).fetchall()
+        else:
+            sql = _adapt_sql(
+                """
+                SELECT p.symbol, p.timestamp, p.unrealized_pnl, p.realized_pnl,
+                       p.position_value, p.cost_basis, p.amount, p.current_price,
+                       p.pnl_pct
+                FROM position_pnl p
+                INNER JOIN (
+                    SELECT symbol, MAX(timestamp) AS max_ts
+                    FROM position_pnl
+                    GROUP BY symbol
+                ) latest ON p.symbol = latest.symbol AND p.timestamp = latest.max_ts
+                """
+            )
+            rows = conn.execute(sql).fetchall()
+        result = []
+        for row in rows:
+            result.append({
+                "symbol": row["symbol"],
+                "timestamp": row["timestamp"],
+                "unrealized_pnl": row["unrealized_pnl"],
+                "realized_pnl": row["realized_pnl"],
+                "position_value": row["position_value"],
+                "cost_basis": row["cost_basis"],
+                "amount": row["amount"],
+                "current_price": row["current_price"],
+                "pnl_pct": row["pnl_pct"],
+            })
+        return result
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def cleanup_old_position_pnl(retention_days: int = 90):
+    """Delete position P&L snapshots older than retention_days."""
+    conn = get_connection()
+    try:
+        cutoff_ms = int((time.time() - retention_days * 24 * 60 * 60) * 1000)
+        sql = _adapt_sql("DELETE FROM position_pnl WHERE timestamp < %s")
+        deleted = conn.execute(sql, (cutoff_ms,)).rowcount
+        conn.commit()
+        if deleted:
+            logger.info(f"Cleaned up {deleted} old position P&L snapshots (older than {retention_days} days)")
+        return deleted
     finally:
         conn.close()
 
