@@ -61,6 +61,10 @@ DEFAULT_STRATEGY_INTERVAL = 3600   # fallback when no timeframe or no symbols (1
 MIN_SYMBOL_REEVALUATION_INTERVAL = 3600  # 1 hour – prevents rapid toggling
 MAX_STOP_LOSS_REVIEWS = 10   # force-sell after this many consecutive stop-loss reviews
 MAX_TAKE_PROFIT_REVIEWS = 10   # force-sell after this many consecutive take-profit reviews
+# Hard maximum unrealized loss that forces exit regardless of LLM stop-loss review decisions
+HARD_MAX_LOSS_PCT = 0.15  # 15% unrealized loss forces immediate exit
+# Timeframe threshold for reducing max stop-loss reviews (30 days = 1M candles)
+LONG_TERM_TF_SECONDS = 2_592_000
 
 
 @dataclass
@@ -5847,6 +5851,12 @@ class TradingEngine:
         except Exception:
             pass
 
+        # Scale stop-loss review limit for long-term timeframes
+        if tf_seconds >= LONG_TERM_TF_SECONDS:  # >= 1 month
+            max_sl_reviews_prompt = min(max_sl_reviews_prompt, 3)
+        elif tf_seconds >= 604_800:  # >= 1 week
+            max_sl_reviews_prompt = min(max_sl_reviews_prompt, 5)
+
         try:
             async with self._exchange_semaphore:
                 base = symbol.split("/")[0]
@@ -8065,6 +8075,35 @@ class TradingEngine:
                         )
                         continue
 
+                # --- Hard stop: maximum total loss regardless of LLM decisions ---
+                entry_price = pos["price"]
+                if entry_price > 0:
+                    unrealized_loss_pct = (entry_price - current_price) / entry_price
+                    if unrealized_loss_pct >= HARD_MAX_LOSS_PCT:
+                        logger.warning(
+                            f"Hard max loss threshold reached for {symbol}: "
+                            f"unrealized loss {unrealized_loss_pct:.2%} >= {HARD_MAX_LOSS_PCT:.2%}. Forcing SELL."
+                        )
+                        if self.notifier:
+                            await self.notifier.send_notification(
+                                f"⛔ Hard stop for {display_symbol}: unrealized loss {unrealized_loss_pct:.2%} "
+                                f"exceeds maximum {HARD_MAX_LOSS_PCT:.2%} – force selling.",
+                                summary={
+                                    "symbol": symbol,
+                                    "action": "SELL",
+                                    "reason": "Hard maximum loss threshold",
+                                    "price": current_price,
+                                    "unrealized_loss_pct": round(unrealized_loss_pct, 4),
+                                    "exit_reason": "hard_max_loss",
+                                }
+                            )
+                        await self._execute_signal(
+                            symbol,
+                            Signal(action="SELL", confidence=1.0, reasoning="Hard maximum loss threshold exceeded"),
+                            exit_reason="hard_max_loss"
+                        )
+                        continue
+
                 # --- Max hold time expired → ask LLM instead of auto‑closing ---
                 max_hold = pos.get("max_hold_time_seconds")
                 if max_hold is not None and max_hold > 0:
@@ -8249,17 +8288,27 @@ class TradingEngine:
                         continue  # position has been closed, move to next
                 elif current_price <= pos["stop_loss"]:
                     # Instead of immediately selling, ask the LLM whether to sell or adjust the stop.
+                    # Scale max reviews based on position timeframe to prevent excessive
+                    # loss accumulation in long-term positions.
+                    effective_max_sl_reviews = max_sl_reviews
+                    pos_tf = pos.get("timeframe")
+                    if pos_tf:
+                        pos_tf_secs = self._timeframe_to_seconds(pos_tf)
+                        if pos_tf_secs >= LONG_TERM_TF_SECONDS:  # >= 1 month
+                            effective_max_sl_reviews = min(effective_max_sl_reviews, 3)
+                        elif pos_tf_secs >= 604_800:  # >= 1 week
+                            effective_max_sl_reviews = min(effective_max_sl_reviews, 5)
                     review_count = pos.get("_stop_loss_review_count", 0)
-                    if review_count >= max_sl_reviews:
+                    if review_count >= effective_max_sl_reviews:
                         # Fallback: force-sell after too many reviews
                         logger.warning(
                             f"Stop-loss triggered for {symbol} at {current_price} – "
-                            f"review count {review_count} >= {max_sl_reviews}, forcing SELL."
+                            f"review count {review_count} >= {effective_max_sl_reviews}, forcing SELL."
                         )
                         if self.notifier:
                             await self.notifier.send_notification(
                                 f"⛔ Stop‑loss triggered for {display_symbol} at {current_price:.4f} – "
-                                f"max reviews reached, selling.",
+                                f"max reviews reached ({effective_max_sl_reviews}), selling.",
                                 summary={
                                     "symbol": symbol,
                                     "action": "SELL",
@@ -8282,7 +8331,7 @@ class TradingEngine:
                             self._last_strategy_eval.pop(symbol, None)
                             logger.info(
                                 f"Stop-loss triggered for {symbol} at {current_price} – "
-                                f"asking LLM (review {pos['_stop_loss_review_count']}/{max_sl_reviews})."
+                                f"asking LLM (review {pos['_stop_loss_review_count']}/{effective_max_sl_reviews})."
                             )
                             if self.notifier:
                                 await self.notifier.send_notification(
@@ -8298,7 +8347,7 @@ class TradingEngine:
                             # Already waiting for LLM; do nothing (avoid re-triggering)
                             logger.debug(
                                 f"Stop-loss still triggered for {symbol}, waiting for LLM response "
-                                f"(review {review_count}/{max_sl_reviews})."
+                                f"(review {review_count}/{effective_max_sl_reviews})."
                             )
                 elif current_price >= pos["take_profit"]:
                     # Always ask the LLM whether to sell or adjust the take-profit, but cap reviews.
