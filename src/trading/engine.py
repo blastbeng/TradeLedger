@@ -8497,6 +8497,28 @@ class TradingEngine:
                         )
                     return
                 logger.info(f"BUY {symbol}: {order}")
+                # Queue remaining partial market order for polling
+                if order.get("remaining_order_id"):
+                    queued_entry = {
+                        'symbol': symbol,
+                        'side': 'buy',
+                        'amount': amount - order['cost'],
+                        'original_amount': amount - order['cost'],
+                        'limit_price': order['price'],
+                        'stop_price': None,
+                        'trail_offset': None,
+                        'order_type': 'limit',
+                        'time_in_force': 'day',
+                        'signal': asdict(signal),
+                        'timeframe': timeframe,
+                        'atr': atr,
+                        'order_id': order['remaining_order_id'],
+                        'queued_at': time.time(),
+                        'filled_qty': 0,
+                        'filled_cost': 0.0,
+                    }
+                    async with self._queued_orders_lock:
+                        self.queued_orders.append(queued_entry)
                 async with self._cycle_spent_lock:
                     self._cycle_spent += order['cost']
                 # Update or create position
@@ -8889,6 +8911,29 @@ class TradingEngine:
                         )
                     return
                 logger.info(f"SELL {symbol}: {order}")
+                # Queue remaining partial market order for polling
+                if order.get("remaining_order_id"):
+                    _sell_queued_entry = {
+                        'symbol': symbol,
+                        'side': 'sell',
+                        'amount': gross_amount - order['amount'],
+                        'original_amount': gross_amount - order['amount'],
+                        'limit_price': order['price'],
+                        'stop_price': None,
+                        'trail_offset': None,
+                        'order_type': 'limit',
+                        'time_in_force': 'day',
+                        'signal': asdict(signal),
+                        'timeframe': timeframe,
+                        'atr': atr,
+                        'exit_reason': exit_reason,
+                        'order_id': order['remaining_order_id'],
+                        'queued_at': time.time(),
+                        'filled_qty': 0,
+                        'filled_cost': 0.0,
+                    }
+                    async with self._queued_orders_lock:
+                        self.queued_orders.append(_sell_queued_entry)
                 # Compute realized P&L
                 fee = order.get('fee', {})
                 fee_cost = float(fee.get('cost', 0.0) or 0.0)
@@ -11237,7 +11282,7 @@ class TradingEngine:
                     # else: still open / partially_filled / accepted – keep waiting
             except Exception as e:
                 logger.error(f"Error processing queued orders: {e}", exc_info=True)
-            await asyncio.sleep(120)  # check every 2 minutes (medium/long-term)
+            await asyncio.sleep(15)  # check every 15 seconds for faster fill detection
 
     async def _handle_queued_buy_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any]):
         """Process a queued BUY limit order that has filled in the simulator."""

@@ -1,4 +1,5 @@
 import logging
+import random
 import time
 import uuid
 from typing import Dict, List, Optional, Any
@@ -56,6 +57,7 @@ class PaperTrader:
         self.base_currency = settings.BASE_CURRENCY
         self._balances: Dict[str, float] = {}
         self._orders: Dict[str, PaperOrder] = {}
+        self.market_slippage_pct = 0.001  # 0.1% adverse slippage on market orders
         self._load_balances()
 
     # ------------------------------------------------------------------
@@ -179,6 +181,13 @@ class PaperTrader:
 
     def _fill_order(self, order: PaperOrder, fill_price: float, base: str, quote: str):
         """Fill an open order and update balances."""
+        # Apply slippage to stop-order fills (they execute at market)
+        if order.order_type in ("stop", "trailing_stop"):
+            if order.side == "buy":
+                fill_price = fill_price * (1 + self.market_slippage_pct)
+            else:
+                fill_price = fill_price * (1 - self.market_slippage_pct)
+
         if order.side == "buy":
             # amount is in quote currency
             base_amount = order.amount / fill_price
@@ -272,6 +281,9 @@ class PaperTrader:
         else:
             fill_price = price
 
+        # Apply slippage to market order fills
+        fill_price = fill_price * (1 + self.market_slippage_pct)
+
         base_amount = amount / fill_price
         costs = calculate_transaction_costs("BUY", fill_price, base_amount, symbol=symbol)
         total_cost = costs["net_value"]
@@ -290,23 +302,42 @@ class PaperTrader:
                 "timestamp": int(time.time() * 1000),
             }
 
-        self._balances[quote] = quote_balance - total_cost
-        self._balances[base] = self._balances.get(base, 0.0) + base_amount
+        # Simulate partial fill: fill 60-100% of the requested amount immediately
+        fill_fraction = random.uniform(0.6, 1.0)
+        filled_base_amount = base_amount * fill_fraction
+        filled_cost = filled_base_amount * fill_price
+
+        self._balances[quote] = quote_balance - (filled_cost + (fee_cost * fill_fraction))
+        self._balances[base] = self._balances.get(base, 0.0) + filled_base_amount
         self._save_balances()
 
         order_id = self._generate_order_id()
         order = PaperOrder(
             order_id=order_id, symbol=symbol, side="buy", order_type="market",
-            amount=base_amount, price=fill_price, filled_qty=base_amount,
+            amount=base_amount, price=fill_price, filled_qty=filled_base_amount,
             filled_avg_price=fill_price, status="filled",
         )
         self._orders[order_id] = order
 
+        remaining_order_id = None
+        if fill_fraction < 1.0:
+            remaining_amount = amount - filled_cost  # remaining quote currency
+            remaining_order_id = self._generate_order_id()
+            remaining_order = PaperOrder(
+                order_id=remaining_order_id, symbol=symbol, side="buy",
+                order_type="limit", amount=remaining_amount, limit_price=fill_price,
+                time_in_force="day", status="open",
+            )
+            self._orders[remaining_order_id] = remaining_order
+            self._save_orders()
+
         return {
             "id": order_id, "status": "filled", "symbol": symbol, "side": "buy",
-            "amount": base_amount, "price": fill_price, "cost": costs["gross_value"],
-            "fee": {"cost": fee_cost, "currency": fee_currency},
+            "amount": filled_base_amount, "price": fill_price,
+            "cost": filled_base_amount * fill_price,
+            "fee": {"cost": fee_cost * fill_fraction, "currency": fee_currency},
             "timestamp": order.timestamp,
+            "remaining_order_id": remaining_order_id,
         }
 
     def create_market_sell_order(
@@ -348,6 +379,9 @@ class PaperTrader:
         else:
             fill_price = price
 
+        # Apply slippage to market order fills
+        fill_price = fill_price * (1 - self.market_slippage_pct)
+
         base_balance = self._balances.get(base, 0.0)
         if amount > base_balance:
             logger.warning(
@@ -360,28 +394,46 @@ class PaperTrader:
                 "timestamp": int(time.time() * 1000),
             }
 
-        costs = calculate_transaction_costs("SELL", fill_price, amount, symbol=symbol)
+        # Simulate partial fill: fill 60-100% of the requested amount immediately
+        fill_fraction = random.uniform(0.6, 1.0)
+        filled_amount = amount * fill_fraction
+
+        costs = calculate_transaction_costs("SELL", fill_price, filled_amount, symbol=symbol)
         net_quote = costs["net_value"]
         fee_cost = costs["total_costs"]
         fee_currency = quote
 
-        self._balances[base] = base_balance - amount
+        self._balances[base] = base_balance - filled_amount
         self._balances[quote] = self._balances.get(quote, 0.0) + net_quote
         self._save_balances()
 
         order_id = self._generate_order_id()
         order = PaperOrder(
             order_id=order_id, symbol=symbol, side="sell", order_type="market",
-            amount=amount, price=fill_price, filled_qty=amount,
+            amount=filled_amount, price=fill_price, filled_qty=filled_amount,
             filled_avg_price=fill_price, status="filled",
         )
         self._orders[order_id] = order
 
+        remaining_order_id = None
+        if fill_fraction < 1.0:
+            remaining_amount = amount - filled_amount
+            remaining_order_id = self._generate_order_id()
+            remaining_order = PaperOrder(
+                order_id=remaining_order_id, symbol=symbol, side="sell",
+                order_type="limit", amount=remaining_amount, limit_price=fill_price,
+                time_in_force="day", status="open",
+            )
+            self._orders[remaining_order_id] = remaining_order
+            self._save_orders()
+
         return {
             "id": order_id, "status": "filled", "symbol": symbol, "side": "sell",
-            "amount": amount, "price": fill_price, "cost": costs["gross_value"],
+            "amount": filled_amount, "price": fill_price,
+            "cost": filled_amount * fill_price,
             "fee": {"cost": fee_cost, "currency": fee_currency},
             "timestamp": order.timestamp,
+            "remaining_order_id": remaining_order_id,
         }
 
     # ------------------------------------------------------------------
