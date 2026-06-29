@@ -1190,6 +1190,14 @@ class TradingEngine:
                 f"is from cached database quotes and is {age_minutes} minutes old. "
                 f"It may not reflect real-time market conditions.\n"
             )
+        elif source == "yfinance" and age_seconds > 900:
+            age_minutes = int(age_seconds / 60)
+            return (
+                f"\n⚠️ **STALE QUOTE WARNING:** The current price ({ticker.get('last')}) "
+                f"is from Yahoo Finance and is {age_minutes} minutes old. "
+                f"It may not reflect real-time market conditions. "
+                f"Exercise extra caution and consider waiting for fresher data.\n"
+            )
 
         return ""
 
