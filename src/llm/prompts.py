@@ -829,15 +829,23 @@ Select between 0 and {max_symbols} assets from the shortlist above. You may keep
 
     # Add performance
     if performance:
-        prompt += f"""
-Historical Performance Data:
-Overall equity curve: {json.dumps(performance.get('equity_curve', {}))}
-Per-stock performance (win rate, avg P&L, total trades): {json.dumps(performance.get('stock_performance', {}))}
-Per-strategy performance: {json.dumps(performance.get('strategy_performance', {}))}
-"""
+        perf_lines = ["Historical Performance Data:"]
+        equity_curve = performance.get('equity_curve', {})
+        stock_perf = performance.get('stock_performance', {})
+        strategy_perf = performance.get('strategy_performance', {})
+        
+        if equity_curve:
+            perf_lines.append(f"Overall equity curve: {json.dumps(equity_curve)}")
+        if stock_perf:
+            perf_lines.append(f"Per-stock performance (win rate, avg P&L, total trades): {json.dumps(stock_perf)}")
+        if strategy_perf:
+            perf_lines.append(f"Per-strategy performance: {json.dumps(strategy_perf)}")
+        
+        if len(perf_lines) > 1:
+            prompt += "\n".join(perf_lines) + "\n"
         if daily_pnl is not None:
             prompt += f"Today's realized P&L: {daily_pnl:.4f} {base_currency}\n"
-        consecutive_losses = performance.get("equity_curve", {}).get("consecutive_losses", 0)
+        consecutive_losses = equity_curve.get("consecutive_losses", 0)
         if consecutive_losses > 0:
             prompt += f"⚠️ You have {consecutive_losses} consecutive losing trades. Consider pausing or reducing risk.\n"
 
