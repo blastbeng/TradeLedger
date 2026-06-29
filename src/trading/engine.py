@@ -9346,15 +9346,33 @@ class TradingEngine:
         Uses recent OHLCV data from the database and compares with previous state."""
         # Fetch pre-computed indicators from DB
         ind = await asyncio.to_thread(get_indicators, symbol, timeframe)
-        if not ind:
-            return False
 
-        # Still need candles for volume EMA computation
+        # Still need candles for volume EMA computation and fallback
+        # indicator computation
         db_candles = await asyncio.to_thread(
             get_ohlcv, symbol, timeframe, limit=50
         )
         if len(db_candles) < 26:
             return False
+
+        # If DB indicators are missing (common for long timeframes like
+        # 5Y/3Y/1Y where indicators may not be stored), compute them
+        # on-the-fly from the OHLCV candles so entry signal detection
+        # still works.
+        if not ind:
+            raw_candles = [
+                [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
+                for c in db_candles
+            ]
+            try:
+                ind = await asyncio.to_thread(compute_all_indicators, raw_candles)
+            except Exception as e:
+                logger.debug(
+                    f"Failed to compute indicators on-the-fly for {symbol} {timeframe}: {e}"
+                )
+                return False
+            if not ind:
+                return False
 
         closes = [c["close"] for c in db_candles]
         volumes = [c["volume"] for c in db_candles]
