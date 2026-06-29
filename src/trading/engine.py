@@ -3114,20 +3114,40 @@ class TradingEngine:
         def _compute_correlation_matrix():
             corr_matrix: Dict[str, Dict[str, float]] = {}
             if ohlcv_data and settings.OHLCV_TIMEFRAMES:
-                primary_tf = settings.OHLCV_TIMEFRAMES[0]
-                close_series: Dict[str, List[float]] = {}
-                for sym in sorted_by_vol:
-                    if sym in ohlcv_data and primary_tf in ohlcv_data[sym]:
-                        candles = ohlcv_data[sym][primary_tf]
-                        if len(candles) >= 12:
-                            close_series[sym] = [c[4] for c in candles]
-                # Compute percentage returns
+                # Try timeframes from longest to shortest. For long timeframes
+                # (5Y, 3Y, 1Y) with very few candles, fall back to shorter
+                # timeframes that have more candles. Use lowered minimum
+                # thresholds so correlation can be computed even with sparse data.
+                MIN_CANDLES = 4
+                MIN_RETURNS = 3
+
                 returns_series: Dict[str, List[float]] = {}
-                for sym, closes in close_series.items():
-                    returns = [(closes[i] - closes[i - 1]) / closes[i - 1]
-                               for i in range(1, len(closes)) if closes[i - 1] != 0]
-                    if len(returns) >= 10:
-                        returns_series[sym] = returns
+                used_tf = None
+                for tf in settings.OHLCV_TIMEFRAMES:
+                    close_series: Dict[str, List[float]] = {}
+                    for sym in sorted_by_vol:
+                        if sym in ohlcv_data and tf in ohlcv_data[sym]:
+                            candles = ohlcv_data[sym][tf]
+                            if len(candles) >= MIN_CANDLES:
+                                close_series[sym] = [c[4] for c in candles]
+                    # Compute percentage returns
+                    candidate_returns: Dict[str, List[float]] = {}
+                    for sym, closes in close_series.items():
+                        returns = [(closes[i] - closes[i - 1]) / closes[i - 1]
+                                   for i in range(1, len(closes)) if closes[i - 1] != 0]
+                        if len(returns) >= MIN_RETURNS:
+                            candidate_returns[sym] = returns
+                    # Use this timeframe if at least 2 symbols have enough data
+                    if len(candidate_returns) >= 2:
+                        returns_series = candidate_returns
+                        used_tf = tf
+                        break
+
+                if used_tf:
+                    logger.debug(
+                        f"Correlation matrix computed using {used_tf} timeframe "
+                        f"({len(returns_series)} symbols)"
+                    )
                 # Pairwise Pearson correlation
                 corr_symbols = list(returns_series.keys())
                 for sym_a in corr_symbols:
