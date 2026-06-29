@@ -11497,8 +11497,19 @@ class TradingEngine:
         signal_dict = queued.get('signal', {}) or {}
         if signal_dict:
             try:
-                # Reconstruct a Signal from the stored dict
-                reconstructed_signal = Signal(**signal_dict)
+                # Reconstruct a Signal from the stored dict, filtering to only
+                # valid Signal fields and providing fallbacks for required fields.
+                import dataclasses as _dc
+                valid_keys = {f.name for f in _dc.fields(Signal)}
+                filtered = {k: v for k, v in signal_dict.items() if k in valid_keys}
+                # Ensure required fields have fallbacks
+                if "action" not in filtered:
+                    filtered["action"] = "BUY"
+                if "confidence" not in filtered:
+                    filtered["confidence"] = 0.0
+                if "reasoning" not in filtered:
+                    filtered["reasoning"] = ""
+                reconstructed_signal = Signal(**filtered)
                 exit_prices = self._compute_exit_order_prices(
                     entry_price=self.positions[symbol]["price"],
                     signal=reconstructed_signal,
@@ -11507,6 +11518,17 @@ class TradingEngine:
                 await self._place_exit_orders(symbol, reconstructed_signal, exit_prices, queued.get('timeframe'))
             except Exception as e:
                 logger.error(f"Failed to place exit orders after queued buy fill for {symbol}: {e}")
+                if self.notifier:
+                    stock_name = await self._get_stock_name(symbol)
+                    display_symbol = self._format_symbol_display(symbol, stock_name, queued.get('timeframe'))
+                    await self.notifier.send_notification(
+                        f"⚠️ Exit order placement failed for {display_symbol} after queued fill: {e}",
+                        summary={
+                            "symbol": symbol,
+                            "action": "ERROR",
+                            "reason": f"Exit order placement failed after queued fill: {str(e)[:200]}",
+                        }
+                    )
 
     async def _handle_queued_sell_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any], partial: bool = False):
         """Process a queued SELL limit order that has filled in the simulator.
