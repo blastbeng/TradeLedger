@@ -5179,7 +5179,6 @@ class TradingEngine:
             "breakeven_activation_pct", "trailing_take_profit_distance_pct",
             "max_unrealized_loss_pct", "position_size_fraction",
         }
-        TOLERANCE = 1e-6
 
         def _signature(v: Dict[str, Any]) -> tuple:
             sig = []
@@ -13038,6 +13037,8 @@ class TradingEngine:
                 variants_to_test = list(preliminary_signal.backtest_variants)
             else:
                 variants_to_test.append(preliminary_signal.strategy_params or {})
+            # --- Deduplicate variants with identical key risk parameters ---
+            variants_to_test = self._deduplicate_variants(variants_to_test)
             # Safety cap: limit to configured max variants to prevent excessive backtest time
             if len(variants_to_test) > settings.MAX_BACKTEST_VARIANTS:
                 logger.warning(
@@ -13190,6 +13191,8 @@ class TradingEngine:
             variants_to_test = list(preliminary_signal.backtest_variants)
         else:
             variants_to_test.append(preliminary_signal.strategy_params or {})
+        # --- Deduplicate variants with identical key risk parameters ---
+        variants_to_test = self._deduplicate_variants(variants_to_test)
         # Safety cap: limit to configured max variants to prevent excessive backtest time
         if len(variants_to_test) > settings.MAX_BACKTEST_VARIANTS:
             logger.warning(
