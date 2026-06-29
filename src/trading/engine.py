@@ -5792,10 +5792,42 @@ class TradingEngine:
             else:
                 _trade_amount = 0.0
 
+            # Extract strategy parameters for the signal detail modal
+            _sig_params = signal.strategy_params or {}
+            _entry_cond_str = None
+            if validated.entry_condition:
+                _ec = validated.entry_condition
+                _etype = _ec.get("type", "")
+                if _etype == "limit_price":
+                    _entry_cond_str = f"Wait for price to drop to {_ec.get('price', '?')} (timeout: {_ec.get('timeout_seconds', '?')}s)"
+                elif _etype == "rsi_threshold":
+                    _entry_cond_str = f"Wait for RSI(14) to fall below {_ec.get('rsi_below', '?')} (timeout: {_ec.get('timeout_seconds', '?')}s)"
+                elif _etype == "delay":
+                    _entry_cond_str = f"Wait {_ec.get('delay_seconds', '?')}s before executing"
+                elif _etype == "indicator_combo":
+                    _conds = _ec.get("conditions", [])
+                    _cond_strs = []
+                    for c in _conds:
+                        _cond_strs.append(f"{c.get('indicator','?')} {c.get('direction','?')} {c.get('threshold','?')}")
+                    _entry_cond_str = f"Wait for ALL: {', '.join(_cond_strs)} (timeout: {_ec.get('timeout_seconds', '?')}s)"
+            _sl_method = _sig_params.get("stop_loss_method", "fixed")
+            _sl_str = ""
+            if _sl_method == "atr_multiple":
+                _sl_str = f"ATR × {_sig_params.get('stop_loss_atr_multiple', '?')} (fallback: {_sig_params.get('stop_loss_pct', '?')})"
+            else:
+                _sl_str = f"{_sig_params.get('stop_loss_pct', '?')}"
+            _tp_str = ""
+            if _sig_params.get("take_profit_atr_multiple"):
+                _tp_str = f"ATR × {_sig_params.get('take_profit_atr_multiple', '?')} (fallback: {_sig_params.get('take_profit_pct', '?')})"
+            else:
+                _tp_str = f"{_sig_params.get('take_profit_pct', '?')}"
+
             # Record signal for the web dashboard
             self.recent_signals.append({
                 "symbol": symbol,
                 "display_symbol": display_symbol,
+                "stock_name": stock_name,
+                "timeframe": assigned_tf,
                 "action": validated.action,
                 "confidence": validated.confidence,
                 "reasoning": validated.reasoning or "",
@@ -5806,6 +5838,16 @@ class TradingEngine:
                 "trade_amount": round(_trade_amount, 2),
                 "base_currency": self.base_currency,
                 "timestamp": time.time(),
+                "entry_condition": _entry_cond_str,
+                "stop_loss": _sl_str,
+                "take_profit": _tp_str,
+                "position_size_fraction": _sig_params.get("position_size_fraction"),
+                "trailing_stop": _sig_params.get("trailing_stop"),
+                "trailing_stop_distance_pct": _sig_params.get("trailing_stop_distance_pct"),
+                "max_hold_time_seconds": _sig_params.get("max_hold_time_seconds"),
+                "cooldown_after_loss_seconds": _sig_params.get("cooldown_after_loss_seconds"),
+                "order_type": signal.order_type,
+                "limit_price": _sig_params.get("limit_price"),
             })
             # Keep only the last 50 signals
             if len(self.recent_signals) > 50:
