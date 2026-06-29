@@ -11844,6 +11844,7 @@ class TradingEngine:
                         logger.info(f"Queued limit order {order_id} for {queued['symbol']} completely filled.")
                         async with self._queued_orders_lock:
                             self.queued_orders.remove(queued)
+                        self._state_dirty = True
 
                     elif status in ('rejected', 'canceled', 'cancelled', 'expired'):
                         logger.warning(
