@@ -870,21 +870,20 @@ class TelegramBot:
 
         # --- Verbosity filter ---
         verbosity = settings.NOTIFICATION_VERBOSITY
-        should_send = True
-        # Always send pause/resume notifications, regardless of verbosity
-        if summary and summary.get("action") in ("PAUSE", "RESUME"):
+        action = summary.get("action", "") if summary else ""
+
+        if action in ("PAUSE", "RESUME"):
             should_send = True
-        elif verbosity != "all":
-            if summary is None:
-                should_send = False
-            else:
-                action = summary.get("action", "")
-                if verbosity == "errors_only":
-                    should_send = (action == "ERROR")
-                elif verbosity == "trades_only":
-                    should_send = (action in ("BUY", "SELL"))
-                elif verbosity == "none":
-                    should_send = False
+        elif verbosity == "all":
+            should_send = True
+        elif verbosity == "none":
+            should_send = False
+        elif verbosity == "errors_only":
+            should_send = (action == "ERROR")
+        elif verbosity == "trades_only":
+            should_send = (action in ("BUY", "SELL"))
+        else:
+            should_send = False
 
         if should_send:
             if summary and summary.get("model_type"):
