@@ -1933,22 +1933,15 @@ def build_analysis_prompt(**kwargs) -> str:
     """Build a focused prompt for Step 1a: Market analysis only.
 
     Reuses build_strategy_prompt for all market data context,
-    but replaces the output format section with a simpler one
-    that asks only for action, confidence, reasoning, and strategy_direction.
+    but appends a simpler output format instruction at the end.
     No trading parameters, backtest variants, or entry conditions are requested.
     """
     full_prompt = build_strategy_prompt(**kwargs)
 
-    # Truncate at the output format marker and replace with a simpler one
-    marker = "**Output ONLY the raw JSON object as specified.**\n\n"
-    idx = full_prompt.rfind(marker)
-    if idx >= 0:
-        market_data_section = full_prompt[:idx]
-    else:
-        market_data_section = full_prompt
-
     analysis_output = (
-        "**Output ONLY a raw JSON object with these fields:**\n"
+        "\n\n**IMPORTANT — Step 1a: Analysis Only**\n"
+        "For this step, IGNORE the output format instructions above. "
+        "Instead, output ONLY a raw JSON object with these fields:\n"
         '- "action": one of BUY, SELL, HOLD\n'
         '- "confidence": a float between 0.0 and 1.0\n'
         '- "reasoning": a string explaining your analysis. Include the key factors '
@@ -1962,7 +1955,7 @@ def build_analysis_prompt(**kwargs) -> str:
         "Output ONLY the raw JSON object."
     )
 
-    return market_data_section + analysis_output
+    return full_prompt + analysis_output
 
 
 def build_backtest_variants_prompt(
@@ -2029,7 +2022,7 @@ Base currency: {base_currency}
 - Strategy Direction: {analysis.get("strategy_direction", "unknown")}
 
 **Key Market Context for Parameter Selection:**
-- ATR (14-period, {assigned_timeframe}): {atr:.6f if atr else 'N/A'}
+- ATR (14-period, {assigned_timeframe}): {f"{atr:.6f}" if atr is not None else "N/A"}
 """
     if atr is not None and current_price and current_price > 0:
         atr_pct = atr / current_price
