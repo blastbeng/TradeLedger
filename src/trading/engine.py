@@ -9212,9 +9212,10 @@ class TradingEngine:
         if is_critical:
             return False
 
-        # If we lack key indicators, we cannot reliably determine if the market
-        # is unchanged – do not skip, let the LLM decide.
-        if rsi is None or macd_hist is None or atr is None:
+        # ATR is the most critical for skip logic (price change comparison).
+        # RSI and MACD are supplementary — if they're missing, we can still
+        # make a skip decision based on price change and ATR alone.
+        if atr is None:
             return False
 
         snapshot = self._last_eval_snapshot.get(symbol)
