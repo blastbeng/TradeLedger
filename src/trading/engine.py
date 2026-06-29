@@ -12041,6 +12041,18 @@ class TradingEngine:
         else:
             bt_candles = historical_ohlcv or raw_candles
 
+        # Early skip: if the assigned timeframe cannot possibly have enough candles
+        # given the data retention period, skip backtesting entirely instead of
+        # falling back to a much shorter timeframe whose results would be misleading.
+        tf_seconds_bt = self._timeframe_to_seconds(assigned_tf)
+        max_possible_candles = (settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds_bt
+        if max_possible_candles < 5:
+            return None, (
+                f"Backtesting skipped for {assigned_tf}: only ~{int(max_possible_candles)} candles possible "
+                f"with {settings.OHLCV_RETENTION_DAYS} days retention (need ≥5). "
+                f"Rely on LLM analysis, fundamentals, and multi-timeframe indicators instead."
+            )
+
         # --- Fallback to shorter timeframes when the assigned timeframe has too few candles ---
         MIN_BACKTEST_CANDLES = 20
         backtest_fallback_note = ""
@@ -12065,7 +12077,12 @@ class TradingEngine:
                                 [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
                                 for c in fb_db_candles
                             ]
-                            backtest_fallback_note = f" [Fallback: backtested on {shorter_tf} candles (assigned {assigned_tf} had < {MIN_BACKTEST_CANDLES} candles)]"
+                            backtest_fallback_note = (
+                                f" ⚠️ FALLBACK WARNING: Backtest was run on {shorter_tf} candles, NOT {assigned_tf}. "
+                                f"The assigned {assigned_tf} timeframe had insufficient candles (< {MIN_BACKTEST_CANDLES}) "
+                                f"with {settings.OHLCV_RETENTION_DAYS} days retention. "
+                                f"Results from {shorter_tf} may not accurately represent {assigned_tf} behavior — treat with caution."
+                            )
                             logger.info(
                                 f"Backtest fallback for {symbol}: assigned_tf={assigned_tf} had insufficient candles, "
                                 f"using {shorter_tf} ({len(bt_candles)} candles)."
@@ -12175,8 +12192,8 @@ class TradingEngine:
 
             return backtest_stats, bt_summary
         if backtest_fallback_note:
-            return None, f"Insufficient data for backtest (need ≥20 candles).{backtest_fallback_note}"
-        return None, "Insufficient data for backtest (need ≥20 candles)."
+            return None, f"Insufficient data for backtest (need ≥{MIN_BACKTEST_CANDLES} candles).{backtest_fallback_note}"
+        return None, f"Insufficient data for backtest for {assigned_tf} (need ≥{MIN_BACKTEST_CANDLES} candles with {settings.OHLCV_RETENTION_DAYS} days retention)."
 
     async def _prepare_simulation_data(self, symbol: str) -> Dict[str, Any]:
         """Fetch all necessary data and build the strategy prompt for simulation."""
