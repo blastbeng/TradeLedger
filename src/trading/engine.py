@@ -1514,7 +1514,10 @@ class TradingEngine:
     def _format_symbol_display(symbol: str, stock_name: str, timeframe: Optional[str] = None) -> str:
         """Return a display string like 'AAPL[Apple Inc.]' or 'AAPL[Apple Inc.] (15m)'."""
         base = symbol.split("/")[0] if "/" in symbol else symbol
-        display = f"{base}[{stock_name}]"
+        if stock_name and stock_name != base:
+            display = f"{base}[{stock_name}]"
+        else:
+            display = base
         if timeframe:
             display += f" ({timeframe})"
         return display
