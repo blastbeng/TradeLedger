@@ -564,7 +564,20 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
                 prompt += f"  {sym}: {symbol_trend_scores[sym]:.3f}\n"
         prompt += "High trend quality (>0.7) = strong, clean trend suitable for momentum/breakout strategies. Low score (<0.3) = choppy or ranging, better for mean reversion or avoid.\n"
     if ohlcv_summary:
-        prompt += f"\nMulti-timeframe OHLCV summary (price change %, high, low, volume):\n{json.dumps(ohlcv_summary)}\n"
+        filtered_ohlcv_summary = {}
+        for sym, tfs in ohlcv_summary.items():
+            valid_tfs = {tf: data for tf, data in tfs.items() if data}
+            if valid_tfs:
+                filtered_ohlcv_summary[sym] = valid_tfs
+        if filtered_ohlcv_summary:
+            prompt += f"\nMulti-timeframe OHLCV summary (price change %, high, low, volume):\n{json.dumps(filtered_ohlcv_summary)}\n"
+        else:
+            prompt += (
+                "\n**Note:** No OHLCV data is available for any candidate symbol. "
+                "You must base your selection entirely on ticker data (price, 24h change, volume), "
+                "news sentiment, trend quality scores, and other provided metrics. "
+                "Do not pause trading solely due to missing OHLCV if other indicators suggest strong opportunities.\n"
+            )
     else:
         prompt += (
             "\n**Note:** No OHLCV data is available for any candidate symbol. "
@@ -660,13 +673,20 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
             "Factor this assessment into your stock selection and reasoning.\n"
         )
     if performance:
-        perf_text = f"""
-Historical Performance Data:
-Overall equity curve: {json.dumps(performance.get('equity_curve', {}))}
-Per-stock performance (win rate, avg P&L, total trades): {json.dumps(performance.get('stock_performance', {}))}
-Per-strategy performance: {json.dumps(performance.get('strategy_performance', {}))}
-"""
-        prompt += perf_text
+        perf_lines = ["Historical Performance Data:"]
+        equity_curve = performance.get('equity_curve', {})
+        stock_perf = performance.get('stock_performance', {})
+        strategy_perf = performance.get('strategy_performance', {})
+        
+        if equity_curve:
+            perf_lines.append(f"Overall equity curve: {json.dumps(equity_curve)}")
+        if stock_perf:
+            perf_lines.append(f"Per-stock performance (win rate, avg P&L, total trades): {json.dumps(stock_perf)}")
+        if strategy_perf:
+            perf_lines.append(f"Per-strategy performance: {json.dumps(strategy_perf)}")
+        
+        if len(perf_lines) > 1:
+            prompt += "\n".join(perf_lines) + "\n"
         if daily_pnl is not None:
             prompt += f"Today's realized P&L: {daily_pnl:.4f} {base_currency}\n"
         consecutive_losses = performance.get("equity_curve", {}).get("consecutive_losses", 0)
@@ -1791,14 +1811,18 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         stock_perf = performance.get("stock_performance", {}).get(symbol, {})
         strategy_perf = performance.get("strategy_performance", {})
         equity = performance.get("equity_curve", {})
-        perf_text = f"""
-Historical Performance:
-- This stock's past performance: {json.dumps(stock_perf)} (stop_loss_hits = number of times stop-loss was triggered; avg_hold_time_seconds = average trade duration)
-- Overall equity curve: {json.dumps(equity)}
-- Strategy performance summary: {json.dumps(strategy_perf)}
-
-Use this data to decide whether to BUY, SELL, or HOLD. If the stock has a poor win rate or the overall equity curve is declining, be more conservative. Prefer strategies that have worked well historically.
-"""
+        perf_lines = ["Historical Performance:"]
+        if stock_perf:
+            perf_lines.append(f"- This stock's past performance: {json.dumps(stock_perf)} (stop_loss_hits = number of times stop-loss was triggered; avg_hold_time_seconds = average trade duration)")
+        if equity:
+            perf_lines.append(f"- Overall equity curve: {json.dumps(equity)}")
+        if strategy_perf:
+            perf_lines.append(f"- Strategy performance summary: {json.dumps(strategy_perf)}")
+        
+        if len(perf_lines) > 1:
+            perf_text = "\n".join(perf_lines) + "\n\nUse this data to decide whether to BUY, SELL, or HOLD. If the stock has a poor win rate or the overall equity curve is declining, be more conservative. Prefer strategies that have worked well historically.\n"
+        else:
+            perf_text = ""
         perf_text += (
             "Calibrate parameters based on this data: low win rate/negative P&L → reduce size, widen stop, shorten hold time; "
             "high win rate/positive P&L → may increase size and tighten stops; high stop_loss_hits → wider stop or longer timeframe; "
