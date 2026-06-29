@@ -341,6 +341,11 @@ Output strict JSON only. The response must start with '{' or '[' and end with '}
 
 """
 
+# Replace placeholder with the configurable max backtest variants value
+SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
+    "__MAX_BACKTEST_VARIANTS__", str(settings.MAX_BACKTEST_VARIANTS)
+)
+
 def build_stock_selection_prompt(
     available_symbols: List[str],
     current_symbols: List[Dict[str, str]],
