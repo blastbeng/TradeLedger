@@ -46,14 +46,18 @@ def get_cached_llm_response(
         base_url = (settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL) if model_type == "mind" else (settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL)
         api_key = (settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY) if model_type == "mind" else (settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY)
 
-    # Build cache key (unchanged logic)
+    # Round temperature to 1 decimal place for cache key to improve cache hit rate
+    # when temperature is dynamically computed based on complexity.
+    cache_temp = round(temperature, 1) if temperature is not None else None
+
+    # Build cache key
     if market_hash:
-        cache_key = f"llm:{provider}:{model}:{model_type}:market:{market_hash}:t{int(temperature * 100) if temperature is not None else 'def'}"
+        cache_key = f"llm:{provider}:{model}:{model_type}:market:{market_hash}:t{cache_temp if cache_temp is not None else 'def'}"
     else:
         key_data = json.dumps(
             {"prompt": prompt, "system": system_prompt, "model_type": model_type,
              "provider": provider, "model": model,
-             "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE},
+             "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE},
             sort_keys=True
         )
         cache_key = f"llm:{hashlib.sha256(key_data.encode()).hexdigest()}"
