@@ -318,13 +318,13 @@ class PaperTrader:
                 "timestamp": int(time.time() * 1000),
             }
 
-        # Fill the entire order amount (no random partial fills — keeps
-        # paper trading consistent with backtesting results)
-        fill_fraction = 1.0
+        # NOTE: The paper trader assumes full fills for market orders to keep
+        # paper trading consistent with backtesting results. Partial fills
+        # based on volume are not simulated.
         filled_base_amount = base_amount
         filled_cost = filled_base_amount * fill_price
 
-        self._balances[quote] = quote_balance - (filled_cost + (fee_cost * fill_fraction))
+        self._balances[quote] = quote_balance - (filled_cost + fee_cost)
         self._balances[base] = self._balances.get(base, 0.0) + filled_base_amount
         self._balances_dirty = True
 
@@ -336,26 +336,13 @@ class PaperTrader:
         )
         self._orders[order_id] = order
 
-        remaining_order_id = None
-        if fill_fraction < 1.0:
-            remaining_amount = amount - filled_cost  # remaining quote currency
-            remaining_order_id = self._generate_order_id()
-            remaining_order = PaperOrder(
-                order_id=remaining_order_id, symbol=symbol, side="buy",
-                order_type="limit", amount=remaining_amount, limit_price=fill_price,
-                time_in_force="day", status="open",
-            )
-            self._orders[remaining_order_id] = remaining_order
-            self._save_orders()
-
         self._save_balances()
         return {
             "id": order_id, "status": "filled", "symbol": symbol, "side": "buy",
             "amount": filled_base_amount, "price": fill_price,
             "cost": filled_base_amount * fill_price,
-            "fee": {"cost": fee_cost * fill_fraction, "currency": fee_currency},
+            "fee": {"cost": fee_cost, "currency": fee_currency},
             "timestamp": order.timestamp,
-            "remaining_order_id": remaining_order_id,
         }
 
     def create_market_sell_order(
@@ -412,9 +399,9 @@ class PaperTrader:
                 "timestamp": int(time.time() * 1000),
             }
 
-        # Fill the entire order amount (no random partial fills — keeps
-        # paper trading consistent with backtesting results)
-        fill_fraction = 1.0
+        # NOTE: The paper trader assumes full fills for market orders to keep
+        # paper trading consistent with backtesting results. Partial fills
+        # based on volume are not simulated.
         filled_amount = amount
 
         costs = calculate_transaction_costs("SELL", fill_price, filled_amount, symbol=symbol)
@@ -434,18 +421,6 @@ class PaperTrader:
         )
         self._orders[order_id] = order
 
-        remaining_order_id = None
-        if fill_fraction < 1.0:
-            remaining_amount = amount - filled_amount
-            remaining_order_id = self._generate_order_id()
-            remaining_order = PaperOrder(
-                order_id=remaining_order_id, symbol=symbol, side="sell",
-                order_type="limit", amount=remaining_amount, limit_price=fill_price,
-                time_in_force="day", status="open",
-            )
-            self._orders[remaining_order_id] = remaining_order
-            self._save_orders()
-
         self._save_balances()
         return {
             "id": order_id, "status": "filled", "symbol": symbol, "side": "sell",
@@ -453,7 +428,6 @@ class PaperTrader:
             "cost": filled_amount * fill_price,
             "fee": {"cost": fee_cost, "currency": fee_currency},
             "timestamp": order.timestamp,
-            "remaining_order_id": remaining_order_id,
         }
 
     # ------------------------------------------------------------------
