@@ -204,260 +204,153 @@ def _migrate_db():
             # because _get_existing_columns will still report it as missing.
 
 
+def _get_init_statements() -> List[str]:
+    """Return a list of CREATE TABLE/INDEX statements adapted for the backend."""
+    if _backend == "postgresql":
+        pk_type = "SERIAL PRIMARY KEY"
+        bigint_type = "BIGINT"
+        float_type = "DOUBLE PRECISION"
+    else:
+        pk_type = "INTEGER PRIMARY KEY AUTOINCREMENT"
+        bigint_type = "INTEGER"
+        float_type = "REAL"
+
+    statements = [
+        f"""
+        CREATE TABLE IF NOT EXISTS trading_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS telegram_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS trade_history (
+            id {pk_type},
+            order_id TEXT,
+            symbol TEXT NOT NULL,
+            timeframe TEXT,
+            side TEXT NOT NULL,
+            type TEXT,
+            amount REAL NOT NULL,
+            price REAL NOT NULL,
+            cost REAL,
+            fee_cost REAL,
+            fee_currency TEXT,
+            realized_pnl REAL,
+            cost_basis REAL,
+            strategy_type TEXT,
+            note TEXT,
+            status TEXT,
+            timestamp {bigint_type} NOT NULL,
+            exit_reason TEXT,
+            hold_time_seconds REAL,
+            buy_confidence REAL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_trade_history_symbol ON trade_history(symbol)",
+        "CREATE INDEX IF NOT EXISTS idx_trade_history_timestamp ON trade_history(timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_trade_history_symbol_timeframe ON trade_history(symbol, timeframe)",
+        f"""
+        CREATE TABLE IF NOT EXISTS news_articles (
+            id {pk_type},
+            symbol TEXT NOT NULL,
+            title TEXT,
+            source TEXT,
+            url TEXT,
+            published_at TEXT,
+            summary TEXT,
+            sentiment_label TEXT,
+            sentiment_compound REAL,
+            fetched_at {float_type} NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_news_symbol ON news_articles(symbol)",
+        "CREATE INDEX IF NOT EXISTS idx_news_fetched_at ON news_articles(fetched_at)",
+        f"""
+        CREATE TABLE IF NOT EXISTS market_data (
+            id {pk_type},
+            symbol TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            timestamp {bigint_type} NOT NULL,
+            open REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            close REAL NOT NULL,
+            volume REAL NOT NULL
+        )
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_market_data_symbol_tf_ts ON market_data(symbol, timeframe, timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_market_data_timestamp ON market_data(timestamp)",
+        f"""
+        CREATE TABLE IF NOT EXISTS indicators (
+            id {pk_type},
+            symbol TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            timestamp {bigint_type} NOT NULL,
+            indicators_json TEXT NOT NULL,
+            computed_at {float_type} NOT NULL,
+            UNIQUE(symbol, timeframe)
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS quotes (
+            symbol TEXT PRIMARY KEY,
+            last REAL,
+            bid REAL,
+            ask REAL,
+            volume REAL,
+            change_24h REAL,
+            percentage REAL,
+            quotevolume REAL,
+            name TEXT,
+            coupon REAL,
+            maturity TEXT,
+            updated_at {float_type} NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS discovered_symbols (
+            symbol TEXT PRIMARY KEY,
+            isin TEXT,
+            asset_type TEXT,
+            name TEXT,
+            maturity TEXT,
+            coupon REAL,
+            discovered_at {float_type} NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS position_pnl (
+            id {pk_type},
+            symbol TEXT NOT NULL,
+            timestamp {bigint_type} NOT NULL,
+            unrealized_pnl REAL,
+            realized_pnl REAL,
+            position_value REAL,
+            cost_basis REAL,
+            amount REAL,
+            current_price REAL,
+            pnl_pct REAL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_position_pnl_symbol ON position_pnl(symbol)",
+        "CREATE INDEX IF NOT EXISTS idx_position_pnl_timestamp ON position_pnl(timestamp)",
+    ]
+    return statements
+
+
 def init_db():
     """Create tables if they don't exist, then run migrations."""
     conn = get_connection()
     try:
-        if _backend == "postgresql":
-            statements = [
-                """
-                CREATE TABLE IF NOT EXISTS trading_state (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS telegram_state (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS trade_history (
-                    id SERIAL PRIMARY KEY,
-                    order_id TEXT,
-                    symbol TEXT NOT NULL,
-                    timeframe TEXT,
-                    side TEXT NOT NULL,
-                    type TEXT,
-                    amount REAL NOT NULL,
-                    price REAL NOT NULL,
-                    cost REAL,
-                    fee_cost REAL,
-                    fee_currency TEXT,
-                    realized_pnl REAL,
-                    cost_basis REAL,
-                    strategy_type TEXT,
-                    note TEXT,
-                    status TEXT,
-                    timestamp BIGINT NOT NULL,
-                    exit_reason TEXT,
-                    hold_time_seconds REAL,
-                    buy_confidence REAL
-                )
-                """,
-                "CREATE INDEX IF NOT EXISTS idx_trade_history_symbol ON trade_history(symbol)",
-                "CREATE INDEX IF NOT EXISTS idx_trade_history_timestamp ON trade_history(timestamp)",
-                "CREATE INDEX IF NOT EXISTS idx_trade_history_symbol_timeframe ON trade_history(symbol, timeframe)",
-                """
-                CREATE TABLE IF NOT EXISTS news_articles (
-                    id SERIAL PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    title TEXT,
-                    source TEXT,
-                    url TEXT,
-                    published_at TEXT,
-                    summary TEXT,
-                    sentiment_label TEXT,
-                    sentiment_compound REAL,
-                    fetched_at DOUBLE PRECISION NOT NULL
-                )
-                """,
-                "CREATE INDEX IF NOT EXISTS idx_news_symbol ON news_articles(symbol)",
-                "CREATE INDEX IF NOT EXISTS idx_news_fetched_at ON news_articles(fetched_at)",
-                """
-                CREATE TABLE IF NOT EXISTS market_data (
-                    id SERIAL PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    timestamp BIGINT NOT NULL,
-                    open REAL NOT NULL,
-                    high REAL NOT NULL,
-                    low REAL NOT NULL,
-                    close REAL NOT NULL,
-                    volume REAL NOT NULL
-                )
-                """,
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_market_data_symbol_tf_ts ON market_data(symbol, timeframe, timestamp)",
-                "CREATE INDEX IF NOT EXISTS idx_market_data_timestamp ON market_data(timestamp)",
-                """
-                CREATE TABLE IF NOT EXISTS indicators (
-                    id SERIAL PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    timestamp BIGINT NOT NULL,
-                    indicators_json TEXT NOT NULL,
-                    computed_at DOUBLE PRECISION NOT NULL,
-                    UNIQUE(symbol, timeframe)
-                )
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS quotes (
-                    symbol TEXT PRIMARY KEY,
-                    last REAL,
-                    bid REAL,
-                    ask REAL,
-                    volume REAL,
-                    change_24h REAL,
-                    percentage REAL,
-                    quotevolume REAL,
-                    name TEXT,
-                    coupon REAL,
-                    maturity TEXT,
-                    updated_at DOUBLE PRECISION NOT NULL
-                )
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS discovered_symbols (
-                    symbol TEXT PRIMARY KEY,
-                    isin TEXT,
-                    asset_type TEXT,
-                    name TEXT,
-                    maturity TEXT,
-                    coupon REAL,
-                    discovered_at DOUBLE PRECISION NOT NULL
-                )
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS position_pnl (
-                    id SERIAL PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    timestamp BIGINT NOT NULL,
-                    unrealized_pnl REAL,
-                    realized_pnl REAL,
-                    position_value REAL,
-                    cost_basis REAL,
-                    amount REAL,
-                    current_price REAL,
-                    pnl_pct REAL
-                )
-                """,
-                "CREATE INDEX IF NOT EXISTS idx_position_pnl_symbol ON position_pnl(symbol)",
-                "CREATE INDEX IF NOT EXISTS idx_position_pnl_timestamp ON position_pnl(timestamp)",
-            ]
-            for stmt in statements:
-                conn.execute(stmt)
-        else:
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS trading_state (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS telegram_state (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS trade_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    order_id TEXT,
-                    symbol TEXT NOT NULL,
-                    timeframe TEXT,
-                    side TEXT NOT NULL,
-                    type TEXT,
-                    amount REAL NOT NULL,
-                    price REAL NOT NULL,
-                    cost REAL,
-                    fee_cost REAL,
-                    fee_currency TEXT,
-                    realized_pnl REAL,
-                    cost_basis REAL,
-                    strategy_type TEXT,
-                    note TEXT,
-                    status TEXT,
-                    timestamp INTEGER NOT NULL,
-                    exit_reason TEXT,
-                    hold_time_seconds REAL,
-                    buy_confidence REAL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_trade_history_symbol ON trade_history(symbol);
-                CREATE INDEX IF NOT EXISTS idx_trade_history_timestamp ON trade_history(timestamp);
-                CREATE INDEX IF NOT EXISTS idx_trade_history_symbol_timeframe ON trade_history(symbol, timeframe);
-
-                CREATE TABLE IF NOT EXISTS news_articles (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    title TEXT,
-                    source TEXT,
-                    url TEXT,
-                    published_at TEXT,
-                    summary TEXT,
-                    sentiment_label TEXT,
-                    sentiment_compound REAL,
-                    fetched_at REAL NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_news_symbol ON news_articles(symbol);
-                CREATE INDEX IF NOT EXISTS idx_news_fetched_at ON news_articles(fetched_at);
-
-                CREATE TABLE IF NOT EXISTS market_data (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    timestamp INTEGER NOT NULL,
-                    open REAL NOT NULL,
-                    high REAL NOT NULL,
-                    low REAL NOT NULL,
-                    close REAL NOT NULL,
-                    volume REAL NOT NULL
-                );
-
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_market_data_symbol_tf_ts ON market_data(symbol, timeframe, timestamp);
-                CREATE INDEX IF NOT EXISTS idx_market_data_timestamp ON market_data(timestamp);
-
-                CREATE TABLE IF NOT EXISTS indicators (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    timestamp INTEGER NOT NULL,
-                    indicators_json TEXT NOT NULL,
-                    computed_at REAL NOT NULL,
-                    UNIQUE(symbol, timeframe)
-                );
-
-                CREATE TABLE IF NOT EXISTS quotes (
-                    symbol TEXT PRIMARY KEY,
-                    last REAL,
-                    bid REAL,
-                    ask REAL,
-                    volume REAL,
-                    change_24h REAL,
-                    percentage REAL,
-                    quotevolume REAL,
-                    name TEXT,
-                    coupon REAL,
-                    maturity TEXT,
-                    updated_at REAL NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS discovered_symbols (
-                    symbol TEXT PRIMARY KEY,
-                    isin TEXT,
-                    asset_type TEXT,
-                    name TEXT,
-                    maturity TEXT,
-                    coupon REAL,
-                    discovered_at REAL NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS position_pnl (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    timestamp INTEGER NOT NULL,
-                    unrealized_pnl REAL,
-                    realized_pnl REAL,
-                    position_value REAL,
-                    cost_basis REAL,
-                    amount REAL,
-                    current_price REAL,
-                    pnl_pct REAL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_position_pnl_symbol ON position_pnl(symbol);
-                CREATE INDEX IF NOT EXISTS idx_position_pnl_timestamp ON position_pnl(timestamp);
-            """)
+        statements = _get_init_statements()
+        for stmt in statements:
+            conn.execute(stmt)
         conn.commit()
     finally:
         conn.close()
