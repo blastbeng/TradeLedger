@@ -3729,6 +3729,13 @@ class TradingEngine:
                 else:
                     await asyncio.to_thread(self.redis.delete, "trading:min_risk_reward_ratio")
 
+                conf_rejection = parsed.get("confidence_rejection_threshold")
+                if conf_rejection is not None and isinstance(conf_rejection, (int, float)) and 0.0 <= float(conf_rejection) <= 1.0:
+                    await asyncio.to_thread(self.redis.setex, "trading:confidence_rejection_threshold", 7 * 24 * 3600, str(float(conf_rejection)))
+                    logger.info(f"LLM set confidence rejection threshold to {float(conf_rejection):.2f}")
+                else:
+                    await asyncio.to_thread(self.redis.delete, "trading:confidence_rejection_threshold")
+
                 # Parse LLM-controlled limit price max distance
                 limit_price_max_dist = parsed.get("limit_price_max_distance_pct")
                 if limit_price_max_dist is not None and isinstance(limit_price_max_dist, (int, float)) and 0.0 <= float(limit_price_max_dist) <= 1.0:
@@ -6276,6 +6283,29 @@ class TradingEngine:
                 else:
                     sl_pct = params.get("stop_loss_pct")
 
+            # --- Global confidence rejection threshold (set during stock selection) ---
+            if validated.action == "BUY":
+                conf_rejection_raw = await asyncio.to_thread(self.redis.get, "trading:confidence_rejection_threshold")
+                if conf_rejection_raw:
+                    try:
+                        conf_threshold = float(conf_rejection_raw)
+                        if conf_threshold > 0 and validated.confidence < conf_threshold:
+                            logger.info(f"Skipping {symbol}: confidence {validated.confidence:.2f} below global rejection threshold {conf_threshold:.2f}")
+                            if self.notifier:
+                                await self.notifier.send_notification(
+                                    f"⚠️ Skipping {display_symbol}: confidence {validated.confidence:.2f} below threshold {conf_threshold:.2f}",
+                                    summary={
+                                        "symbol": symbol,
+                                        "action": "SKIP",
+                                        "reason": "Confidence below rejection threshold",
+                                        "confidence": validated.confidence,
+                                        "threshold": conf_threshold,
+                                    }
+                                )
+                            return
+                    except (ValueError, TypeError):
+                        pass
+
             min_conf = params.get("min_confidence")
             if min_conf is not None and validated.confidence < min_conf:
                 logger.info(f"Skipping {symbol}: confidence {validated.confidence:.2f} below LLM min {min_conf:.2f}")
@@ -7714,6 +7744,22 @@ class TradingEngine:
 
             # Desired amount based on fraction of total available quote balance
             desired_amount = quote_balance * position_fraction
+
+            # Apply confidence-based position sizing (LLM-decided weight)
+            confidence_sizing_weight = params.get("confidence_sizing_weight", 0.0)
+            if confidence_sizing_weight is not None:
+                try:
+                    confidence_sizing_weight = float(confidence_sizing_weight)
+                except (TypeError, ValueError):
+                    confidence_sizing_weight = 0.0
+            if confidence_sizing_weight > 0 and signal.confidence < 1.0:
+                confidence_multiplier = 1.0 - confidence_sizing_weight * (1.0 - signal.confidence)
+                desired_amount *= confidence_multiplier
+                logger.info(
+                    f"Confidence sizing applied: weight={confidence_sizing_weight}, "
+                    f"confidence={signal.confidence:.2f}, multiplier={confidence_multiplier:.4f}, "
+                    f"adjusted amount={desired_amount:.2f}"
+                )
 
             # Fetch all position tickers once for risk calculations
             pos_tickers = await self._get_all_position_tickers()

@@ -17,6 +17,7 @@ class Signal:
     take_profit: Optional[float] = None      # percentage above entry (e.g., 0.10 for 10%)
     take_profit_atr_multiple: Optional[float] = None
     position_size: Optional[float] = None    # fraction of per-symbol budget (0.0 - 1.0)
+    confidence_sizing_weight: Optional[float] = None  # LLM-decided: 0.0-1.0, how much confidence scales position size
     trailing_stop: Optional[bool] = False    # whether to use a trailing stop
     stop_loss_method: Optional[str] = None
     stop_loss_atr_multiple: Optional[float] = None

@@ -197,7 +197,7 @@ SYSTEM_PROMPT = """You are a professional stock, ETF, and BTP bond trading bot a
 
 Key principles:
 - **CRITICAL — Primary timeframes: "5Y", "3Y", "1Y", "6M", "3M", "1M".** You MUST prioritize these long-term timeframes above all others. The longest available timeframes are the most important for stocks, ETFs, and BTPs. The largest and most reliable profits come from long-term holdings identified on yearly or monthly charts. You MUST use "5Y", "3Y", "1Y", "6M", "3M", or "1M" as your primary decision timeframe whenever available. Use "1w" (weekly) as a secondary confirmation timeframe only. Use "1d" and "1h" only for short‑term confirmation or finer entry/exit timing, or when long-term data is unavailable. When assigning timeframes to symbols, ALWAYS prefer "5Y", "3Y", or "1Y" for positions you intend to hold for years, and "6M", "3M", or "1M" for months. Never default to short-term timeframes if long-term data is available.
-- **Confidence is your directional conviction, not a trade gate.** Set confidence between 0.0 and 1.0. 0.0 → no conviction (should be HOLD). 0.5 → moderate belief. 1.0 → absolute certainty. Only output HOLD when you have no directional edge at all.
+- **Confidence directly affects position sizing and trade rejection.** Set confidence between 0.0 and 1.0. 0.0 → no conviction (should be HOLD). 0.5 → moderate belief. 1.0 → absolute certainty. Only output HOLD when you have no directional edge at all. Your confidence score is NOT decorative — it is used to scale position size (via `confidence_sizing_weight` in strategy params) and to reject low-conviction trades (via `confidence_rejection_threshold` in stock selection). Set these parameters to control how much your confidence influences actual trading.
 - **You must set `position_size_fraction` yourself** to reflect your confidence, risk level, and any other factors. The engine will NOT scale the position size automatically – it will use exactly the fraction you provide. If you have low confidence, set a smaller `position_size_fraction`; if high confidence, you may set a larger one. The sum of position_size_fraction across all stocks you intend to trade must not exceed 1.0.
 - Focus on stocks with strong medium to long-term momentum, solid fundamentals, and favorable sector trends. Avoid extremely low‑volatility or chaotic markets, but do not require perfect conditions to trade.
 - You will receive pre-computed technical indicators (RSI, MACD, Bollinger Bands, EMAs, Stochastic, ADX, etc.) along with raw OHLCV data. Use these provided indicators to time your entries and exits. Require confirmation from at least two independent indicators before taking a trade.
@@ -266,6 +266,7 @@ Your risk appetite must adapt dynamically to market and portfolio conditions. Do
 - Set `cooldown_after_loss_seconds` to **0** (no cooldown) unless you have a very strong reason to avoid a stock. Quick re‑entry after a small loss is often profitable. Long cooldowns cause missed opportunities.
 - You may include `"max_portfolio_exposure_pct"` (0.0-1.0) and `"max_portfolio_stop_risk_pct"` (0.0-1.0) in your stock selection JSON to define the maximum portfolio exposure and total stop-loss risk you are willing to accept. The engine will use these thresholds to guide position sizing in the strategy step.
 - You may include `"min_risk_reward_ratio"` (a positive number, e.g., 1.5) in your stock selection JSON to define a global minimum reward:risk ratio for all trades in this cycle. The validator will reject any trade where `take_profit_pct / stop_loss_pct` is below this value, unless you explicitly override it with a different value in the strategy step.
+- You may include `"confidence_rejection_threshold"` (0.0-1.0, e.g., 0.4) in your stock selection JSON to define a global minimum confidence threshold for all trades in this cycle. Any trade with confidence below this threshold will be rejected. Set to 0.0 to disable.
 - If the daily realized P&L is deeply negative or market conditions are poor, you may select 0 stocks in the stock selection step to pause trading. Always set a meaningful `pause_duration_seconds` (≥ 1800) to avoid an immediate re‑pause. (See the Risk Appetite Framework above for exact thresholds).
 - **Required parameter for every BUY/SELL:**
   - `"cooldown_after_loss_seconds"`: a non-negative integer (0 or more). If the trade results in a loss, the bot will avoid this stock for this many seconds before considering it again. Set 0 to allow immediate re-entry.
@@ -276,6 +277,7 @@ Your risk appetite must adapt dynamically to market and portfolio conditions. Do
   - `"min_profit_per_trade"`: an optional non-negative number (in base currency, e.g., 0.5). If set, the bot will skip the trade if the expected gross profit (position size × take_profit_pct) is below this value. Set `min_profit_per_trade` to **0** (or a very small value like 0.01) to allow tiny profits. Do not block trades because the expected profit is small – a small profit is still profit.
   - `"min_risk_reward_ratio"`: an optional positive number (e.g., 1.5). If set, the validator will reject the trade unless take_profit_pct / stop_loss_pct >= this value.
   - `"position_size_multiplier"`: an optional decimal between 0.0 and 1.0 (e.g., 0.5 for 50%). If set, the final position size for this trade will be further multiplied by this factor, after the global risk multiplier.
+  - `"confidence_sizing_weight"`: an optional decimal between 0.0 and 1.0 (e.g., 0.5). Controls how much your confidence score scales the position size. The effective position size is multiplied by `(1.0 - confidence_sizing_weight × (1.0 - confidence))`. Set to 0.0 to disable confidence-based sizing (position size is unaffected by confidence). Set to 1.0 to make position size directly proportional to confidence (e.g., confidence 0.5 → half the position size). This makes your confidence score meaningful: higher confidence → larger position, lower confidence → smaller position.
   - `"min_confidence"`: an optional decimal between 0.0 and 1.0 (e.g., 0.6). If set, the bot will skip the trade if your confidence is below this threshold.
 - `"portfolio_risk_adjustment_factor"`: an optional decimal between 0.1 and 1.0 (e.g., 0.5). This is your per-symbol "vote" on the overall portfolio risk for the current cycle. The engine will take the **minimum** of this factor across all symbols evaluated in the current cycle and apply it as a global multiplier to all position sizes. Use a lower value (e.g., 0.3–0.5) if you detect high volatility, unfavorable market regime shifts, or elevated risk for this symbol. Use 1.0 if conditions are normal and you see no reason to reduce overall portfolio risk. This allows you to dynamically adjust the global trading risk based on the latest per-symbol market data, rather than relying solely on the periodic stock selection phase.
 
@@ -518,6 +520,7 @@ Return a JSON object with the following fields:
 - "max_portfolio_exposure_pct": a float between 0.0 and 1.0 (e.g., 0.7 for 70%). The maximum percentage of total portfolio value that can be deployed in open positions.
 - "max_portfolio_stop_risk_pct": a float between 0.0 and 1.0 (e.g., 0.05 for 5%). The maximum total stop-loss risk as a percentage of portfolio value.
 - "min_risk_reward_ratio": a positive number (e.g., 1.5). The minimum reward:risk ratio required for all trades. Trades with a lower ratio will be rejected.
+- "confidence_rejection_threshold": a float between 0.0 and 1.0 (e.g., 0.4). The minimum confidence required for any trade to be executed. Trades with confidence below this threshold will be rejected. Set to 0.0 to disable. This is a global threshold that applies to all trades in the cycle.
 - "limit_price_max_distance_pct": an optional float between 0.0 and 1.0 (e.g., 0.05 for 5%). The maximum allowed distance of a limit price from the current best bid/ask. Orders with a limit price further away than this are rejected to avoid indefinite queuing. Set to 0.0 to disable the check entirely. If omitted, the engine uses its default (0.05).
 - "min_viable_trade_amount": an optional positive number (e.g., 500.0) indicating the minimum amount in {base_currency} that should be allocated to a single trade for it to be profitable after fees. This is a SUGGESTION only — the engine does NOT block trades below this value. You decide the actual position size dynamically. Set to 0 to allow trades of any size (only exchange minimums apply).
 - "reasoning": a short string (max 200 characters) explaining why you selected these specific stocks and timeframes. This will be shown to the user, so make it informative.
@@ -884,6 +887,7 @@ Return a JSON object with the following fields:
 - "max_portfolio_exposure_pct": a float between 0.0 and 1.0
 - "max_portfolio_stop_risk_pct": a float between 0.0 and 1.0
 - "min_risk_reward_ratio": a positive number
+- "confidence_rejection_threshold": a float between 0.0 and 1.0
 - "limit_price_max_distance_pct": an optional float between 0.0 and 1.0
 - "min_viable_trade_amount": an optional positive number
 - "stock_revaluation_interval_seconds": an optional integer >= 3600
@@ -1294,6 +1298,15 @@ Maximum symbols to trade: {max_symbols}
         f"- Even a very small `position_size_fraction` (e.g., 0.01–0.05) is valid if your conviction is low or "
         f"capital is limited, BUT ONLY if the trade is still profitable after fees at that size.\n"
         f"- The sum of `position_size_fraction` across all stocks must not exceed 1.0 (total available balance).\n"
+    )
+    prompt += (
+        "\n**Confidence-Based Position Sizing:** You can set `confidence_sizing_weight` (0.0–1.0) in your strategy parameters "
+        "to make your confidence score directly affect the position size. The effective position size is: "
+        "`position_size_fraction × total_balance × (1.0 - confidence_sizing_weight × (1.0 - confidence))`. "
+        "Set to 0.0 to disable (default). Set to 1.0 to make position size directly proportional to confidence. "
+        "This makes your confidence score meaningful: high confidence → larger position, low confidence → smaller position.\n"
+    )
+    prompt += (
         f"- The only hard floor is the exchange minimum order size: your `position_size_fraction × total_balance` "
         f"must be ≥ the minimum order cost for this symbol (shown above as min_order_cost).\n"
         f"- If the remaining balance is too small to meet the exchange minimum, reduce your fraction or output HOLD.\n"
@@ -1727,7 +1740,7 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         "You MUST also include the decided price (the current market price or your specified `limit_price`) in the reasoning message.\n"
         "- `strategy`: an object containing `type` (string) and `parameters` (object).\n"
         "  The `parameters` object MUST include ALL required trading parameters:\n"
-        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`, etc.\n"
+        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`, etc.\n"
         "- `backtest_variants`: a JSON array of objects, each containing a complete set of strategy parameters for backtesting. "
         "Each variant MUST include at minimum: `stop_loss_pct`, `take_profit_pct`, `max_hold_time_seconds`, `trailing_stop`, "
         "`position_size_fraction`, and `backtest_period_days`. You decide how many variants to return (minimum 1, recommended 3–5). "
@@ -1922,7 +1935,7 @@ If ANY backtest variant confirms a strategy is viable, you may output your final
         "You MUST also include the decided price (the current market price or your specified `limit_price`) in the reasoning message.\n"
         "- `strategy`: an object containing `type` and `parameters`.\n"
         "  The `parameters` object MUST include ALL required trading parameters (same as Step 1):\n"
-        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, etc.\n"
+        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, etc.\n"
         "  You may adjust `position_size_fraction` based on backtest performance (e.g., reduce size if drawdown is high).\n"
         "\n**CRITICAL — Confidence must reflect ALL available data:**\n"
         "Your `confidence` value must be your holistic assessment based on EVERYTHING provided to you:\n"

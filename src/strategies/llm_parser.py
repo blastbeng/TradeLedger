@@ -80,6 +80,7 @@ def parse_llm_response(response_text: str) -> Signal:
             "partial_take_profit_fraction",
             "max_unrealized_loss_pct",
             "position_size_multiplier",
+            "confidence_sizing_weight",
             "order_type", "stop_price", "trail_offset",
             "stop_loss_order_type", "stop_loss_stop_price",
             "stop_loss_limit_price", "stop_loss_trail_offset",
@@ -137,6 +138,10 @@ def parse_llm_response(response_text: str) -> Signal:
             params["take_profit_pct"] = take_profit
         if position_size is not None:
             params["position_size_fraction"] = position_size
+        confidence_sizing_weight = _safe_float(params.get("confidence_sizing_weight"))
+        if confidence_sizing_weight is not None:
+            confidence_sizing_weight = max(0.0, min(1.0, confidence_sizing_weight))
+            params["confidence_sizing_weight"] = confidence_sizing_weight
         params["trailing_stop"] = trailing_stop
         if max_hold_time_seconds is not None:
             params["max_hold_time_seconds"] = max_hold_time_seconds
@@ -237,6 +242,7 @@ def parse_llm_response(response_text: str) -> Signal:
             take_profit=take_profit,
             take_profit_atr_multiple=take_profit_atr_multiple,
             position_size=position_size,
+            confidence_sizing_weight=confidence_sizing_weight,
             trailing_stop=trailing_stop,
             reason=reason,
             entry_condition=entry_condition,
