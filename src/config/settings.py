@@ -303,6 +303,20 @@ class Settings(BaseSettings):
         Settings.parse_temperature_range(v)  # raises ValueError if invalid
         return v
 
+    # Threshold for choosing the "mind" model tier over "actuator".
+    # Represents the minimum normalized weighted complexity score (0.0 to 1.0)
+    # required to trigger the "mind" model. Lower values = more frequent use
+    # of the "mind" model (higher cost/quality); higher values = more frequent
+    # use of the "actuator" model (lower cost/faster).
+    LLM_MIND_MODEL_THRESHOLD: float = 0.20
+
+    @field_validator("LLM_MIND_MODEL_THRESHOLD")
+    @classmethod
+    def validate_llm_mind_model_threshold(cls, v: float) -> float:
+        if v < 0.05 or v > 0.80:
+            raise ValueError("LLM_MIND_MODEL_THRESHOLD must be between 0.05 and 0.80")
+        return v
+
     @staticmethod
     def parse_temperature_range(value: Optional[str]) -> Optional[tuple]:
         """Parse a temperature setting into (min, max) or None if not set.

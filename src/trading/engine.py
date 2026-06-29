@@ -9249,120 +9249,162 @@ class TradingEngine:
         if is_critical:
             return "mind"
 
-        complexity = 0
+        score = 0.0
+        max_score = 0.0
 
-        # 1. Volatility extremes (ATR percentile)
-        if atr_percentile is not None:
-            if atr_percentile > 80 or atr_percentile < 20:
-                complexity += 1
-
-        # 2. Turbulent market regime
-        if market_regime and any(kw in market_regime for kw in ("high volatility", "squeeze", "expansion", "ranging")):
-            complexity += 1
-
-        # 3. Strong sentiment swing
-        if sentiment_trend_val is not None and abs(sentiment_trend_val) > 0.2:
-            complexity += 1
-
-        # 4. Conflicting technicals: RSI extreme vs MACD direction
+        # === Critical factors (weight 2.0) — directly affect risk/decision quality ===
+        # Conflicting technicals: RSI extreme vs MACD direction
         if rsi is not None and macd_hist is not None:
+            max_score += 2.0
             if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
-                complexity += 1
+                score += 2.0
 
-        # 5. MACD crossover nearby (lines very close → indecision)
-        if macd is not None and macd_signal is not None and macd != 0:
-            if abs(macd - macd_signal) < 0.0001 * abs(macd):
-                complexity += 1
+        # EMA alignment conflict with ADX/DI trend
+        if all(v is not None for v in (ema_9, ema_21, adx, plus_di, minus_di)):
+            max_score += 2.0
+            if (ema_9 > ema_21) != (plus_di > minus_di) and adx > 25:
+                score += 2.0
 
-        # 6. Bollinger Band squeeze or expansion
-        if bb_upper is not None and bb_lower is not None and bb_middle is not None and bb_middle > 0:
+        # Account drawdown
+        if drawdown_pct is not None:
+            max_score += 2.0
+            if drawdown_pct > 10:
+                score += 2.0
+
+        # Symbol event detected (earnings, FDA, M&A, etc.)
+        if symbol_event is not None:
+            max_score += 2.0
+            if symbol_event.get("has_event"):
+                score += 2.0
+
+        # Consecutive losses
+        max_score += 2.0
+        if consecutive_losses >= 3:
+            score += 2.0
+
+        # === Significant factors (weight 1.5) — market structure changes ===
+        # Volatility extremes (ATR percentile)
+        if atr_percentile is not None:
+            max_score += 1.5
+            if atr_percentile > 80 or atr_percentile < 20:
+                score += 1.5
+
+        # Turbulent market regime
+        if market_regime:
+            max_score += 1.5
+            if any(kw in market_regime for kw in ("high volatility", "squeeze", "expansion", "ranging")):
+                score += 1.5
+
+        # Strong sentiment swing
+        if sentiment_trend_val is not None:
+            max_score += 1.5
+            if abs(sentiment_trend_val) > 0.2:
+                score += 1.5
+
+        # Bollinger Band squeeze or expansion
+        if all(v is not None for v in (bb_upper, bb_lower, bb_middle)) and bb_middle > 0:
+            max_score += 1.5
             bb_width = (bb_upper - bb_lower) / bb_middle
             if bb_width < 0.02 or bb_width > 0.08:
-                complexity += 1
+                score += 1.5
 
-        # 7. EMA alignment conflict with ADX/DI trend
-        if ema_9 is not None and ema_21 is not None and adx is not None and plus_di is not None and minus_di is not None:
-            ema_bullish = ema_9 > ema_21
-            di_bullish = plus_di > minus_di
-            if ema_bullish != di_bullish and adx > 25:
-                complexity += 1
+        # Portfolio stress: high exposure
+        if portfolio_exposure_pct is not None:
+            max_score += 1.5
+            if portfolio_exposure_pct > 70:
+                score += 1.5
 
-        # 8. Stochastic extremes
-        if stochastic_k is not None and (stochastic_k < 20 or stochastic_k > 80):
-            complexity += 1
+        # Portfolio stress: high stop risk
+        if portfolio_stop_risk_pct is not None:
+            max_score += 1.5
+            if portfolio_stop_risk_pct > 8:
+                score += 1.5
 
-        # 9. MFI extremes
-        if mfi is not None and (mfi < 20 or mfi > 80):
-            complexity += 1
+        # Large unrealized loss (position under stress)
+        if unrealized_pnl is not None:
+            max_score += 1.5
+            if unrealized_pnl < 0:
+                score += 1.5
 
-        # 10. CCI extremes
-        if cci is not None and (cci < -100 or cci > 100):
-            complexity += 1
+        # Market breadth extremes (candidate stocks)
+        if market_breadth is not None:
+            max_score += 1.5
+            pos_pct = market_breadth.get("positive_pct", 50)
+            if pos_pct > 80 or pos_pct < 20:
+                score += 1.5
 
-        # 11. Williams %R extremes
-        if williams_r is not None and (williams_r < -80 or williams_r > -20):
-            complexity += 1
+        # Market breadth extremes (full universe)
+        if full_market_breadth is not None:
+            max_score += 1.5
+            pos_pct = full_market_breadth.get("positive_pct", 50)
+            if pos_pct > 80 or pos_pct < 20:
+                score += 1.5
 
-        # 12. Ichimoku cloud conflict (price inside cloud = uncertainty)
+        # === Standard factors (weight 1.0) — supplementary indicators ===
+        # MACD crossover nearby (lines very close → indecision)
+        if macd is not None and macd_signal is not None and macd != 0:
+            max_score += 1.0
+            if abs(macd - macd_signal) < 0.0001 * abs(macd):
+                score += 1.0
+
+        # Stochastic extremes
+        if stochastic_k is not None:
+            max_score += 1.0
+            if stochastic_k < 20 or stochastic_k > 80:
+                score += 1.0
+
+        # MFI extremes
+        if mfi is not None:
+            max_score += 1.0
+            if mfi < 20 or mfi > 80:
+                score += 1.0
+
+        # CCI extremes
+        if cci is not None:
+            max_score += 1.0
+            if cci < -100 or cci > 100:
+                score += 1.0
+
+        # Williams %R extremes
+        if williams_r is not None:
+            max_score += 1.0
+            if williams_r < -80 or williams_r > -20:
+                score += 1.0
+
+        # Ichimoku cloud conflict (price inside cloud = uncertainty)
         if ichimoku is not None and current_price is not None:
             cloud_top = ichimoku.get("cloud_top")
             cloud_bottom = ichimoku.get("cloud_bottom")
             if cloud_top is not None and cloud_bottom is not None:
+                max_score += 1.0
                 if cloud_bottom <= current_price <= cloud_top:
-                    complexity += 1
+                    score += 1.0
 
-        # 13. Portfolio stress: high exposure or high stop risk
-        if portfolio_exposure_pct is not None and portfolio_exposure_pct > 70:
-            complexity += 1
-        if portfolio_stop_risk_pct is not None and portfolio_stop_risk_pct > 8:
-            complexity += 1
+        # Volume spike
+        if volume_trend is not None:
+            max_score += 1.0
+            if volume_trend > 3.0:
+                score += 1.0
 
-        # 14. Account drawdown
-        if drawdown_pct is not None and drawdown_pct > 10:
-            complexity += 1
-
-        # 15. Large unrealized loss (position under stress)
-        if unrealized_pnl is not None and unrealized_pnl < 0:
-            complexity += 1
-
-        # 16. Volume spike
-        if volume_trend is not None and volume_trend > 3.0:
-            complexity += 1
-
-        # 17. Symbol event detected (earnings, FDA, M&A, etc.)
-        if symbol_event is not None and symbol_event.get("has_event"):
-            complexity += 1
-
-        # 18. Consecutive losses
-        if consecutive_losses >= 3:
-            complexity += 1
-
-        # 19. Extreme fundamentals (very high P/E or negative margins)
+        # Extreme fundamentals (very high P/E or negative margins)
         if fundamentals is not None:
             pe = fundamentals.get("pe_ratio")
-            if pe is not None and (pe > 50 or pe < 0):
-                complexity += 1
+            if pe is not None:
+                max_score += 1.0
+                if pe > 50 or pe < 0:
+                    score += 1.0
             margins = fundamentals.get("profit_margins")
-            if margins is not None and margins < 0:
-                complexity += 1
+            if margins is not None:
+                max_score += 1.0
+                if margins < 0:
+                    score += 1.0
 
-        # 20. Market breadth extremes
-        if market_breadth is not None:
-            pos_pct = market_breadth.get("positive_pct", 50)
-            if pos_pct > 80 or pos_pct < 20:
-                complexity += 1
-        if full_market_breadth is not None:
-            pos_pct = full_market_breadth.get("positive_pct", 50)
-            if pos_pct > 80 or pos_pct < 20:
-                complexity += 1
-
-        # For medium/long-term, use the "mind" model when complexity is
-        # moderately high (at least 3 independent factors). This ensures
-        # that genuinely complex situations — conflicting signals,
-        # drawdown, volatility extremes, upcoming events, etc. — receive
-        # the deeper reasoning of the mind model, while routine
-        # evaluations still use the faster actuator to conserve tokens.
-        return "mind" if complexity >= 3 else "actuator"
+        # Normalize score against the maximum achievable given available data,
+        # then compare against the configurable threshold.
+        if max_score == 0:
+            return "actuator"
+        normalized_score = score / max_score
+        return "mind" if normalized_score >= settings.LLM_MIND_MODEL_THRESHOLD else "actuator"
 
     def _compute_prompt_complexity(
         self,
