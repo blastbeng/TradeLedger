@@ -4726,6 +4726,252 @@ class TradingEngine:
             "vwap": vwap, "daily_pivot_points": daily_pivot_points,
         }
 
+    async def _gather_prompt_context(
+        self,
+        symbol: str,
+        assigned_tf: str,
+        tf_seconds: int,
+        ticker: Dict[str, Any],
+        base_balance: float,
+        ohlcv_data: Dict[str, List[List]],
+        multi_tf_indicators: Dict[str, Dict[str, Any]],
+        multi_tf_raw_candles: Dict[str, List[List]],
+        atr: Optional[float],
+        rsi: Optional[float],
+        macd: Optional[float],
+        macd_signal: Optional[float],
+        macd_hist: Optional[float],
+        bb_upper: Optional[float],
+        bb_middle: Optional[float],
+        bb_lower: Optional[float],
+        ema_9: Optional[float],
+        ema_21: Optional[float],
+        adx: Optional[float],
+        plus_di: Optional[float],
+        minus_di: Optional[float],
+        is_btp: bool,
+    ) -> Dict[str, Any]:
+        """Gather all additional market context needed for the strategy prompt."""
+        # ATR multi-TF
+        atr_multi_tf: Dict[str, float] = {}
+        for tf in settings.OHLCV_TIMEFRAMES:
+            ind = multi_tf_indicators.get(tf, {})
+            tf_atr = ind.get('atr')
+            if tf_atr is not None and tf_atr > 0:
+                atr_multi_tf[tf] = tf_atr
+
+        # ATR Percentile (volatility context)
+        atr_percentile = None
+        if atr is not None and atr > 0:
+            atr_percentile_key = f"atr_percentile:{symbol}"
+            try:
+                stored_atr = await asyncio.to_thread(self.redis.get, atr_percentile_key)
+                if stored_atr:
+                    atr_history = json.loads(stored_atr)
+                else:
+                    atr_history = []
+                atr_history.append(atr)
+                atr_history = atr_history[-100:]
+                await asyncio.to_thread(self.redis.setex, atr_percentile_key, 7 * 24 * 3600, json.dumps(atr_history))
+                if len(atr_history) >= 5:
+                    sorted_atr = sorted(atr_history)
+                    rank = sum(1 for v in sorted_atr if v <= atr)
+                    atr_percentile = round(rank / len(sorted_atr) * 100, 1)
+            except Exception as e:
+                logger.info(f"ATR percentile computation failed for {symbol}: {e}")
+
+        # Market regime classification
+        market_regime = await self._classify_market_regime(
+            adx=adx, plus_di=plus_di, minus_di=minus_di,
+            ema_9=ema_9, ema_21=ema_21,
+            bb_upper=bb_upper, bb_lower=bb_lower, bb_middle=bb_middle,
+            atr=atr, atr_percentile=atr_percentile,
+            current_price=ticker['last'],
+        )
+
+        # Extract raw candles for the assigned timeframe
+        raw_candles = multi_tf_raw_candles.get(assigned_tf)
+
+        # Fetch historical OHLCV from DB for backtest analysis
+        historical_ohlcv = None
+        try:
+            since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+            hist_limit = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds) + 100
+            db_candles = await asyncio.to_thread(
+                get_ohlcv, symbol, assigned_tf, since_ms=since_ms, limit=hist_limit
+            )
+            if db_candles:
+                historical_ohlcv = [
+                    [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
+                    for c in db_candles
+                ]
+                if len(historical_ohlcv) >= 2:
+                    interval_ms = self._timeframe_to_ms(assigned_tf)
+                    timestamps = [c[0] for c in historical_ohlcv]
+                    has_gap = False
+                    for i in range(len(timestamps) - 1):
+                        if timestamps[i+1] - timestamps[i] > interval_ms * 1.5:
+                            has_gap = True
+                            break
+                    if has_gap:
+                        logger.warning(
+                            f"Historical OHLCV for {symbol} {assigned_tf} contains gaps; "
+                            f"passing data to LLM anyway for backtesting."
+                        )
+        except Exception as e:
+            logger.warning(f"Failed to fetch historical OHLCV for {symbol} {assigned_tf}: {e}")
+
+        # Unrealized P&L for current position
+        unrealized_pnl = None
+        position_info = None
+        if symbol in self.positions:
+            pos = self.positions[symbol]
+            position_info = pos
+            current_price = ticker['last']
+            entry_price = pos['price']
+            amount = pos['amount']
+            unrealized_pnl = (current_price - entry_price) * amount
+
+        # Recent trade outcomes (last 5 closed trades)
+        recent_trades = [t for t in self.trade_history if t.get("side") == "sell"][-5:]
+        recent_trades_summary = [
+            {
+                "symbol": t["symbol"],
+                "realized_pnl": t.get("realized_pnl", 0.0),
+                "strategy": t.get("strategy_type", "unknown"),
+            }
+            for t in recent_trades
+        ]
+
+        # Fetch minimum order size
+        try:
+            asset = await self._get_asset_info(symbol)
+            min_order_amount = float(asset.min_order_size) if asset.min_order_size else None
+        except Exception:
+            min_order_amount = None
+        current_price = ticker['last']
+        if min_order_amount is not None and current_price:
+            min_order_cost = min_order_amount * current_price
+        else:
+            min_order_cost = None
+
+        # Past trades for this specific symbol (last 10 closed sells)
+        past_trades = [
+            t for t in self.trade_history
+            if t.get("symbol") == symbol and t.get("side") == "sell"
+        ][-10:]
+
+        # Fetch aggregate sentiment
+        aggregate_sentiment = None
+        if settings.NEWS_ENABLED:
+            try:
+                aggregate_sentiment = await self._get_cached_sentiment(symbol)
+            except Exception as e:
+                logger.info(f"Could not fetch aggregate sentiment for {symbol}: {e}")
+
+        # Sentiment trend
+        sentiment_trend_val = None
+        if aggregate_sentiment:
+            base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+            current_compound = aggregate_sentiment.get("avg_compound")
+            prev_key = f"sentiment:prev:{base_symbol}"
+            prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
+            prev_compound = float(prev_raw) if prev_raw else None
+            if current_compound is not None:
+                await asyncio.to_thread(self.redis.setex, prev_key, settings.NEWS_CACHE_TTL_SECONDS, str(current_compound))
+            if current_compound is not None and prev_compound is not None:
+                sentiment_trend_val = round(current_compound - prev_compound, 4)
+
+        # Volume trend
+        volume_trend_val = None
+        current_volume = ticker.get('quoteVolume', 0) or 0
+        if current_volume > 0:
+            volume_trend_val = await self._compute_volume_trend(symbol, current_volume)
+
+        # Full market breadth from Redis
+        full_market_breadth = None
+        try:
+            full_breadth_raw = await asyncio.to_thread(self.redis.get, "market:breadth:full")
+            if full_breadth_raw:
+                full_market_breadth = json.loads(full_breadth_raw)
+        except Exception:
+            pass
+        session_info = self._get_session_info()
+
+        # Compute minutes until market close
+        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Rome"))
+        weekday = now_rome.weekday()
+        if weekday < 5:
+            rome_minutes = now_rome.hour * 60 + now_rome.minute
+            close_minutes = 17 * 60 + 30
+            minutes_to_market_close = close_minutes - rome_minutes
+            if minutes_to_market_close < 0:
+                minutes_to_market_close = 0
+        else:
+            minutes_to_market_close = None
+
+        # Global risk multiplier
+        global_risk_mult = await self._get_global_risk_multiplier()
+
+        # Portfolio risk thresholds
+        max_port_exp = None
+        max_port_risk = None
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_exposure_pct")
+            if raw:
+                max_port_exp = float(raw)
+            raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_stop_risk_pct")
+            if raw:
+                max_port_risk = float(raw)
+        except Exception:
+            pass
+
+        partial_tp_executed_levels = self.positions[symbol].get("partial_tp_levels_triggered", []) if symbol in self.positions else []
+
+        # Validator multipliers
+        min_stop_atr_mult = 1.0
+        min_hold_time_mult = 1.0
+        global_min_rr = None
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "trading:min_stop_loss_atr_mult")
+            if raw:
+                min_stop_atr_mult = float(raw)
+            raw = await asyncio.to_thread(self.redis.get, "trading:min_max_hold_time_mult")
+            if raw:
+                min_hold_time_mult = float(raw)
+            raw = await asyncio.to_thread(self.redis.get, "trading:min_risk_reward_ratio")
+            if raw:
+                global_min_rr = float(raw)
+        except Exception:
+            pass
+
+        return {
+            "atr_multi_tf": atr_multi_tf,
+            "atr_percentile": atr_percentile,
+            "market_regime": market_regime,
+            "raw_candles": raw_candles,
+            "historical_ohlcv": historical_ohlcv,
+            "unrealized_pnl": unrealized_pnl,
+            "position_info": position_info,
+            "recent_trades_summary": recent_trades_summary,
+            "min_order_amount": min_order_amount,
+            "min_order_cost": min_order_cost,
+            "past_trades": past_trades,
+            "aggregate_sentiment": aggregate_sentiment,
+            "sentiment_trend_val": sentiment_trend_val,
+            "volume_trend_val": volume_trend_val,
+            "full_market_breadth": full_market_breadth,
+            "session_info": session_info,
+            "minutes_to_market_close": minutes_to_market_close,
+            "global_risk_mult": global_risk_mult,
+            "max_port_exp": max_port_exp,
+            "max_port_risk": max_port_risk,
+            "partial_tp_executed_levels": partial_tp_executed_levels,
+            "min_stop_atr_mult": min_stop_atr_mult,
+            "min_hold_time_mult": min_hold_time_mult,
+            "global_min_rr": global_min_rr,
+        }
+
     async def _process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False):
         """Fetch market data, get LLM strategy, validate, and execute."""
         symbol = symbol_entry["symbol"]
@@ -5034,95 +5280,54 @@ class TradingEngine:
             vwap = _inds["vwap"]
             daily_pivot_points = _inds["daily_pivot_points"]
 
-            atr_multi_tf: Dict[str, float] = {}
-            for tf in settings.OHLCV_TIMEFRAMES:
-                ind = multi_tf_indicators.get(tf, {})
-                tf_atr = ind.get('atr')
-                if tf_atr is not None and tf_atr > 0:
-                    atr_multi_tf[tf] = tf_atr
-
-            # ATR Percentile (volatility context)
-            atr_percentile = None
-            if atr is not None and atr > 0:
-                atr_percentile_key = f"atr_percentile:{symbol}"
-                try:
-                    stored_atr = await asyncio.to_thread(self.redis.get, atr_percentile_key)
-                    if stored_atr:
-                        atr_history = json.loads(stored_atr)
-                    else:
-                        atr_history = []
-                    atr_history.append(atr)
-                    atr_history = atr_history[-100:]
-                    await asyncio.to_thread(self.redis.setex, atr_percentile_key, 7 * 24 * 3600, json.dumps(atr_history))
-                    if len(atr_history) >= 5:
-                        sorted_atr = sorted(atr_history)
-                        rank = sum(1 for v in sorted_atr if v <= atr)
-                        atr_percentile = round(rank / len(sorted_atr) * 100, 1)
-                except Exception as e:
-                    logger.info(f"ATR percentile computation failed for {symbol}: {e}")
-
-            # --- Market regime classification (enhanced) ---
-            market_regime = await self._classify_market_regime(
+            _ctx = await self._gather_prompt_context(
+                symbol=symbol,
+                assigned_tf=assigned_tf,
+                tf_seconds=tf_seconds,
+                ticker=ticker,
+                base_balance=base_balance,
+                ohlcv_data=ohlcv_data,
+                multi_tf_indicators=multi_tf_indicators,
+                multi_tf_raw_candles=multi_tf_raw_candles,
+                atr=atr,
+                rsi=rsi,
+                macd=macd,
+                macd_signal=macd_signal,
+                macd_hist=macd_hist,
+                bb_upper=bb_upper,
+                bb_middle=bb_middle,
+                bb_lower=bb_lower,
+                ema_9=ema_9,
+                ema_21=ema_21,
                 adx=adx,
                 plus_di=plus_di,
                 minus_di=minus_di,
-                ema_9=ema_9,
-                ema_21=ema_21,
-                bb_upper=bb_upper,
-                bb_lower=bb_lower,
-                bb_middle=bb_middle,
-                atr=atr,
-                atr_percentile=atr_percentile,
-                current_price=ticker['last'],
+                is_btp=is_btp,
             )
-
-            # Extract raw candles for the assigned timeframe (from multi-timeframe data)
-            raw_candles = multi_tf_raw_candles.get(assigned_tf)
-
-            # Fetch historical OHLCV from DB for backtest analysis (retention period)
-            historical_ohlcv = None
-            try:
-                since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
-                # Calculate limit dynamically based on timeframe to fetch all available retention data
-                tf_secs = self._timeframe_to_seconds(assigned_tf)
-                hist_limit = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_secs) + 100
-                db_candles = await asyncio.to_thread(
-                    get_ohlcv, symbol, assigned_tf, since_ms=since_ms, limit=hist_limit
-                )
-                if db_candles:
-                    # Convert list of dicts to list of lists [ts, o, h, l, c, v] as expected by the prompt
-                    historical_ohlcv = [
-                        [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                        for c in db_candles
-                    ]
-
-                    # --- Gap check: warn about gaps but keep the data ---
-                    if len(historical_ohlcv) >= 2:
-                        interval_ms = self._timeframe_to_ms(assigned_tf)
-                        timestamps = [c[0] for c in historical_ohlcv]
-                        has_gap = False
-                        for i in range(len(timestamps) - 1):
-                            if timestamps[i+1] - timestamps[i] > interval_ms * 1.5:
-                                has_gap = True
-                                break
-                        if has_gap:
-                            logger.warning(
-                                f"Historical OHLCV for {symbol} {assigned_tf} contains gaps; "
-                                f"passing data to LLM anyway for backtesting."
-                            )
-            except Exception as e:
-                logger.warning(f"Failed to fetch historical OHLCV for {symbol} {assigned_tf}: {e}")
-
-            # Unrealized P&L for current position (if any)
-            unrealized_pnl = None
-            position_info = None
-            if symbol in self.positions:
-                pos = self.positions[symbol]
-                position_info = pos
-                current_price = ticker['last']
-                entry_price = pos['price']
-                amount = pos['amount']
-                unrealized_pnl = (current_price - entry_price) * amount
+            atr_multi_tf = _ctx["atr_multi_tf"]
+            atr_percentile = _ctx["atr_percentile"]
+            market_regime = _ctx["market_regime"]
+            raw_candles = _ctx["raw_candles"]
+            historical_ohlcv = _ctx["historical_ohlcv"]
+            unrealized_pnl = _ctx["unrealized_pnl"]
+            position_info = _ctx["position_info"]
+            recent_trades_summary = _ctx["recent_trades_summary"]
+            min_order_amount = _ctx["min_order_amount"]
+            min_order_cost = _ctx["min_order_cost"]
+            past_trades = _ctx["past_trades"]
+            aggregate_sentiment = _ctx["aggregate_sentiment"]
+            sentiment_trend_val = _ctx["sentiment_trend_val"]
+            volume_trend_val = _ctx["volume_trend_val"]
+            full_market_breadth = _ctx["full_market_breadth"]
+            session_info = _ctx["session_info"]
+            minutes_to_market_close = _ctx["minutes_to_market_close"]
+            global_risk_mult = _ctx["global_risk_mult"]
+            max_port_exp = _ctx["max_port_exp"]
+            max_port_risk = _ctx["max_port_risk"]
+            partial_tp_executed_levels = _ctx["partial_tp_executed_levels"]
+            min_stop_atr_mult = _ctx["min_stop_atr_mult"]
+            min_hold_time_mult = _ctx["min_hold_time_mult"]
+            global_min_rr = _ctx["global_min_rr"]
 
             # --- Compute portfolio exposure summary for the prompt ---
             _portfolio = await self._compute_portfolio_exposure_summary(base_balance)
@@ -5133,123 +5338,8 @@ class TradingEngine:
             portfolio_stop_risk_pct = _portfolio["portfolio_stop_risk_pct"]
             portfolio_available_capital = _portfolio["portfolio_available_capital"]
 
-            # Recent trade outcomes (last 5 closed trades)
-            recent_trades = [
-                t for t in self.trade_history if t.get("side") == "sell"
-            ][-5:]
-            recent_trades_summary = [
-                {
-                    "symbol": t["symbol"],
-                    "realized_pnl": t.get("realized_pnl", 0.0),
-                    "strategy": t.get("strategy_type", "unknown"),
-                }
-                for t in recent_trades
-            ]
-
-            # Fetch minimum order size for this symbol from Alpaca asset info
-            try:
-                asset = await self._get_asset_info(symbol)
-                min_order_amount = float(asset.min_order_size) if asset.min_order_size else None
-            except Exception:
-                min_order_amount = None
-            # Compute min order cost from min amount and current price
-            if min_order_amount is not None and current_price:
-                min_order_cost = min_order_amount * current_price
-            else:
-                min_order_cost = None
-
-            # Past trades for this specific symbol (last 10 closed sells)
-            past_trades = [
-                t for t in self.trade_history
-                if t.get("symbol") == symbol and t.get("side") == "sell"
-            ][-10:]
-
-            # Fetch aggregate sentiment for the symbol
-            aggregate_sentiment = None
-            if settings.NEWS_ENABLED:
-                try:
-                    aggregate_sentiment = await self._get_cached_sentiment(symbol)
-                except Exception as e:
-                    logger.info(f"Could not fetch aggregate sentiment for {symbol}: {e}")
-
-            # Sentiment trend for this symbol
-            sentiment_trend_val = None
-            if aggregate_sentiment:
-                base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
-                current_compound = aggregate_sentiment.get("avg_compound")
-                prev_key = f"sentiment:prev:{base_symbol}"
-                prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
-                prev_compound = float(prev_raw) if prev_raw else None
-                if current_compound is not None:
-                    await asyncio.to_thread(self.redis.setex, prev_key, settings.NEWS_CACHE_TTL_SECONDS, str(current_compound))
-                if current_compound is not None and prev_compound is not None:
-                    sentiment_trend_val = round(current_compound - prev_compound, 4)
-
-            # Volume trend (24h volume spike detection)
-            volume_trend_val = None
-            current_volume = ticker.get('quoteVolume', 0) or 0
-            if current_volume > 0:
-                volume_trend_val = await self._compute_volume_trend(symbol, current_volume)
-
             async with self._cycle_spent_lock:
                 remaining = max(0.0, base_balance - self._cycle_spent)
-
-            # Fetch full market breadth from Redis (computed by background task)
-            full_market_breadth = None
-            try:
-                full_breadth_raw = await asyncio.to_thread(self.redis.get, "market:breadth:full")
-                if full_breadth_raw:
-                    full_market_breadth = json.loads(full_breadth_raw)
-            except Exception:
-                pass
-            session_info = self._get_session_info()
-
-            # Compute minutes until market close (5:30 PM Rome = 17:30)
-            now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Rome"))
-            weekday = now_rome.weekday()
-            if weekday < 5:  # Monday-Friday
-                rome_minutes = now_rome.hour * 60 + now_rome.minute
-                close_minutes = 17 * 60 + 30  # 5:30 PM Rome
-                minutes_to_market_close = close_minutes - rome_minutes
-                if minutes_to_market_close < 0:
-                    minutes_to_market_close = 0  # market already closed
-            else:
-                minutes_to_market_close = None
-
-            # Fetch current global risk multiplier so the LLM can adjust position sizing
-            global_risk_mult = await self._get_global_risk_multiplier()
-
-            # Read LLM-decided portfolio risk thresholds
-            max_port_exp = None
-            max_port_risk = None
-            try:
-                raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_exposure_pct")
-                if raw:
-                    max_port_exp = float(raw)
-                raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_stop_risk_pct")
-                if raw:
-                    max_port_risk = float(raw)
-            except Exception:
-                pass
-
-            partial_tp_executed_levels = self.positions[symbol].get("partial_tp_levels_triggered", []) if symbol in self.positions else []
-
-            # Read LLM-configured validator multipliers from Redis
-            min_stop_atr_mult = 1.0
-            min_hold_time_mult = 1.0
-            global_min_rr = None
-            try:
-                raw = await asyncio.to_thread(self.redis.get, "trading:min_stop_loss_atr_mult")
-                if raw:
-                    min_stop_atr_mult = float(raw)
-                raw = await asyncio.to_thread(self.redis.get, "trading:min_max_hold_time_mult")
-                if raw:
-                    min_hold_time_mult = float(raw)
-                raw = await asyncio.to_thread(self.redis.get, "trading:min_risk_reward_ratio")
-                if raw:
-                    global_min_rr = float(raw)
-            except Exception:
-                pass
 
             prompt = await asyncio.to_thread(
                 build_strategy_prompt,
