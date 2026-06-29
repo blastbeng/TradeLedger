@@ -337,6 +337,21 @@ def _get_init_statements() -> List[str]:
         """,
         "CREATE INDEX IF NOT EXISTS idx_position_pnl_symbol ON position_pnl(symbol)",
         "CREATE INDEX IF NOT EXISTS idx_position_pnl_timestamp ON position_pnl(timestamp)",
+        f"""
+        CREATE TABLE IF NOT EXISTS backtest_results (
+            id {pk_type},
+            symbol TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            params_hash TEXT NOT NULL,
+            variant_params_json TEXT NOT NULL,
+            stats_json TEXT NOT NULL,
+            summary TEXT,
+            created_at {float_type} NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol ON backtest_results(symbol)",
+        "CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol_tf_hash ON backtest_results(symbol, timeframe, params_hash, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_backtest_results_created_at ON backtest_results(created_at)",
     ]
     return statements
 
@@ -520,6 +535,108 @@ def cleanup_old_position_pnl(retention_days: int = 90):
         conn.commit()
         if deleted:
             logger.info(f"Cleaned up {deleted} old position P&L snapshots (older than {retention_days} days)")
+        return deleted
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def save_backtest_result(symbol: str, timeframe: str, params_hash: str, variant_params: Dict[str, Any], stats: Dict[str, Any], summary: str):
+    """Persist a backtest result to the database for historical analysis."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            INSERT INTO backtest_results (symbol, timeframe, params_hash, variant_params_json, stats_json, summary, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
+        )
+        conn.execute(sql, (
+            symbol,
+            timeframe,
+            params_hash,
+            json.dumps(variant_params, default=str),
+            json.dumps(stats, default=str),
+            summary,
+            time.time(),
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_recent_backtest_result(symbol: str, timeframe: str, params_hash: str, max_age_seconds: int = 3600) -> Optional[Dict[str, Any]]:
+    """Check for a recent backtest result with matching params hash (dedup within a time window)."""
+    conn = get_connection()
+    try:
+        cutoff = time.time() - max_age_seconds
+        sql = _adapt_sql(
+            """
+            SELECT stats_json, summary FROM backtest_results
+            WHERE symbol = %s AND timeframe = %s AND params_hash = %s AND created_at >= %s
+            ORDER BY created_at DESC LIMIT 1
+            """
+        )
+        row = conn.execute(sql, (symbol, timeframe, params_hash, cutoff)).fetchone()
+        if row:
+            return {"stats": json.loads(row["stats_json"]), "summary": row["summary"]}
+        return None
+    finally:
+        conn.close()
+
+
+def get_backtest_results_for_symbol(symbol: str, timeframe: str = None, limit: int = 10) -> List[Dict[str, Any]]:
+    """Retrieve recent backtest results for a symbol from the database."""
+    conn = get_connection()
+    try:
+        if timeframe:
+            sql = _adapt_sql(
+                """
+                SELECT symbol, timeframe, variant_params_json, stats_json, summary, created_at
+                FROM backtest_results
+                WHERE symbol = %s AND timeframe = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """
+            )
+            rows = conn.execute(sql, (symbol, timeframe, limit)).fetchall()
+        else:
+            sql = _adapt_sql(
+                """
+                SELECT symbol, timeframe, variant_params_json, stats_json, summary, created_at
+                FROM backtest_results
+                WHERE symbol = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """
+            )
+            rows = conn.execute(sql, (symbol, limit)).fetchall()
+        result = []
+        for row in rows:
+            result.append({
+                "symbol": row["symbol"],
+                "timeframe": row["timeframe"],
+                "variant_params": json.loads(row["variant_params_json"]),
+                "stats": json.loads(row["stats_json"]),
+                "summary": row["summary"],
+                "created_at": row["created_at"],
+            })
+        return result
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def cleanup_old_backtest_results(retention_days: int = 90):
+    """Delete backtest results older than retention_days."""
+    conn = get_connection()
+    try:
+        cutoff = time.time() - retention_days * 24 * 60 * 60
+        sql = _adapt_sql("DELETE FROM backtest_results WHERE created_at < %s")
+        deleted = conn.execute(sql, (cutoff,)).rowcount
+        conn.commit()
+        if deleted:
+            logger.info(f"Cleaned up {deleted} old backtest results (older than {retention_days} days)")
         return deleted
     finally:
         conn.close()

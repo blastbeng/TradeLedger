@@ -52,7 +52,7 @@ from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary
 from src.utils.redis_client import get_redis_client
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results
 
 logger = logging.getLogger(__name__)
 
@@ -1883,6 +1883,7 @@ class TradingEngine:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(self._db_executor, cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
                 await loop.run_in_executor(self._db_executor, cleanup_old_position_pnl, 90)
+                await loop.run_in_executor(self._db_executor, cleanup_old_backtest_results, 90)
                 logger.info("Full asset OHLCV download cycle complete.")
             except Exception as e:
                 logger.error(f"Full asset download loop error: {e}", exc_info=True)
@@ -5231,6 +5232,11 @@ class TradingEngine:
             if t.get("symbol") == symbol and t.get("side") == "sell"
         ][-10:]
 
+        # Fetch historical backtest results for this symbol
+        historical_backtest_results = await asyncio.to_thread(
+            get_backtest_results_for_symbol, symbol, assigned_tf, 10
+        )
+
         # Fetch aggregate sentiment
         aggregate_sentiment = None
         if settings.NEWS_ENABLED:
@@ -5502,6 +5508,9 @@ class TradingEngine:
             if backtest_results:
                 # Build Step 2 prompt with ALL backtest results
                 total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
+                historical_bt_results = await asyncio.to_thread(
+                    get_backtest_results_for_symbol, symbol, assigned_tf, 10
+                )
                 step2_prompt = build_final_decision_prompt(
                     symbol=symbol,
                     ticker=ticker,
@@ -5516,6 +5525,7 @@ class TradingEngine:
                     base_currency=self.base_currency,
                     trading_paused=trading_paused,
                     total_variants_proposed=total_variants_proposed,
+                    historical_backtest_results=historical_bt_results,
                 )
                 # Append position info if exists
                 if symbol in self.positions:
@@ -6403,6 +6413,7 @@ class TradingEngine:
                 min_hold_time_mult=min_hold_time_mult,
                 min_stop_atr_mult=min_stop_atr_mult,
                 min_viable_trade_amount=min_viable_amount,
+                historical_backtest_results=historical_backtest_results,
             )
             # Add quote staleness warning if the price data is outdated
             staleness_warning = self._get_quote_staleness_warning(ticker)
@@ -12600,22 +12611,23 @@ class TradingEngine:
         base_balance: float,
         is_btp: bool,
     ) -> Tuple[Optional[Dict[str, Any]], str]:
-        """Run a single backtest variant with Redis caching and concurrency limiting."""
-        # Build cache key from symbol, timeframe, params hash, and data fingerprint
+        """Run a single backtest variant with database persistence and concurrency limiting."""
+        # Build params hash for dedup lookup
         source_candles = historical_ohlcv or raw_candles or []
         last_ts = source_candles[-1][0] if source_candles else 0
         candle_count = len(source_candles)
         params_hash = hashlib.md5(
             json.dumps(variant_params, sort_keys=True, default=str).encode()
         ).hexdigest()[:16]
-        cache_key = f"backtest:{symbol}:{assigned_tf}:{params_hash}:{last_ts}:{candle_count}"
 
-        # Check Redis cache
+        # Check database for a recent identical backtest (dedup within 1 hour)
         try:
-            cached = await asyncio.to_thread(self.redis.get, cache_key)
-            if cached:
-                data = json.loads(cached)
-                return data["stats"], data["summary"]
+            recent = await asyncio.to_thread(
+                get_recent_backtest_result, symbol, assigned_tf, params_hash, 3600
+            )
+            if recent:
+                logger.debug(f"Backtest DB cache hit for {symbol} {assigned_tf} (params_hash={params_hash})")
+                return recent["stats"], recent["summary"]
         except Exception:
             pass
 
@@ -12640,13 +12652,15 @@ class TradingEngine:
                 is_btp=is_btp,
             )
 
-        # Cache the result for 1 hour
+        # Persist the result to the database
         if bt_stats is not None:
             try:
-                cache_data = json.dumps({"stats": bt_stats, "summary": bt_summary})
-                await asyncio.to_thread(self.redis.setex, cache_key, 3600, cache_data)
-            except Exception:
-                pass
+                await asyncio.to_thread(
+                    save_backtest_result, symbol, assigned_tf, params_hash,
+                    variant_params, bt_stats, bt_summary
+                )
+            except Exception as e:
+                logger.warning(f"Failed to persist backtest result to DB for {symbol}: {e}")
 
         return bt_stats, bt_summary
 
@@ -13071,6 +13085,10 @@ class TradingEngine:
 
         past_trades = [t for t in self.trade_history if t.get("symbol") == symbol and t.get("side") == "sell"][-10:]
 
+        historical_backtest_results = await asyncio.to_thread(
+            get_backtest_results_for_symbol, symbol, assigned_tf, 10
+        )
+
         try:
             asset = await self._get_asset_info(symbol)
             min_order_amount = float(asset.min_order_size) if asset.min_order_size else None
@@ -13177,6 +13195,7 @@ class TradingEngine:
             min_hold_time_mult=sim_min_hold_time_mult,
             min_stop_atr_mult=sim_min_stop_atr_mult,
             min_viable_trade_amount=min_viable_amount,
+            historical_backtest_results=historical_backtest_results,
         )
         # Add quote staleness warning if the price data is outdated
         staleness_warning = self._get_quote_staleness_warning(ticker)
@@ -13368,6 +13387,7 @@ class TradingEngine:
             min_hold_time_mult=data.get("min_hold_time_mult", 1.0),
             trading_paused=False,
             has_position=data.get("has_position", False),
+            historical_backtest_results=data.get("historical_backtest_results"),
         )
 
         try:
@@ -13515,6 +13535,7 @@ class TradingEngine:
             min_hold_time_mult=data.get("min_hold_time_mult", 1.0),
             trading_paused=False,
             has_position=data.get("has_position", False),
+            historical_backtest_results=data.get("historical_backtest_results"),
         )
 
         try:
@@ -13614,6 +13635,7 @@ class TradingEngine:
             base_currency=self.base_currency,
             trading_paused=False,
             total_variants_proposed=total_variants_proposed,
+            historical_backtest_results=data.get("historical_backtest_results"),
         )
         
         # Append position info if exists

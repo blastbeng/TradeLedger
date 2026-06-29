@@ -1038,6 +1038,7 @@ def build_strategy_prompt(
     min_hold_time_mult: float = 1.0,
     min_stop_atr_mult: float = 1.0,
     min_viable_trade_amount: float = 0.0,
+    historical_backtest_results: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Build a prompt to generate a trading strategy for a specific stock/ETF."""
     current_price = ticker.get("last") if ticker else None
@@ -1639,6 +1640,25 @@ Maximum symbols to trade: {max_symbols}
             "if low-confidence trades are winning, consider raising confidence.\n"
         )
 
+    if historical_backtest_results:
+        prompt += f"\n**Historical Backtest Results for {symbol} (last {len(historical_backtest_results)} tests):**\n"
+        for bt in historical_backtest_results:
+            age_hours = (time.time() - bt.get("created_at", 0)) / 3600
+            stats = bt.get("stats", {})
+            params = bt.get("variant_params", {})
+            prompt += (
+                f"  [{bt.get('timeframe', '?')}] {age_hours:.1f}h ago: "
+                f"SL={params.get('stop_loss_pct', '?')}, TP={params.get('take_profit_pct', '?')}, "
+                f"trades={stats.get('total_trades', 0)}, win_rate={stats.get('win_rate', 0)*100:.1f}%, "
+                f"total_pnl={stats.get('total_pnl_pct', 0)*100:+.2f}%, "
+                f"max_dd={stats.get('max_drawdown_pct', 0)*100:.2f}%, "
+                f"profit_factor={stats.get('profit_factor', 0):.2f}\n"
+            )
+        prompt += (
+            "Use these historical results to avoid repeating failed parameter combinations "
+            "and to build on strategies that have historically performed well for this symbol.\n"
+        )
+
     # --- Aggregate sentiment summary ---
     if sentiment_trend is not None:
         prompt += f"\nSentiment trend (change in compound score since last cycle): {sentiment_trend:+.4f}\n"
@@ -1987,6 +2007,7 @@ def build_backtest_variants_prompt(
     min_hold_time_mult: float = 1.0,
     trading_paused: bool = False,
     has_position: bool = False,
+    historical_backtest_results: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Build a focused prompt for Step 1b: Parameter selection and backtest variants.
 
@@ -2079,6 +2100,19 @@ Base currency: {base_currency}
             f"  Your take_profit_pct MUST be > {break_even_pct*100:.2f}% to be profitable.\n"
         )
 
+    if historical_backtest_results:
+        prompt += "\n**Historical Backtest Results (learn from past tests):**\n"
+        for bt in historical_backtest_results[:5]:
+            stats = bt.get("stats", {})
+            params = bt.get("variant_params", {})
+            prompt += (
+                f"  SL={params.get('stop_loss_pct', '?')}, TP={params.get('take_profit_pct', '?')}, "
+                f"trades={stats.get('total_trades', 0)}, win_rate={stats.get('win_rate', 0)*100:.1f}%, "
+                f"total_pnl={stats.get('total_pnl_pct', 0)*100:+.2f}%, "
+                f"max_dd={stats.get('max_drawdown_pct', 0)*100:.2f}%\n"
+            )
+        prompt += "Avoid repeating failed combinations. Prefer parameters similar to historically profitable ones.\n\n"
+
     prompt += f"""
 **Validator Constraints:**
 - Minimum max_hold_time_seconds for {assigned_timeframe}: {validator_min} seconds
@@ -2143,6 +2177,7 @@ def build_final_decision_prompt(
     base_currency: str,
     trading_paused: bool = False,
     total_variants_proposed: Optional[int] = None,
+    historical_backtest_results: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Build a prompt to ask the LLM for its final decision after reviewing backtest results."""
     current_price = ticker.get("last") if ticker else None
@@ -2192,6 +2227,18 @@ If ANY backtest variant confirms a strategy is viable, you may output your final
             f"{len(backtest_results)} were tested (maximum {settings.MAX_BACKTEST_VARIANTS} variants per cycle). The results above cover all "
             f"tested variants. To avoid truncation in future cycles, limit your `backtest_variants` array to at most {settings.MAX_BACKTEST_VARIANTS} entries.\n"
         )
+    if historical_backtest_results:
+        prompt += "\n**Historical Backtest Results for this symbol (past tests):**\n"
+        for bt in historical_backtest_results[:5]:
+            stats = bt.get("stats", {})
+            params = bt.get("variant_params", {})
+            prompt += (
+                f"  SL={params.get('stop_loss_pct', '?')}, TP={params.get('take_profit_pct', '?')}, "
+                f"trades={stats.get('total_trades', 0)}, win_rate={stats.get('win_rate', 0)*100:.1f}%, "
+                f"total_pnl={stats.get('total_pnl_pct', 0)*100:+.2f}%, "
+                f"max_dd={stats.get('max_drawdown_pct', 0)*100:.2f}%\n"
+            )
+        prompt += "Consider these historical results when making your final decision.\n"
     prompt += (
         "**Output ONLY the raw JSON object as specified.**\n"
         "Return a JSON object with these **required** fields:\n"
