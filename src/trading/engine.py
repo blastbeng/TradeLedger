@@ -10584,15 +10584,8 @@ class TradingEngine:
                 min_amount = 1.0
         except Exception:
             min_amount = None
-        if min_amount is not None and current_price:
-            min_cost = min_amount * current_price
-        else:
-            min_cost = None
         if min_amount is not None and sell_amount < float(min_amount):
             logger.info(f"Partial TP sell amount {sell_amount:.6f} below min {min_amount} for {symbol}, skipping.")
-            return
-        if min_cost is not None and sell_amount * current_price < float(min_cost):
-            logger.info(f"Partial TP sell cost {sell_amount * current_price:.2f} below min {min_cost} for {symbol}, skipping.")
             return
 
         if not await self._is_market_open():
@@ -10672,8 +10665,6 @@ class TradingEngine:
                 # Check if remaining amount is dust
                 is_dust = False
                 if min_amount is not None and remaining_amount < float(min_amount):
-                    is_dust = True
-                elif min_cost is not None and remaining_amount * current_price < float(min_cost):
                     is_dust = True
                 if is_dust:
                     logger.info(f"Remaining {remaining_amount:.6f} {base} is dust after partial TP for {symbol}, sweeping.")
@@ -10771,15 +10762,8 @@ class TradingEngine:
                 min_amount = 1.0
         except Exception:
             min_amount = None
-        if min_amount is not None and current_price:
-            min_cost = min_amount * current_price
-        else:
-            min_cost = None
         if min_amount is not None and sell_amount < float(min_amount):
             logger.info(f"Partial TP level {level_index} sell amount {sell_amount:.6f} below min for {symbol}, skipping.")
-            return
-        if min_cost is not None and sell_amount * current_price < float(min_cost):
-            logger.info(f"Partial TP level {level_index} sell cost below min for {symbol}, skipping.")
             return
 
         if not await self._is_market_open():
@@ -10872,8 +10856,6 @@ class TradingEngine:
                 is_dust = False
                 if min_amount is not None and remaining_amount < float(min_amount):
                     is_dust = True
-                elif min_cost is not None and remaining_amount * current_price < float(min_cost):
-                    is_dust = True
                 if is_dust:
                     logger.info(f"Remaining {remaining_amount:.6f} {base} is dust after partial TP for {symbol}, sweeping.")
                     await self._sweep_dust(symbol)
@@ -10962,16 +10944,8 @@ class TradingEngine:
                 min_amount = 1.0
         except Exception:
             min_amount = None
-        if min_amount is not None and price:
-            min_cost = min_amount * price
-        else:
-            min_cost = None
-
         if min_amount is not None and balance < float(min_amount):
             logger.info(f"Dust sweep: {balance} {base} below min amount {min_amount}, cannot sell.")
-            return
-        if min_cost is not None and balance * price < float(min_cost):
-            logger.info(f"Dust sweep: notional {balance * price:.4f} below min cost {min_cost}, cannot sell.")
             return
 
         if not await self._is_market_open():
