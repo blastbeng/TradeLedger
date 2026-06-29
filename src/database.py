@@ -162,6 +162,8 @@ def _migrate_db():
         ("trade_history", "hold_time_seconds", "ALTER TABLE trade_history ADD COLUMN hold_time_seconds REAL"),
         ("trade_history", "buy_confidence", "ALTER TABLE trade_history ADD COLUMN buy_confidence REAL"),
         ("quotes", "quotevolume", "ALTER TABLE quotes ADD COLUMN quotevolume REAL"),
+        ("discovered_symbols", "maturity", "ALTER TABLE discovered_symbols ADD COLUMN maturity TEXT"),
+        ("discovered_symbols", "coupon", "ALTER TABLE discovered_symbols ADD COLUMN coupon REAL"),
     ]
 
     for table, column, sql in migrations:
@@ -286,6 +288,8 @@ def init_db():
                     isin TEXT,
                     asset_type TEXT,
                     name TEXT,
+                    maturity TEXT,
+                    coupon REAL,
                     discovered_at DOUBLE PRECISION NOT NULL
                 )
                 """,
@@ -392,6 +396,8 @@ def init_db():
                     isin TEXT,
                     asset_type TEXT,
                     name TEXT,
+                    maturity TEXT,
+                    coupon REAL,
                     discovered_at REAL NOT NULL
                 );
             """)
@@ -1219,7 +1225,7 @@ def save_quotes_batch(quotes: Dict[str, Dict[str, Any]]):
                 rows.append((
                     sym, q.get("last"), q.get("bid"), q.get("ask"),
                     q.get("volume"), q.get("change_24h"), q.get("percentage"),
-                    q.get("quoteVolume"), q.get("name"), q.get("coupon"),
+                    q.get("quoteVolume"), None, q.get("coupon"),
                     q.get("maturity"), now
                 ))
         if rows:
@@ -1265,7 +1271,7 @@ def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict
                 "change_24h": row["change_24h"],
                 "percentage": row["percentage"],
                 "quoteVolume": row["quotevolume"],
-                "name": row["name"],
+                "name": None,
                 "coupon": row["coupon"],
                 "maturity": row["maturity"],
                 "last_update": int(row["updated_at"] * 1000) if row["updated_at"] else None,
@@ -1361,8 +1367,8 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
 
 @retry_on_db_lock()
-def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, name: str = ""):
-    """Insert or update a discovered symbol with its ISIN.
+def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, name: str = "", maturity: Optional[str] = None, coupon: Optional[float] = None):
+    """Insert or update a discovered symbol with its ISIN, maturity, and coupon.
 
     Uses COALESCE to preserve existing ISINs — if isin is None, the existing
     ISIN in the database is kept (not overwritten with NULL). This is critical
@@ -1371,15 +1377,17 @@ def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, na
     conn = get_connection()
     try:
         sql = _adapt_sql(
-            "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
-            "VALUES (%s, %s, %s, %s, %s) "
+            "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, maturity, coupon, discovered_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
             "asset_type = COALESCE(EXCLUDED.asset_type, discovered_symbols.asset_type), "
             "name = COALESCE(NULLIF(EXCLUDED.name, ''), discovered_symbols.name), "
+            "maturity = COALESCE(EXCLUDED.maturity, discovered_symbols.maturity), "
+            "coupon = COALESCE(EXCLUDED.coupon, discovered_symbols.coupon), "
             "discovered_at = EXCLUDED.discovered_at"
         )
-        conn.execute(sql, (symbol, isin, asset_type, name, time.time()))
+        conn.execute(sql, (symbol, isin, asset_type, name, maturity, coupon, time.time()))
         conn.commit()
     finally:
         conn.close()
@@ -1398,15 +1406,17 @@ def save_discovered_symbols_batch(symbols: List[Dict[str, Any]]):
     try:
         now = time.time()
         sql = _adapt_sql(
-            "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
-            "VALUES (%s, %s, %s, %s, %s) "
+            "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, maturity, coupon, discovered_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
             "asset_type = COALESCE(EXCLUDED.asset_type, discovered_symbols.asset_type), "
             "name = COALESCE(NULLIF(EXCLUDED.name, ''), discovered_symbols.name), "
+            "maturity = COALESCE(EXCLUDED.maturity, discovered_symbols.maturity), "
+            "coupon = COALESCE(EXCLUDED.coupon, discovered_symbols.coupon), "
             "discovered_at = EXCLUDED.discovered_at"
         )
-        rows = [(s["symbol"], s.get("isin"), s.get("asset_type", ""), s.get("name", ""), now) for s in symbols]
+        rows = [(s["symbol"], s.get("isin"), s.get("asset_type", ""), s.get("name", ""), s.get("maturity"), s.get("coupon"), now) for s in symbols]
         conn.executemany(sql, rows)
         conn.commit()
     finally:
@@ -1474,6 +1484,33 @@ def get_isin_map_from_db(symbols: List[str]) -> Dict[str, Optional[str]]:
         result = {s: None for s in symbols}
         for row in rows:
             result[row["symbol"]] = row["isin"]
+        return result
+    finally:
+        conn.close()
+
+
+def get_btp_details_from_db(symbols: List[str]) -> Dict[str, Dict[str, Optional[Any]]]:
+    """Return maturity, coupon, and name for BTP symbols from discovered_symbols.
+    Returns a dict: {symbol: {maturity, coupon, name}}.
+    """
+    if not symbols:
+        return {}
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql("SELECT symbol, maturity, coupon, name FROM discovered_symbols WHERE symbol = ANY(%s)")
+            rows = conn.execute(sql, (symbols,)).fetchall()
+        else:
+            placeholders = ",".join(["?" for _ in symbols])
+            sql = _adapt_sql(f"SELECT symbol, maturity, coupon, name FROM discovered_symbols WHERE symbol IN ({placeholders})")
+            rows = conn.execute(sql, symbols).fetchall()
+        result = {}
+        for row in rows:
+            result[row["symbol"]] = {
+                "maturity": row["maturity"],
+                "coupon": row["coupon"],
+                "name": row["name"],
+            }
         return result
     finally:
         conn.close()

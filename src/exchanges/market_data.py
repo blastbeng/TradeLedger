@@ -1270,6 +1270,27 @@ def get_tradable_assets() -> List[str]:
     return filtered
 
 
+def _enrich_quotes_with_btp_details(result: Dict[str, Dict[str, Any]], symbols: List[str]):
+    """Enrich quote results with BTP maturity, coupon, and name from discovered_symbols."""
+    btp_symbols = [s for s in symbols if re.match(r'^IT[A-Z0-9]{10}$', s)]
+    if not btp_symbols:
+        return
+    try:
+        from src.database import get_btp_details_from_db
+        details = get_btp_details_from_db(btp_symbols)
+        for sym in btp_symbols:
+            if sym in result and details.get(sym):
+                d = details[sym]
+                if d.get("maturity"):
+                    result[sym]["maturity"] = d["maturity"]
+                if d.get("coupon") is not None:
+                    result[sym]["coupon"] = d["coupon"]
+                if not result[sym].get("name") and d.get("name"):
+                    result[sym]["name"] = d["name"]
+    except Exception as e:
+        logger.debug(f"Failed to enrich BTP details in quotes: {e}")
+
+
 def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     """Fetch latest quotes for a list of symbols using yfinance batch download.
 
@@ -1504,6 +1525,9 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     else:
         logger.debug(f"get_quotes: {valid_count}/{len(missing_symbols)} symbols got valid prices")
 
+    # Enrich BTP quotes with maturity, coupon, and name from discovered_symbols
+    _enrich_quotes_with_btp_details(result, symbols)
+
     return result
 
 
@@ -1610,6 +1634,9 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
             save_quotes_batch(quotes_to_save)
         except Exception as e:
             logger.warning(f"get_quotes_cached: Failed to save DB close prices to quotes table: {e}")
+
+    # Enrich BTP quotes with maturity, coupon, and name from discovered_symbols
+    _enrich_quotes_with_btp_details(result, symbols)
 
     return result
 
@@ -1838,6 +1865,57 @@ def get_bars_range(
     return []
 
 
+def _fetch_btp_details(isin: str, market_code: str) -> Dict[str, Optional[Any]]:
+    """Fetch BTP details (maturity, coupon, name) from the individual BTP page.
+
+    Scrapes the 'Info Strumento' section of the Borsa Italiana BTP page
+    to extract the Scadenza (maturity), coupon rate, and denomination.
+    """
+    url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-{market_code}.html?lang=it"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
+            response = client.get(url, headers=headers)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Find "Info Strumento" header
+            info_header = soup.find(["h3", "h2", "h4"], string=re.compile("Info Strumento", re.I))
+            if not info_header:
+                return {}
+
+            # Find the parent container with the tables
+            container = info_header.find_parent("div")
+            if not container:
+                return {}
+
+            tables = container.find_all("table")
+            details: Dict[str, Optional[Any]] = {}
+            for table in tables:
+                for row in table.find_all("tr"):
+                    cells = row.find_all("td")
+                    if len(cells) >= 2:
+                        key = cells[0].get_text(strip=True)
+                        val = cells[1].get_text(strip=True)
+                        if "Scadenza" in key:
+                            details["maturity"] = val
+                        elif "Tasso Cedola su base Annua" in key:
+                            val_cleaned = val.replace(",", ".")
+                            try:
+                                details["coupon"] = float(val_cleaned)
+                            except ValueError:
+                                details["coupon"] = val
+                        elif "Denominazione" in key:
+                            details["name"] = val
+
+            return details
+    except Exception as e:
+        logger.debug(f"Failed to fetch BTP details for {isin}: {e}")
+        return {}
+
+
 def discover_btp_bonds() -> List[Dict[str, Any]]:
     """Discover and parse BTP bonds from Borsa Italiana."""
     redis_client = get_redis_client()
@@ -1921,12 +1999,27 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
             except Exception as e:
                 logger.warning(f"Failed to cache BTP bonds: {e}")
 
+    # Fetch individual BTP details (maturity, coupon) from each BTP's page
+    market_code = settings.MARKET_CODE
+    for bond in bonds:
+        isin = bond["isin"]
+        details = _fetch_btp_details(isin, market_code)
+        if details:
+            if details.get("maturity"):
+                bond["maturity"] = details["maturity"]
+            if details.get("coupon") is not None:
+                bond["coupon"] = details["coupon"]
+            if details.get("name"):
+                bond["name"] = details["name"]
+        time.sleep(0.2)  # small delay to avoid rate limiting
+
     # Always save BTP bonds to DB (idempotent upsert — ensures DB stays populated)
     if bonds:
         try:
             from src.database import save_discovered_symbols_batch
             symbols_to_save = [
-                {"symbol": b["isin"], "isin": b["isin"], "asset_type": "btp", "name": b.get("name", "")}
+                {"symbol": b["isin"], "isin": b["isin"], "asset_type": "btp", "name": b.get("name", ""),
+                 "maturity": b.get("maturity"), "coupon": b.get("coupon")}
                 for b in bonds
             ]
             if symbols_to_save:
