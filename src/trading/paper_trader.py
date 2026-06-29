@@ -58,6 +58,7 @@ class PaperTrader:
         self._balances: Dict[str, float] = {}
         self._orders: Dict[str, PaperOrder] = {}
         self.market_slippage_pct = 0.001  # 0.1% adverse slippage on market orders
+        self._balances_dirty = False
         self._load_balances()
 
     # ------------------------------------------------------------------
@@ -81,15 +82,21 @@ class PaperTrader:
                 self._orders[order.id] = order
         if self._orders:
             logger.info(f"Loaded {len(self._orders)} persisted open paper orders.")
+        self._balances_dirty = False
 
     def _save_balances(self):
         """Persist balances to SQLite."""
+        if not self._balances_dirty:
+            return
         save_paper_balances(self._balances)
+        self._balances_dirty = False
 
     def _save_orders(self):
         """Persist open orders to SQLite."""
         orders_list = []
         for order in self._orders.values():
+            if order.status != "open":
+                continue
             orders_list.append({
                 "id": order.id,
                 "symbol": order.symbol,
@@ -109,6 +116,14 @@ class PaperTrader:
                 "_lowest_price": order._lowest_price,
             })
         save_paper_orders(orders_list)
+        # Clean up old non-open orders to prevent unbounded memory growth
+        if len(self._orders) > 100:
+            stale_ids = [
+                oid for oid, o in self._orders.items()
+                if o.status != "open"
+            ]
+            for oid in stale_ids:
+                del self._orders[oid]
 
     @staticmethod
     def _dict_to_order(d: dict) -> PaperOrder:
@@ -231,7 +246,7 @@ class PaperTrader:
 
         order.filled_avg_price = fill_price
         order.status = "filled"
-        self._save_balances()
+        self._balances_dirty = True
         self._save_orders()
         logger.info(
             f"Paper order filled: {order.side} {order.symbol} "
@@ -309,7 +324,7 @@ class PaperTrader:
 
         self._balances[quote] = quote_balance - (filled_cost + (fee_cost * fill_fraction))
         self._balances[base] = self._balances.get(base, 0.0) + filled_base_amount
-        self._save_balances()
+        self._balances_dirty = True
 
         order_id = self._generate_order_id()
         order = PaperOrder(
@@ -331,6 +346,7 @@ class PaperTrader:
             self._orders[remaining_order_id] = remaining_order
             self._save_orders()
 
+        self._save_balances()
         return {
             "id": order_id, "status": "filled", "symbol": symbol, "side": "buy",
             "amount": filled_base_amount, "price": fill_price,
@@ -405,7 +421,7 @@ class PaperTrader:
 
         self._balances[base] = base_balance - filled_amount
         self._balances[quote] = self._balances.get(quote, 0.0) + net_quote
-        self._save_balances()
+        self._balances_dirty = True
 
         order_id = self._generate_order_id()
         order = PaperOrder(
@@ -427,6 +443,7 @@ class PaperTrader:
             self._orders[remaining_order_id] = remaining_order
             self._save_orders()
 
+        self._save_balances()
         return {
             "id": order_id, "status": "filled", "symbol": symbol, "side": "sell",
             "amount": filled_amount, "price": fill_price,
