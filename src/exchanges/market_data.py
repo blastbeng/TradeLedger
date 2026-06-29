@@ -1842,92 +1842,96 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
     """Discover and parse BTP bonds from Borsa Italiana."""
     redis_client = get_redis_client()
     cache_key = "btp_bonds_list"
+    import json
+
+    bonds = None
     try:
         cached = redis_client.get(cache_key)
         if cached:
-            import json
-            return json.loads(cached)
+            bonds = json.loads(cached)
     except Exception:
         pass
 
-    url = settings.BTP_URL
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    bonds = []
-    import json
+    if bonds is None:
+        url = settings.BTP_URL
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        bonds = []
 
-    for page in range(1, 11):
-        page_url = f"{url}?&page={page}"
+        for page in range(1, 11):
+            page_url = f"{url}?&page={page}"
+            try:
+                with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
+                    response = client.get(page_url, headers=headers)
+                if response.status_code != 200:
+                    break
+
+                soup = BeautifulSoup(response.text, "html.parser")
+                table = soup.find("table")
+                if not table:
+                    break
+
+                rows = table.find_all("tr")
+                for row in rows:
+                    cols = row.find_all("td")
+                    if len(cols) < 3:
+                        continue
+
+                    isin_text = cols[0].get_text(separator=" ", strip=True)
+                    isin_match = re.search(r'IT[A-Z0-9]{10}', isin_text)
+                    if not isin_match:
+                        continue
+                    isin = isin_match.group(0)
+
+                    name = cols[1].get_text(strip=True)
+
+                    last_price_str = cols[2].get_text(strip=True).replace(",", ".")
+                    try:
+                        last_price = float(last_price_str) if last_price_str else None
+                    except ValueError:
+                        last_price = None
+
+                    coupon_str = cols[3].get_text(strip=True).replace(",", ".") if len(cols) > 3 else ""
+                    try:
+                        coupon = float(coupon_str) if coupon_str else None
+                    except ValueError:
+                        coupon = None
+
+                    maturity = cols[4].get_text(strip=True) if len(cols) > 4 else None
+                    change_pct = 0.0
+
+                    if last_price is not None:
+                        bonds.append({
+                            "isin": isin,
+                            "name": name,
+                            "last_price": last_price,
+                            "change_pct": change_pct,
+                            "coupon": coupon,
+                            "maturity": maturity,
+                        })
+            except Exception as e:
+                logger.warning(f"Failed to fetch BTP page {page}: {e}")
+                break
+
+        # Only cache non-empty results so failed scrapes retry on next call
+        if bonds:
+            try:
+                redis_client.set(cache_key, json.dumps(bonds), ex=300)
+            except Exception as e:
+                logger.warning(f"Failed to cache BTP bonds: {e}")
+
+    # Always save BTP bonds to DB (idempotent upsert — ensures DB stays populated)
+    if bonds:
         try:
-            with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
-                response = client.get(page_url, headers=headers)
-            if response.status_code != 200:
-                break
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            table = soup.find("table")
-            if not table:
-                break
-
-            rows = table.find_all("tr")
-            for row in rows:
-                cols = row.find_all("td")
-                if len(cols) < 3:
-                    continue
-
-                isin_text = cols[0].get_text(separator=" ", strip=True)
-                isin_match = re.search(r'IT[A-Z0-9]{10}', isin_text)
-                if not isin_match:
-                    continue
-                isin = isin_match.group(0)
-
-                name = cols[1].get_text(strip=True)
-
-                last_price_str = cols[2].get_text(strip=True).replace(",", ".")
-                try:
-                    last_price = float(last_price_str) if last_price_str else None
-                except ValueError:
-                    last_price = None
-
-                # Extract Coupon (Cedola) and Maturity (Scadenza)
-                coupon_str = cols[3].get_text(strip=True).replace(",", ".") if len(cols) > 3 else ""
-                try:
-                    coupon = float(coupon_str) if coupon_str else None
-                except ValueError:
-                    coupon = None
-
-                maturity = cols[4].get_text(strip=True) if len(cols) > 4 else None
-                change_pct = 0.0
-
-                if last_price is not None:
-                    bonds.append({
-                        "isin": isin,
-                        "name": name,
-                        "last_price": last_price,
-                        "change_pct": change_pct,
-                        "coupon": coupon,
-                        "maturity": maturity,
-                    })
+            from src.database import save_discovered_symbols_batch
+            symbols_to_save = [
+                {"symbol": b["isin"], "isin": b["isin"], "asset_type": "btp", "name": b.get("name", "")}
+                for b in bonds
+            ]
+            if symbols_to_save:
+                save_discovered_symbols_batch(symbols_to_save)
         except Exception as e:
-            logger.warning(f"Failed to fetch BTP page {page}: {e}")
-            break
-
-    try:
-        redis_client.set(cache_key, json.dumps(bonds), ex=300)  # Cache for 5 minutes
-    except Exception as e:
-        logger.warning(f"Failed to cache BTP bonds: {e}")
-
-    # Save BTP bonds to DB
-    try:
-        from src.database import save_discovered_symbols_batch
-        symbols_to_save = [
-            {"symbol": b["isin"], "isin": b["isin"], "asset_type": "btp", "name": b.get("name", "")}
-            for b in bonds
-        ]
-        if symbols_to_save:
-            save_discovered_symbols_batch(symbols_to_save)
-    except Exception as e:
-        logger.warning(f"Failed to save BTP bonds to DB: {e}")
+            logger.warning(f"Failed to save BTP bonds to DB: {e}")
 
     return bonds

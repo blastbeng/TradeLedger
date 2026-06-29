@@ -143,6 +143,7 @@ class TradingEngine:
         self._state_lock = asyncio.Lock()
         self._state_save_pending = False
         self._symbol_reeval_lock = asyncio.Lock()
+        self._tradable_assets_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
         self._force_reeval: bool = False
         self._user_forced_reeval: bool = False
@@ -292,48 +293,63 @@ class TradingEngine:
         now = time.time()
         if self._tradable_assets_cache and (now - self._tradable_assets_cache_time) < 300:
             return self._tradable_assets_cache
-        assets = await asyncio.to_thread(get_tradable_assets)
-        self._tradable_assets_cache = assets
-        self._tradable_assets_cache_time = now
-        return assets
+        async with self._tradable_assets_lock:
+            # Double-check cache after acquiring lock (another task may have populated it)
+            now = time.time()
+            if self._tradable_assets_cache and (now - self._tradable_assets_cache_time) < 300:
+                return self._tradable_assets_cache
+            assets = await asyncio.to_thread(get_tradable_assets)
+            self._tradable_assets_cache = assets
+            self._tradable_assets_cache_time = now
+            return assets
 
     async def _get_btp_bonds(self) -> List[Dict[str, Any]]:
         """Return BTP bonds, cached for 30 minutes to reduce scraping calls."""
         now = time.time()
         if self._btp_bonds_cache and (now - self._btp_bonds_cache_time) < 1800:
             return self._btp_bonds_cache
-        bonds = await asyncio.to_thread(discover_btp_bonds)
-        # Merge with DB-saved BTPs so nothing is lost between runs
-        try:
-            from src.database import get_all_discovered_symbols
-            db_symbols = get_all_discovered_symbols()
-            existing_isins = {b["isin"] for b in bonds}
-            for db_entry in db_symbols:
-                if db_entry.get("asset_type") == "btp" and db_entry["symbol"] not in existing_isins:
-                    bonds.append({
-                        "isin": db_entry["symbol"],
-                        "name": db_entry.get("name", db_entry["symbol"]),
-                        "last_price": None,
-                        "change_pct": 0.0,
-                        "coupon": None,
-                        "maturity": None,
-                    })
-                    existing_isins.add(db_entry["symbol"])
-        except Exception as e:
-            logger.warning(f"Failed to merge BTPs from DB: {e}")
-        self._btp_bonds_cache = bonds
-        self._btp_bonds_cache_time = now
-        return bonds
+        async with self._tradable_assets_lock:
+            # Double-check after lock
+            now = time.time()
+            if self._btp_bonds_cache and (now - self._btp_bonds_cache_time) < 1800:
+                return self._btp_bonds_cache
+            bonds = await asyncio.to_thread(discover_btp_bonds)
+            # Merge with DB-saved BTPs so nothing is lost between runs
+            try:
+                from src.database import get_all_discovered_symbols
+                db_symbols = get_all_discovered_symbols()
+                existing_isins = {b["isin"] for b in bonds}
+                for db_entry in db_symbols:
+                    if db_entry.get("asset_type") == "btp" and db_entry["symbol"] not in existing_isins:
+                        bonds.append({
+                            "isin": db_entry["symbol"],
+                            "name": db_entry.get("name", db_entry["symbol"]),
+                            "last_price": None,
+                            "change_pct": 0.0,
+                            "coupon": None,
+                            "maturity": None,
+                        })
+                        existing_isins.add(db_entry["symbol"])
+            except Exception as e:
+                logger.warning(f"Failed to merge BTPs from DB: {e}")
+            self._btp_bonds_cache = bonds
+            self._btp_bonds_cache_time = now
+            return bonds
 
     async def _get_etf_symbols(self) -> List[str]:
         """Return Italian UCITS ETF symbols, cached for 1 hour."""
         now = time.time()
         if self._etf_symbols_cache and (now - self._etf_symbols_cache_time) < 3600:
             return self._etf_symbols_cache
-        symbols = await asyncio.to_thread(discover_italian_ucits_etfs)
-        self._etf_symbols_cache = symbols
-        self._etf_symbols_cache_time = now
-        return symbols
+        async with self._tradable_assets_lock:
+            # Double-check after lock
+            now = time.time()
+            if self._etf_symbols_cache and (now - self._etf_symbols_cache_time) < 3600:
+                return self._etf_symbols_cache
+            symbols = await asyncio.to_thread(discover_italian_ucits_etfs)
+            self._etf_symbols_cache = symbols
+            self._etf_symbols_cache_time = now
+            return symbols
 
     async def _get_asset_info(self, symbol: str) -> Any:
         """Return asset info (min order size, name, etc.), cached for 1 hour."""
