@@ -1439,6 +1439,27 @@ def get_isin_from_db(symbol: str) -> Optional[str]:
         conn.close()
 
 
+def get_isin_map_from_db(symbols: List[str]) -> Dict[str, Optional[str]]:
+    """Return a dict mapping symbol -> ISIN for multiple symbols in a single query."""
+    if not symbols:
+        return {}
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql("SELECT symbol, isin FROM discovered_symbols WHERE symbol = ANY(%s)")
+            rows = conn.execute(sql, (symbols,)).fetchall()
+        else:
+            placeholders = ",".join(["?" for _ in symbols])
+            sql = _adapt_sql(f"SELECT symbol, isin FROM discovered_symbols WHERE symbol IN ({placeholders})")
+            rows = conn.execute(sql, symbols).fetchall()
+        result = {s: None for s in symbols}
+        for row in rows:
+            result[row["symbol"]] = row["isin"]
+        return result
+    finally:
+        conn.close()
+
+
 def close_pool():
     """Close the PostgreSQL connection pool if it exists."""
     global _pg_pool

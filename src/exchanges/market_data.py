@@ -977,17 +977,13 @@ def discover_italian_ucits_etfs() -> List[str]:
 
 def _save_discovered_assets_to_db(base_symbols: List[str], etf_symbols: List[str] = None):
     """Save discovered stock/ETF base symbols to the database. ISINs are fetched on demand."""
-    from src.database import save_discovered_symbols_batch, get_isin_from_db
+    from src.database import save_discovered_symbols_batch, get_isin_map_from_db
     etf_set = set(etf_symbols or [])
     symbols_to_save = []
     for sym in base_symbols:
         base = sym.split(".")[0] if "." in sym else sym
         if re.match(r'^IT[A-Z0-9]{10}$', base):
             continue  # BTPs are saved separately
-        # Check if already in DB with ISIN
-        existing_isin = get_isin_from_db(base)
-        if existing_isin:
-            continue
         asset_type = "etf" if base in etf_set else "stock"
         symbols_to_save.append({
             "symbol": base,
@@ -995,6 +991,16 @@ def _save_discovered_assets_to_db(base_symbols: List[str], etf_symbols: List[str
             "asset_type": asset_type,
             "name": "",
         })
+    if not symbols_to_save:
+        return
+    # Batch check which symbols already have ISINs in DB — single query instead of N
+    try:
+        sym_list = [s["symbol"] for s in symbols_to_save]
+        isin_map = get_isin_map_from_db(sym_list)
+        # Filter out symbols that already have an ISIN
+        symbols_to_save = [s for s in symbols_to_save if not isin_map.get(s["symbol"])]
+    except Exception:
+        pass  # If batch lookup fails, save all (upsert handles it)
     if symbols_to_save:
         try:
             save_discovered_symbols_batch(symbols_to_save)
@@ -1141,10 +1147,7 @@ def get_tradable_assets() -> List[str]:
 
     # Save discovered symbols to DB (ISINs will be fetched on demand)
     try:
-        etf_set = set()
-        if settings.FINANCEDATABASE_TICKER_DISCOVERY_ENABLED:
-            etf_set.update(_discover_financedatabase_tickers())
-        etf_set.update(discover_italian_ucits_etfs())
+        etf_set = set(etf_symbols)
         _save_discovered_assets_to_db(base_symbols, list(etf_set))
     except Exception as e:
         logger.warning(f"Failed to save discovered assets to DB: {e}")
@@ -1591,17 +1594,6 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 
     return result
 
-
-def _get_btp_name(isin: str) -> str:
-    """Get the BTP name from the cached BTP bonds list."""
-    try:
-        btp_bonds = discover_btp_bonds()
-        for b in btp_bonds:
-            if b["isin"] == isin:
-                return b["name"]
-    except Exception:
-        pass
-    return isin
 
 def get_multi_timeframe_bars(
     symbol: str = "", timeframes: List[str] = None, limit: int = 24
