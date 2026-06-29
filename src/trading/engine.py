@@ -5983,6 +5983,23 @@ class TradingEngine:
             staleness_warning = self._get_quote_staleness_warning(ticker)
             if staleness_warning:
                 prompt += staleness_warning
+            # Add auto-resume note so the LLM sees this context in per-symbol decisions
+            last_auto_resume_raw = await asyncio.to_thread(self.redis.get, "trading:last_auto_resume")
+            if last_auto_resume_raw:
+                try:
+                    last_auto_resume_ts = float(last_auto_resume_raw)
+                    seconds_since = time.time() - last_auto_resume_ts
+                    if seconds_since < self._symbol_reevaluation_interval * 2:
+                        minutes_since = seconds_since / 60
+                        prompt += (
+                            f"\n**NOTE:** Trading was auto‑resumed {minutes_since:.1f} minutes ago after a pause. "
+                            "Market conditions may not have changed significantly. "
+                            "Consider whether conditions have actually improved enough to justify trading. "
+                            "If you decide to pause again, set a longer `pause_duration_seconds` (e.g., 1800–7200) "
+                            "to allow conditions to evolve; a very short pause will likely lead to the same outcome.\n"
+                        )
+                except (ValueError, TypeError):
+                    pass
             logger.info(f"LLM prompt for {symbol}: {len(prompt)} chars")
             # Build a market snapshot dict for caching (per-symbol)
             market_snapshot = {
