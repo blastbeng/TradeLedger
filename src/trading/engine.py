@@ -1335,7 +1335,22 @@ class TradingEngine:
         await asyncio.sleep(5)  # initial delay
         while self._running:
             try:
-                await asyncio.sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
+                # Scale risk check interval based on the shortest timeframe among
+                # open positions.  For very long timeframes (>= 1 month), checking
+                # every 2 minutes is wasteful — use ~1% of the timeframe instead,
+                # capped at 1 hour minimum and 1 day maximum.
+                min_tf_seconds = None
+                for pos in self.positions.values():
+                    pos_tf = pos.get("timeframe")
+                    if pos_tf:
+                        pos_tf_secs = self._timeframe_to_seconds(pos_tf)
+                        if min_tf_seconds is None or pos_tf_secs < min_tf_seconds:
+                            min_tf_seconds = pos_tf_secs
+                if min_tf_seconds is not None and min_tf_seconds >= 2_592_000:  # >= 1 month
+                    risk_interval = max(3600, min(86400, int(min_tf_seconds * 0.01)))
+                else:
+                    risk_interval = settings.RISK_CHECK_INTERVAL_SECONDS
+                await asyncio.sleep(risk_interval)
                 await self._check_risk_management()
                 await self._save_state()
             except Exception as e:
@@ -2675,11 +2690,13 @@ class TradingEngine:
                     elif tf in ("1w",):
                         tf_base_interval = 3600 # 1 hour
                     elif tf in ("1M",):
-                        tf_base_interval = 7200 # 2 hours
+                        tf_base_interval = 86400 # 1 day
                     elif tf in ("3M",):
-                        tf_base_interval = 10800 # 3 hours
-                    elif tf in ("6M", "1Y", "3Y", "5Y"):
-                        tf_base_interval = 14400 # 4 hours
+                        tf_base_interval = 172800 # 2 days
+                    elif tf in ("6M", "1Y"):
+                        tf_base_interval = 604800 # 1 week
+                    elif tf in ("3Y", "5Y"):
+                        tf_base_interval = 1209600 # 2 weeks
                     else:
                         tf_base_interval = 3600 # 1 hour default
 
@@ -2694,7 +2711,8 @@ class TradingEngine:
 
                     if full_market_breadth and 40 <= full_market_breadth.get("positive_pct", 50) <= 60 and not is_active_period:
                         # Quiet market: evaluate less frequently (double the interval, max 8h)
-                        tf_base_interval = min(28800, tf_base_interval * 2)
+                        # Use max() so the cap never reduces the interval below the base for long timeframes
+                        tf_base_interval = max(tf_base_interval, min(tf_base_interval * 2, 28800))
 
                     # Use the dynamically computed tf_base_interval, but allow LLM to override per-symbol
                     default_interval = tf_base_interval
@@ -9242,7 +9260,12 @@ class TradingEngine:
         # Cap the safety net at the configured max skip interval so the bot
         # never skips LLM evaluations indefinitely, even for very long
         # timeframes (e.g., 1Y, 3Y, 5Y where 3× the interval would be ~3 years).
-        if now - last_time > min(3 * effective_interval, settings.MAX_SKIP_INTERVAL_SECONDS):
+        # Cap the safety net at a value proportional to the timeframe,
+        # but never less than the configured MAX_SKIP_INTERVAL_SECONDS.
+        # This prevents excessively frequent forced evaluations for long
+        # timeframes (e.g., 5Y candles should not be forced every 7 days).
+        max_skip = max(settings.MAX_SKIP_INTERVAL_SECONDS, int(timeframe_seconds))
+        if now - last_time > min(3 * effective_interval, max_skip):
             return False
 
         # Fetch LLM-driven skip thresholds from Redis.
@@ -9325,6 +9348,11 @@ class TradingEngine:
                 for entry in self.current_symbols:
                     symbol = entry["symbol"]
                     tf = entry["timeframe"]
+                    # Skip entry signal monitoring for very long timeframes (>= 1 month)
+                    # where short-term crossovers are irrelevant.
+                    tf_seconds = self._timeframe_to_seconds(tf)
+                    if tf_seconds >= 2_592_000:  # 30 days (1M)
+                        continue
                     # Avoid re‑triggering too often – enforce a cooldown of at least
                     # the normal strategy interval.
                     # Use a short, dedicated cooldown so the bot reacts quickly to new signals
