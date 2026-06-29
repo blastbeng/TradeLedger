@@ -13328,6 +13328,7 @@ class TradingEngine:
             "min_stop_atr_mult": sim_min_stop_atr_mult,
             "min_hold_time_mult": sim_min_hold_time_mult,
             "has_position": symbol in self.positions,
+            "historical_backtest_results": historical_backtest_results,
         }
 
     async def simulate_backtest(self, symbol: str) -> Dict[str, Any]:
