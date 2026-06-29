@@ -340,13 +340,23 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
             response = client.get(url, headers=headers)
             response.raise_for_status()
             # Extract token from <chart-allinone ... token="..." ...>
-            match = re.search(r'<chart-allinone[^>]*token="([^"]+)"', response.text)
-            if match:
-                token = match.group(1)
+            # Use BeautifulSoup for robust parsing, with regex as a fallback
+            soup = BeautifulSoup(response.text, "html.parser")
+            chart_tag = soup.find("chart-allinone")
+            token = chart_tag.get("token") if chart_tag else None
+            
+            if not token:
+                # Fallback to regex if BeautifulSoup fails to find the tag
+                match = re.search(r'<chart-allinone[^>]*token="([^"]+)"', response.text)
+                if match:
+                    token = match.group(1)
+            
+            if token:
                 # Cache the token
                 with _borsa_token_cache_lock:
                     _borsa_token_cache[cache_key] = (now, token)
                 return token
+                
             logger.warning(f"Could not find Borsa Italiana token for {isin}-{market_code}")
             return None
     except Exception as e:
