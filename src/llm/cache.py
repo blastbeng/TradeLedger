@@ -190,7 +190,7 @@ def _stringify_keys(obj):
 def _normalize_for_hash(obj, depth=0):
     """Recursively normalize data for stable hashing.
     
-    - Rounds floats to 6 decimal places to reduce noise from tiny price changes.
+    - Rounds floats to 12 decimal places to reduce noise from tiny price changes while preserving precision for very small indicator values (e.g., MACD histogram).
     - Excludes keys containing 'timestamp', 'time', 'fetched_at', 'created_at',
       'published_at', 'last_eval', 'last_auto_resume' (volatile fields that
       change every cycle but don't affect trading decisions).
@@ -212,9 +212,9 @@ def _normalize_for_hash(obj, depth=0):
     if isinstance(obj, list):
         return [_normalize_for_hash(item, depth + 1) for item in obj]
     if isinstance(obj, float):
-        # Round to 8 decimal places — enough precision for prices/indicators,
-        # but filters out floating-point noise that changes every cycle.
-        return round(obj, 8)
+        # Round to 12 decimal places — enough precision for very small indicator values (e.g., MACD histogram),
+        # while filtering out floating-point noise that changes every cycle.
+        return round(obj, 12)
     if obj is None:
         return "null"
     return obj
