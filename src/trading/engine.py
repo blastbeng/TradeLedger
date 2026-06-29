@@ -5005,70 +5005,34 @@ class TradingEngine:
             ind_cfg = self.positions.get(symbol, {}).get('indicator_config') if symbol in self.positions else None
 
             # Compute indicators for all timeframes
-            multi_tf_indicators: Dict[str, Dict[str, Any]] = {}
-            multi_tf_raw_candles: Dict[str, List[List]] = {}
-            atr = None
-            rsi = None
-            macd = None
-            macd_signal = None
-            macd_hist = None
-            bb_upper = None
-            bb_middle = None
-            bb_lower = None
-            ema_9 = None
-            ema_21 = None
-            stochastic_k = None
-            stochastic_d = None
-            adx = None
-            plus_di = None
-            minus_di = None
-            obv = None
-            mfi = None
-            cci = None
-            williams_r = None
-            ichimoku = None
-            donchian_channels = None
-            parabolic_sar = None
-            keltner_channels = None
-            vwap = None
-            daily_pivot_points = None
-
-            # Batch-fetch all indicators for this symbol in a single DB query
-            batch_inds = await asyncio.to_thread(get_indicators_for_symbols, [symbol], settings.OHLCV_TIMEFRAMES)
-            symbol_inds = batch_inds.get(symbol, {})
-
-            for tf in settings.OHLCV_TIMEFRAMES:
-                if tf in ohlcv_data and ohlcv_data[tf]:
-                    candles = ohlcv_data[tf]
-                    multi_tf_raw_candles[tf] = candles
-                    ind = symbol_inds.get(tf)
-                    if ind:
-                        multi_tf_indicators[tf] = ind
-                        if tf == assigned_tf:
-                            atr = ind.get('atr')
-                            rsi = ind.get('rsi')
-                            macd = ind.get('macd')
-                            macd_signal = ind.get('macd_signal')
-                            macd_hist = ind.get('macd_hist')
-                            bb_upper = ind.get('bb_upper')
-                            bb_middle = ind.get('bb_middle')
-                            bb_lower = ind.get('bb_lower')
-                            ema_9 = ind.get('ema_9')
-                            ema_21 = ind.get('ema_21')
-                            stochastic_k = ind.get('stochastic_k')
-                            stochastic_d = ind.get('stochastic_d')
-                            adx = ind.get('adx')
-                            plus_di = ind.get('plus_di')
-                            minus_di = ind.get('minus_di')
-                            obv = ind.get('obv')
-                            mfi = ind.get('mfi')
-                            cci = ind.get('cci')
-                            williams_r = ind.get('williams_r')
-                            ichimoku = ind.get('ichimoku')
-                            donchian_channels = ind.get('donchian_channels')
-                            parabolic_sar = ind.get('parabolic_sar')
-                            keltner_channels = ind.get('keltner_channels')
-                            vwap = compute_vwap(candles)
+            _inds = await self._compute_multi_tf_indicators(symbol, ohlcv_data, assigned_tf)
+            multi_tf_indicators = _inds["multi_tf_indicators"]
+            multi_tf_raw_candles = _inds["multi_tf_raw_candles"]
+            atr = _inds["atr"]
+            rsi = _inds["rsi"]
+            macd = _inds["macd"]
+            macd_signal = _inds["macd_signal"]
+            macd_hist = _inds["macd_hist"]
+            bb_upper = _inds["bb_upper"]
+            bb_middle = _inds["bb_middle"]
+            bb_lower = _inds["bb_lower"]
+            ema_9 = _inds["ema_9"]
+            ema_21 = _inds["ema_21"]
+            stochastic_k = _inds["stochastic_k"]
+            stochastic_d = _inds["stochastic_d"]
+            adx = _inds["adx"]
+            plus_di = _inds["plus_di"]
+            minus_di = _inds["minus_di"]
+            obv = _inds["obv"]
+            mfi = _inds["mfi"]
+            cci = _inds["cci"]
+            williams_r = _inds["williams_r"]
+            ichimoku = _inds["ichimoku"]
+            donchian_channels = _inds["donchian_channels"]
+            parabolic_sar = _inds["parabolic_sar"]
+            keltner_channels = _inds["keltner_channels"]
+            vwap = _inds["vwap"]
+            daily_pivot_points = _inds["daily_pivot_points"]
 
             atr_multi_tf: Dict[str, float] = {}
             for tf in settings.OHLCV_TIMEFRAMES:
@@ -5076,12 +5040,6 @@ class TradingEngine:
                 tf_atr = ind.get('atr')
                 if tf_atr is not None and tf_atr > 0:
                     atr_multi_tf[tf] = tf_atr
-
-            # Compute daily pivot points from the 1d timeframe (if available)
-            if "1d" in multi_tf_raw_candles and len(multi_tf_raw_candles["1d"]) >= 2:
-                daily_candles = multi_tf_raw_candles["1d"]
-                prev_daily = daily_candles[-2]  # [ts, o, h, l, c, v]
-                daily_pivot_points = compute_pivot_points(prev_daily[2], prev_daily[3], prev_daily[4])
 
             # ATR Percentile (volatility context)
             atr_percentile = None
