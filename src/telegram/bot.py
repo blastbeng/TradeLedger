@@ -804,30 +804,20 @@ class TelegramBot:
 
     @staticmethod
     def _compact_summary(summary: dict) -> dict:
-        """Return a minimal version of the summary dict to keep the notification log small."""
-        # Allowed keys – only these will be kept
-        allowed_keys = {
-            "symbol", "action", "confidence", "reason",
-            "price", "amount", "realized_pnl", "exit_reason", "mode",
-            "symbols", "daily_pnl", "target_amount", "strategy_type",
-            "sentiment", "backtest", "indicators",
-            "timestamp",
-        }
+        """Return a compacted version of the summary dict to keep the notification log small."""
         compact = {}
-        for key in allowed_keys:
-            if key in summary:
-                value = summary[key]
-                # If symbols is a list of dicts, keep only the symbols
-                if key == "symbols" and isinstance(value, list):
-                    if value and isinstance(value[0], dict):
-                        value = [c.get("symbol", c) for c in value]
-                # Compact sentiment to just the numeric compound value (e.g., 0.05 or -0.05)
-                if key == "sentiment" and isinstance(value, dict):
-                    value = round(value.get("avg_compound", 0), 2)
-                # Compact backtest to a short win/loss summary
-                if key == "backtest" and isinstance(value, str):
-                    value = TelegramBot._compact_backtest(value)
-                compact[key] = value
+        for key, value in summary.items():
+            # If symbols is a list of dicts, keep only the symbols
+            if key == "symbols" and isinstance(value, list):
+                if value and isinstance(value[0], dict):
+                    value = [c.get("symbol", c) for c in value]
+            # Compact sentiment to just the numeric compound value (e.g., 0.05 or -0.05)
+            elif key == "sentiment" and isinstance(value, dict):
+                value = round(value.get("avg_compound", 0), 2)
+            # Compact backtest to a short win/loss summary
+            elif key == "backtest" and isinstance(value, str):
+                value = TelegramBot._compact_backtest(value)
+            compact[key] = value
         return compact
 
     @staticmethod
