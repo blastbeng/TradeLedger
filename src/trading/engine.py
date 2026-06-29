@@ -11569,8 +11569,22 @@ class TradingEngine:
                     # from the timeout because they must remain active until triggered
                     # or explicitly cancelled when the position is closed.
                     queued_at = queued.get('queued_at', 0)
-                    if (not queued.get("is_exit_order")
-                            and time.time() - queued_at > settings.QUEUED_ORDER_TIMEOUT_SECONDS):
+                    if not queued.get("is_exit_order"):
+                        # Scale timeout based on the assigned timeframe.
+                        # Long-term timeframes may have limit orders that need
+                        # days or weeks to fill — a fixed 15-minute timeout would
+                        # prematurely cancel them.
+                        queued_tf = queued.get('timeframe')
+                        base_timeout = settings.QUEUED_ORDER_TIMEOUT_SECONDS
+                        if queued_tf:
+                            tf_secs = self._timeframe_to_seconds(queued_tf)
+                            # Use 50% of the timeframe as the timeout, with a
+                            # minimum of the base timeout and a maximum of
+                            # 180 days (same cap as entry conditions).
+                            scaled_timeout = min(max(base_timeout, int(tf_secs * 0.5)), 15_552_000)
+                        else:
+                            scaled_timeout = base_timeout
+                        if time.time() - queued_at > scaled_timeout:
                         logger.warning(
                             f"Queued order {order_id} for {queued['symbol']} timed out "
                             f"after {settings.QUEUED_ORDER_TIMEOUT_SECONDS}s. Cancelling."
