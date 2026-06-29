@@ -56,13 +56,17 @@ def validate_signal(
         # Enforce minimum fixed stop-loss relative to ATR (if ATR and price are available)
         if stop_method == "fixed" and atr is not None and price is not None and price > 0 and atr > 0:
             atr_pct = atr / price
+            # Scale ATR to a daily equivalent if the timeframe is longer than 1 day
+            # to avoid absurdly wide stop-loss requirements for long timeframes (e.g., 5Y)
+            if timeframe_seconds is not None and timeframe_seconds > 86400:
+                atr_pct = atr_pct * (86400 / timeframe_seconds) ** 0.5
             min_sl = min_stop_atr_mult * atr_pct
             if sl < min_sl:
                 return Signal(
                     action="HOLD",
                     confidence=0.0,
                     reasoning=(
-                        f"Fixed stop-loss too tight: must be at least 1.5x ATR "
+                        f"Fixed stop-loss too tight: must be at least {min_stop_atr_mult}x ATR "
                         f"(ATR%={atr_pct:.4%}, stop_loss_pct={sl:.4%})"
                     )
                 )
