@@ -9460,125 +9460,113 @@ class TradingEngine:
         Considers the same parameters as Step 1 (build_strategy_prompt) to ensure
         temperature selection is calibrated to the full market context.
         """
-        score = 0.0
+        # Category-based scoring: within each category, take the MAX contribution
+        # (not the sum) so that multiple factors in the same category don't
+        # dominate the score.  Category maxima sum to 1.0 exactly.
 
-        # --- Candidate count ---
-        if num_candidates > 20:
-            score += 0.05
-        elif num_candidates > 10:
-            score += 0.03
-
-        # --- Volatility extremes ---
-        if volatility_percentile is not None and (volatility_percentile > 80 or volatility_percentile < 20):
-            score += 0.05
-
-        # --- Indicator extremes ---
+        # === Category 1: Technical indicator extremes (max 0.25) ===
+        tech_score = 0.0
         if rsi is not None and (rsi < 30 or rsi > 70):
-            score += 0.03
+            tech_score = max(tech_score, 0.15)
         if stochastic_k is not None and (stochastic_k < 20 or stochastic_k > 80):
-            score += 0.03
+            tech_score = max(tech_score, 0.12)
         if mfi is not None and (mfi < 20 or mfi > 80):
-            score += 0.03
+            tech_score = max(tech_score, 0.12)
         if cci is not None and (cci < -100 or cci > 100):
-            score += 0.03
+            tech_score = max(tech_score, 0.12)
         if williams_r is not None and (williams_r < -80 or williams_r > -20):
-            score += 0.03
-
-        # --- Conflicting technicals ---
-        if rsi is not None and macd_hist is not None:
-            if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
-                score += 0.05
-        if ema_9 is not None and ema_21 is not None and adx is not None and plus_di is not None and minus_di is not None:
-            ema_bullish = ema_9 > ema_21
-            di_bullish = plus_di > minus_di
-            if ema_bullish != di_bullish and adx > 25:
-                score += 0.05
-        if conflicting_signals:
-            score += 0.05
-
-        # --- MACD crossover nearby ---
+            tech_score = max(tech_score, 0.12)
         if macd is not None and macd_signal is not None and macd != 0:
             if abs(macd - macd_signal) < 0.0001 * abs(macd):
-                score += 0.03
-
-        # --- Bollinger squeeze/expansion ---
+                tech_score = max(tech_score, 0.10)
         if bb_upper is not None and bb_lower is not None and bb_middle is not None and bb_middle > 0:
             bb_width = (bb_upper - bb_lower) / bb_middle
             if bb_width < 0.02 or bb_width > 0.08:
-                score += 0.04
-
-        # --- Ichimoku cloud conflict ---
+                tech_score = max(tech_score, 0.15)
         if ichimoku is not None and current_price is not None:
             cloud_top = ichimoku.get("cloud_top")
             cloud_bottom = ichimoku.get("cloud_bottom")
             if cloud_top is not None and cloud_bottom is not None:
                 if cloud_bottom <= current_price <= cloud_top:
-                    score += 0.04
+                    tech_score = max(tech_score, 0.12)
 
-        # --- Market regime turbulence ---
+        # === Category 2: Conflicting signals (max 0.20) ===
+        conflict_score = 0.0
+        if rsi is not None and macd_hist is not None:
+            if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
+                conflict_score = max(conflict_score, 0.20)
+        if ema_9 is not None and ema_21 is not None and adx is not None and plus_di is not None and minus_di is not None:
+            ema_bullish = ema_9 > ema_21
+            di_bullish = plus_di > minus_di
+            if ema_bullish != di_bullish and adx > 25:
+                conflict_score = max(conflict_score, 0.15)
+        if conflicting_signals:
+            conflict_score = max(conflict_score, 0.10)
+
+        # === Category 3: Market context (max 0.20) ===
+        market_score = 0.0
+        if volatility_percentile is not None and (volatility_percentile > 80 or volatility_percentile < 20):
+            market_score = max(market_score, 0.15)
         if market_regime and any(kw in market_regime for kw in ("high volatility", "squeeze", "expansion", "ranging")):
-            score += 0.04
-
-        # --- Market breadth extremes ---
+            market_score = max(market_score, 0.12)
         if market_breadth:
             pos_pct = market_breadth.get("positive_pct", 50)
             if pos_pct > 80 or pos_pct < 20:
-                score += 0.04
+                market_score = max(market_score, 0.12)
         if full_market_breadth:
             pos_pct = full_market_breadth.get("positive_pct", 50)
             if pos_pct > 80 or pos_pct < 20:
-                score += 0.03
-
-        # --- Sentiment swing ---
+                market_score = max(market_score, 0.10)
         if sentiment_trend_magnitude is not None and sentiment_trend_magnitude > 0.2:
-            score += 0.04
-
-        # --- Volume spike ---
+            market_score = max(market_score, 0.12)
         if volume_trend is not None and volume_trend > 3.0:
-            score += 0.03
+            market_score = max(market_score, 0.10)
 
-        # --- Portfolio stress ---
+        # === Category 4: Portfolio stress (max 0.15) ===
+        portfolio_score = 0.0
         if portfolio_exposure_pct is not None and portfolio_exposure_pct > 70:
-            score += 0.04
+            portfolio_score = max(portfolio_score, 0.15)
         if portfolio_stop_risk_pct is not None and portfolio_stop_risk_pct > 8:
-            score += 0.04
+            portfolio_score = max(portfolio_score, 0.15)
         if drawdown_pct is not None and drawdown_pct > 10:
-            score += 0.04
+            portfolio_score = max(portfolio_score, 0.15)
         if unrealized_pnl is not None and unrealized_pnl < 0:
-            score += 0.03
-
-        # --- Consecutive losses ---
+            portfolio_score = max(portfolio_score, 0.10)
         if consecutive_losses >= 3:
-            score += 0.04
+            portfolio_score = max(portfolio_score, 0.12)
 
-        # --- Symbol event ---
+        # === Category 5: Critical & events (max 0.15) ===
+        critical_score = 0.0
+        if is_critical:
+            critical_score = max(critical_score, 0.15)
         if symbol_event is not None and symbol_event.get("has_event"):
-            score += 0.04
-
-        # --- Fundamentals extreme ---
+            critical_score = max(critical_score, 0.10)
         if fundamentals is not None:
             pe = fundamentals.get("pe_ratio")
             if pe is not None and (pe > 50 or pe < 0):
-                score += 0.03
+                critical_score = max(critical_score, 0.08)
             margins = fundamentals.get("profit_margins")
             if margins is not None and margins < 0:
-                score += 0.03
-
-        # --- Critical decision ---
-        if is_critical:
-            score += 0.1
-
-        # --- Trading paused (adds uncertainty) ---
+                critical_score = max(critical_score, 0.08)
         if trading_paused:
-            score += 0.03
+            critical_score = max(critical_score, 0.05)
 
-        # --- Legacy fear_greed ---
+        # === Category 6: Candidate count (max 0.03) ===
+        candidate_score = 0.0
+        if num_candidates > 20:
+            candidate_score = 0.03
+        elif num_candidates > 10:
+            candidate_score = 0.02
+
+        # === Category 7: Legacy fear_greed (max 0.02) ===
+        legacy_score = 0.0
         if fear_greed:
             fg = fear_greed.get("value", 50)
             if fg <= 25 or fg >= 75:
-                score += 0.05
+                legacy_score = 0.02
 
-        return min(1.0, score)
+        total = tech_score + conflict_score + market_score + portfolio_score + critical_score + candidate_score + legacy_score
+        return min(1.0, total)
 
     def _get_effective_temperature(self, model_type: str, complexity: float) -> float:
         """Return the temperature to use for a given model_type and complexity score (0-1)."""
