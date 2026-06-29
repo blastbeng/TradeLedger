@@ -516,9 +516,9 @@ def get_borsa_italiana_candles(
     try:
         with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
             if timeframe == "1d":
-                # For 1d, use the intraday endpoint
-                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/intraday?resolution=1MN"
-                logger.debug(f"Fetching intraday data from: {url}")
+                # For 1d, use the 1M history endpoint to get daily candles
+                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=1M&adjustment=true&add-last-price=true"
+                logger.debug(f"Fetching 1d data from history endpoint: {url}")
                 response = client.get(url, headers=headers)
                 response.raise_for_status()
             else:
@@ -551,7 +551,7 @@ def get_borsa_italiana_candles(
         intraday_points = data.get("intradayPoint", [])
 
         rows = []
-        if intraday_points:
+        if intraday_points and timeframe != "1d":
             # Intraday response format (1d endpoint)
             # Fields: time (YYYYMMDD-HH:MM:SS), beginPx, highPx, lowPx, endPx, vol
             for item in intraday_points:
@@ -1506,10 +1506,10 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             f"Quotes will be served from Redis cache or database if available."
         )
 
-    # --- Try Borsa Italiana for Italian stocks still missing valid prices ---
+    # --- Try Borsa Italiana for Italian stocks AND BTPs still missing valid prices ---
     # This is a per-symbol HTTP call (token + intraday), so limit to a small batch.
     missing_after_yf = [
-        sym for sym in stock_symbols
+        sym for sym in missing_symbols
         if result.get(sym, {}).get("last") is None
     ]
     if missing_after_yf:
