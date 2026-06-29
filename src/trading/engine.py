@@ -4488,6 +4488,7 @@ class TradingEngine:
             await asyncio.to_thread(self.redis.set, "trading:last_triggered_reeval", str(time.time()))
             await asyncio.to_thread(self.redis.expire, "trading:last_triggered_reeval", 7200)
 
+        self._state_dirty = True
         logger.info("Re-evaluation complete: %d symbols selected.", len(self.current_symbols))
         await asyncio.to_thread(self.redis.set, last_key, now)
 
@@ -6745,6 +6746,7 @@ class TradingEngine:
                 "position_size_fraction": params.get("position_size_fraction") if params else None,
                 "stop_loss_method": params.get("stop_loss_method") if params else None,
             }
+            self._state_dirty = True
             # Compute trade amount for display in the signals card
             _params = signal.strategy_params or {}
             _psf = _params.get("position_size_fraction")
