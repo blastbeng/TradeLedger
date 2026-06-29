@@ -10757,10 +10757,11 @@ class TradingEngine:
                                     logger.info(f"Cancelled OCO pair {oco_pair_id} for timed-out exit order {order_id}")
                                 except Exception as e:
                                     logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
-                                self.queued_orders = [
-                                    q for q in self.queued_orders
-                                    if q.get("order_id") != oco_pair_id
-                                ]
+                                async with self._queued_orders_lock:
+                                    self.queued_orders = [
+                                        q for q in self.queued_orders
+                                        if q.get("order_id") != oco_pair_id
+                                    ]
                             # Clear exit order IDs from position
                             pos = self.positions.get(queued["symbol"])
                             if pos:
