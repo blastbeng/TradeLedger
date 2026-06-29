@@ -9219,11 +9219,10 @@ class TradingEngine:
         if is_critical:
             return False
 
-        # ATR is the most critical for skip logic (price change comparison).
-        # RSI and MACD are supplementary — if they're missing, we can still
-        # make a skip decision based on price change and ATR alone.
-        if atr is None:
-            return False
+        # ATR is used for price-change comparison but is not strictly required.
+        # When ATR is None (common for long timeframes like 1Y/3Y/5Y), we fall
+        # back to a fixed percentage threshold so the skip logic still works
+        # and we don't waste LLM calls every cycle.
 
         snapshot = self._last_eval_snapshot.get(symbol)
         if snapshot is None:
