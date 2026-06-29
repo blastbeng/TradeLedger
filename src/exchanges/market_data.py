@@ -1086,6 +1086,7 @@ def get_tradable_assets() -> List[str]:
             logger.info(f"Loaded {len(hardcoded)} tickers from hardcoded fallback list.")
             base_symbols = hardcoded
 
+    suffix = settings.TICKER_SUFFIX
     if not base_symbols:
         logger.warning("No tickers discovered from Wikipedia, Euronext, or news feeds. Checking Redis cache and DB for previously discovered symbols...")
         # Try Redis cache first (may have symbols from a previous successful run)
