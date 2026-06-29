@@ -5640,7 +5640,6 @@ class TradingEngine:
                         backtest_results=backtest_results,
                         base_currency=self.base_currency,
                         trading_paused=trading_paused,
-                        step1_prompt=prompt,
                         total_variants_proposed=total_variants_proposed,
                     )
                     # Append position info if exists
@@ -12295,7 +12294,6 @@ class TradingEngine:
             backtest_results=backtest_results,
             base_currency=self.base_currency,
             trading_paused=False,
-            step1_prompt=data["prompt"],
             total_variants_proposed=total_variants_proposed,
         )
         
