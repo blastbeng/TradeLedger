@@ -357,6 +357,10 @@ class Settings(BaseSettings):
     LLM_MIND_PROVIDER: str = ""
     LLM_ACTUATOR_PROVIDER: str = ""
 
+    # Enable automatic fallback to the other LLM provider if the primary fails.
+    # Default: False (opt-in) to avoid masking configuration errors and unexpected costs.
+    LLM_FALLBACK_ENABLED: bool = False
+
     # Per‑role OpenAI settings (empty or None = use global OPENAI_*)
     OPENAI_MIND_API_KEY: Optional[str] = None
     OPENAI_ACTUATOR_API_KEY: Optional[str] = None
