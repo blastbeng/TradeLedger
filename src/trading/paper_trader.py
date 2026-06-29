@@ -176,8 +176,9 @@ class PaperTrader:
         Adapts the backtester's dynamic slippage model to live trading by using
         the most recent daily candle and a 20-day average volume.
         """
+        base = symbol.split("/")[0] if "/" in symbol else symbol
         try:
-            candles = get_ohlcv(symbol, "1d", limit=21)
+            candles = get_ohlcv(base, "1d", limit=21)
             if not candles or len(candles) < 5:
                 return self.slippage_base_pct
             
