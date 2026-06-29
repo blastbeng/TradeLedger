@@ -52,9 +52,9 @@ def backtest_strategy(
     max_trades: int = 200,
     cooldown_after_loss_seconds: Optional[int] = None,
     slippage_pct: float = 0.0,
-    trend_filter_ema_period: int = 50,
+    trend_filter_ema_period: int = 0,
     rsi_values: Optional[List[Optional[float]]] = None,
-    max_rsi: float = 70.0,
+    max_rsi: float = 100.0,
     macd_hist_values: Optional[List[Optional[float]]] = None,
     backtest_entry_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -92,12 +92,12 @@ def backtest_strategy(
     # Parse configurable entry logic
     if backtest_entry_config is None:
         backtest_entry_config = {}
-    entry_ema_period = backtest_entry_config.get("ema_period", trend_filter_ema_period)
+    entry_ema_period = backtest_entry_config.get("ema_period", 0)
     entry_ema_direction = backtest_entry_config.get("ema_direction", "above")
-    entry_min_adx = backtest_entry_config.get("min_adx", min_adx)
-    entry_max_rsi = backtest_entry_config.get("max_rsi", max_rsi)
+    entry_min_adx = backtest_entry_config.get("min_adx", 0.0)
+    entry_max_rsi = backtest_entry_config.get("max_rsi", 100.0)
     entry_min_rsi = backtest_entry_config.get("min_rsi", 0.0)
-    entry_macd_filter = backtest_entry_config.get("macd_filter", "positive")
+    entry_macd_filter = backtest_entry_config.get("macd_filter", "none")
     entry_logic = backtest_entry_config.get("logic", "and")
 
     trades = []
