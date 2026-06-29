@@ -139,7 +139,9 @@ class TradingEngine:
         self._cycle_spent = 0.0
         self._symbol_first_seen: Dict[str, float] = {}  # symbol -> timestamp when first added
         self._market_breadth: Optional[Dict[str, Any]] = None
-        self._risk_lock = asyncio.Lock()
+        self._cycle_spent_lock = asyncio.Lock()
+        self._positions_lock = asyncio.Lock()
+        self._queued_orders_lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
         self._state_save_pending = False
         self._symbol_reeval_lock = asyncio.Lock()
@@ -2245,10 +2247,12 @@ class TradingEngine:
                 logger.warning(f"Stock {symbol} no longer available. Removing from tracking.")
                 self.current_symbols.remove(entry)
                 # Remove any queued orders for this delisted symbol
-                self.queued_orders = [q for q in self.queued_orders if q['symbol'] != symbol]
+                async with self._queued_orders_lock:
+                    self.queued_orders = [q for q in self.queued_orders if q['symbol'] != symbol]
                 if symbol in self.positions:
                     await self._cancel_exit_orders(symbol)
-                    pos = self.positions.pop(symbol)
+                    async with self._positions_lock:
+                        pos = self.positions.pop(symbol)
                     cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
                     trade = {
                         "symbol": symbol,
@@ -2323,25 +2327,28 @@ class TradingEngine:
                 )
                 if actual_balance == 0.0:
                     await self._cancel_exit_orders(symbol)
-                    del self.positions[symbol]
+                    async with self._positions_lock:
+                        del self.positions[symbol]
                     await self._remove_symbol_if_paused(symbol)
                 else:
-                    self.positions[symbol]["amount"] = actual_balance
-                    self.positions[symbol]["cost_basis"] = cost_basis - prorated_cost_basis
-                    self.positions[symbol]["net_base"] = net_base - sold_amount
-                    new_net_base = self.positions[symbol]["net_base"]
-                    new_cost_basis = self.positions[symbol]["cost_basis"]
-                    self.positions[symbol]["price"] = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
+                    async with self._positions_lock:
+                        self.positions[symbol]["amount"] = actual_balance
+                        self.positions[symbol]["cost_basis"] = cost_basis - prorated_cost_basis
+                        self.positions[symbol]["net_base"] = net_base - sold_amount
+                        new_net_base = self.positions[symbol]["net_base"]
+                        new_cost_basis = self.positions[symbol]["cost_basis"]
+                        self.positions[symbol]["price"] = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
             elif actual_balance > recorded_amount + 1e-8:
                 # External deposit – sync to actual balance
                 logger.warning(
                     f"Balance of {base} increased externally from {recorded_amount} to {actual_balance}. "
                     f"Updating position."
                 )
-                self.positions[symbol]["amount"] = actual_balance
-                self.positions[symbol]["net_base"] = actual_balance
-                cost_basis = self.positions[symbol].get("cost_basis", 0.0)
-                self.positions[symbol]["price"] = cost_basis / actual_balance if actual_balance > 0 else 0.0
+                async with self._positions_lock:
+                    self.positions[symbol]["amount"] = actual_balance
+                    self.positions[symbol]["net_base"] = actual_balance
+                    cost_basis = self.positions[symbol].get("cost_basis", 0.0)
+                    self.positions[symbol]["price"] = cost_basis / actual_balance if actual_balance > 0 else 0.0
 
         # --- Close positions that were loaded without LLM risk parameters ---
         for symbol, pos in list(self.positions.items()):
@@ -2660,7 +2667,8 @@ class TradingEngine:
 
     async def _reevaluate_symbols_impl(self, force: bool = False):
         # Reset per-cycle spending tracker so new buys are not blocked by prior cycle spending
-        self._cycle_spent = 0.0
+        async with self._cycle_spent_lock:
+            self._cycle_spent = 0.0
         logger.info("Re-evaluation step 1/12: Checking cooldown and fetching asset lists...")
 
         # Respect triggered re-evaluation cooldown for market-condition triggers only.
@@ -4652,7 +4660,9 @@ class TradingEngine:
                         return
 
         # Skip if there is already a queued order for this symbol
-        if any(q['symbol'] == symbol for q in self.queued_orders):
+        async with self._queued_orders_lock:
+            has_queued = any(q['symbol'] == symbol for q in self.queued_orders)
+        if has_queued:
             logger.info(f"Skipping {display_symbol}: order already queued.")
             self._force_eval.pop(symbol, None)
             return
@@ -5044,7 +5054,8 @@ class TradingEngine:
                     pass
             portfolio_exposure_pct = (portfolio_exposure / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
             portfolio_stop_risk_pct = (portfolio_stop_risk / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
-            portfolio_available_capital = max(0.0, base_balance - self._cycle_spent)
+            async with self._cycle_spent_lock:
+                portfolio_available_capital = max(0.0, base_balance - self._cycle_spent)
 
             # Recent trade outcomes (last 5 closed trades)
             recent_trades = [
@@ -5104,7 +5115,8 @@ class TradingEngine:
             if current_volume > 0:
                 volume_trend_val = await self._compute_volume_trend(symbol, current_volume)
 
-            remaining = max(0.0, base_balance - self._cycle_spent)
+            async with self._cycle_spent_lock:
+                remaining = max(0.0, base_balance - self._cycle_spent)
 
             # Fetch full market breadth from Redis (computed by background task)
             full_market_breadth = None
@@ -6007,7 +6019,7 @@ class TradingEngine:
                             }
                         )
                     # Also apply any other updated parameters from the LLM
-                    self._update_position_params(
+                    await self._update_position_params(
                         symbol,
                         params,
                         signal.indicator_config,
@@ -6065,7 +6077,7 @@ class TradingEngine:
                         self.positions[symbol].pop("_stop_loss_triggered", None)
                         self.positions[symbol].pop("_stop_loss_review_count", None)
                         # Also apply any other updated parameters from the LLM
-                        self._update_position_params(
+                        await self._update_position_params(
                             symbol,
                             new_params,
                             signal.indicator_config,
@@ -6138,7 +6150,7 @@ class TradingEngine:
                         self.positions[symbol].pop("_take_profit_triggered", None)
                         self.positions[symbol].pop("_take_profit_review_count", None)
                         # Also apply any other updated parameters from the LLM
-                        self._update_position_params(
+                        await self._update_position_params(
                             symbol,
                             new_params,
                             signal.indicator_config,
@@ -6210,7 +6222,7 @@ class TradingEngine:
                     self.positions[symbol]["partial_tp_depth_wait_start"] = {}
                     logger.info(f"LLM updated partial TP levels for {symbol}")
                     # Also apply any other updated parameters from the LLM
-                    self._update_position_params(
+                    await self._update_position_params(
                         symbol,
                         params,
                         signal.indicator_config,
@@ -6338,7 +6350,7 @@ class TradingEngine:
 
             # Apply any updated risk parameters from the LLM to the open position
             if symbol in self.positions and signal.strategy_params:
-                self._update_position_params(
+                await self._update_position_params(
                     symbol,
                     signal.strategy_params,
                     signal.indicator_config,
@@ -7005,7 +7017,9 @@ class TradingEngine:
                     continue
 
                 # Skip if there is already a queued order for this symbol
-                if any(q['symbol'] == symbol for q in self.queued_orders):
+                async with self._queued_orders_lock:
+                    has_queued = any(q['symbol'] == symbol for q in self.queued_orders)
+                if has_queued:
                     continue
 
                 ticker = risk_tickers.get(symbol)
@@ -7430,15 +7444,16 @@ class TradingEngine:
                             )
                         except Exception as e:
                             logger.warning(f"Failed to cancel OCO TP {tp_order_id} for {symbol}: {e}")
-                        self.queued_orders = [
-                            q for q in self.queued_orders
-                            if q.get("order_id") != tp_order_id
-                        ]
-                        pos.pop("take_profit_order_id", None)
-                        for q in self.queued_orders:
-                            if q.get("order_id") == sl_order_id:
-                                q["oco_pair"] = None
-                                break
+                        async with self._queued_orders_lock:
+                            self.queued_orders = [
+                                q for q in self.queued_orders
+                                if q.get("order_id") != tp_order_id
+                            ]
+                            pos.pop("take_profit_order_id", None)
+                            for q in self.queued_orders:
+                                if q.get("order_id") == sl_order_id:
+                                    q["oco_pair"] = None
+                                    break
                         if self.notifier:
                             await self.notifier.send_notification(
                                 f"🛑 Stop triggered for {display_symbol} at {current_price:.4f}, "
@@ -7455,13 +7470,14 @@ class TradingEngine:
                             await asyncio.to_thread(self.trader.cancel_order, sl_order_id)
                         except Exception:
                             pass
-                        self.queued_orders = [
-                            q for q in self.queued_orders
-                            if q.get("order_id") != sl_order_id
-                        ]
-                        pos.pop("stop_loss_order_id", None)
-                        pos.pop("stop_loss_order_type", None)
-                        pos.pop("_native_stop_price", None)
+                        async with self._queued_orders_lock:
+                            self.queued_orders = [
+                                q for q in self.queued_orders
+                                if q.get("order_id") != sl_order_id
+                            ]
+                            pos.pop("stop_loss_order_id", None)
+                            pos.pop("stop_loss_order_type", None)
+                            pos.pop("_native_stop_price", None)
                         await self._execute_signal(
                             symbol,
                             Signal(action="SELL", confidence=1.0, reasoning="Stop-loss triggered (risk check)"),
@@ -7481,17 +7497,18 @@ class TradingEngine:
                             )
                         except Exception as e:
                             logger.warning(f"Failed to cancel OCO stop {sl_order_id} for {symbol}: {e}")
-                        self.queued_orders = [
-                            q for q in self.queued_orders
-                            if q.get("order_id") != sl_order_id
-                        ]
-                        pos.pop("stop_loss_order_id", None)
-                        pos.pop("stop_loss_order_type", None)
-                        pos.pop("_native_stop_price", None)
-                        for q in self.queued_orders:
-                            if q.get("order_id") == tp_order_id:
-                                q["oco_pair"] = None
-                                break
+                        async with self._queued_orders_lock:
+                            self.queued_orders = [
+                                q for q in self.queued_orders
+                                if q.get("order_id") != sl_order_id
+                            ]
+                            pos.pop("stop_loss_order_id", None)
+                            pos.pop("stop_loss_order_type", None)
+                            pos.pop("_native_stop_price", None)
+                            for q in self.queued_orders:
+                                if q.get("order_id") == tp_order_id:
+                                    q["oco_pair"] = None
+                                    break
                         if self.notifier:
                             await self.notifier.send_notification(
                                 f"🎯 Take‑profit reached for {display_symbol} at {current_price:.4f}, "
@@ -7508,11 +7525,12 @@ class TradingEngine:
                             await asyncio.to_thread(self.trader.cancel_order, tp_order_id)
                         except Exception:
                             pass
-                        self.queued_orders = [
-                            q for q in self.queued_orders
-                            if q.get("order_id") != tp_order_id
-                        ]
-                        pos.pop("take_profit_order_id", None)
+                        async with self._queued_orders_lock:
+                            self.queued_orders = [
+                                q for q in self.queued_orders
+                                if q.get("order_id") != tp_order_id
+                            ]
+                            pos.pop("take_profit_order_id", None)
                         await self._execute_signal(
                             symbol,
                             Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered (risk check)"),
@@ -7654,13 +7672,16 @@ class TradingEngine:
 
         # Prevent executing new signals if an order is already queued for this symbol
         # (unless it's a manual override)
-        if any(q['symbol'] == symbol for q in self.queued_orders) and not (exit_reason and exit_reason.startswith("manual")):
+        async with self._queued_orders_lock:
+            has_queued = any(q['symbol'] == symbol for q in self.queued_orders)
+        if has_queued and not (exit_reason and exit_reason.startswith("manual")):
             logger.info(f"Skipping {signal.action} for {symbol}: order already queued.")
             return
 
         # If this is a manual sell, cancel any queued SELL order for this symbol to avoid duplicate sells
         if exit_reason and exit_reason.startswith("manual") and signal.action == "SELL":
-            self.queued_orders = [q for q in self.queued_orders if not (q['symbol'] == symbol and q['side'] == 'sell')]
+            async with self._queued_orders_lock:
+                self.queued_orders = [q for q in self.queued_orders if not (q['symbol'] == symbol and q['side'] == 'sell')]
 
         # In live mode, only execute during regular market hours (manual overrides are allowed anytime)
         if not await self._is_market_open() and not (exit_reason and exit_reason.startswith("manual")):
@@ -7672,13 +7693,12 @@ class TradingEngine:
                 )
             return
 
-        async with self._risk_lock:
-            parts = symbol.split("/")
-            if len(parts) != 2:
-                logger.error(f"Invalid symbol format: {symbol}")
-                return
-            base, quote = parts
-            balance = await self._get_cached_balance()
+        parts = symbol.split("/")
+        if len(parts) != 2:
+            logger.error(f"Invalid symbol format: {symbol}")
+            return
+        base, quote = parts
+        balance = await self._get_cached_balance()
 
         if signal.action == "BUY":
             # Safety: never buy when trading is paused
@@ -8250,7 +8270,8 @@ class TradingEngine:
                         'filled_qty': 0,
                         'filled_cost': 0.0,
                     }
-                    self.queued_orders.append(queued_entry)
+                    async with self._queued_orders_lock:
+                        self.queued_orders.append(queued_entry)
                     if self.notifier:
                         await self.notifier.send_notification(
                             f"⏳ BUY {order_type} order for {display_symbol} queued{price_str}",
@@ -8266,7 +8287,8 @@ class TradingEngine:
                         )
                     return
                 logger.info(f"BUY {symbol}: {order}")
-                self._cycle_spent += order['cost']
+                async with self._cycle_spent_lock:
+                    self._cycle_spent += order['cost']
                 # Update or create position
                 # Extract fee info for cost basis tracking
                 fee = order.get('fee', {})
@@ -8621,7 +8643,7 @@ class TradingEngine:
                         order_type_str = signal.order_type
                     price_str = f" at {limit_price}" if limit_price is not None else ""
                     logger.info(f"SELL {order_type_str} order for {symbol} queued{price_str}")
-                    self.queued_orders.append({
+                    _sell_queued_entry = {
                         'symbol': symbol,
                         'side': 'sell',
                         'amount': gross_amount,
@@ -8639,7 +8661,9 @@ class TradingEngine:
                         'queued_at': time.time(),
                         'filled_qty': 0,
                         'filled_cost': 0.0,
-                    })
+                    }
+                    async with self._queued_orders_lock:
+                        self.queued_orders.append(_sell_queued_entry)
                     if self.notifier:
                         await self.notifier.send_notification(
                             f"⏳ SELL {order_type_str} order for {display_symbol} queued{price_str}",
@@ -8692,7 +8716,8 @@ class TradingEngine:
                     pos.pop("_stop_loss_triggered", None)
                     pos.pop("_stop_loss_review_count", None)
                 # Remove position
-                self.positions.pop(symbol, None)
+                async with self._positions_lock:
+                    self.positions.pop(symbol, None)
                 self._strategy_intervals.pop(symbol, None)
                 self._last_strategy_eval.pop(symbol, None)
                 self._last_decisions.pop(symbol, None)
@@ -9662,7 +9687,7 @@ class TradingEngine:
         self._global_risk_multiplier = value
         await asyncio.to_thread(save_trading_state, "global_risk_multiplier", value)
 
-    def _update_position_params(
+    async def _update_position_params(
         self,
         symbol: str,
         params: Dict[str, Any],
@@ -9672,7 +9697,8 @@ class TradingEngine:
         atr: Optional[float],
     ):
         """Update risk parameters of an open position from LLM strategy_params."""
-        pos = self.positions.get(symbol)
+        async with self._positions_lock:
+            pos = self.positions.get(symbol)
         if not pos:
             return
 
@@ -9853,10 +9879,11 @@ class TradingEngine:
                     logger.info(f"Cancelled exit order {order_id} for {symbol}")
                 except Exception as e:
                     logger.warning(f"Failed to cancel exit order {order_id}: {e}")
-                self.queued_orders = [
-                    q for q in self.queued_orders
-                    if q.get("order_id") != order_id
-                ]
+                async with self._queued_orders_lock:
+                    self.queued_orders = [
+                        q for q in self.queued_orders
+                        if q.get("order_id") != order_id
+                    ]
         pos.pop("stop_loss_order_type", None)
         pos.pop("_native_stop_price", None)
 
@@ -9883,10 +9910,11 @@ class TradingEngine:
                 except Exception as e:
                     logger.warning(f"Failed to cancel old exit order {old_id}: {e}")
                 # Remove from queued_orders
-                self.queued_orders = [
-                    q for q in self.queued_orders
-                    if q.get("order_id") != old_id
-                ]
+                async with self._queued_orders_lock:
+                    self.queued_orders = [
+                        q for q in self.queued_orders
+                        if q.get("order_id") != old_id
+                    ]
         # Clear the stored IDs so they are not reused
         pos.pop("stop_loss_order_id", None)
         pos.pop("take_profit_order_id", None)
@@ -9924,7 +9952,7 @@ class TradingEngine:
                         time_in_force="gtc", timeout=60.0
                     )
                 sl_order_id = order["id"]
-                self.queued_orders.append({
+                _sl_queued = {
                     "symbol": symbol,
                     "side": "sell",
                     "amount": qty,
@@ -9944,7 +9972,9 @@ class TradingEngine:
                     "filled_cost": 0.0,
                     "is_exit_order": True,
                     "oco_pair": None,
-                })
+                }
+                async with self._queued_orders_lock:
+                    self.queued_orders.append(_sl_queued)
             except Exception as e:
                 logger.error(f"Failed to place stop-loss order for {symbol}: {e}")
 
@@ -9958,7 +9988,7 @@ class TradingEngine:
                         time_in_force="gtc", timeout=60.0
                     )
                     sl_order_id = order["id"]
-                    self.queued_orders.append({
+                    _trail_queued = {
                         "symbol": symbol,
                         "side": "sell",
                         "amount": qty,
@@ -9978,7 +10008,9 @@ class TradingEngine:
                         "filled_cost": 0.0,
                         "is_exit_order": True,
                         "oco_pair": None,
-                    })
+                    }
+                    async with self._queued_orders_lock:
+                        self.queued_orders.append(_trail_queued)
                 except Exception as e:
                     logger.error(f"Failed to place trailing-stop order for {symbol}: {e}")
 
@@ -10006,7 +10038,7 @@ class TradingEngine:
                     limit_price=tp_price, time_in_force="gtc"
                 )
                 tp_order_id = order["id"]
-                self.queued_orders.append({
+                _tp_queued = {
                     "symbol": symbol,
                     "side": "sell",
                     "amount": qty,
@@ -10026,7 +10058,9 @@ class TradingEngine:
                     "filled_cost": 0.0,
                     "is_exit_order": True,
                     "oco_pair": None,
-                })
+                }
+                async with self._queued_orders_lock:
+                    self.queued_orders.append(_tp_queued)
             except Exception as e:
                 logger.error(f"Failed to place take-profit order for {symbol}: {e}")
 
@@ -10095,17 +10129,18 @@ class TradingEngine:
             # The OCO logic will eventually cancel the old one if the new one fills.
 
         # Capture the old queued entry's limit price BEFORE removing it
-        old_queued = next(
-            (q for q in self.queued_orders if q.get("order_id") == old_order_id),
-            None
-        )
-        old_limit_price = old_queued.get("limit_price") if old_queued else None
+        async with self._queued_orders_lock:
+            old_queued = next(
+                (q for q in self.queued_orders if q.get("order_id") == old_order_id),
+                None
+            )
+            old_limit_price = old_queued.get("limit_price") if old_queued else None
 
-        # Remove the old queued entry
-        self.queued_orders = [
-            q for q in self.queued_orders
-            if q.get("order_id") != old_order_id
-        ]
+            # Remove the old queued entry
+            self.queued_orders = [
+                q for q in self.queued_orders
+                if q.get("order_id") != old_order_id
+            ]
 
         # Place a new stop order
         qty = pos["amount"]
@@ -10128,8 +10163,7 @@ class TradingEngine:
                     time_in_force="gtc", timeout=60.0
                 )
             new_order_id = order["id"]
-            # Add to queued_orders
-            self.queued_orders.append({
+            _replace_queued = {
                 "symbol": symbol,
                 "side": "sell",
                 "amount": qty,
@@ -10149,14 +10183,16 @@ class TradingEngine:
                 "filled_cost": 0.0,
                 "is_exit_order": True,
                 "oco_pair": pos.get("take_profit_order_id"),  # maintain OCO link
-            })
-            # Update OCO link on the take-profit order if it exists
-            tp_order_id = pos.get("take_profit_order_id")
-            if tp_order_id:
-                for q in self.queued_orders:
-                    if q.get("order_id") == tp_order_id:
-                        q["oco_pair"] = new_order_id
-                        break
+            }
+            async with self._queued_orders_lock:
+                self.queued_orders.append(_replace_queued)
+                # Update OCO link on the take-profit order if it exists
+                tp_order_id = pos.get("take_profit_order_id")
+                if tp_order_id:
+                    for q in self.queued_orders:
+                        if q.get("order_id") == tp_order_id:
+                            q["oco_pair"] = new_order_id
+                            break
             # Update position
             pos["stop_loss_order_id"] = new_order_id
             logger.info(f"Placed new stop order {new_order_id} for {symbol} at {new_stop_price:.4f}")
@@ -10281,20 +10317,22 @@ class TradingEngine:
 
             if remaining_amount <= 0 or remaining_net_base <= 0:
                 # Position fully closed (shouldn't normally happen with partial, but handle gracefully)
-                self.positions.pop(symbol, None)
+                async with self._positions_lock:
+                    self.positions.pop(symbol, None)
                 self._strategy_intervals.pop(symbol, None)
                 self._last_strategy_eval.pop(symbol, None)
                 self._pending_entries.pop(symbol, None)
                 await self._remove_symbol_if_paused(symbol)
             else:
-                self.positions[symbol]["amount"] = remaining_amount
-                self.positions[symbol]["cost_basis"] = remaining_cost_basis
-                self.positions[symbol]["net_base"] = remaining_net_base
-                self.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
-                # Clear single partial TP flags
-                self.positions[symbol].pop("partial_tp_triggered", None)
-                self.positions[symbol].pop("_partial_tp_triggered_single", None)
-                self.positions[symbol].pop("_partial_tp_single_review_count", None)
+                async with self._positions_lock:
+                    self.positions[symbol]["amount"] = remaining_amount
+                    self.positions[symbol]["cost_basis"] = remaining_cost_basis
+                    self.positions[symbol]["net_base"] = remaining_net_base
+                    self.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
+                    # Clear single partial TP flags
+                    self.positions[symbol].pop("partial_tp_triggered", None)
+                    self.positions[symbol].pop("_partial_tp_triggered_single", None)
+                    self.positions[symbol].pop("_partial_tp_single_review_count", None)
 
                 # Check if remaining amount is dust
                 is_dust = False
@@ -10482,17 +10520,18 @@ class TradingEngine:
                 self._pending_entries.pop(symbol, None)
                 await self._remove_symbol_if_paused(symbol)
             else:
-                self.positions[symbol]["amount"] = remaining_amount
-                self.positions[symbol]["cost_basis"] = remaining_cost_basis
-                self.positions[symbol]["net_base"] = remaining_net_base
-                self.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
-                # Clear partial TP review flags for this level
-                self.positions[symbol].pop("_partial_tp_triggered", None)
-                self.positions[symbol].pop("_partial_tp_review_count", None)
-                triggered_levels = self.positions[symbol].get("_partial_tp_triggered_levels", [])
-                self.positions[symbol]["_partial_tp_triggered_levels"] = [
-                    x for x in triggered_levels if x != level_index
-                ]
+                async with self._positions_lock:
+                    self.positions[symbol]["amount"] = remaining_amount
+                    self.positions[symbol]["cost_basis"] = remaining_cost_basis
+                    self.positions[symbol]["net_base"] = remaining_net_base
+                    self.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
+                    # Clear partial TP review flags for this level
+                    self.positions[symbol].pop("_partial_tp_triggered", None)
+                    self.positions[symbol].pop("_partial_tp_review_count", None)
+                    triggered_levels = self.positions[symbol].get("_partial_tp_triggered_levels", [])
+                    self.positions[symbol]["_partial_tp_triggered_levels"] = [
+                        x for x in triggered_levels if x != level_index
+                    ]
 
                 # Check if remaining amount is dust
                 is_dust = False
@@ -10647,7 +10686,8 @@ class TradingEngine:
             await self._cancel_exit_orders(symbol)
 
             # Remove the now-empty position
-            self.positions.pop(symbol, None)
+            async with self._positions_lock:
+                self.positions.pop(symbol, None)
             self._strategy_intervals.pop(symbol, None)
             self._last_strategy_eval.pop(symbol, None)
             await self._remove_symbol_if_paused(symbol)
@@ -10750,7 +10790,8 @@ class TradingEngine:
                     paper_order = await asyncio.to_thread(self.trader.get_order, order_id)
                     if paper_order is None:
                         logger.warning(f"Order {order_id} not found for {queued['symbol']}, removing from queue.")
-                        self.queued_orders.remove(queued)
+                        async with self._queued_orders_lock:
+                            self.queued_orders.remove(queued)
                         continue
 
                     status = paper_order.status
@@ -10863,10 +10904,11 @@ class TradingEngine:
                                     logger.info(f"Cancelled OCO pair {oco_pair_id} for {queued['symbol']}")
                                 except Exception as e:
                                     logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
-                                self.queued_orders = [
-                                    q for q in self.queued_orders
-                                    if q.get("order_id") != oco_pair_id
-                                ]
+                                async with self._queued_orders_lock:
+                                    self.queued_orders = [
+                                        q for q in self.queued_orders
+                                        if q.get("order_id") != oco_pair_id
+                                    ]
                             
                             # If the fill was partial, cancel the remaining part of this exit order
                             # to avoid leaving a dangling order that is no longer linked to the position.
@@ -10877,10 +10919,11 @@ class TradingEngine:
                                     logger.info(f"Cancelled remaining part of partially filled exit order {order_id} for {queued['symbol']}")
                                 except Exception as e:
                                     logger.warning(f"Failed to cancel remaining part of exit order {order_id}: {e}")
-                                self.queued_orders = [
-                                    q for q in self.queued_orders
-                                    if q.get("order_id") != order_id
-                                ]
+                                async with self._queued_orders_lock:
+                                    self.queued_orders = [
+                                        q for q in self.queued_orders
+                                        if q.get("order_id") != order_id
+                                    ]
 
                             pos = self.positions.get(queued["symbol"])
                             if pos:
@@ -10934,7 +10977,8 @@ class TradingEngine:
 
                     if status == 'filled':
                         logger.info(f"Queued limit order {order_id} for {queued['symbol']} completely filled.")
-                        self.queued_orders.remove(queued)
+                        async with self._queued_orders_lock:
+                            self.queued_orders.remove(queued)
 
                     elif status in ('rejected', 'canceled', 'cancelled', 'expired'):
                         logger.warning(
@@ -10952,7 +10996,8 @@ class TradingEngine:
                                     "reason": f"Order {status}",
                                 }
                             )
-                        self.queued_orders.remove(queued)
+                        async with self._queued_orders_lock:
+                            self.queued_orders.remove(queued)
                         if queued.get("is_exit_order"):
                             oco_pair_id = queued.get("oco_pair")
                             if oco_pair_id:
@@ -10961,10 +11006,11 @@ class TradingEngine:
                                     logger.info(f"Cancelled OCO pair {oco_pair_id} for {status} exit order {order_id}")
                                 except Exception as e:
                                     logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
-                                self.queued_orders = [
-                                    q for q in self.queued_orders
-                                    if q.get("order_id") != oco_pair_id
-                                ]
+                                async with self._queued_orders_lock:
+                                    self.queued_orders = [
+                                        q for q in self.queued_orders
+                                        if q.get("order_id") != oco_pair_id
+                                    ]
                             pos = self.positions.get(queued["symbol"])
                             if pos:
                                 pos.pop("stop_loss_order_id", None)
@@ -11111,7 +11157,8 @@ class TradingEngine:
         trade_dict['buy_reasoning'] = (signal_dict.get('reasoning', '') or '')[:200]
         self.trade_history.append(trade_dict)
         self._balance_cache = None
-        self._cycle_spent += trade_dict['cost']
+        async with self._cycle_spent_lock:
+            self._cycle_spent += trade_dict['cost']
         await asyncio.to_thread(insert_trade, trade_dict)
         await self._save_state()
         if self.notifier:
@@ -11205,40 +11252,43 @@ class TradingEngine:
                     self.cooldown_durations[symbol] = pos.get("cooldown_after_loss_seconds", 0)
                 pos.pop("_stop_loss_triggered", None)
                 pos.pop("_stop_loss_review_count", None)
-                self.positions.pop(symbol, None)
+                async with self._positions_lock:
+                    self.positions.pop(symbol, None)
                 self._strategy_intervals.pop(symbol, None)
                 self._last_strategy_eval.pop(symbol, None)
                 self._last_decisions.pop(symbol, None)
                 self._pending_entries.pop(symbol, None)
                 await self._remove_symbol_if_paused(symbol)
             else:
-                self.positions[symbol]["amount"] = remaining_amount
-                self.positions[symbol]["cost_basis"] = remaining_cost_basis
-                self.positions[symbol]["net_base"] = remaining_net_base
-                self.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
+                async with self._positions_lock:
+                    self.positions[symbol]["amount"] = remaining_amount
+                    self.positions[symbol]["cost_basis"] = remaining_cost_basis
+                    self.positions[symbol]["net_base"] = remaining_net_base
+                    self.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
 
                 # Replace exit orders for the remaining amount
                 from src.strategies.base import Signal
-                dummy_params = {
-                    "trailing_take_profit": self.positions[symbol].get("trailing_take_profit", False),
-                    "partial_take_profit_levels": self.positions[symbol].get("partial_take_profit_levels"),
-                    "partial_take_profit_pct": self.positions[symbol].get("partial_take_profit_pct"),
-                }
-                dummy_signal = Signal(
-                    action="BUY",
-                    confidence=1.0,
-                    reasoning="Replacing exit orders after partial sell fill",
-                    stop_loss_order_type=self.positions[symbol].get("stop_loss_order_type"),
-                    stop_loss_stop_price=self.positions[symbol].get("stop_loss"),
-                    stop_loss_limit_price=None,
-                    take_profit_order_type=self.positions[symbol].get("take_profit_order_type"),
-                    take_profit_limit_price=self.positions[symbol].get("take_profit"),
-                    strategy_params=dummy_params,
-                )
-                exit_prices = {
-                    "stop_loss_price": self.positions[symbol].get("stop_loss"),
-                    "take_profit_price": self.positions[symbol].get("take_profit"),
-                }
+                async with self._positions_lock:
+                    dummy_params = {
+                        "trailing_take_profit": self.positions[symbol].get("trailing_take_profit", False),
+                        "partial_take_profit_levels": self.positions[symbol].get("partial_take_profit_levels"),
+                        "partial_take_profit_pct": self.positions[symbol].get("partial_take_profit_pct"),
+                    }
+                    dummy_signal = Signal(
+                        action="BUY",
+                        confidence=1.0,
+                        reasoning="Replacing exit orders after partial sell fill",
+                        stop_loss_order_type=self.positions[symbol].get("stop_loss_order_type"),
+                        stop_loss_stop_price=self.positions[symbol].get("stop_loss"),
+                        stop_loss_limit_price=None,
+                        take_profit_order_type=self.positions[symbol].get("take_profit_order_type"),
+                        take_profit_limit_price=self.positions[symbol].get("take_profit"),
+                        strategy_params=dummy_params,
+                    )
+                    exit_prices = {
+                        "stop_loss_price": self.positions[symbol].get("stop_loss"),
+                        "take_profit_price": self.positions[symbol].get("take_profit"),
+                    }
                 await self._place_exit_orders(symbol, dummy_signal, exit_prices, self.positions[symbol].get("timeframe"))
         else:
             # Full fill (non-partial) – original logic
@@ -11257,7 +11307,8 @@ class TradingEngine:
             if pos:
                 pos.pop("_stop_loss_triggered", None)
                 pos.pop("_stop_loss_review_count", None)
-            self.positions.pop(symbol, None)
+            async with self._positions_lock:
+                self.positions.pop(symbol, None)
             self._strategy_intervals.pop(symbol, None)
             self._last_strategy_eval.pop(symbol, None)
             self._last_decisions.pop(symbol, None)
