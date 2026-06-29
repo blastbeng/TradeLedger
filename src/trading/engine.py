@@ -326,8 +326,8 @@ class TradingEngine:
                             "name": db_entry.get("name", db_entry["symbol"]),
                             "last_price": None,
                             "change_pct": 0.0,
-                            "coupon": None,
-                            "maturity": None,
+                            "coupon": db_entry.get("coupon"),
+                            "maturity": db_entry.get("maturity"),
                         })
                         existing_isins.add(db_entry["symbol"])
             except Exception as e:
@@ -1413,7 +1413,17 @@ class TradingEngine:
                 btp_bonds = await self._get_btp_bonds()
                 for b in btp_bonds:
                     if b["isin"] == base:
-                        return b["name"]
+                        name = b.get("name") or base
+                        if name and name != b["isin"]:
+                            return name
+            except Exception:
+                pass
+            # Fallback: try DB directly
+            try:
+                from src.database import get_symbol_name_from_db
+                db_name = await asyncio.to_thread(get_symbol_name_from_db, base)
+                if db_name:
+                    return db_name
             except Exception:
                 pass
             return base

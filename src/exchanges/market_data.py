@@ -1906,20 +1906,22 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
                         if "Scadenza" in key:
                             details["maturity"] = val
                         elif "Tasso Cedola su base Annua" in key:
-                            val_cleaned = val.replace(",", ".")
-                            try:
-                                details["coupon"] = float(val_cleaned)
-                            except ValueError:
-                                details["coupon"] = val
+                            if val:
+                                val_cleaned = val.replace(",", ".")
+                                try:
+                                    details["coupon"] = float(val_cleaned)
+                                except ValueError:
+                                    details["coupon"] = val
+                            # If empty, leave coupon unset (zero-coupon bond)
                         elif "Denominazione" in key:
                             details["name"] = val
 
-            # Cache the result for 24 hours (bond details rarely change)
-            if details:
-                try:
-                    redis_client.set(cache_key, json.dumps(details), ex=86400)
-                except Exception:
-                    pass
+            # Cache the result (24h for populated details, 1h for empty to allow retry)
+            cache_ttl = 86400 if details else 3600
+            try:
+                redis_client.set(cache_key, json.dumps(details), ex=cache_ttl)
+            except Exception:
+                pass
 
             return details
     except Exception as e:

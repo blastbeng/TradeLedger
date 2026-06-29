@@ -1427,10 +1427,17 @@ def get_all_discovered_symbols() -> List[Dict[str, Any]]:
     """Return all discovered symbols from the database."""
     conn = get_connection()
     try:
-        sql = _adapt_sql("SELECT symbol, isin, asset_type, name FROM discovered_symbols")
+        sql = _adapt_sql("SELECT symbol, isin, asset_type, name, maturity, coupon FROM discovered_symbols")
         rows = conn.execute(sql).fetchall()
         return [
-            {"symbol": row["symbol"], "isin": row["isin"], "asset_type": row["asset_type"], "name": row["name"]}
+            {
+                "symbol": row["symbol"],
+                "isin": row["isin"],
+                "asset_type": row["asset_type"],
+                "name": row["name"],
+                "maturity": row["maturity"],
+                "coupon": row["coupon"],
+            }
             for row in rows
         ]
     finally:
