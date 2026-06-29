@@ -144,6 +144,7 @@ class TradingEngine:
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
+        self._reeval_pending_force: bool = False
         self._force_reeval: bool = False
         self._user_forced_reeval: bool = False
         self._pre_market_reeval: bool = False
@@ -227,12 +228,17 @@ class TradingEngine:
         if force:
             self._force_reeval = True
             self._user_forced_reeval = True
+            if self._reevaluate_running:
+                self._reeval_pending_force = True
+                logger.info("Re-evaluation already running; queued forced re-evaluation for after current cycle completes.")
             # Invalidate correlation matrix cache on forced re-evaluation
             # so the LLM sees fresh correlations after significant market changes
             try:
                 self.redis.delete("reeval:correlation_matrix")
             except Exception:
                 pass
+        elif self._reevaluate_running:
+            logger.info("Re-evaluation already running; queued re-evaluation for after current cycle completes.")
         self._reeval_trigger.set()
 
     async def force_download_all_assets(self):
@@ -630,16 +636,18 @@ class TradingEngine:
         await asyncio.sleep(settings.INITIAL_EVALUATION_DELAY_SECONDS)
         while self._running:
             if self._reevaluate_running:
-                logger.info("Symbol re-evaluation still running; forced re-eval will be picked up when current cycle finishes.")
-                await asyncio.sleep(10)
+                # Wait briefly for the current re-evaluation to finish.
+                # Use a short sleep so queued triggers are picked up quickly.
+                await asyncio.sleep(1)
                 continue
             self._reevaluate_running = True
             try:
                 # Always run re-evaluation, even if paused, to keep generating signals
                 reeval_start_time = time.time()
                 logger.info("Starting symbol re-evaluation...")
-                is_forced = self._force_reeval
+                is_forced = self._force_reeval or self._reeval_pending_force
                 self._force_reeval = False
+                self._reeval_pending_force = False
                 await self._reevaluate_symbols(force=is_forced)
                 elapsed = time.time() - reeval_start_time
                 logger.info(f"Symbol re-evaluation complete (took {elapsed:.1f}s).")
