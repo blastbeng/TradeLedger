@@ -2480,7 +2480,9 @@ class TradingEngine:
     async def _save_state_impl(self):
         """Actual state persistence (must be called under _state_lock)."""
         await asyncio.to_thread(save_trading_state, "current_symbols", self.current_symbols)
-        await asyncio.to_thread(save_trading_state, "positions", self.positions)
+        async with self._positions_lock:
+            positions_snapshot = dict(self.positions)
+        await asyncio.to_thread(save_trading_state, "positions", positions_snapshot)
         await asyncio.to_thread(save_trading_state, "queued_orders", self.queued_orders)
         await asyncio.to_thread(save_trading_state, "recent_signals", self.recent_signals)
         # Serialize pending entries (convert Signal objects to dicts for JSON storage)
@@ -5993,11 +5995,12 @@ class TradingEngine:
                     # LLM decided to extend – update position and clear the flag
                     logger.info(f"LLM extended max hold time for {symbol} to {new_max_hold}s")
                     if symbol in self.positions:
-                        self.positions[symbol]["max_hold_time_seconds"] = new_max_hold
-                        # IMPORTANT: Reset the entry timestamp so the new hold period starts now
-                        self.positions[symbol]["timestamp"] = int(time.time() * 1000)
-                        self.positions[symbol].pop("_max_hold_expired", None)
-                        self.positions[symbol].pop("_max_hold_expired_count", None)
+                        async with self._positions_lock:
+                            self.positions[symbol]["max_hold_time_seconds"] = new_max_hold
+                            # IMPORTANT: Reset the entry timestamp so the new hold period starts now
+                            self.positions[symbol]["timestamp"] = int(time.time() * 1000)
+                            self.positions[symbol].pop("_max_hold_expired", None)
+                            self.positions[symbol].pop("_max_hold_expired_count", None)
                     # Also update current_symbols entry_time for consistency
                     for symbol_entry in self.current_symbols:
                         if symbol_entry["symbol"] == symbol:
@@ -6073,9 +6076,10 @@ class TradingEngine:
                         f"new stop_loss_pct={new_stop_pct:.4%}"
                     )
                     if symbol in self.positions:
-                        self.positions[symbol]["stop_loss"] = current_price * (1 - new_stop_pct)
-                        self.positions[symbol].pop("_stop_loss_triggered", None)
-                        self.positions[symbol].pop("_stop_loss_review_count", None)
+                        async with self._positions_lock:
+                            self.positions[symbol]["stop_loss"] = current_price * (1 - new_stop_pct)
+                            self.positions[symbol].pop("_stop_loss_triggered", None)
+                            self.positions[symbol].pop("_stop_loss_review_count", None)
                         # Also apply any other updated parameters from the LLM
                         await self._update_position_params(
                             symbol,
@@ -6130,8 +6134,9 @@ class TradingEngine:
             elif stop_loss_triggered and signal.action == "SELL":
                 # LLM decided to sell – clear the flag and let the normal SELL execution proceed
                 if symbol in self.positions:
-                    self.positions[symbol].pop("_stop_loss_triggered", None)
-                    self.positions[symbol].pop("_stop_loss_review_count", None)
+                    async with self._positions_lock:
+                        self.positions[symbol].pop("_stop_loss_triggered", None)
+                        self.positions[symbol].pop("_stop_loss_review_count", None)
                 # Continue to the normal SELL execution below (do not return)
 
             # --- Handle take-profit-triggered LLM decision ---
@@ -6146,9 +6151,10 @@ class TradingEngine:
                         f"new take_profit_pct={new_tp_pct:.4%}"
                     )
                     if symbol in self.positions:
-                        self.positions[symbol]["take_profit"] = current_price * (1 + new_tp_pct)
-                        self.positions[symbol].pop("_take_profit_triggered", None)
-                        self.positions[symbol].pop("_take_profit_review_count", None)
+                        async with self._positions_lock:
+                            self.positions[symbol]["take_profit"] = current_price * (1 + new_tp_pct)
+                            self.positions[symbol].pop("_take_profit_triggered", None)
+                            self.positions[symbol].pop("_take_profit_review_count", None)
                         # Also apply any other updated parameters from the LLM
                         await self._update_position_params(
                             symbol,
@@ -6203,8 +6209,9 @@ class TradingEngine:
             elif take_profit_triggered and signal.action == "SELL":
                 # LLM decided to sell – clear the flag and let the normal SELL execution proceed
                 if symbol in self.positions:
-                    self.positions[symbol].pop("_take_profit_triggered", None)
-                    self.positions[symbol].pop("_take_profit_review_count", None)
+                    async with self._positions_lock:
+                        self.positions[symbol].pop("_take_profit_triggered", None)
+                        self.positions[symbol].pop("_take_profit_review_count", None)
                 # Continue to the normal SELL execution below (do not return)
 
             # --- Handle partial TP triggered ---
@@ -6212,14 +6219,15 @@ class TradingEngine:
                 new_levels = params.get("partial_take_profit_levels") if params else None
                 if new_levels is not None:
                     # LLM provided updated levels – apply them and clear triggers
-                    self.positions[symbol]["partial_take_profit_levels"] = new_levels
-                    self.positions[symbol].pop("_partial_tp_triggered", None)
-                    self.positions[symbol].pop("_partial_tp_triggered_single", None)
-                    self.positions[symbol].pop("_partial_tp_review_count", None)
-                    self.positions[symbol].pop("_partial_tp_single_review_count", None)
-                    self.positions[symbol].pop("_partial_tp_triggered_levels", None)
-                    self.positions[symbol]["partial_tp_levels_triggered"] = []
-                    self.positions[symbol]["partial_tp_depth_wait_start"] = {}
+                    async with self._positions_lock:
+                        self.positions[symbol]["partial_take_profit_levels"] = new_levels
+                        self.positions[symbol].pop("_partial_tp_triggered", None)
+                        self.positions[symbol].pop("_partial_tp_triggered_single", None)
+                        self.positions[symbol].pop("_partial_tp_review_count", None)
+                        self.positions[symbol].pop("_partial_tp_single_review_count", None)
+                        self.positions[symbol].pop("_partial_tp_triggered_levels", None)
+                        self.positions[symbol]["partial_tp_levels_triggered"] = []
+                        self.positions[symbol]["partial_tp_depth_wait_start"] = {}
                     logger.info(f"LLM updated partial TP levels for {symbol}")
                     # Also apply any other updated parameters from the LLM
                     await self._update_position_params(
@@ -6241,31 +6249,35 @@ class TradingEngine:
                     logger.info(f"LLM did not update partial TP levels for {symbol}, executing triggered level(s)")
                     if self.positions[symbol].get("_partial_tp_triggered_single"):
                         await self._execute_partial_tp_single(symbol, current_price, None, ticker)
-                        self.positions[symbol].pop("_partial_tp_triggered_single", None)
-                        self.positions[symbol].pop("_partial_tp_single_review_count", None)
+                        async with self._positions_lock:
+                            self.positions[symbol].pop("_partial_tp_triggered_single", None)
+                            self.positions[symbol].pop("_partial_tp_single_review_count", None)
                     if self.positions[symbol].get("_partial_tp_triggered"):
                         for lvl in self.positions[symbol].get("_partial_tp_triggered_levels", []):
                             await self._execute_partial_tp_level(symbol, lvl, current_price, None, ticker)
-                        self.positions[symbol].pop("_partial_tp_triggered", None)
-                        self.positions[symbol].pop("_partial_tp_review_count", None)
-                        self.positions[symbol].pop("_partial_tp_triggered_levels", None)
+                        async with self._positions_lock:
+                            self.positions[symbol].pop("_partial_tp_triggered", None)
+                            self.positions[symbol].pop("_partial_tp_review_count", None)
+                            self.positions[symbol].pop("_partial_tp_triggered_levels", None)
                     return
 
             elif partial_tp_triggered and signal.action == "SELL":
                 # LLM decided to sell the entire position – clear partial TP flags and let normal SELL proceed
-                self.positions[symbol].pop("_partial_tp_triggered", None)
-                self.positions[symbol].pop("_partial_tp_triggered_single", None)
-                self.positions[symbol].pop("_partial_tp_review_count", None)
-                self.positions[symbol].pop("_partial_tp_single_review_count", None)
-                self.positions[symbol].pop("_partial_tp_triggered_levels", None)
+                async with self._positions_lock:
+                    self.positions[symbol].pop("_partial_tp_triggered", None)
+                    self.positions[symbol].pop("_partial_tp_triggered_single", None)
+                    self.positions[symbol].pop("_partial_tp_review_count", None)
+                    self.positions[symbol].pop("_partial_tp_single_review_count", None)
+                    self.positions[symbol].pop("_partial_tp_triggered_levels", None)
                 # continue to normal SELL execution below
 
             # --- Handle dust sweep triggered ---
             if dust_sweep_triggered and signal.action == "HOLD":
-                self.positions[symbol].pop("_dust_sweep_triggered", None)
-                # Record when the LLM first decided to keep the dust (for time-based auto-sell)
-                if self.positions[symbol].get("_dust_keep_since") is None:
-                    self.positions[symbol]["_dust_keep_since"] = time.time()
+                async with self._positions_lock:
+                    self.positions[symbol].pop("_dust_sweep_triggered", None)
+                    # Record when the LLM first decided to keep the dust (for time-based auto-sell)
+                    if self.positions[symbol].get("_dust_keep_since") is None:
+                        self.positions[symbol]["_dust_keep_since"] = time.time()
                 # Do NOT reset _dust_sweep_review_count — let it accumulate so
                 # max_dust_sweep_reviews eventually forces a sell if the LLM
                 # keeps saying HOLD.
@@ -6277,8 +6289,9 @@ class TradingEngine:
                     )
                 return
             elif dust_sweep_triggered and signal.action == "SELL":
-                self.positions[symbol].pop("_dust_sweep_triggered", None)
-                self.positions[symbol].pop("_dust_sweep_review_count", None)
+                async with self._positions_lock:
+                    self.positions[symbol].pop("_dust_sweep_triggered", None)
+                    self.positions[symbol].pop("_dust_sweep_review_count", None)
                 logger.info(f"LLM decided to sell dust for {symbol}")
                 await self._sweep_dust(symbol)
                 return
