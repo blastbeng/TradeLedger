@@ -658,3 +658,83 @@ def format_backtest_summary(stats: Dict[str, Any]) -> str:
         f"Max consec. losses: {stats['max_consecutive_losses']}, "
         f"Partial TPs: {stats.get('partial_tp_count', 0)}"
     )
+
+
+def walk_forward_backtest(
+    candles: List[List],
+    num_windows: int = 5,
+    **backtest_kwargs,
+) -> Dict[str, Any]:
+    """Run walk-forward analysis by splitting candles into non-overlapping windows.
+
+    Runs backtest_strategy on each window separately, then combines all trades
+    for aggregate out-of-sample stats.
+    """
+    if not candles or len(candles) < num_windows * 10:
+        return {"insufficient_data": True, "per_window": [], "combined_stats": _empty_result()}
+
+    backtest_kwargs.pop("_return_trades", None)
+
+    window_size = len(candles) // num_windows
+    per_window_stats = []
+    all_trades = []
+
+    for i in range(num_windows):
+        start = i * window_size
+        end = (i + 1) * window_size if i < num_windows - 1 else len(candles)
+        window_candles = candles[start:end]
+        if len(window_candles) < 5:
+            continue
+
+        result = backtest_strategy(
+            candles=window_candles,
+            _return_trades=True,
+            **backtest_kwargs,
+        )
+        if isinstance(result, tuple):
+            window_trades, window_stats = result
+            all_trades.extend(window_trades)
+        else:
+            window_stats = result
+
+        per_window_stats.append({
+            "window": i + 1,
+            "start_ts": window_candles[0][0],
+            "end_ts": window_candles[-1][0],
+            "candle_count": len(window_candles),
+            **window_stats,
+        })
+
+    buy_and_hold_pct = 0.0
+    if len(candles) >= 2 and candles[0][4] > 0:
+        buy_and_hold_pct = (candles[-1][4] - candles[0][4]) / candles[0][4]
+    combined = _compute_stats(all_trades, buy_and_hold_pct=buy_and_hold_pct) if all_trades else _empty_result()
+
+    return {
+        "per_window": per_window_stats,
+        "combined_stats": combined,
+        "num_windows": num_windows,
+        "insufficient_data": False,
+    }
+
+
+def format_walk_forward_summary(wf_stats: Dict[str, Any]) -> str:
+    if wf_stats.get("insufficient_data"):
+        return "Insufficient data for walk-forward analysis."
+    per_window = wf_stats.get("per_window", [])
+    if not per_window:
+        return "No walk-forward windows could be computed."
+    lines = [f"Walk-forward ({len(per_window)} windows):"]
+    for w in per_window:
+        lines.append(
+            f"  W{w['window']}: {w.get('total_trades', 0)} trades, "
+            f"WR: {w.get('win_rate', 0)*100:.1f}%, "
+            f"P&L: {w.get('total_pnl_pct', 0)*100:+.2f}%"
+        )
+    combined = wf_stats.get("combined_stats", {})
+    lines.append(
+        f"  Combined: {combined.get('total_trades', 0)} trades, "
+        f"WR: {combined.get('win_rate', 0)*100:.1f}%, "
+        f"P&L: {combined.get('total_pnl_pct', 0)*100:+.2f}%"
+    )
+    return "\n".join(lines)

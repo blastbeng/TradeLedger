@@ -49,7 +49,7 @@ except ImportError:
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
-from src.strategies.backtester import backtest_strategy, format_backtest_summary
+from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary
 from src.utils.redis_client import get_redis_client
 from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices
 
@@ -12016,9 +12016,7 @@ class TradingEngine:
             pass
 
         if bt_candles and len(bt_candles) >= 20:
-            backtest_stats = await asyncio.to_thread(
-                backtest_strategy,
-                candles=bt_candles,
+            bt_kwargs = dict(
                 stop_loss_pct=bt_sl_pct,
                 take_profit_pct=bt_tp_pct,
                 stop_loss_atr_multiple=bt_sl_atr_mult,
@@ -12049,7 +12047,22 @@ class TradingEngine:
                 backtest_entry_config=bt_entry_config,
                 direction="long",
             )
+            backtest_stats = await asyncio.to_thread(
+                backtest_strategy,
+                candles=bt_candles,
+                **bt_kwargs,
+            )
             bt_summary = format_backtest_summary(backtest_stats)
+
+            if len(bt_candles) >= 100:
+                wf_stats = await asyncio.to_thread(
+                    walk_forward_backtest,
+                    candles=bt_candles,
+                    num_windows=5,
+                    **bt_kwargs,
+                )
+                bt_summary = bt_summary + "\n" + format_walk_forward_summary(wf_stats)
+
             return backtest_stats, bt_summary
         return None, "Insufficient data for backtest (need ≥20 candles)."
 
