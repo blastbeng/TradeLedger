@@ -4972,6 +4972,249 @@ class TradingEngine:
             "global_min_rr": global_min_rr,
         }
 
+    async def _run_backtest_and_final_decision(
+        self,
+        symbol: str,
+        assigned_tf: str,
+        tf_seconds: int,
+        current_price: float,
+        atr: Optional[float],
+        historical_ohlcv: Optional[List[List]],
+        raw_candles: Optional[List[List]],
+        base_balance: float,
+        is_btp: bool,
+        trading_paused: bool,
+        strategy_model_type: str,
+        effective_temp: float,
+        preliminary_signal: Signal,
+        display_symbol: str,
+        ticker: Dict[str, Any],
+    ) -> Tuple[Signal, str, Optional[str], Optional[str]]:
+        """Run backtests and the Step 2 LLM call to produce the final signal.
+
+        Returns (final_signal, combined_backtest_summary, llm_provider, llm_model).
+        """
+        combined_bt_summary = ""
+        llm_provider = None
+        llm_model = None
+
+        if preliminary_signal.action in ("BUY", "HOLD"):
+            # Determine which variant param sets to backtest
+            variants_to_test = []
+            if preliminary_signal.backtest_variants:
+                variants_to_test = list(preliminary_signal.backtest_variants)
+            else:
+                # Fallback: use the preliminary signal's own params as a single variant
+                variants_to_test.append(preliminary_signal.strategy_params or {})
+            # Safety cap: limit to 10 variants to prevent excessive backtest time
+            MAX_BACKTEST_VARIANTS = 10
+            if len(variants_to_test) > MAX_BACKTEST_VARIANTS:
+                logger.warning(
+                    f"LLM returned {len(variants_to_test)} backtest variants for {symbol}, "
+                    f"capping to {MAX_BACKTEST_VARIANTS}"
+                )
+                variants_to_test = variants_to_test[:MAX_BACKTEST_VARIANTS]
+
+            # Limit number of variants based on available data length
+            source_candles = historical_ohlcv or raw_candles or []
+            if source_candles and len(source_candles) < 50:
+                variants_to_test = variants_to_test[:2]
+            elif source_candles and len(source_candles) < 100:
+                variants_to_test = variants_to_test[:3]
+
+            # Run backtest variants in parallel (concurrency-limited by semaphore)
+            async def _run_single_variant(vp: Dict[str, Any]) -> Dict[str, Any]:
+                try:
+                    bt_stats, bt_summary = await self._run_backtest_variant(
+                        symbol=symbol,
+                        variant_params=vp,
+                        preliminary_signal=preliminary_signal,
+                        atr=atr,
+                        current_price=current_price,
+                        tf_secs=tf_seconds,
+                        assigned_tf=assigned_tf,
+                        historical_ohlcv=historical_ohlcv,
+                        raw_candles=raw_candles,
+                        base_balance=base_balance,
+                        is_btp=is_btp,
+                    )
+                    if bt_stats is not None:
+                        return {"variant_params": vp, "summary": bt_summary, "stats": bt_stats}
+                    else:
+                        return {"variant_params": vp, "summary": bt_summary or "Insufficient data for backtest.", "stats": {}}
+                except Exception as e:
+                    logger.warning(f"Backtest variant failed for {symbol}: {e}")
+                    return {"variant_params": vp, "summary": f"Backtest error: {e}", "stats": {}}
+
+            backtest_results = list(await asyncio.gather(*[_run_single_variant(vp) for vp in variants_to_test]))
+
+            # Log results after all variants complete
+            for i, r in enumerate(backtest_results):
+                if r["stats"]:
+                    logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: {r['summary']}")
+                else:
+                    logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: insufficient data")
+
+            # Build combined backtest summary for notifications
+            combined_bt_summary = " | ".join(
+                f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
+            ) if backtest_results else "No backtest performed"
+
+            if backtest_results:
+                # Build Step 2 prompt with ALL backtest results
+                total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
+                step2_prompt = build_final_decision_prompt(
+                    symbol=symbol,
+                    ticker=ticker,
+                    preliminary_decision={
+                        "action": preliminary_signal.action,
+                        "confidence": preliminary_signal.confidence,
+                        "reasoning": preliminary_signal.reasoning,
+                        "strategy_params": preliminary_signal.strategy_params,
+                        "timeframe": assigned_tf,
+                    },
+                    backtest_results=backtest_results,
+                    base_currency=self.base_currency,
+                    trading_paused=trading_paused,
+                    total_variants_proposed=total_variants_proposed,
+                )
+                # Append position info if exists
+                if symbol in self.positions:
+                    pos = self.positions[symbol]
+                    step2_prompt += (
+                        f"\n**Existing Position:** You already hold {pos['amount']:.6f} "
+                        f"at entry {pos['price']:.4f}. A BUY will ADD to this position (scale in).\n"
+                    )
+
+                # Call LLM for Step 2
+                try:
+                    step2_result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            get_cached_llm_response,
+                            compact_prompt(step2_prompt),
+                            COMPACTED_SYSTEM_PROMPT,
+                            60,
+                            model_type=strategy_model_type,
+                            temperature=effective_temp,
+                        ),
+                        timeout=settings.LLM_TIMEOUT
+                    )
+                    step2_response = step2_result["response"]
+                    llm_provider = step2_result["provider"]
+                    llm_model = step2_result["model"]
+                    logger.info(f"LLM Step 2 call completed for {symbol} (provider={llm_provider}, model={llm_model})")
+
+                    # Parse Step 2 response
+                    try:
+                        final_strategy = create_strategy_from_llm(step2_response)
+                    except ValueError:
+                        # Retry with correction prompt
+                        correction = (
+                            "Your previous response was not valid JSON. "
+                            "Output ONLY a single JSON object. "
+                            "Here is the request:\n\n" + step2_prompt
+                        )
+                        try:
+                            retry_result = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    get_cached_llm_response,
+                                    compact_prompt(correction),
+                                    COMPACTED_SYSTEM_PROMPT, 30,
+                                    model_type="actuator",
+                                    temperature=effective_temp,
+                                ),
+                                timeout=settings.LLM_TIMEOUT
+                            )
+                            final_strategy = create_strategy_from_llm(retry_result["response"])
+                            step2_response = retry_result["response"]
+                            llm_provider = retry_result["provider"]
+                            llm_model = retry_result["model"]
+                        except Exception:
+                            logger.error(f"Step 2 JSON parse retry failed for {symbol}. Using preliminary decision.")
+                            final_strategy = None
+
+                    if final_strategy is not None:
+                        signal = final_strategy.generate_signal({})
+                        signal.model_type = strategy_model_type
+                        signal.llm_provider = llm_provider
+                        signal.llm_model = llm_model
+                        signal.backtest_summary = combined_bt_summary
+                    else:
+                        signal = preliminary_signal
+                        signal.backtest_summary = combined_bt_summary
+                    # Carry over execution-critical fields from Step 1 if not provided in Step 2
+                    if signal.action == "BUY":
+                        # Execution parameters
+                        if signal.entry_condition is None and preliminary_signal.entry_condition is not None:
+                            signal.entry_condition = preliminary_signal.entry_condition
+                        if signal.order_type is None and preliminary_signal.order_type is not None:
+                            signal.order_type = preliminary_signal.order_type
+                        if signal.limit_price is None and preliminary_signal.limit_price is not None:
+                            signal.limit_price = preliminary_signal.limit_price
+                        if signal.stop_price is None and preliminary_signal.stop_price is not None:
+                            signal.stop_price = preliminary_signal.stop_price
+                        if signal.stop_loss_order_type is None and preliminary_signal.stop_loss_order_type is not None:
+                            signal.stop_loss_order_type = preliminary_signal.stop_loss_order_type
+                        if signal.stop_loss_stop_price is None and preliminary_signal.stop_loss_stop_price is not None:
+                            signal.stop_loss_stop_price = preliminary_signal.stop_loss_stop_price
+                        if signal.stop_loss_limit_price is None and preliminary_signal.stop_loss_limit_price is not None:
+                            signal.stop_loss_limit_price = preliminary_signal.stop_loss_limit_price
+                        if signal.stop_loss_trail_offset is None and preliminary_signal.stop_loss_trail_offset is not None:
+                            signal.stop_loss_trail_offset = preliminary_signal.stop_loss_trail_offset
+                        if signal.take_profit_order_type is None and preliminary_signal.take_profit_order_type is not None:
+                            signal.take_profit_order_type = preliminary_signal.take_profit_order_type
+                        if signal.take_profit_limit_price is None and preliminary_signal.take_profit_limit_price is not None:
+                            signal.take_profit_limit_price = preliminary_signal.take_profit_limit_price
+                        if signal.trail_offset is None and preliminary_signal.trail_offset is not None:
+                            signal.trail_offset = preliminary_signal.trail_offset
+                        # Risk parameters — carry over from Step 1 if missing in Step 2
+                        if signal.strategy_params:
+                            prelim_params = preliminary_signal.strategy_params or {}
+                            for risk_key in (
+                                "cooldown_after_loss_seconds",
+                                "max_hold_time_seconds",
+                                "stop_loss_method",
+                                "stop_loss_atr_multiple",
+                                "trailing_stop_distance_pct",
+                                "trailing_stop_atr_multiple",
+                                "trailing_stop_activation_pct",
+                                "partial_take_profit_levels",
+                                "partial_take_profit_pct",
+                                "partial_take_profit_fraction",
+                                "breakeven_activation_pct",
+                                "trailing_take_profit",
+                                "trailing_take_profit_distance_pct",
+                                "max_unrealized_loss_pct",
+                                "news_sentiment_exit_threshold",
+                                "max_risk_per_trade_pct",
+                                "max_portfolio_risk_pct",
+                                "min_profit_per_trade",
+                                "min_risk_reward_ratio",
+                                "min_confidence",
+                                "position_size_multiplier",
+                                "strategy_interval_seconds",
+                                "backtest_period_days",
+                                "order_fill_timeout_seconds",
+                                "time_in_force",
+                            ):
+                                if risk_key not in signal.strategy_params and risk_key in prelim_params:
+                                    signal.strategy_params[risk_key] = prelim_params[risk_key]
+                        else:
+                            # Step 2 returned no params at all — use Step 1's params
+                            signal.strategy_params = preliminary_signal.strategy_params
+                except Exception as e:
+                    logger.error(f"LLM Step 2 call failed for {symbol}: {e}. Using preliminary decision.")
+                    signal = preliminary_signal
+                    signal.backtest_summary = combined_bt_summary
+            else:
+                logger.info(f"Insufficient data for any backtest for {symbol}. Using preliminary decision.")
+                signal = preliminary_signal
+        else:
+            # For SELL or HOLD, no backtest needed, use preliminary decision
+            signal = preliminary_signal
+
+        return signal, combined_bt_summary, llm_provider, llm_model
+
     async def _process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False):
         """Fetch market data, get LLM strategy, validate, and execute."""
         symbol = symbol_entry["symbol"]
@@ -5746,221 +5989,23 @@ class TradingEngine:
             preliminary_signal.llm_model = llm_model
 
             # --- Step 2: Run backtest(s) and ask LLM for final decision ---
-            # Run backtests for BUY and HOLD decisions to validate strategy parameters
-            if preliminary_signal.action in ("BUY", "HOLD"):
-                # Determine which variant param sets to backtest
-                variants_to_test = []
-                if preliminary_signal.backtest_variants:
-                    variants_to_test = list(preliminary_signal.backtest_variants)
-                else:
-                    # Fallback: use the preliminary signal's own params as a single variant
-                    variants_to_test.append(preliminary_signal.strategy_params or {})
-                # Safety cap: limit to 10 variants to prevent excessive backtest time
-                MAX_BACKTEST_VARIANTS = 10
-                if len(variants_to_test) > MAX_BACKTEST_VARIANTS:
-                    logger.warning(
-                        f"LLM returned {len(variants_to_test)} backtest variants for {symbol}, "
-                        f"capping to {MAX_BACKTEST_VARIANTS}"
-                    )
-                    variants_to_test = variants_to_test[:MAX_BACKTEST_VARIANTS]
-
-                # Limit number of variants based on available data length
-                source_candles = historical_ohlcv or raw_candles or []
-                if source_candles and len(source_candles) < 50:
-                    variants_to_test = variants_to_test[:2]
-                elif source_candles and len(source_candles) < 100:
-                    variants_to_test = variants_to_test[:3]
-
-                # Run backtest variants in parallel (concurrency-limited by semaphore)
-                async def _run_single_variant(vp: Dict[str, Any]) -> Dict[str, Any]:
-                    try:
-                        bt_stats, bt_summary = await self._run_backtest_variant(
-                            symbol=symbol,
-                            variant_params=vp,
-                            preliminary_signal=preliminary_signal,
-                            atr=atr,
-                            current_price=current_price,
-                            tf_secs=tf_seconds,
-                            assigned_tf=assigned_tf,
-                            historical_ohlcv=historical_ohlcv,
-                            raw_candles=raw_candles,
-                            base_balance=base_balance,
-                            is_btp=is_btp,
-                        )
-                        if bt_stats is not None:
-                            return {"variant_params": vp, "summary": bt_summary, "stats": bt_stats}
-                        else:
-                            return {"variant_params": vp, "summary": bt_summary or "Insufficient data for backtest.", "stats": {}}
-                    except Exception as e:
-                        logger.warning(f"Backtest variant failed for {symbol}: {e}")
-                        return {"variant_params": vp, "summary": f"Backtest error: {e}", "stats": {}}
-
-                backtest_results = list(await asyncio.gather(*[_run_single_variant(vp) for vp in variants_to_test]))
-
-                # Log results after all variants complete
-                for i, r in enumerate(backtest_results):
-                    if r["stats"]:
-                        logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: {r['summary']}")
-                    else:
-                        logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: insufficient data")
-
-                # Build combined backtest summary for notifications
-                combined_bt_summary = " | ".join(
-                    f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
-                ) if backtest_results else "No backtest performed"
-
-                if backtest_results:
-                    # Build Step 2 prompt with ALL backtest results
-                    total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
-                    step2_prompt = build_final_decision_prompt(
-                        symbol=symbol,
-                        ticker=ticker,
-                        preliminary_decision={
-                            "action": preliminary_signal.action,
-                            "confidence": preliminary_signal.confidence,
-                            "reasoning": preliminary_signal.reasoning,
-                            "strategy_params": preliminary_signal.strategy_params,
-                            "timeframe": assigned_tf,
-                        },
-                        backtest_results=backtest_results,
-                        base_currency=self.base_currency,
-                        trading_paused=trading_paused,
-                        total_variants_proposed=total_variants_proposed,
-                    )
-                    # Append position info if exists
-                    if symbol in self.positions:
-                        pos = self.positions[symbol]
-                        step2_prompt += (
-                            f"\n**Existing Position:** You already hold {pos['amount']:.6f} "
-                            f"at entry {pos['price']:.4f}. A BUY will ADD to this position (scale in).\n"
-                        )
-
-                    # Call LLM for Step 2
-                    try:
-                        step2_result = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                get_cached_llm_response,
-                                compact_prompt(step2_prompt),
-                                COMPACTED_SYSTEM_PROMPT,
-                                60,
-                                model_type=strategy_model_type,
-                                temperature=effective_temp,
-                            ),
-                            timeout=settings.LLM_TIMEOUT
-                        )
-                        step2_response = step2_result["response"]
-                        llm_provider = step2_result["provider"]
-                        llm_model = step2_result["model"]
-                        logger.info(f"LLM Step 2 call completed for {symbol} (provider={llm_provider}, model={llm_model})")
-                        
-                        # Parse Step 2 response
-                        try:
-                            final_strategy = create_strategy_from_llm(step2_response)
-                        except ValueError:
-                            # Retry with correction prompt
-                            correction = (
-                                "Your previous response was not valid JSON. "
-                                "Output ONLY a single JSON object. "
-                                "Here is the request:\n\n" + step2_prompt
-                            )
-                            try:
-                                retry_result = await asyncio.wait_for(
-                                    asyncio.to_thread(
-                                        get_cached_llm_response,
-                                        compact_prompt(correction),
-                                        COMPACTED_SYSTEM_PROMPT, 30,
-                                        model_type="actuator",
-                                        temperature=effective_temp,
-                                    ),
-                                    timeout=settings.LLM_TIMEOUT
-                                )
-                                final_strategy = create_strategy_from_llm(retry_result["response"])
-                                step2_response = retry_result["response"]
-                                llm_provider = retry_result["provider"]
-                                llm_model = retry_result["model"]
-                            except Exception:
-                                logger.error(f"Step 2 JSON parse retry failed for {symbol}. Using preliminary decision.")
-                                final_strategy = None
-
-                        if final_strategy is not None:
-                            signal = final_strategy.generate_signal({})
-                            signal.model_type = strategy_model_type
-                            signal.llm_provider = llm_provider
-                            signal.llm_model = llm_model
-                            signal.backtest_summary = combined_bt_summary
-                        else:
-                            signal = preliminary_signal
-                            signal.backtest_summary = combined_bt_summary
-                        # Carry over execution-critical fields from Step 1 if not provided in Step 2
-                        if signal.action == "BUY":
-                            # Execution parameters
-                            if signal.entry_condition is None and preliminary_signal.entry_condition is not None:
-                                signal.entry_condition = preliminary_signal.entry_condition
-                            if signal.order_type is None and preliminary_signal.order_type is not None:
-                                signal.order_type = preliminary_signal.order_type
-                            if signal.limit_price is None and preliminary_signal.limit_price is not None:
-                                signal.limit_price = preliminary_signal.limit_price
-                            if signal.stop_price is None and preliminary_signal.stop_price is not None:
-                                signal.stop_price = preliminary_signal.stop_price
-                            if signal.stop_loss_order_type is None and preliminary_signal.stop_loss_order_type is not None:
-                                signal.stop_loss_order_type = preliminary_signal.stop_loss_order_type
-                            if signal.stop_loss_stop_price is None and preliminary_signal.stop_loss_stop_price is not None:
-                                signal.stop_loss_stop_price = preliminary_signal.stop_loss_stop_price
-                            if signal.stop_loss_limit_price is None and preliminary_signal.stop_loss_limit_price is not None:
-                                signal.stop_loss_limit_price = preliminary_signal.stop_loss_limit_price
-                            if signal.stop_loss_trail_offset is None and preliminary_signal.stop_loss_trail_offset is not None:
-                                signal.stop_loss_trail_offset = preliminary_signal.stop_loss_trail_offset
-                            if signal.take_profit_order_type is None and preliminary_signal.take_profit_order_type is not None:
-                                signal.take_profit_order_type = preliminary_signal.take_profit_order_type
-                            if signal.take_profit_limit_price is None and preliminary_signal.take_profit_limit_price is not None:
-                                signal.take_profit_limit_price = preliminary_signal.take_profit_limit_price
-                            if signal.trail_offset is None and preliminary_signal.trail_offset is not None:
-                                signal.trail_offset = preliminary_signal.trail_offset
-                            # Risk parameters — carry over from Step 1 if missing in Step 2
-                            if signal.strategy_params:
-                                prelim_params = preliminary_signal.strategy_params or {}
-                                for risk_key in (
-                                    "cooldown_after_loss_seconds",
-                                    "max_hold_time_seconds",
-                                    "stop_loss_method",
-                                    "stop_loss_atr_multiple",
-                                    "trailing_stop_distance_pct",
-                                    "trailing_stop_atr_multiple",
-                                    "trailing_stop_activation_pct",
-                                    "partial_take_profit_levels",
-                                    "partial_take_profit_pct",
-                                    "partial_take_profit_fraction",
-                                    "breakeven_activation_pct",
-                                    "trailing_take_profit",
-                                    "trailing_take_profit_distance_pct",
-                                    "max_unrealized_loss_pct",
-                                    "news_sentiment_exit_threshold",
-                                    "max_risk_per_trade_pct",
-                                    "max_portfolio_risk_pct",
-                                    "min_profit_per_trade",
-                                    "min_risk_reward_ratio",
-                                    "min_confidence",
-                                    "position_size_multiplier",
-                                    "strategy_interval_seconds",
-                                    "backtest_period_days",
-                                    "order_fill_timeout_seconds",
-                                    "time_in_force",
-                                ):
-                                    if risk_key not in signal.strategy_params and risk_key in prelim_params:
-                                        signal.strategy_params[risk_key] = prelim_params[risk_key]
-                            else:
-                                # Step 2 returned no params at all — use Step 1's params
-                                signal.strategy_params = preliminary_signal.strategy_params
-                    except Exception as e:
-                        logger.error(f"LLM Step 2 call failed for {symbol}: {e}. Using preliminary decision.")
-                        signal = preliminary_signal
-                        signal.backtest_summary = combined_bt_summary
-                else:
-                    logger.info(f"Insufficient data for any backtest for {symbol}. Using preliminary decision.")
-                    signal = preliminary_signal
-            else:
-                # For SELL or HOLD, no backtest needed, use preliminary decision
-                signal = preliminary_signal
+            signal, combined_bt_summary, llm_provider, llm_model = await self._run_backtest_and_final_decision(
+                symbol=symbol,
+                assigned_tf=assigned_tf,
+                tf_seconds=tf_seconds,
+                current_price=current_price,
+                atr=atr,
+                historical_ohlcv=historical_ohlcv,
+                raw_candles=raw_candles,
+                base_balance=base_balance,
+                is_btp=is_btp,
+                trading_paused=trading_paused,
+                strategy_model_type=strategy_model_type,
+                effective_temp=effective_temp,
+                preliminary_signal=preliminary_signal,
+                display_symbol=display_symbol,
+                ticker=ticker,
+            )
 
             current_price = ticker['last']
 
