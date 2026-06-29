@@ -12797,6 +12797,12 @@ class TradingEngine:
         except Exception:
             pass
 
+        # Scale stop-loss review limit for long-term timeframes (same as _process_symbol)
+        if tf_seconds >= LONG_TERM_TF_SECONDS:  # >= 1 month
+            max_sl_reviews = min(max_sl_reviews, 3)
+        elif tf_seconds >= 604_800:  # >= 1 week
+            max_sl_reviews = min(max_sl_reviews, 5)
+
         trading_paused = False  # Force False for simulation
 
         max_hold_expired = False
