@@ -23,8 +23,13 @@ def _timeframe_to_seconds(tf: str) -> int:
 
 
 def compact_prompt(text: str) -> str:
-    """Collapse all whitespace sequences to a single space and strip."""
-    return re.sub(r'\s+', ' ', text).strip()
+    """Collapse excessive whitespace (multiple spaces/tabs/newlines) while preserving newlines and structure."""
+    # Collapse multiple spaces or tabs into a single space
+    text = re.sub(r'[ \t]+', ' ', text)
+    # Collapse multiple newlines into a single newline
+    text = re.sub(r'\n+', '\n', text)
+    # Strip leading/trailing whitespace
+    return text.strip()
 
 
 def _summarize_ohlcv(candles: List[List]) -> Optional[Dict[str, Any]]:
