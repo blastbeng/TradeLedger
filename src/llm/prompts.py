@@ -996,13 +996,23 @@ def build_strategy_prompt(
         assigned_timeframe = "1d" if "1d" in TIMEFRAME_MAP else list(TIMEFRAME_MAP.keys())[0]
     tf_seconds = _timeframe_to_seconds(assigned_timeframe) if assigned_timeframe else 86400
     _ticker_compact = {
-        k: ticker.get(k) for k in ("last", "bid", "ask", "volume", "quoteVolume", "percentage", "name", "coupon", "maturity")
+        k: ticker.get(k) for k in ("last", "bid", "ask", "volume", "quoteVolume", "name", "coupon", "maturity")
         if k in ticker
     }
+    # Rename "percentage" to "change_24h" so the LLM understands what it represents
+    _pct = ticker.get("percentage")
+    if _pct is not None:
+        _ticker_compact["change_24h"] = _pct
     prompt = f"""Symbol: {symbol}
 Current ticker: {json.dumps(_ticker_compact)}
 Current balances: {json.dumps(balance)}
 """
+    # Explicitly highlight the 24h change so the LLM uses it in its analysis
+    _change_24h = ticker.get("percentage")
+    if _change_24h is not None:
+        prompt += f"24h price change: {_change_24h:+.2f}%\n"
+    else:
+        prompt += "24h price change: N/A (no daily candle data available)\n"
     # --- Portfolio context: total base balance and all tracked symbols ---
     base_balance = balance.get(base_currency, 0.0)
     prompt += f"\nTotal {base_currency} balance available: {base_balance:.2f}\n"
