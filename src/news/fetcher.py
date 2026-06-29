@@ -273,33 +273,50 @@ def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List[Dict[
 
     enabled = _get_enabled_sources()
     logger.debug(f"Enabled news sources for {symbol}: {enabled}")
+    # Build a combined search query for sources that support it.
+    # Use the ticker as the primary term, and the company name as a secondary
+    # term joined with OR.  This reduces API calls from N_terms × N_sources
+    # to just N_sources, and returns articles that mention either the ticker
+    # or the company name.
+    combined_query = base_symbol
+    if name and name != base_symbol:
+        combined_query = f'"{base_symbol}" OR "{name}"'
+    db_name = None
+    try:
+        from src.database import get_symbol_name_from_db
+        db_name = get_symbol_name_from_db(base_symbol)
+    except Exception:
+        pass
+    if db_name and db_name != base_symbol and db_name != name:
+        combined_query = f'{combined_query} OR "{db_name}"'
+
     for source in enabled:
-        for term in search_terms:
-            source_start = time.time()
-            if source == "newsapi":
-                articles.extend(_fetch_newsapi(term, name=name))
-            elif source == "twitter":
-                if term == base_symbol:
-                    articles.extend(_fetch_twitter(term, use_cashtag=True, name=name))
-                else:
-                    articles.extend(_fetch_twitter(term, use_cashtag=False, name=name))
-            elif source == "reddit":
-                articles.extend(_fetch_reddit(term, name=name))
-            elif source == "facebook":
-                articles.extend(_fetch_facebook(term, name=name))
-            elif source == "youtube":
-                articles.extend(_fetch_youtube(term, name=name))
-            elif source == "googlenews":
-                articles.extend(_fetch_googlenews(term, name=name))
-            elif source == "stocktwits":
-                # StockTwits only supports ticker symbols, not company names
-                if term == base_symbol:
-                    articles.extend(_fetch_stocktwits(term, name=name))
-            elif source == "rss":
+        source_start = time.time()
+        if source == "newsapi":
+            articles.extend(_fetch_newsapi(combined_query, name=name))
+        elif source == "twitter":
+            # Twitter: use cashtag for ticker, plain text for name
+            articles.extend(_fetch_twitter(base_symbol, use_cashtag=True, name=name))
+            if name and name != base_symbol:
+                articles.extend(_fetch_twitter(name, use_cashtag=False, name=name))
+        elif source == "reddit":
+            articles.extend(_fetch_reddit(combined_query, name=name))
+        elif source == "facebook":
+            articles.extend(_fetch_facebook(base_symbol, name=name))
+        elif source == "youtube":
+            articles.extend(_fetch_youtube(combined_query, name=name))
+        elif source == "googlenews":
+            articles.extend(_fetch_googlenews(combined_query, name=name))
+        elif source == "stocktwits":
+            # StockTwits only supports ticker symbols, not company names
+            articles.extend(_fetch_stocktwits(base_symbol, name=name))
+        elif source == "rss":
+            # RSS: search for each term separately (feeds are scanned locally)
+            for term in search_terms:
                 articles.extend(_fetch_rss(term, name=name))
-            source_time = time.time() - source_start
-            if source_time > 2.0:
-                logger.debug(f"Slow news source '{source}' for {term}: {source_time:.2f}s")
+        source_time = time.time() - source_start
+        if source_time > 2.0:
+            logger.debug(f"Slow news source '{source}': {source_time:.2f}s")
 
     # Deduplicate by URL
     seen = set()
@@ -464,8 +481,15 @@ def _fetch_newsapi(symbol: str, name: Optional[str] = None) -> List[Dict[str, st
         _get_rate_limiter().wait("newsapi")
         logger.debug(f"Fetching NewsAPI for {symbol}...")
         url = "https://newsapi.org/v2/everything"
+        # Use the query as-is (it may be a combined query with OR).
+        # Only append " stock" if the query is a single ticker (no spaces/quotes).
+        base = symbol.split('/')[0]
+        if " " in base or '"' in base:
+            q = base
+        else:
+            q = f"{base} stock"
         params = {
-            "q": f"{symbol.split('/')[0]} stock",
+            "q": q,
             "language": "en",
             "sortBy": "publishedAt",
             "pageSize": settings.NEWS_MAX_ARTICLES_PER_SYMBOL,
@@ -582,8 +606,13 @@ def _fetch_reddit(symbol: str, name: Optional[str] = None) -> List[Dict[str, str
             user_agent=settings.REDDIT_USER_AGENT,
             timeout=settings.NEWS_HTTP_TIMEOUT_SECONDS,
         )
+        base = symbol.split('/')[0]
+        if " " in base or '"' in base:
+            q = base
+        else:
+            q = f"{base} stock"
         submissions = reddit.subreddit("all").search(
-            f"{symbol.split('/')[0]} stock",
+            q,
             sort="relevance",
             time_filter="week",
             limit=settings.NEWS_MAX_ARTICLES_PER_SYMBOL,
@@ -670,9 +699,14 @@ def _fetch_youtube(symbol: str, name: Optional[str] = None) -> List[Dict[str, st
         _get_rate_limiter().wait("youtube")
         logger.debug(f"Fetching YouTube for {symbol}...")
         url = "https://www.googleapis.com/youtube/v3/search"
+        base = symbol.split('/')[0]
+        if " " in base or '"' in base:
+            q = base
+        else:
+            q = f"{base} stock"
         params = {
             "part": "snippet",
-            "q": f"{symbol.split('/')[0]} stock",
+            "q": q,
             "type": "video",
             "maxResults": settings.YOUTUBE_MAX_RESULTS,
             "order": "date",
@@ -719,7 +753,13 @@ def _fetch_googlenews(symbol: str, name: Optional[str] = None) -> List[Dict[str,
         logger.debug(f"Fetching Google News for {symbol}...")
         base = symbol.split("/")[0]
         encoded_base = quote(base)
-        url = f"https://news.google.com/rss/search?q={encoded_base}+stock&hl=en-US&gl=US&ceid=US:en"
+        # Use the query as-is (it may be a combined query with OR).
+        # Only append "+stock" if the query is a single ticker (no spaces/quotes).
+        if " " in base or '"' in base:
+            search_q = encoded_base
+        else:
+            search_q = f"{encoded_base}+stock"
+        url = f"https://news.google.com/rss/search?q={search_q}&hl=en-US&gl=US&ceid=US:en"
         feed = feedparser.parse(url)
         articles = []
         for entry in feed.entries[:settings.GOOGLE_NEWS_MAX_ARTICLES]:
