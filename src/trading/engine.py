@@ -6609,6 +6609,8 @@ class TradingEngine:
 
             # --- Step 1a: Call LLM for analysis ---
             analysis_result = None
+            llm_provider = None
+            llm_model = None
             try:
                 step1a_result = await asyncio.wait_for(
                     asyncio.to_thread(
@@ -6678,40 +6680,28 @@ class TradingEngine:
                         exit_reason=reason.replace(" ", "_").lower()
                     )
                     return
-                if self.notifier:
-                    await self.notifier.send_notification(
-                        f"⏱️ LLM Step 1a timeout for {display_symbol}, skipping.",
-                        summary={
-                            "symbol": symbol,
-                            "action": "SKIP",
-                            "reason": "LLM Step 1a timeout",
-                            "model_type": strategy_model_type,
-                        }
-                    )
+                # Non-critical timeout: fall through to fallback HOLD
                 self._force_eval.pop(symbol, None)
-                return
+                # Fall through to fallback HOLD below
             except Exception as e:
                 logger.error(f"LLM Step 1a failed for {symbol}: {e}")
-                if self.notifier:
-                    await self.notifier.send_notification(
-                        f"⚠️ LLM Step 1a failed for {display_symbol}: {e}",
-                        summary={
-                            "symbol": symbol,
-                            "action": "SKIP",
-                            "reason": f"LLM Step 1a error: {str(e)[:200]}",
-                            "model_type": strategy_model_type,
-                        }
-                    )
                 self._force_eval.pop(symbol, None)
-                return
+                # Fall through to fallback HOLD below
 
             if analysis_result is None:
-                logger.warning(f"Step 1a analysis parsing failed for {symbol} after retry. Skipping.")
+                logger.warning(f"Step 1a analysis failed for {symbol} after all retries. Using fallback HOLD.")
                 self._force_eval.pop(symbol, None)
-                return
-
+                # Create a fallback HOLD signal so the bot continues functioning
+                preliminary_signal = self._create_fallback_hold_signal(
+                    symbol, "LLM Step 1a analysis failed after retries", strategy_model_type
+                )
+                signal = preliminary_signal
+                llm_provider = "fallback"
+                llm_model = "default_hold"
+                combined_bt_summary = ""
+                _skip_backtest = True
             # If analysis says HOLD with no position, skip parameter selection entirely
-            if analysis_result.get("action") == "HOLD" and not has_position:
+            elif analysis_result.get("action") == "HOLD" and not has_position:
                 logger.info(f"Step 1a analysis returned HOLD with no position for {symbol}. Skipping Step 1b.")
                 # Create a minimal preliminary signal for the notification flow
                 preliminary_signal = Signal(
@@ -6830,7 +6820,9 @@ class TradingEngine:
                         llm_model = response2["model"]
                     except Exception as e2:
                         logger.error(f"LLM Step 1b response still invalid after retry for {symbol}: {e2}")
-                        preliminary_strategy = LLMStrategy(Signal(action="HOLD", confidence=0.0, reasoning="Failed to parse LLM Step 1b response after retry"))
+                        preliminary_strategy = LLMStrategy(self._create_fallback_hold_signal(
+                            symbol, "Failed to parse LLM Step 1b response after retry", strategy_model_type
+                        ))
 
                 preliminary_signal = preliminary_strategy.generate_signal({})
                 preliminary_signal.model_type = strategy_model_type
@@ -10710,6 +10702,25 @@ class TradingEngine:
             "rsi": rsi,
             "macd_hist": macd_hist,
         }
+
+    def _create_fallback_hold_signal(
+        self, symbol: str, reason: str, strategy_model_type: str = "actuator"
+    ) -> Signal:
+        """Create a default HOLD signal when LLM calls fail after all retries.
+
+        This ensures the bot continues to function even if the LLM is temporarily
+        unavailable or producing invalid output.
+        """
+        return Signal(
+            action="HOLD",
+            confidence=0.0,
+            reasoning=f"Fallback: {reason}",
+            strategy_type="fallback",
+            strategy_params={},
+            model_type=strategy_model_type,
+            llm_provider="fallback",
+            llm_model="default_hold",
+        )
 
     def _parse_analysis_response(self, response: str) -> Optional[Dict[str, Any]]:
         """Parse the Step 1a analysis LLM response into a dict.
