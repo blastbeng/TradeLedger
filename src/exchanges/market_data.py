@@ -59,6 +59,10 @@ _yf_lock = threading.Lock()
 YF_MAX_ERRORS = 20
 YF_CIRCUIT_COOLDOWN = 300  # 5 minutes
 
+_yf_session_cache = None
+_yf_session_lock = threading.Lock()
+_yf_session_created = False  # True only after successful creation or confirmed ImportError
+
 def _check_yf_circuit() -> bool:
     """Return True if the circuit is open (yfinance should be skipped)."""
     with _yf_lock:
@@ -131,43 +135,60 @@ class YFinance401Filter(logging.Filter):
 logging.getLogger("yfinance").addFilter(YFinance401Filter())
 
 def _get_yf_session():
-    """Return a curl_cffi session that impersonates Chrome for yfinance requests.
+    """Return a cached curl_cffi session that impersonates Chrome for yfinance requests.
 
     Yahoo Finance increasingly blocks requests that don't look like a real
     browser.  curl_cffi can impersonate Chrome's TLS fingerprint, which
-    avoids 401/429 responses.
+    avoids 401/429 responses.  The session is created once and reused for
+    all subsequent calls to avoid the overhead of repeated session creation.
     """
-    try:
-        from curl_cffi import requests as curl_requests
+    global _yf_session_cache, _yf_session_created
 
-        proxies = None
-        if settings.HTTP_PROXY_ENABLED and settings.HTTP_PROXIES:
-            import random
-            proxy = random.choice(settings.HTTP_PROXIES)
-            proxies = {"http": proxy, "https": proxy}
-            logger.debug(f"Using proxy for yfinance: {proxy}")
+    # Fast path: return cached session without acquiring lock
+    if _yf_session_created:
+        return _yf_session_cache
 
-        class YFinanceSessionWrapper(curl_requests.Session):
-            def request(self, *args, **kwargs):
-                if _check_yf_circuit():
-                    raise ConnectionError("yfinance circuit breaker is open")
-                _yf_rate_limiter.acquire()
-                # Enforce a timeout to prevent indefinite hangs
-                kwargs.setdefault('timeout', 15.0)
-                response = super().request(*args, **kwargs)
-                if response.status_code == 401:
-                    _record_yf_error()
-                else:
-                    _reset_yf_circuit()
-                return response
+    with _yf_session_lock:
+        # Double-check after acquiring lock
+        if _yf_session_created:
+            return _yf_session_cache
 
-        return YFinanceSessionWrapper(impersonate="chrome", proxies=proxies)
-    except ImportError:
-        logger.warning("curl_cffi not installed – yfinance requests may be blocked.")
-        return None
-    except Exception as e:
-        logger.warning(f"Failed to create curl_cffi session: {e}")
-        return None
+        try:
+            from curl_cffi import requests as curl_requests
+
+            proxies = None
+            if settings.HTTP_PROXY_ENABLED and settings.HTTP_PROXIES:
+                import random
+                proxy = random.choice(settings.HTTP_PROXIES)
+                proxies = {"http": proxy, "https": proxy}
+                logger.debug(f"Using proxy for yfinance: {proxy}")
+
+            class YFinanceSessionWrapper(curl_requests.Session):
+                def request(self, *args, **kwargs):
+                    if _check_yf_circuit():
+                        raise ConnectionError("yfinance circuit breaker is open")
+                    _yf_rate_limiter.acquire()
+                    # Enforce a timeout to prevent indefinite hangs
+                    kwargs.setdefault('timeout', 15.0)
+                    response = super().request(*args, **kwargs)
+                    if response.status_code == 401:
+                        _record_yf_error()
+                    else:
+                        _reset_yf_circuit()
+                    return response
+
+            _yf_session_cache = YFinanceSessionWrapper(impersonate="chrome", proxies=proxies)
+            _yf_session_created = True
+            return _yf_session_cache
+        except ImportError:
+            logger.warning("curl_cffi not installed – yfinance requests may be blocked.")
+            _yf_session_cache = None
+            _yf_session_created = True
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to create curl_cffi session: {e}")
+            # Don't set _yf_session_created so we retry on the next call
+            return None
 
 
 class DynamicProxyRotator:
