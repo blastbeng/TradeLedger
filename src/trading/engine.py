@@ -824,15 +824,47 @@ class TradingEngine:
                 continue
             self._full_breadth_running = True
             try:
-                plain_assets = await self._get_tradable_assets()
-                available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+                # Fetch all asset types for stratified sampling
+                stock_assets = await self._get_tradable_assets()
+                stock_pairs = [f"{sym}/{self.base_currency}" for sym in stock_assets]
+                etf_symbols = await self._get_etf_symbols()
+                etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
+                btp_bonds = await self._get_btp_bonds()
+                btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
+
+                # Build strata: (pairs, label) for each asset type
+                strata = [
+                    (stock_pairs, "stocks"),
+                    (etf_pairs, "etfs"),
+                    (btp_pairs, "btps"),
+                ]
+                # Filter out empty strata
+                strata = [(pairs, label) for pairs, label in strata if pairs]
+
+                available_pairs = stock_pairs + etf_pairs + btp_pairs
                 if available_pairs:
-                    # Use a random sample of up to 500 pairs for better representativeness
                     MAX_BREADTH_SAMPLE = 500
-                    if len(available_pairs) > MAX_BREADTH_SAMPLE:
-                        breadth_pairs = random.sample(available_pairs, MAX_BREADTH_SAMPLE)
-                    else:
+                    if len(available_pairs) <= MAX_BREADTH_SAMPLE:
+                        # Universe is small enough — use everything
                         breadth_pairs = available_pairs
+                    else:
+                        # Proportional stratified sampling across asset types
+                        total_universe = len(available_pairs)
+                        breadth_pairs = []
+                        for pairs, label in strata:
+                            # Proportional allocation: stratum_size / total * MAX_SAMPLE
+                            stratum_sample_size = max(1, round(len(pairs) / total_universe * MAX_BREADTH_SAMPLE))
+                            # Cap at the stratum's actual size
+                            stratum_sample_size = min(stratum_sample_size, len(pairs))
+                            sampled = random.sample(pairs, stratum_sample_size)
+                            breadth_pairs.extend(sampled)
+                            logger.debug(
+                                f"Breadth stratum '{label}': {len(pairs)} total, "
+                                f"sampled {len(sampled)}"
+                            )
+                        # If rounding caused us to exceed the cap, trim randomly
+                        if len(breadth_pairs) > MAX_BREADTH_SAMPLE:
+                            breadth_pairs = random.sample(breadth_pairs, MAX_BREADTH_SAMPLE)
                     plain_breadth = [s.split("/")[0] for s in breadth_pairs]
 
                     # Use cached quotes (Redis/DB only, no network calls)
