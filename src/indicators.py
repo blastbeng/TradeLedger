@@ -63,6 +63,165 @@ def _compute_simple_atr_series(candles: List[List], period: int = 14) -> List[Op
     return result
 
 
+def _compute_simple_rsi(closes: List[float], period: int = 14) -> Optional[float]:
+    if len(closes) < 2:
+        return None
+    use_period = min(period, len(closes) - 1)
+    gains = []
+    losses = []
+    for i in range(1, len(closes)):
+        change = closes[i] - closes[i-1]
+        gains.append(max(0, change))
+        losses.append(max(0, -change))
+    
+    recent_gains = gains[-use_period:]
+    recent_losses = losses[-use_period:]
+    
+    avg_gain = sum(recent_gains) / use_period if use_period > 0 else 0
+    avg_loss = sum(recent_losses) / use_period if use_period > 0 else 0
+    
+    if avg_loss == 0:
+        return 100.0 if avg_gain > 0 else 50.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+def _compute_simple_macd(closes: List[float], fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    if len(closes) < 2:
+        return None, None, None
+    fast_period = min(fast, len(closes))
+    slow_period = min(slow, len(closes))
+    
+    fast_sma = sum(closes[-fast_period:]) / fast_period
+    slow_sma = sum(closes[-slow_period:]) / slow_period
+    macd_val = fast_sma - slow_sma
+    
+    return macd_val, macd_val, 0.0
+
+def _compute_simple_bollinger_bands(closes: List[float], period: int = 20, std_dev: float = 2.0) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    if not closes:
+        return None, None, None
+    use_period = min(period, len(closes))
+    recent = closes[-use_period:]
+    middle = sum(recent) / use_period
+    variance = sum((x - middle) ** 2 for x in recent) / use_period
+    std = variance ** 0.5
+    upper = middle + std_dev * std
+    lower = middle - std_dev * std
+    return upper, middle, lower
+
+def _compute_simple_stochastic(highs: List[float], lows: List[float], closes: List[float], period: int = 14, smooth_k: int = 3) -> Tuple[Optional[float], Optional[float]]:
+    if not closes:
+        return None, None
+    use_period = min(period, len(closes))
+    recent_highs = highs[-use_period:]
+    recent_lows = lows[-use_period:]
+    highest = max(recent_highs)
+    lowest = min(recent_lows)
+    current_close = closes[-1]
+    if highest == lowest:
+        k = 50.0
+    else:
+        k = ((current_close - lowest) / (highest - lowest)) * 100.0
+    return k, k
+
+def _compute_simple_adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    if len(closes) < 2:
+        return None, None, None
+    start_price = closes[0]
+    end_price = closes[-1]
+    price_change = abs(end_price - start_price) / start_price if start_price != 0 else 0
+    adx_val = min(100.0, price_change * 100)
+    plus_val = 100.0 if end_price > start_price else 0.0
+    minus_val = 100.0 if end_price < start_price else 0.0
+    return adx_val, plus_val, minus_val
+
+def _compute_simple_ichimoku(highs: List[float], lows: List[float], closes: List[float], tenkan_period: int = 9, kijun_period: int = 26, senkou_b_period: int = 52) -> Optional[Dict[str, Optional[float]]]:
+    if not closes:
+        return None
+    tenkan_p = min(tenkan_period, len(closes))
+    kijun_p = min(kijun_period, len(closes))
+    senkou_b_p = min(senkou_b_period, len(closes))
+    
+    tenkan_high = max(highs[-tenkan_p:])
+    tenkan_low = min(lows[-tenkan_p:])
+    tenkan_sen = (tenkan_high + tenkan_low) / 2
+    
+    kijun_high = max(highs[-kijun_p:])
+    kijun_low = min(lows[-kijun_p:])
+    kijun_sen = (kijun_high + kijun_low) / 2
+    
+    senkou_span_a = (tenkan_sen + kijun_sen) / 2
+    
+    senkou_b_high = max(highs[-senkou_b_p:])
+    senkou_b_low = min(lows[-senkou_b_p:])
+    senkou_span_b = (senkou_b_high + senkou_b_low) / 2
+    
+    chikou_span = closes[-1]
+    cloud_top = max(senkou_span_a, senkou_span_b)
+    cloud_bottom = min(senkou_span_a, senkou_span_b)
+    
+    return {
+        "tenkan_sen": round(tenkan_sen, 8),
+        "kijun_sen": round(kijun_sen, 8),
+        "senkou_span_a": round(senkou_span_a, 8),
+        "senkou_span_b": round(senkou_span_b, 8),
+        "chikou_span": round(chikou_span, 8),
+        "cloud_top": round(cloud_top, 8),
+        "cloud_bottom": round(cloud_bottom, 8),
+    }
+
+def _compute_simple_donchian_channels(highs: List[float], lows: List[float], period: int = 20) -> Optional[Dict[str, float]]:
+    if not highs or not lows:
+        return None
+    use_period = min(period, len(highs))
+    upper = max(highs[-use_period:])
+    lower = min(lows[-use_period:])
+    middle = (upper + lower) / 2.0
+    return {
+        "upper": round(upper, 8),
+        "middle": round(middle, 8),
+        "lower": round(lower, 8),
+    }
+
+def _compute_simple_mfi(highs: List[float], lows: List[float], closes: List[float], volumes: List[float], period: int = 14) -> Optional[float]:
+    if len(closes) < 2:
+        return None
+    tps = [(h + l + c) / 3.0 for h, l, c in zip(highs, lows, closes)]
+    pos_flow = 0.0
+    neg_flow = 0.0
+    for i in range(1, len(tps)):
+        if tps[i] > tps[i-1]:
+            pos_flow += tps[i] * volumes[i]
+        elif tps[i] < tps[i-1]:
+            neg_flow += tps[i] * volumes[i]
+    
+    if neg_flow == 0:
+        return 100.0 if pos_flow > 0 else 50.0
+    mfr = pos_flow / neg_flow
+    return 100.0 - (100.0 / (1.0 + mfr))
+
+def _compute_simple_cci(highs: List[float], lows: List[float], closes: List[float], period: int = 20) -> Optional[float]:
+    if not closes:
+        return None
+    use_period = min(period, len(closes))
+    tp = [(h + l + c) / 3.0 for h, l, c in zip(highs[-use_period:], lows[-use_period:], closes[-use_period:])]
+    avg_tp = sum(tp) / use_period
+    mean_dev = sum(abs(x - avg_tp) for x in tp) / use_period
+    if mean_dev == 0:
+        return 0.0
+    return (tp[-1] - avg_tp) / (0.015 * mean_dev)
+
+def _compute_simple_williams_r(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Optional[float]:
+    if not closes:
+        return None
+    use_period = min(period, len(closes))
+    highest = max(highs[-use_period:])
+    lowest = min(lows[-use_period:])
+    if highest == lowest:
+        return -50.0
+    return ((highest - closes[-1]) / (highest - lowest)) * -100.0
+
+
 def compute_atr(candles: List[List], period: int = 14) -> Optional[float]:
     """Compute Average True Range from OHLCV candles using Wilder's smoothing."""
     if len(candles) < period + 1:
@@ -78,7 +237,7 @@ def compute_atr(candles: List[List], period: int = 14) -> Optional[float]:
 def compute_rsi(closes: List[float], period: int = 14) -> Optional[float]:
     """Compute RSI from closing prices."""
     if len(closes) < period + 1:
-        return None
+        return _compute_simple_rsi(closes, period)
     result = talib.RSI(np.array(closes, dtype=float), timeperiod=period)
     val = result[-1]
     return val if not np.isnan(val) else None
@@ -86,8 +245,11 @@ def compute_rsi(closes: List[float], period: int = 14) -> Optional[float]:
 
 def compute_ema(data: List[float], period: int) -> List[Optional[float]]:
     """Compute Exponential Moving Average. Returns full-length list with None warmup."""
-    if len(data) < period:
+    if not data:
         return []
+    if len(data) < period:
+        sma = sum(data) / len(data)
+        return [sma] * len(data)
     result = talib.EMA(np.array(data, dtype=float), timeperiod=period)
     return [None if np.isnan(v) else float(v) for v in result]
 
@@ -146,7 +308,7 @@ def compute_stochastic(
     """Compute Stochastic Oscillator %K and %D."""
     min_len = period + smooth_k - 1
     if len(closes) < min_len:
-        return None, None
+        return _compute_simple_stochastic(highs, lows, closes, period, smooth_k)
 
     fast_k, fast_d = talib.STOCH(
         np.array(highs, dtype=float), 
@@ -169,7 +331,7 @@ def compute_adx(
 ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """Compute ADX, +DI, -DI using Wilder's smoothing."""
     if len(closes) < period + 1:
-        return None, None, None
+        return _compute_simple_adx(highs, lows, closes, period)
     
     h = np.array(highs, dtype=float)
     l = np.array(lows, dtype=float)
@@ -203,7 +365,7 @@ def compute_mfi(
 ) -> Optional[float]:
     """Compute Money Flow Index."""
     if len(closes) < period + 1:
-        return None
+        return _compute_simple_mfi(highs, lows, closes, volumes, period)
     result = talib.MFI(
         np.array(highs, dtype=float), 
         np.array(lows, dtype=float), 
@@ -220,7 +382,7 @@ def compute_cci(
 ) -> Optional[float]:
     """Compute Commodity Channel Index."""
     if len(closes) < period:
-        return None
+        return _compute_simple_cci(highs, lows, closes, period)
     result = talib.CCI(
         np.array(highs, dtype=float), 
         np.array(lows, dtype=float), 
@@ -236,7 +398,7 @@ def compute_williams_r(
 ) -> Optional[float]:
     """Compute Williams %R."""
     if len(closes) < period:
-        return None
+        return _compute_simple_williams_r(highs, lows, closes, period)
     result = talib.WILLR(
         np.array(highs, dtype=float), 
         np.array(lows, dtype=float), 
@@ -257,7 +419,7 @@ def compute_ichimoku(
     chikou_span, cloud_top, cloud_bottom. Returns None if insufficient data.
     """
     if len(closes) < senkou_b_period:
-        return None
+        return _compute_simple_ichimoku(highs, lows, closes, tenkan_period, kijun_period, senkou_b_period)
 
     # Tenkan-sen (Conversion Line): (highest high + lowest low) / 2 over tenkan_period
     tenkan_high = max(highs[-tenkan_period:])
@@ -307,7 +469,7 @@ def compute_donchian_channels(
     Returns dict with 'upper', 'middle', 'lower', or None if insufficient data.
     """
     if len(highs) < period or len(lows) < period:
-        return None
+        return _compute_simple_donchian_channels(highs, lows, period)
 
     upper_arr = talib.MAX(np.array(highs, dtype=float), timeperiod=period)
     lower_arr = talib.MIN(np.array(lows, dtype=float), timeperiod=period)
@@ -332,7 +494,7 @@ def compute_macd(
 ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """Compute MACD line, signal line, and histogram."""
     if len(closes) < slow + signal:
-        return None, None, None
+        return _compute_simple_macd(closes, fast, slow, signal)
     
     macd, macdsignal, macdhist = talib.MACD(
         np.array(closes, dtype=float), 
@@ -355,7 +517,7 @@ def compute_bollinger_bands(
 ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """Compute Bollinger Bands (upper, middle, lower)."""
     if len(closes) < period:
-        return None, None, None
+        return _compute_simple_bollinger_bands(closes, period, std_dev)
     
     upper, middle, lower = talib.BBANDS(
         np.array(closes, dtype=float), 
