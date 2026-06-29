@@ -1,5 +1,4 @@
 import logging
-import random
 import time
 import uuid
 from typing import Dict, List, Optional, Any
@@ -319,9 +318,10 @@ class PaperTrader:
                 "timestamp": int(time.time() * 1000),
             }
 
-        # Simulate partial fill: fill 60-100% of the requested amount immediately
-        fill_fraction = random.uniform(0.6, 1.0)
-        filled_base_amount = base_amount * fill_fraction
+        # Fill the entire order amount (no random partial fills — keeps
+        # paper trading consistent with backtesting results)
+        fill_fraction = 1.0
+        filled_base_amount = base_amount
         filled_cost = filled_base_amount * fill_price
 
         self._balances[quote] = quote_balance - (filled_cost + (fee_cost * fill_fraction))
@@ -412,9 +412,10 @@ class PaperTrader:
                 "timestamp": int(time.time() * 1000),
             }
 
-        # Simulate partial fill: fill 60-100% of the requested amount immediately
-        fill_fraction = random.uniform(0.6, 1.0)
-        filled_amount = amount * fill_fraction
+        # Fill the entire order amount (no random partial fills — keeps
+        # paper trading consistent with backtesting results)
+        fill_fraction = 1.0
+        filled_amount = amount
 
         costs = calculate_transaction_costs("SELL", fill_price, filled_amount, symbol=symbol)
         net_quote = costs["net_value"]
