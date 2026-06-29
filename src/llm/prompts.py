@@ -1923,8 +1923,8 @@ If ANY backtest variant confirms a strategy is viable, you may output your final
     if total_variants_proposed is not None and total_variants_proposed > len(backtest_results):
         prompt += (
             f"\n**Note:** You proposed {total_variants_proposed} backtest variants in Step 1, but only the first "
-            f"{len(backtest_results)} were tested (maximum 10 variants per cycle). The results above cover all "
-            f"tested variants. To avoid truncation in future cycles, limit your `backtest_variants` array to at most 10 entries.\n"
+            f"{len(backtest_results)} were tested (maximum {settings.MAX_BACKTEST_VARIANTS} variants per cycle). The results above cover all "
+            f"tested variants. To avoid truncation in future cycles, limit your `backtest_variants` array to at most {settings.MAX_BACKTEST_VARIANTS} entries.\n"
         )
     prompt += (
         "**Output ONLY the raw JSON object as specified.**\n"

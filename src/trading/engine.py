@@ -3974,7 +3974,7 @@ class TradingEngine:
                                     # - but never less than MIN_LLM_PAUSE_DURATION
                                     pause_start_raw = await asyncio.to_thread(self.redis.get, "trading:pause_start")
                                     pause_duration_raw = await asyncio.to_thread(self.redis.get, "trading:pause_duration")
-                                    required_pause = MIN_LLM_PAUSE_DURATION
+                                    required_pause = settings.MIN_LLM_PAUSE_DURATION
                                     try:
                                         raw = await asyncio.to_thread(self.redis.get, "trading:min_llm_pause_duration")
                                         if raw:
@@ -3984,7 +3984,7 @@ class TradingEngine:
                                     if pause_duration_raw:
                                         try:
                                             llm_set_duration = int(pause_duration_raw)
-                                            required_pause = max(MIN_LLM_PAUSE_DURATION, llm_set_duration)
+                                            required_pause = max(settings.MIN_LLM_PAUSE_DURATION, llm_set_duration)
                                         except (ValueError, TypeError):
                                             pass
 
