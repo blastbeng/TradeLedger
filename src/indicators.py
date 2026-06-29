@@ -331,30 +331,43 @@ def compute_all_indicators(
     # ATR
     ind['atr'] = compute_atr(candles)
 
-    if len(candles) >= 26:
+    rsi_period = config.get('rsi_period', 14)
+    macd_fast = config.get('macd_fast', 12)
+    macd_slow = config.get('macd_slow', 26)
+    macd_signal_period = config.get('macd_signal', 9)
+    bb_period = config.get('bb_period', 20)
+    bb_std = config.get('bb_std', 2.0)
+    ema_fast = config.get('ema_fast', 9)
+    ema_slow = config.get('ema_slow', 21)
+    stoch_k_period = config.get('stoch_k_period', 14)
+    stoch_d_period = config.get('stoch_d_period', 3)
+    adx_period = config.get('adx_period', 14)
+    mfi_period = config.get('mfi_period', 14)
+    cci_period = config.get('cci_period', 20)
+    willr_period = config.get('willr_period', 14)
+    ichimoku_tenkan = config.get('ichimoku_tenkan', 9)
+    ichimoku_kijun = config.get('ichimoku_kijun', 26)
+    ichimoku_senkou_b = config.get('ichimoku_senkou_b', 52)
+    donchian_period = config.get('donchian_period', 20)
+
+    # Determine the minimum number of candles required to avoid partial indicator sets
+    min_required = max(
+        macd_slow + macd_signal_period,
+        ichimoku_senkou_b,
+        donchian_period,
+        bb_period,
+        ema_slow,
+        adx_period + 1,
+        mfi_period + 1,
+        willr_period,
+        cci_period
+    )
+
+    if len(candles) >= min_required:
         closes = [c[4] for c in candles]
         highs = [c[2] for c in candles]
         lows = [c[3] for c in candles]
         volumes = [c[5] for c in candles]
-
-        rsi_period = config.get('rsi_period', 14)
-        macd_fast = config.get('macd_fast', 12)
-        macd_slow = config.get('macd_slow', 26)
-        macd_signal_period = config.get('macd_signal', 9)
-        bb_period = config.get('bb_period', 20)
-        bb_std = config.get('bb_std', 2.0)
-        ema_fast = config.get('ema_fast', 9)
-        ema_slow = config.get('ema_slow', 21)
-        stoch_k_period = config.get('stoch_k_period', 14)
-        stoch_d_period = config.get('stoch_d_period', 3)
-        adx_period = config.get('adx_period', 14)
-        mfi_period = config.get('mfi_period', 14)
-        cci_period = config.get('cci_period', 20)
-        willr_period = config.get('willr_period', 14)
-        ichimoku_tenkan = config.get('ichimoku_tenkan', 9)
-        ichimoku_kijun = config.get('ichimoku_kijun', 26)
-        ichimoku_senkou_b = config.get('ichimoku_senkou_b', 52)
-        donchian_period = config.get('donchian_period', 20)
 
         ind['rsi'] = compute_rsi(closes, period=rsi_period)
         macd_val, macd_sig, macd_hist = compute_macd(closes, fast=macd_fast, slow=macd_slow, signal=macd_signal_period)
