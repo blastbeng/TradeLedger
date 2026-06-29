@@ -5144,6 +5144,75 @@ class TradingEngine:
             "global_min_rr": global_min_rr,
         }
 
+    @staticmethod
+    def _deduplicate_variants(variants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Remove backtest variants whose key risk parameters are identical or nearly identical.
+
+        Compares the parameters that actually change backtest outcomes:
+        stop_loss_pct, take_profit_pct, stop_loss_atr_multiple, take_profit_atr_multiple,
+        trailing_stop, trailing_stop_distance_pct, trailing_stop_atr_multiple,
+        trailing_stop_activation_pct, max_hold_time_seconds, breakeven_activation_pct,
+        partial_take_profit_levels, trailing_take_profit, trailing_take_profit_distance_pct,
+        max_unrealized_loss_pct, position_size_fraction, backtest_entry_config.
+        Variants whose values for ALL these keys match (within a small tolerance for floats)
+        are considered duplicates; only the first is kept.
+        """
+        if not variants:
+            return []
+
+        KEY_PARAMS = [
+            "stop_loss_pct", "take_profit_pct",
+            "stop_loss_atr_multiple", "take_profit_atr_multiple",
+            "trailing_stop", "trailing_stop_distance_pct",
+            "trailing_stop_atr_multiple", "trailing_stop_activation_pct",
+            "max_hold_time_seconds", "breakeven_activation_pct",
+            "partial_take_profit_levels", "trailing_take_profit",
+            "trailing_take_profit_distance_pct",
+            "max_unrealized_loss_pct", "position_size_fraction",
+            "backtest_entry_config",
+        ]
+        FLOAT_KEYS = {
+            "stop_loss_pct", "take_profit_pct",
+            "stop_loss_atr_multiple", "take_profit_atr_multiple",
+            "trailing_stop_distance_pct", "trailing_stop_atr_multiple",
+            "trailing_stop_activation_pct", "max_hold_time_seconds",
+            "breakeven_activation_pct", "trailing_take_profit_distance_pct",
+            "max_unrealized_loss_pct", "position_size_fraction",
+        }
+        TOLERANCE = 1e-6
+
+        def _signature(v: Dict[str, Any]) -> tuple:
+            sig = []
+            for key in KEY_PARAMS:
+                val = v.get(key)
+                if key in FLOAT_KEYS and val is not None:
+                    try:
+                        val = round(float(val), 8)
+                    except (TypeError, ValueError):
+                        pass
+                # For list/dict params, use a JSON string for stable comparison
+                if isinstance(val, (list, dict)):
+                    val = json.dumps(val, sort_keys=True, default=str)
+                sig.append((key, val))
+            return tuple(sig)
+
+        seen: set = set()
+        unique: List[Dict[str, Any]] = []
+        for v in variants:
+            if not isinstance(v, dict):
+                continue
+            sig = _signature(v)
+            if sig not in seen:
+                seen.add(sig)
+                unique.append(v)
+
+        if len(unique) < len(variants):
+            logger.info(
+                f"Deduplicated backtest variants: {len(variants)} -> {len(unique)} "
+                f"(removed {len(variants) - len(unique)} duplicate(s))"
+            )
+        return unique
+
     async def _run_backtest_and_final_decision(
         self,
         symbol: str,
@@ -5178,6 +5247,8 @@ class TradingEngine:
             else:
                 # Fallback: use the preliminary signal's own params as a single variant
                 variants_to_test.append(preliminary_signal.strategy_params or {})
+            # --- Deduplicate variants with identical key risk parameters ---
+            variants_to_test = self._deduplicate_variants(variants_to_test)
             # Safety cap: limit to configured max variants to prevent excessive backtest time
             if len(variants_to_test) > settings.MAX_BACKTEST_VARIANTS:
                 logger.warning(
