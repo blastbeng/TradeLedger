@@ -1520,6 +1520,28 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 result[sym].update(bi_quote)
                 logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
 
+    # --- Final pass: compute change_24h and percentage from DB daily candles ---
+    # For ALL symbols with a valid last price, recompute change_24h and percentage
+    # from the latest 2 daily candles in the database. This ensures consistency
+    # and eliminates NULL values when daily candle data is available.
+    # DB candles are the primary source; yfinance is only a fallback for the last price.
+    symbols_with_price = [
+        sym for sym in result
+        if result[sym].get("last") is not None and result[sym]["last"] > 0
+    ]
+    if symbols_with_price:
+        try:
+            db_change_data = get_latest_close_prices(symbols_with_price)
+            for sym in symbols_with_price:
+                if sym in db_change_data:
+                    prev_close = db_change_data[sym].get("prev_close")
+                    if prev_close and prev_close > 0:
+                        last = result[sym]["last"]
+                        result[sym]["change_24h"] = last - prev_close
+                        result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
+        except Exception as e:
+            logger.warning(f"Failed to recompute change_24h/percentage from DB candles: {e}")
+
     # Cache the result per-symbol in Redis (5 minutes) and save to database
     quotes_to_save = {}
     for sym in result:
@@ -1643,6 +1665,28 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     for sym in missing_symbols:
         result[sym] = {"last": None, "bid": None, "ask": None, "volume": None,
                        "change_24h": None, "percentage": None, "quoteVolume": None}
+
+    # --- Final pass: compute change_24h and percentage from DB daily candles ---
+    # For ALL symbols with a valid last price, recompute change_24h and percentage
+    # from the latest 2 daily candles in the database. This ensures consistency
+    # and eliminates NULL values when daily candle data is available.
+    # DB candles are the primary source; yfinance is only a fallback for the last price.
+    symbols_with_price = [
+        sym for sym in result
+        if result[sym].get("last") is not None and result[sym]["last"] > 0
+    ]
+    if symbols_with_price:
+        try:
+            db_change_data = get_latest_close_prices(symbols_with_price)
+            for sym in symbols_with_price:
+                if sym in db_change_data:
+                    prev_close = db_change_data[sym].get("prev_close")
+                    if prev_close and prev_close > 0:
+                        last = result[sym]["last"]
+                        result[sym]["change_24h"] = last - prev_close
+                        result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
+        except Exception as e:
+            logger.warning(f"get_quotes_cached: Failed to recompute change_24h/percentage from DB candles: {e}")
 
     # Persist DB close prices to Redis and the quotes table so that other
     # consumers (web dashboard, re-evaluation, etc.) can access them even
