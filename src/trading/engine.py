@@ -454,7 +454,7 @@ class TradingEngine:
             logger.warning(f"Failed to fetch sentiment for {base}: {e}")
             return None
 
-    async def _get_clock(self, ttl: float = 30.0) -> Optional[ClockInfo]:
+    async def _get_clock(self, ttl: float = 300.0) -> Optional[ClockInfo]:
         """Return Euronext Milan market clock info, cached for `ttl` seconds.
 
         Uses pandas_market_calendars only to detect holidays/weekends.
@@ -465,15 +465,15 @@ class TradingEngine:
         if self._clock_cache is not None and (now - self._clock_cache_time) < ttl:
             return self._clock_cache
 
-        rome_tz = ZoneInfo("Europe/Rome")
+        rome_tz = ZoneInfo(settings.MARKET_TIMEZONE)
         now_rome = datetime.now(timezone.utc).astimezone(rome_tz)
         today = now_rome.date()
 
-        # Default trading hours
-        MARKET_OPEN_HOUR = 9
-        MARKET_OPEN_MINUTE = 0
-        MARKET_CLOSE_HOUR = 17
-        MARKET_CLOSE_MINUTE = 30
+        # Configurable trading hours
+        MARKET_OPEN_HOUR = settings.MARKET_OPEN_HOUR
+        MARKET_OPEN_MINUTE = settings.MARKET_OPEN_MINUTE
+        MARKET_CLOSE_HOUR = settings.MARKET_CLOSE_HOUR
+        MARKET_CLOSE_MINUTE = settings.MARKET_CLOSE_MINUTE
 
         market_open_today = datetime(today.year, today.month, today.day,
                                      MARKET_OPEN_HOUR, MARKET_OPEN_MINUTE, tzinfo=rome_tz)
@@ -979,8 +979,8 @@ class TradingEngine:
 
                 if not is_open:
                     # Market closed – always pause trading immediately
-                    now_rome = clock.timestamp.astimezone(ZoneInfo("Europe/Rome"))
-                    next_open_rome = clock.next_open.astimezone(ZoneInfo("Europe/Rome"))
+                    now_rome = clock.timestamp.astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
+                    next_open_rome = clock.next_open.astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
                     remaining_seconds = (clock.next_open - clock.timestamp).total_seconds()
                     if remaining_seconds > 3600:
                         hours = int(remaining_seconds // 3600)
@@ -1052,7 +1052,7 @@ class TradingEngine:
                                 countdown_str = f"{minutes}m {seconds}s"
                             else:
                                 countdown_str = f"{int(remaining_seconds)}s"
-                            next_open_rome = clock.next_open.astimezone(ZoneInfo("Europe/Rome")) if clock else None
+                            next_open_rome = clock.next_open.astimezone(ZoneInfo(settings.MARKET_TIMEZONE)) if clock else None
                             next_open_str = next_open_rome.strftime('%H:%M %d/%m/%Y') if next_open_rome else "?"
                             update_msg = (
                                 f"⏸️ Market still closed. Reopens in {countdown_str} "
@@ -2550,12 +2550,12 @@ class TradingEngine:
                 is_active_period = False
                 if clock and clock.is_open:
                     now_rome = clock.timestamp
-                    market_open_dt = now_rome.replace(hour=9, minute=0, second=0, microsecond=0)
+                    market_open_dt = now_rome.replace(hour=settings.MARKET_OPEN_HOUR, minute=settings.MARKET_OPEN_MINUTE, second=0, microsecond=0)
                     minutes_since_open = (now_rome - market_open_dt).total_seconds() / 60
                     if 0 <= minutes_since_open < settings.MARKET_OPEN_ACTIVE_MINUTES:
                         is_active_period = True
                     if not is_active_period:
-                        market_close_dt = now_rome.replace(hour=17, minute=30, second=0, microsecond=0)
+                        market_close_dt = now_rome.replace(hour=settings.MARKET_CLOSE_HOUR, minute=settings.MARKET_CLOSE_MINUTE, second=0, microsecond=0)
                         minutes_to_close = (market_close_dt - now_rome).total_seconds() / 60
                         if 0 < minutes_to_close < settings.MARKET_CLOSE_ACTIVE_MINUTES:
                             is_active_period = True
@@ -6686,7 +6686,7 @@ class TradingEngine:
 
                 market_time_str = None
                 if clock is not None:
-                    market_time_str = clock.timestamp.astimezone(ZoneInfo("Europe/Rome")).strftime('%H:%M %d/%m/%Y')
+                    market_time_str = clock.timestamp.astimezone(ZoneInfo(settings.MARKET_TIMEZONE)).strftime('%H:%M %d/%m/%Y')
                     if not clock.is_open:
                         now_utc = datetime.now(timezone.utc)
                         next_open = clock.next_open
@@ -11456,14 +11456,16 @@ class TradingEngine:
 
     def _get_session_info(self) -> dict:
         """Return current Italian market session info using Europe/Rome timezone."""
-        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Rome"))
+        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
         weekday = now_rome.weekday()
         hour = now_rome.hour + now_rome.minute / 60.0
+        open_hour = settings.MARKET_OPEN_HOUR + settings.MARKET_OPEN_MINUTE / 60.0
+        close_hour = settings.MARKET_CLOSE_HOUR + settings.MARKET_CLOSE_MINUTE / 60.0
         if weekday >= 5:
             session = "Closed (weekend)"
-        elif hour < 9.0:
+        elif hour < open_hour:
             session = "Closed (pre-open)"
-        elif hour < 17.5:
+        elif hour < close_hour:
             session = "Regular"
         else:
             session = "Closed (after hours)"
@@ -11898,11 +11900,11 @@ class TradingEngine:
             pass
         session_info = self._get_session_info()
 
-        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Rome"))
+        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
         weekday = now_rome.weekday()
         if weekday < 5:
             rome_minutes = now_rome.hour * 60 + now_rome.minute
-            close_minutes = 17 * 60 + 30
+            close_minutes = settings.MARKET_CLOSE_HOUR * 60 + settings.MARKET_CLOSE_MINUTE
             minutes_to_market_close = close_minutes - rome_minutes
             if minutes_to_market_close < 0: minutes_to_market_close = 0
         else:

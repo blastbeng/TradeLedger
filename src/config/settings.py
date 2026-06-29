@@ -506,6 +506,13 @@ class Settings(BaseSettings):
     # Borsa Italiana market code (e.g., XMIL for Borsa di Milano)
     MARKET_CODE: str = "XMIL"
 
+    # Market hours (Rome time)
+    MARKET_OPEN_HOUR: int = 9
+    MARKET_OPEN_MINUTE: int = 0
+    MARKET_CLOSE_HOUR: int = 17
+    MARKET_CLOSE_MINUTE: int = 30
+    MARKET_TIMEZONE: str = "Europe/Rome"
+
     # BTP Bond Fees (Intesa Sanpaolo Investo)
     BTP_FEE_PERC: float = 0.0024
     BTP_MIN_FEE: float = 3.50
