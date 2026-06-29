@@ -307,9 +307,6 @@ def _get_init_statements() -> List[str]:
             change_24h REAL,
             percentage REAL,
             quotevolume REAL,
-            name TEXT,
-            coupon REAL,
-            maturity TEXT,
             updated_at {float_type} NOT NULL
         )
         """,
@@ -1282,21 +1279,20 @@ def save_quotes_batch(quotes: Dict[str, Dict[str, Any]]):
         if _backend == "postgresql":
             sql = _adapt_sql(
                 """
-                INSERT INTO quotes (symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, name, coupon, maturity, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO quotes (symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (symbol) DO UPDATE SET
                     last = EXCLUDED.last, bid = EXCLUDED.bid, ask = EXCLUDED.ask,
                     volume = EXCLUDED.volume, change_24h = EXCLUDED.change_24h,
                     percentage = EXCLUDED.percentage, quotevolume = EXCLUDED.quotevolume,
-                    name = EXCLUDED.name, coupon = EXCLUDED.coupon, maturity = EXCLUDED.maturity,
                     updated_at = EXCLUDED.updated_at
                 """
             )
         else:
             sql = _adapt_sql(
                 """
-                INSERT OR REPLACE INTO quotes (symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, name, coupon, maturity, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT OR REPLACE INTO quotes (symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
             )
         rows = []
@@ -1305,8 +1301,7 @@ def save_quotes_batch(quotes: Dict[str, Dict[str, Any]]):
                 rows.append((
                     sym, q.get("last"), q.get("bid"), q.get("ask"),
                     q.get("volume"), q.get("change_24h"), q.get("percentage"),
-                    q.get("quoteVolume"), q.get("name"), q.get("coupon"),
-                    q.get("maturity"), now
+                    q.get("quoteVolume"), now
                 ))
         if rows:
             conn.executemany(sql, rows)
@@ -1326,7 +1321,7 @@ def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict
         if _backend == "postgresql":
             sql = _adapt_sql(
                 """
-                SELECT symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, name, coupon, maturity, updated_at
+                SELECT symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, updated_at
                 FROM quotes WHERE symbol = ANY(%s) AND updated_at >= %s
                 """
             )
@@ -1335,7 +1330,7 @@ def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict
             placeholders = ",".join(["?" for _ in symbols])
             sql = _adapt_sql(
                 f"""
-                SELECT symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, name, coupon, maturity, updated_at
+                SELECT symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, updated_at
                 FROM quotes WHERE symbol IN ({placeholders}) AND updated_at >= %s
                 """
             )
@@ -1351,9 +1346,6 @@ def get_quotes_from_db(symbols: List[str], max_age_seconds: int = 86400) -> Dict
                 "change_24h": row["change_24h"],
                 "percentage": row["percentage"],
                 "quoteVolume": row["quotevolume"],
-                "name": row["name"],
-                "coupon": row["coupon"],
-                "maturity": row["maturity"],
                 "last_update": int(row["updated_at"] * 1000) if row["updated_at"] else None,
                 "source": "db_quotes",
             }
