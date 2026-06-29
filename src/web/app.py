@@ -409,6 +409,7 @@ async def tickers(symbols: str = ""):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info("WebSocket client connected")
+    last_sent_str = None
     try:
         while True:
             try:
@@ -496,9 +497,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     _ws_payload_cache = payload
                     _ws_payload_cache_time = now
 
-                await websocket.send_text(json.dumps(payload))
+                payload_str = json.dumps(payload)
+                if payload_str != last_sent_str:
+                    await websocket.send_text(payload_str)
+                    last_sent_str = payload_str
             except HTTPException:
-                await websocket.send_text(json.dumps({"status": "initializing"}))
+                init_str = json.dumps({"status": "initializing"})
+                if init_str != last_sent_str:
+                    await websocket.send_text(init_str)
+                    last_sent_str = init_str
             except WebSocketDisconnect:
                 logger.debug("WebSocket client disconnected")
                 break
