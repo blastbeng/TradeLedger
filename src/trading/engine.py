@@ -7397,12 +7397,22 @@ class TradingEngine:
                                             atr_is_stale = False
                                             if ind_ts is not None:
                                                 tf_secs = self._timeframe_to_seconds(tf)
-                                                max_age_secs = tf_secs * 2
+                                                # Cap max age at 7 days so long timeframes
+                                                # (5Y, 3Y, etc.) don't get an absurdly
+                                                # large staleness window.
+                                                max_age_secs = min(tf_secs * 2, 604800)
+                                                # The indicator timestamp is the candle's
+                                                # start time.  The candle covers a period
+                                                # of tf_secs, so the most recent data is
+                                                # tf_secs more recent than the timestamp.
+                                                # Subtract the candle duration to get the
+                                                # effective age of the data.
                                                 age_secs = (time.time() * 1000 - ind_ts) / 1000
-                                                if age_secs > max_age_secs:
+                                                effective_age = max(0, age_secs - tf_secs)
+                                                if effective_age > max_age_secs:
                                                     logger.info(
                                                         f"ATR for {symbol} {tf} is stale "
-                                                        f"(indicator data {age_secs/86400:.1f}d old, "
+                                                        f"(indicator data {effective_age/86400:.1f}d old, "
                                                         f"max {max_age_secs/86400:.1f}d). "
                                                         f"Falling back to fixed-percentage trailing stop."
                                                     )
