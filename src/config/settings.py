@@ -426,7 +426,7 @@ class Settings(BaseSettings):
                 raise ValueError(f"Invalid temperature value: {value!r}")
 
     # LLM timeout (seconds) for HTTP requests
-    LLM_TIMEOUT: float = 60.0
+    LLM_TIMEOUT: float = 300.0
 
     @field_validator("LLM_TIMEOUT")
     @classmethod
