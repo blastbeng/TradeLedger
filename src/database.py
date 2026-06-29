@@ -1362,65 +1362,65 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     if row["timeframe"] == result[db_base]["timeframe"]:
                         result[db_base]["prev_close"] = float(row["close"])
 
-    # --- Also fetch the latest 2 daily (1d) candles to compute a proper 24h change.
-    # The main query above gets the latest candles across ALL timeframes, which may
-    # mix timeframes (e.g., 5Y and 1M), making the prev_close / change_24h
-    # calculation incorrect.  We specifically query 1d candles so that prev_close
-    # always represents the previous trading day's close.
-    if base_symbols:
-        daily_pairs = [f"{bs}/{settings.BASE_CURRENCY}" for bs in base_symbols]
-        if _backend == "postgresql":
-            sql_daily = _adapt_sql(
-                """
-                WITH RankedDaily AS (
-                    SELECT symbol, close, timestamp,
-                           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
-                    FROM market_data
-                    WHERE symbol = ANY(%s) AND timeframe = '1d'
+        # --- Also fetch the latest 2 daily (1d) candles to compute a proper 24h change.
+        # The main query above gets the latest candles across ALL timeframes, which may
+        # mix timeframes (e.g., 5Y and 1M), making the prev_close / change_24h
+        # calculation incorrect.  We specifically query 1d candles so that prev_close
+        # always represents the previous trading day's close.
+        if base_symbols:
+            daily_pairs = [f"{bs}/{settings.BASE_CURRENCY}" for bs in base_symbols]
+            if _backend == "postgresql":
+                sql_daily = _adapt_sql(
+                    """
+                    WITH RankedDaily AS (
+                        SELECT symbol, close, timestamp,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
+                        FROM market_data
+                        WHERE symbol = ANY(%s) AND timeframe = '1d'
+                    )
+                    SELECT symbol, close, timestamp
+                    FROM RankedDaily
+                    WHERE rn <= 2
+                    ORDER BY symbol, timestamp DESC
+                    """
                 )
-                SELECT symbol, close, timestamp
-                FROM RankedDaily
-                WHERE rn <= 2
-                ORDER BY symbol, timestamp DESC
-                """
-            )
-            daily_rows = conn.execute(sql_daily, (daily_pairs,)).fetchall()
-        else:
-            placeholders = ",".join(["?" for _ in daily_pairs])
-            sql_daily = _adapt_sql(
-                f"""
-                WITH RankedDaily AS (
-                    SELECT symbol, close, timestamp,
-                           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
-                    FROM market_data
-                    WHERE symbol IN ({placeholders}) AND timeframe = '1d'
+                daily_rows = conn.execute(sql_daily, (daily_pairs,)).fetchall()
+            else:
+                placeholders = ",".join(["?" for _ in daily_pairs])
+                sql_daily = _adapt_sql(
+                    f"""
+                    WITH RankedDaily AS (
+                        SELECT symbol, close, timestamp,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
+                        FROM market_data
+                        WHERE symbol IN ({placeholders}) AND timeframe = '1d'
+                    )
+                    SELECT symbol, close, timestamp
+                    FROM RankedDaily
+                    WHERE rn <= 2
+                    ORDER BY symbol, timestamp DESC
+                    """
                 )
-                SELECT symbol, close, timestamp
-                FROM RankedDaily
-                WHERE rn <= 2
-                ORDER BY symbol, timestamp DESC
-                """
-            )
-            daily_rows = conn.execute(sql_daily, daily_pairs).fetchall()
+                daily_rows = conn.execute(sql_daily, daily_pairs).fetchall()
 
-        # Build a dict: base_symbol -> previous daily close (2nd latest 1d candle)
-        daily_seen: set = set()
-        daily_prev_close: Dict[str, float] = {}
-        for row in daily_rows:
-            db_symbol = row["symbol"]
-            db_base = db_symbol.split('/')[0]
-            if db_base in base_symbols and row["close"] is not None and row["close"] > 0:
-                if db_base not in daily_seen:
-                    # First (latest) 1d candle — mark as seen, skip
-                    daily_seen.add(db_base)
-                else:
-                    # Second 1d candle — this is the previous trading day's close
-                    daily_prev_close[db_base] = float(row["close"])
+            # Build a dict: base_symbol -> previous daily close (2nd latest 1d candle)
+            daily_seen: set = set()
+            daily_prev_close: Dict[str, float] = {}
+            for row in daily_rows:
+                db_symbol = row["symbol"]
+                db_base = db_symbol.split('/')[0]
+                if db_base in base_symbols and row["close"] is not None and row["close"] > 0:
+                    if db_base not in daily_seen:
+                        # First (latest) 1d candle — mark as seen, skip
+                        daily_seen.add(db_base)
+                    else:
+                        # Second 1d candle — this is the previous trading day's close
+                        daily_prev_close[db_base] = float(row["close"])
 
-        # Override prev_close with daily data when available
-        for db_base, prev_close in daily_prev_close.items():
-            if db_base in result:
-                result[db_base]["prev_close"] = prev_close
+            # Override prev_close with daily data when available
+            for db_base, prev_close in daily_prev_close.items():
+                if db_base in result:
+                    result[db_base]["prev_close"] = prev_close
         return result
     finally:
         conn.close()
