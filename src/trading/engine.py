@@ -12003,12 +12003,8 @@ class TradingEngine:
             atr_series, adx_series, rsi_series, macd_hist_series = await asyncio.to_thread(_compute_bt_indicator_series)
 
         # Fetch LLM-configured thresholds for backtest filters
-        bt_min_adx = 20.0
         bt_max_rsi = 70.0
         try:
-            raw = await asyncio.to_thread(self.redis.get, "trading:regime_adx_moderate")
-            if raw:
-                bt_min_adx = float(raw)
             raw = await asyncio.to_thread(self.redis.get, "trading:skip_eval_rsi_overbought")
             if raw:
                 bt_max_rsi = float(raw)
@@ -12033,7 +12029,6 @@ class TradingEngine:
                 atr_values=atr_series,
                 max_unrealized_loss_pct=bt_params.get("max_unrealized_loss_pct"),
                 adx_values=adx_series,
-                min_adx=bt_min_adx,
                 rsi_values=rsi_series,
                 max_rsi=bt_max_rsi,
                 macd_hist_values=macd_hist_series,
@@ -12046,7 +12041,6 @@ class TradingEngine:
                 slippage_model="dynamic",
                 slippage_base_pct=0.001,
                 slippage_max_pct=0.01,
-                trend_filter_ema_period=50,
                 backtest_entry_config=bt_entry_config,
                 direction="long",
             )
@@ -12055,7 +12049,8 @@ class TradingEngine:
                 candles=bt_candles,
                 **bt_kwargs,
             )
-            bt_summary = format_backtest_summary(backtest_stats)
+            bt_entry_config_used = bt_entry_config is not None and isinstance(bt_entry_config, dict) and len(bt_entry_config) > 0
+            bt_summary = format_backtest_summary(backtest_stats, entry_config_used=bt_entry_config_used)
 
             if len(bt_candles) >= 100:
                 wf_stats = await asyncio.to_thread(

@@ -77,7 +77,6 @@ def backtest_strategy(
     take_profit_atr_multiple: Optional[float] = None,
     max_unrealized_loss_pct: Optional[float] = None,
     adx_values: Optional[List[Optional[float]]] = None,
-    min_adx: float = 20.0,
     fee_rate: float = 0.0,
     fee_model: str = "flat",
     trade_value: Optional[float] = None,
@@ -88,7 +87,6 @@ def backtest_strategy(
     slippage_model: str = "fixed",
     slippage_base_pct: float = 0.001,
     slippage_max_pct: float = 0.01,
-    trend_filter_ema_period: int = 0,
     rsi_values: Optional[List[Optional[float]]] = None,
     max_rsi: float = 100.0,
     macd_hist_values: Optional[List[Optional[float]]] = None,
@@ -151,7 +149,6 @@ def backtest_strategy(
             slippage_model=slippage_model,
             slippage_base_pct=slippage_base_pct,
             slippage_max_pct=slippage_max_pct,
-            trend_filter_ema_period=trend_filter_ema_period,
             rsi_values=rsi_values, max_rsi=max_rsi,
             macd_hist_values=macd_hist_values,
             backtest_entry_config=backtest_entry_config,
@@ -177,7 +174,6 @@ def backtest_strategy(
             slippage_model=slippage_model,
             slippage_base_pct=slippage_base_pct,
             slippage_max_pct=slippage_max_pct,
-            trend_filter_ema_period=trend_filter_ema_period,
             rsi_values=rsi_values, max_rsi=max_rsi,
             macd_hist_values=macd_hist_values,
             backtest_entry_config=backtest_entry_config,
@@ -703,13 +699,14 @@ def _compute_stats(trades: List[Dict[str, Any]], buy_and_hold_pct: float = 0.0) 
     }
 
 
-def format_backtest_summary(stats: Dict[str, Any]) -> str:
+def format_backtest_summary(stats: Dict[str, Any], entry_config_used: bool = True) -> str:
     """Format backtest statistics into a human-readable string for LLM prompts and notifications."""
     if stats.get("insufficient_data") or stats.get("total_trades", 0) == 0:
         return "Insufficient data for backtesting."
 
+    entry_note = "" if entry_config_used else " [NO ENTRY FILTER — enters every candle]"
     return (
-        f"Python backtest ({stats['total_trades']} trades): "
+        f"Python backtest ({stats['total_trades']} trades){entry_note}: "
         f"Win rate: {stats['win_rate']*100:.1f}%, "
         f"Avg P&L: {stats['avg_pnl_pct']*100:+.2f}%, "
         f"Total P&L: {stats['total_pnl_pct']*100:+.2f}%, "
