@@ -146,6 +146,7 @@ class TradingEngine:
         self._queued_orders_lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
         self._state_save_pending = False
+        self._state_dirty: bool = False
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
@@ -1387,6 +1388,7 @@ class TradingEngine:
                 await asyncio.sleep(risk_interval)
                 await self._check_risk_management()
                 await self._save_state()
+                self._state_dirty = True
             except Exception as e:
                 logger.error(f"Risk management loop error: {e}", exc_info=True)
 
@@ -2696,6 +2698,7 @@ class TradingEngine:
         await asyncio.to_thread(save_trading_state, "global_risk_multiplier", self._global_risk_multiplier)
         logger.debug("Saved trading state: %d symbols, %d positions, %d trades",
                      len(self.current_symbols), len(self.positions), len(self.trade_history))
+        self._state_dirty = False
 
     async def run(self):
         """Main event‑driven loop using WebSocket ticker updates."""
@@ -2845,10 +2848,11 @@ class TradingEngine:
                                 )
                         await asyncio.sleep(0.2)   # small delay to reduce contention
 
-                # Save state periodically (every 30 seconds)
-                if now - self._last_state_save > 30:
+                # Save state periodically (every 5 minutes) when dirty
+                if now - self._last_state_save > 300 and self._state_dirty:
                     await self._save_state()
                     self._last_state_save = now
+                    self._state_dirty = False
 
             except Exception as e:
                 logger.error(f"Engine loop error: {e}", exc_info=True)
@@ -5577,6 +5581,7 @@ class TradingEngine:
                 await self._update_position_params(
                     symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
                 )
+                self._state_dirty = True
             else:
                 logger.warning(
                     f"LLM returned HOLD without new max_hold_time_seconds for {symbol} "
@@ -5623,6 +5628,7 @@ class TradingEngine:
                     await self._update_position_params(
                         symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
                     )
+                    self._state_dirty = True
                 if self.notifier:
                     await self.notifier.send_notification(
                         f"🔄 {display_symbol}: LLM adjusted stop-loss to {new_stop_pct:.4%} – holding.\n"
@@ -5679,6 +5685,7 @@ class TradingEngine:
                     await self._update_position_params(
                         symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
                     )
+                    self._state_dirty = True
                 if self.notifier:
                     await self.notifier.send_notification(
                         f"🔄 {display_symbol}: LLM adjusted take-profit to {new_tp_pct:.4%} – holding.\n"
@@ -5735,6 +5742,7 @@ class TradingEngine:
                 await self._update_position_params(
                     symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
                 )
+                self._state_dirty = True
                 if self.notifier:
                     await self.notifier.send_notification(
                         f"🔄 {display_symbol}: LLM adjusted partial TP levels – holding.",
@@ -9964,6 +9972,7 @@ class TradingEngine:
                                 }
                             )
                         del self._pending_entries[symbol]
+                        self._state_dirty = True
                         continue
 
                     # Check the condition (non‑blocking)
@@ -9975,6 +9984,7 @@ class TradingEngine:
                         # Remove from pending before executing to avoid re‑trigger
                         signal = entry["signal"]
                         del self._pending_entries[symbol]
+                        self._state_dirty = True
                         # Check trading pause again (may have changed)
                         paused = await asyncio.to_thread(self.redis.get, "trading:paused")
                         if paused:
@@ -10675,6 +10685,7 @@ class TradingEngine:
             pos["timeframe"] = timeframe
 
         logger.info(f"Updated risk parameters for {symbol} from LLM strategy_params")
+        self._state_dirty = True
 
     def _compute_exit_order_prices(
         self,
@@ -12356,6 +12367,7 @@ class TradingEngine:
         so the bot continues to generate and notify signals."""
         # Always clear any pending entry for this symbol
         self._pending_entries.pop(symbol, None)
+        self._state_dirty = True
 
     def _get_tickers_for_symbols_sync(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         """Fetch latest quotes for a list of symbols synchronously, batching missing ones.
