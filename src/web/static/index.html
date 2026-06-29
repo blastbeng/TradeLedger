@@ -1125,10 +1125,10 @@
                                 }
                             }
 
-                            smTitle.textContent = `${tickerCode} — ${actionLabel}`;
+                            smTitle.innerHTML = `<span class="clickable-symbol" id="signal-modal-ticker-link">${tickerCode}</span> — ${actionLabel}`;
 
                             let bodyHtml = `<strong>Time:</strong> ${time}\n`;
-                            bodyHtml += `<strong>Ticker:</strong> ${tickerCode}\n`;
+                            bodyHtml += `<strong>Ticker:</strong> <span class="clickable-symbol" id="signal-modal-body-ticker-link">${tickerCode}</span>\n`;
                             if (tickerName && tickerName !== tickerCode) {
                                 bodyHtml += `<strong>Name:</strong> ${tickerName}\n`;
                             }
@@ -1197,6 +1197,15 @@
 
                             smBody.innerHTML = bodyHtml;
                             sm.style.display = 'flex';
+                            // Make ticker links clickable to open the chart modal
+                            const _openChartFromSignal = () => {
+                                sm.style.display = 'none';
+                                openChart(s.symbol, tickerTf || '1d');
+                            };
+                            const _titleTickerLink = document.getElementById('signal-modal-ticker-link');
+                            if (_titleTickerLink) _titleTickerLink.onclick = _openChartFromSignal;
+                            const _bodyTickerLink = document.getElementById('signal-modal-body-ticker-link');
+                            if (_bodyTickerLink) _bodyTickerLink.onclick = _openChartFromSignal;
                         };
                     });
                 } else {
