@@ -11609,6 +11609,7 @@ class TradingEngine:
                                 logger.error(f"Failed to cancel timed-out order {order_id}: {e}")
                             # Remove from queue regardless of cancel success
                             self.queued_orders.remove(queued)
+                            self._state_dirty = True
                             # If this was an exit order, cancel its OCO pair
                             if queued.get("is_exit_order"):
                                 oco_pair_id = queued.get("oco_pair")
@@ -11654,6 +11655,7 @@ class TradingEngine:
                         logger.warning(f"Order {order_id} not found for {queued['symbol']}, removing from queue.")
                         async with self._queued_orders_lock:
                             self.queued_orders.remove(queued)
+                        self._state_dirty = True
                         continue
 
                     status = paper_order.status
@@ -11860,6 +11862,7 @@ class TradingEngine:
                             )
                         async with self._queued_orders_lock:
                             self.queued_orders.remove(queued)
+                        self._state_dirty = True
                         if queued.get("is_exit_order"):
                             oco_pair_id = queued.get("oco_pair")
                             if oco_pair_id:
