@@ -1362,22 +1362,23 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
 @retry_on_db_lock()
 def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, name: str = ""):
-    """Insert or update a discovered symbol with its ISIN."""
+    """Insert or update a discovered symbol with its ISIN.
+
+    Uses COALESCE to preserve existing ISINs — if isin is None, the existing
+    ISIN in the database is kept (not overwritten with NULL). This is critical
+    because yfinance can return None when rate-limited.
+    """
     conn = get_connection()
     try:
-        if _backend == "postgresql":
-            sql = _adapt_sql(
-                "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
-                "VALUES (%s, %s, %s, %s, %s) "
-                "ON CONFLICT (symbol) DO UPDATE SET isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
-                "asset_type = EXCLUDED.asset_type, name = EXCLUDED.name, "
-                "discovered_at = EXCLUDED.discovered_at"
-            )
-        else:
-            sql = _adapt_sql(
-                "INSERT OR REPLACE INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
-                "VALUES (%s, %s, %s, %s, %s)"
-            )
+        sql = _adapt_sql(
+            "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (symbol) DO UPDATE SET "
+            "isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
+            "asset_type = EXCLUDED.asset_type, "
+            "name = EXCLUDED.name, "
+            "discovered_at = EXCLUDED.discovered_at"
+        )
         conn.execute(sql, (symbol, isin, asset_type, name, time.time()))
         conn.commit()
     finally:
@@ -1386,25 +1387,25 @@ def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, na
 
 @retry_on_db_lock()
 def save_discovered_symbols_batch(symbols: List[Dict[str, Any]]):
-    """Batch insert or update discovered symbols."""
+    """Batch insert or update discovered symbols.
+
+    Uses COALESCE to preserve existing ISINs — if isin is None, the existing
+    ISIN in the database is kept (not overwritten with NULL).
+    """
     if not symbols:
         return
     conn = get_connection()
     try:
         now = time.time()
-        if _backend == "postgresql":
-            sql = _adapt_sql(
-                "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
-                "VALUES (%s, %s, %s, %s, %s) "
-                "ON CONFLICT (symbol) DO UPDATE SET isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
-                "asset_type = EXCLUDED.asset_type, name = EXCLUDED.name, "
-                "discovered_at = EXCLUDED.discovered_at"
-            )
-        else:
-            sql = _adapt_sql(
-                "INSERT OR REPLACE INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
-                "VALUES (%s, %s, %s, %s, %s)"
-            )
+        sql = _adapt_sql(
+            "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, discovered_at) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (symbol) DO UPDATE SET "
+            "isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
+            "asset_type = EXCLUDED.asset_type, "
+            "name = EXCLUDED.name, "
+            "discovered_at = EXCLUDED.discovered_at"
+        )
         rows = [(s["symbol"], s.get("isin"), s.get("asset_type", ""), s.get("name", ""), now) for s in symbols]
         conn.executemany(sql, rows)
         conn.commit()
