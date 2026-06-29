@@ -7146,6 +7146,7 @@ class TradingEngine:
             # Update virtual cash balance
             self.trader._balances[quote] = self.trader._balances.get(quote, 0.0) - cost_basis
             self.trader._balances[base] = self.trader._balances.get(base, 0.0) + net_base
+            self.trader._balances_dirty = True
             await asyncio.to_thread(self.trader._save_balances)
         elif side == "sell":
             pos = self.positions.get(symbol)
@@ -7164,6 +7165,7 @@ class TradingEngine:
                 # Update virtual cash balance
                 self.trader._balances[base] = self.trader._balances.get(base, 0.0) - quantity
                 self.trader._balances[quote] = self.trader._balances.get(quote, 0.0) + net_quote
+                self.trader._balances_dirty = True
                 await asyncio.to_thread(self.trader._save_balances)
             else:
                 trade["realized_pnl"] = 0.0
@@ -7173,6 +7175,7 @@ class TradingEngine:
                 # Update virtual cash balance even if position wasn't tracked
                 self.trader._balances[base] = self.trader._balances.get(base, 0.0) - quantity
                 self.trader._balances[quote] = self.trader._balances.get(quote, 0.0) + (cost - fee)
+                self.trader._balances_dirty = True
                 await asyncio.to_thread(self.trader._save_balances)
 
         self.trade_history.append(trade)

@@ -70,6 +70,7 @@ class PaperTrader:
         self._balances = load_paper_balances()
         if not self._balances:
             self._balances = {self.base_currency: settings.PAPER_INITIAL_BALANCE}
+            self._balances_dirty = True
             self._save_balances()
         if self.base_currency not in self._balances:
             self._balances[self.base_currency] = 0.0
