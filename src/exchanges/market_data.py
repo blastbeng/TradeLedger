@@ -272,8 +272,14 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     """Fetch the ISIN code for a symbol, using DB first, then yfinance as fallback."""
     from src.database import get_isin_from_db, save_discovered_symbol
 
+    # Strip suffix for DB lookup (DB stores base symbols without suffix)
+    suffix = settings.TICKER_SUFFIX
+    db_symbol = base_symbol
+    if suffix and db_symbol.endswith(suffix):
+        db_symbol = db_symbol[:-len(suffix)]
+
     # Check DB first (not Redis)
-    cached = get_isin_from_db(base_symbol)
+    cached = get_isin_from_db(db_symbol)
     if cached:
         return cached
 
@@ -281,15 +287,14 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     if _check_yf_circuit():
         return None
 
-    suffix = settings.TICKER_SUFFIX
-    yf_symbol = f"{base_symbol}{suffix}" if suffix and not base_symbol.endswith(suffix) else base_symbol
+    yf_symbol = f"{db_symbol}{suffix}" if suffix and not db_symbol.endswith(suffix) else db_symbol
     try:
         ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
         isin = ticker.isin
         if isin:
-            # Save to DB (not Redis)
+            # Save to DB with the base symbol (no suffix)
             try:
-                save_discovered_symbol(base_symbol, isin, "stock", "")
+                save_discovered_symbol(db_symbol, isin, "stock", "")
             except Exception:
                 pass
             return isin
@@ -1604,9 +1609,12 @@ def get_multi_timeframe_bars(
                     pass
             continue
 
-        # Check if we have ISIN in DB
+        # Check if we have ISIN in DB (strip suffix — DB stores base symbols)
         from src.database import get_isin_from_db
-        db_isin = get_isin_from_db(symbol)
+        db_lookup_symbol = symbol
+        if settings.TICKER_SUFFIX and db_lookup_symbol.endswith(settings.TICKER_SUFFIX):
+            db_lookup_symbol = db_lookup_symbol[:-len(settings.TICKER_SUFFIX)]
+        db_isin = get_isin_from_db(db_lookup_symbol)
         has_isin = db_isin is not None
 
         # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
@@ -1705,9 +1713,12 @@ def get_bars_range(
             return borsa_candles
         return []
 
-    # Check if we have ISIN in DB
+    # Check if we have ISIN in DB (strip suffix — DB stores base symbols)
     from src.database import get_isin_from_db
-    db_isin = get_isin_from_db(symbol)
+    db_lookup_symbol = symbol
+    if settings.TICKER_SUFFIX and db_lookup_symbol.endswith(settings.TICKER_SUFFIX):
+        db_lookup_symbol = db_lookup_symbol[:-len(settings.TICKER_SUFFIX)]
+    db_isin = get_isin_from_db(db_lookup_symbol)
     has_isin = db_isin is not None
 
     # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
