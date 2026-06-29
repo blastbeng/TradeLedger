@@ -7289,6 +7289,57 @@ class TradingEngine:
             except Exception as e:
                 logger.debug(f"Failed to record P&L snapshot for {symbol}: {e}")
 
+    async def _process_native_exit_fill(
+        self,
+        symbol: str,
+        order_id: str,
+        order_obj: Any,
+        pos: Dict[str, Any],
+        exit_reason: str,
+    ):
+        """Process a filled native exit order (stop-loss or take-profit) inline.
+
+        This avoids the race condition where a native exit order fills between
+        the OCO cancellation and a manual _execute_signal call, which would
+        result in a double sell.
+        """
+        async with self._queued_orders_lock:
+            queued = next((q for q in self.queued_orders if q.get("order_id") == order_id), None)
+            if queued:
+                filled_qty = float(order_obj.filled_qty) if order_obj.filled_qty else 0.0
+                filled_avg_price = float(order_obj.filled_avg_price) if order_obj.filled_avg_price else 0.0
+                if filled_qty > 0:
+                    delta_cost = filled_qty * filled_avg_price
+                    from src.exchanges.fees import calculate_transaction_costs
+                    _quote_ccy = symbol.split("/")[1] if "/" in symbol else self.base_currency
+                    _fee_costs = calculate_transaction_costs("SELL", filled_avg_price, filled_qty, symbol=symbol)
+                    trade_dict = {
+                        'id': str(order_obj.id),
+                        'symbol': symbol,
+                        'side': 'sell',
+                        'amount': filled_qty,
+                        'price': filled_avg_price,
+                        'cost': delta_cost,
+                        'fee': {'cost': _fee_costs["total_costs"], 'currency': _quote_ccy},
+                        'status': 'closed',
+                        'timestamp': int(time.time() * 1000),
+                    }
+                    await self._handle_queued_sell_fill(trade_dict, queued, partial=False)
+                self.queued_orders = [q for q in self.queued_orders if q.get("order_id") != order_id]
+        # Cancel the OCO pair if it still exists
+        oco_pair_id = queued.get("oco_pair") if queued else None
+        if oco_pair_id:
+            try:
+                await asyncio.to_thread(self.trader.cancel_order, oco_pair_id)
+            except Exception:
+                pass
+            async with self._queued_orders_lock:
+                self.queued_orders = [q for q in self.queued_orders if q.get("order_id") != oco_pair_id]
+        pos.pop("stop_loss_order_id", None)
+        pos.pop("take_profit_order_id", None)
+        pos.pop("stop_loss_order_type", None)
+        pos.pop("_native_stop_price", None)
+
     async def _check_risk_management(self):
         """Check open positions and close if stop-loss, take-profit, or trailing stop is hit."""
         # --- Notify mode: no automated risk management ---
@@ -7792,25 +7843,45 @@ class TradingEngine:
                                     "reason": "Stop triggered, OCO pair cancelled (risk check)",
                                 }
                             )
-                        # Immediately execute the stop-loss sell instead of waiting
-                        # up to 120s for _process_queued_orders to poll the stop order.
+                        # Process the stop-loss order: check if it has already filled
+                        # (race condition prevention — the order may have filled between
+                        # cancelling the TP and now).  Calling get_order will also trigger
+                        # the fill if the stop price has been reached, which is the
+                        # desired behaviour: we process the native fill instead of
+                        # executing a duplicate manual sell.
+                        sl_filled = False
+                        sl_order_obj = None
                         try:
-                            await asyncio.to_thread(self.trader.cancel_order, sl_order_id)
+                            sl_order_obj = await asyncio.to_thread(self.trader.get_order, sl_order_id)
+                            if sl_order_obj is not None and sl_order_obj.status == "filled":
+                                sl_filled = True
                         except Exception:
                             pass
-                        async with self._queued_orders_lock:
-                            self.queued_orders = [
-                                q for q in self.queued_orders
-                                if q.get("order_id") != sl_order_id
-                            ]
+
+                        if sl_filled:
+                            # The native stop-loss order filled — process the fill to
+                            # update positions and trade history, avoiding a double sell.
+                            logger.info(f"Stop-loss order {sl_order_id} filled for {symbol}, processing native fill.")
+                            await self._process_native_exit_fill(symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
+                        else:
+                            # Stop-loss not yet filled — cancel it and execute manual sell
+                            try:
+                                await asyncio.to_thread(self.trader.cancel_order, sl_order_id)
+                            except Exception:
+                                pass
+                            async with self._queued_orders_lock:
+                                self.queued_orders = [
+                                    q for q in self.queued_orders
+                                    if q.get("order_id") != sl_order_id
+                                ]
                             pos.pop("stop_loss_order_id", None)
                             pos.pop("stop_loss_order_type", None)
                             pos.pop("_native_stop_price", None)
-                        await self._execute_signal(
-                            symbol,
-                            Signal(action="SELL", confidence=1.0, reasoning="Stop-loss triggered (risk check)"),
-                            exit_reason="stop_loss"
-                        )
+                            await self._execute_signal(
+                                symbol,
+                                Signal(action="SELL", confidence=1.0, reasoning="Stop-loss triggered (risk check)"),
+                                exit_reason="stop_loss"
+                            )
                         continue  # position has been closed, move to next
 
                     # Take-profit price reached → cancel stop OCO pair
@@ -7847,23 +7918,40 @@ class TradingEngine:
                                     "reason": "Take-profit reached, OCO pair cancelled (risk check)",
                                 }
                             )
-                        # Immediately execute the take-profit sell instead of waiting
-                        # up to 120s for _process_queued_orders to poll the TP order.
+                        # Process the take-profit order: check if it has already
+                        # filled (race condition prevention — the order may have
+                        # filled between cancelling the SL and now).  Calling
+                        # get_order will also trigger the fill if the TP price has
+                        # been reached.
+                        tp_filled = False
+                        tp_order_obj = None
                         try:
-                            await asyncio.to_thread(self.trader.cancel_order, tp_order_id)
+                            tp_order_obj = await asyncio.to_thread(self.trader.get_order, tp_order_id)
+                            if tp_order_obj is not None and tp_order_obj.status == "filled":
+                                tp_filled = True
                         except Exception:
                             pass
-                        async with self._queued_orders_lock:
-                            self.queued_orders = [
-                                q for q in self.queued_orders
-                                if q.get("order_id") != tp_order_id
-                            ]
+
+                        if tp_filled:
+                            logger.info(f"Take-profit order {tp_order_id} filled for {symbol}, processing native fill.")
+                            await self._process_native_exit_fill(symbol, tp_order_id, tp_order_obj, pos, "take_profit")
+                        else:
+                            # TP not yet filled — cancel it and execute manual sell
+                            try:
+                                await asyncio.to_thread(self.trader.cancel_order, tp_order_id)
+                            except Exception:
+                                pass
+                            async with self._queued_orders_lock:
+                                self.queued_orders = [
+                                    q for q in self.queued_orders
+                                    if q.get("order_id") != tp_order_id
+                                ]
                             pos.pop("take_profit_order_id", None)
-                        await self._execute_signal(
-                            symbol,
-                            Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered (risk check)"),
-                            exit_reason="take_profit"
-                        )
+                            await self._execute_signal(
+                                symbol,
+                                Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered (risk check)"),
+                                exit_reason="take_profit"
+                            )
                         continue  # position has been closed, move to next
                 elif current_price <= pos["stop_loss"]:
                     # Instead of immediately selling, ask the LLM whether to sell or adjust the stop.
