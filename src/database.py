@@ -151,7 +151,11 @@ def _get_existing_columns(table_name: str) -> set:
 
 
 def _migrate_db():
-    """Add missing columns to existing tables (schema migrations)."""
+    """Add missing columns to existing tables (schema migrations).
+
+    Failed migrations are automatically retried with exponential backoff
+    (up to 3 attempts) to handle transient database locks and deadlocks.
+    """
     migrations = [
         ("trade_history", "timeframe", "ALTER TABLE trade_history ADD COLUMN timeframe TEXT"),
         ("trade_history", "cost_basis", "ALTER TABLE trade_history ADD COLUMN cost_basis REAL"),
@@ -166,17 +170,38 @@ def _migrate_db():
         ("discovered_symbols", "coupon", "ALTER TABLE discovered_symbols ADD COLUMN coupon REAL"),
     ]
 
+    max_retries = 3
+    initial_delay = 0.5
+
     for table, column, sql in migrations:
         existing = _get_existing_columns(table)
         if column not in existing:
-            conn = get_connection()
-            try:
-                conn.execute(_adapt_sql(sql))
-                conn.commit()
-            except Exception as e:
-                logger.warning(f"Migration {sql} failed: {e}")
-            finally:
-                conn.close()
+            last_exc = None
+            for attempt in range(max_retries + 1):
+                conn = get_connection()
+                try:
+                    conn.execute(_adapt_sql(sql))
+                    conn.commit()
+                    logger.info(f"Migration succeeded: {sql}")
+                    last_exc = None
+                    break
+                except Exception as e:
+                    last_exc = e
+                    if attempt < max_retries:
+                        delay = initial_delay * (2 ** attempt)
+                        logger.warning(
+                            f"Migration {sql} failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                            f"Retrying in {delay:.1f}s..."
+                        )
+                        time.sleep(delay)
+                    else:
+                        logger.error(
+                            f"Migration {sql} failed after {max_retries + 1} attempts: {e}"
+                        )
+                finally:
+                    conn.close()
+            # If all retries failed, the column will be retried on next startup
+            # because _get_existing_columns will still report it as missing.
 
 
 def init_db():
