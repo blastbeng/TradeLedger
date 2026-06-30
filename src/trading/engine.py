@@ -8253,8 +8253,9 @@ class TradingEngine:
                             logger.info(f"Dust sweep max reviews reached for {symbol}, force sweeping.")
                             await self._sweep_dust(symbol)
                         else:
-                            pos["_dust_sweep_triggered"] = True
-                            pos["_dust_sweep_review_count"] = review_count
+                            async with self._positions_lock:
+                                pos["_dust_sweep_triggered"] = True
+                                pos["_dust_sweep_review_count"] = review_count
                             self._last_strategy_eval.pop(symbol, None)
                             logger.info(f"Dust condition triggered for {symbol} – asking LLM (review {review_count})")
                             if self.notifier:
@@ -8275,9 +8276,10 @@ class TradingEngine:
                     if min_amount is not None and amount < min_amount:
                         is_dust = True
                     if not is_dust:
-                        pos.pop("_dust_sweep_triggered", None)
-                        pos.pop("_dust_sweep_review_count", None)
-                        pos.pop("_dust_keep_since", None)
+                        async with self._positions_lock:
+                            pos.pop("_dust_sweep_triggered", None)
+                            pos.pop("_dust_sweep_review_count", None)
+                            pos.pop("_dust_keep_since", None)
                         logger.info(f"Dust condition cleared for {symbol}")
 
                 # --- News sentiment exit ---
