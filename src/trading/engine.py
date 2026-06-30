@@ -8303,6 +8303,20 @@ class TradingEngine:
                     continue  # no real-time data yet, skip this check
                 current_price = ticker['last']
 
+                # --- Staleness guard: skip risk checks if the quote is too stale ---
+                pos_tf = pos.get("timeframe")
+                if not pos_tf:
+                    for entry in self.current_symbols:
+                        if entry["symbol"] == symbol:
+                            pos_tf = entry.get("timeframe")
+                            break
+                if pos_tf and await self._is_quote_too_stale(ticker, pos_tf):
+                    logger.warning(
+                        f"Skipping risk management for {symbol}: quote data is too stale "
+                        f"for timeframe {pos_tf}."
+                    )
+                    continue
+
                 # --- Format symbol for notifications ---
                 stock_name = await self._get_stock_name(symbol)
                 display_symbol = self._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
