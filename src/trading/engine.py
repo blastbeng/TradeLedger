@@ -3383,6 +3383,13 @@ class TradingEngine:
             results = await asyncio.gather(*tasks)
             ohlcv_data = dict(results)
 
+        # Build available timeframes per symbol for validation and final selection prompt
+        available_timeframes_by_symbol = {}
+        for sym, tf_data in ohlcv_data.items():
+            available_tfs = [tf for tf in settings.OHLCV_TIMEFRAMES if tf in tf_data and tf_data[tf]]
+            if available_tfs:
+                available_timeframes_by_symbol[sym] = available_tfs
+
         logger.info("Re-evaluation step 8/12: Batch-fetching indicators for %d symbols...", len(sorted_by_vol))
         primary_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
 
@@ -3953,6 +3960,7 @@ class TradingEngine:
                 min_viable_trade_amount=min_viable_amount,
                 available_timeframes=settings.OHLCV_TIMEFRAMES,
                 market_limits=market_limits,
+                available_timeframes_by_symbol=available_timeframes_by_symbol,
             )
             if auto_resume_note:
                 final_prompt += "\n" + auto_resume_note
@@ -4146,6 +4154,25 @@ class TradingEngine:
                     e for e in deduped
                     if not self._is_excluded(e["symbol"], e["timeframe"])
                 ]
+
+                # Validate that each selected symbol/timeframe has OHLCV data;
+                # fall back to an available timeframe or skip the symbol entirely
+                validated_deduped = []
+                for entry in deduped:
+                    sym = entry["symbol"]
+                    tf = entry["timeframe"]
+                    sym_data = ohlcv_data.get(sym, {})
+                    if tf in sym_data and sym_data[tf]:
+                        validated_deduped.append(entry)
+                    else:
+                        available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if t in sym_data and sym_data[t]]
+                        if available_tfs:
+                            entry["timeframe"] = available_tfs[0]
+                            validated_deduped.append(entry)
+                            logger.info(f"No OHLCV data for {sym} on {tf}, falling back to {available_tfs[0]}")
+                        else:
+                            logger.warning(f"Skipping {sym}: no OHLCV data available for any timeframe")
+                deduped = validated_deduped
 
                 # --- Extract pause_trading early so MIN_SYMBOLS enforcement can respect it ---
                 pause_trading = parsed.get("pause_trading")

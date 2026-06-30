@@ -761,6 +761,7 @@ def build_final_selection_prompt(
     min_viable_trade_amount: float = 0.0,
     available_timeframes: Optional[List[str]] = None,
     market_limits: Optional[Dict[str, Dict[str, Any]]] = None,
+    available_timeframes_by_symbol: Optional[Dict[str, List[str]]] = None,
 ) -> str:
     """Build a prompt for the final symbol selection from chunk results.
 
