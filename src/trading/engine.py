@@ -8301,6 +8301,24 @@ class TradingEngine:
                 # are inappropriate for bond instruments.
                 _ts_base_sym = symbol.split("/")[0]
                 _ts_is_btp = re.match(r'^IT[A-Z0-9]{10}$', _ts_base_sym) is not None
+                # Warn if a BTP position has trailing_stop enabled (not supported by Intesa Sanpaolo Investo)
+                if _ts_is_btp and pos.get("trailing_stop") and not pos.get("_ts_btp_warned"):
+                    logger.warning(
+                        f"Trailing stop is enabled for BTP {symbol} but is not supported by Intesa Sanpaolo Investo. "
+                        f"It will be ignored. The position is protected only by the fixed stop-loss."
+                    )
+                    if self.notifier:
+                        await self.notifier.send_notification(
+                            f"⚠️ Trailing stop ignored for BTP {display_symbol}: not supported by Intesa Sanpaolo Investo. "
+                            f"Position is protected by fixed stop-loss only.",
+                            summary={
+                                "symbol": symbol,
+                                "action": "INFO",
+                                "reason": "Trailing stop not supported for BTPs",
+                            }
+                        )
+                    async with self._positions_lock:
+                        pos["_ts_btp_warned"] = True
                 if (
                     pos.get("trailing_stop")
                     and pos.get("stop_loss_order_type") != "trailing_stop"
@@ -9129,6 +9147,8 @@ class TradingEngine:
             logger.error(f"Invalid symbol format: {symbol}")
             return
         base, quote = parts
+        _exec_base = symbol.split("/")[0]
+        _exec_is_btp = re.match(r'^IT[A-Z0-9]{10}$', _exec_base) is not None
         balance = await self._get_cached_balance()
 
         if signal.action == "BUY":
@@ -9200,6 +9220,13 @@ class TradingEngine:
                     )
                     tp_pct = settings.BTP_MAX_TAKE_PROFIT_PCT
             trailing_stop = params["trailing_stop"]
+            # Force trailing_stop off for BTPs — not supported by Intesa Sanpaolo Investo
+            if _exec_is_btp and trailing_stop:
+                logger.warning(
+                    f"LLM set trailing_stop=true for BTP {symbol}, but trailing stops are not supported "
+                    f"for BTPs on Intesa Sanpaolo Investo. Forcing trailing_stop=false."
+                )
+                trailing_stop = False
             trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
 
             # Determine stop-loss percentage based on method
@@ -11320,7 +11347,16 @@ class TradingEngine:
 
         # --- Trailing stop ---
         if "trailing_stop" in params:
-            pos["trailing_stop"] = params["trailing_stop"]
+            _upd_base = symbol.split("/")[0]
+            _upd_is_btp = re.match(r'^IT[A-Z0-9]{10}$', _upd_base) is not None
+            if _upd_is_btp and params["trailing_stop"]:
+                logger.warning(
+                    f"LLM set trailing_stop=true for BTP {symbol} in position update, but trailing stops "
+                    f"are not supported for BTPs. Forcing trailing_stop=false."
+                )
+                pos["trailing_stop"] = False
+            else:
+                pos["trailing_stop"] = params["trailing_stop"]
         if "trailing_stop_distance_pct" in params:
             pos["trailing_stop_distance_pct"] = params["trailing_stop_distance_pct"]
         if "trailing_stop_activation_pct" in params:
@@ -12683,6 +12719,14 @@ class TradingEngine:
                 )
                 tp_pct = settings.BTP_MAX_TAKE_PROFIT_PCT
         trailing_stop = params.get("trailing_stop", False)
+        _qbuy_base = symbol.split("/")[0]
+        _qbuy_is_btp = re.match(r'^IT[A-Z0-9]{10}$', _qbuy_base) is not None
+        if _qbuy_is_btp and trailing_stop:
+            logger.warning(
+                f"LLM set trailing_stop=true for BTP {symbol} (queued fill), but trailing stops are not supported "
+                f"for BTPs on Intesa Sanpaolo Investo. Forcing trailing_stop=false."
+            )
+            trailing_stop = False
         trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
         indicator_config = signal_dict.get('indicator_config')
 
