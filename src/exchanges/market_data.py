@@ -289,6 +289,32 @@ def _get_proxies() -> Optional[str]:
     return None
 
 
+def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Fetch ISIN, country, and name from Borsa Italiana search API.
+
+    Returns (isin, country, name). Country is always 'Italy' if found.
+    """
+    url = f"https://www.borsaitaliana.it/borsa/search/srch.ash?testo={base_symbol}&lang=it"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        with httpx.Client(proxy=_get_proxies(), timeout=10.0, follow_redirects=True) as client:
+            response = client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            if data and isinstance(data, list):
+                for item in data:
+                    isin = item.get("ISIN")
+                    name = item.get("Name")
+                    if isin and re.match(r'^[A-Z]{2}[A-Z0-9]{9}\d$', isin):
+                        # Borsa Italiana is the Italian exchange, so country is Italy
+                        return isin, "Italy", name
+    except Exception as e:
+        logger.debug(f"Borsa Italiana search failed for {base_symbol}: {e}")
+    return None, None, None
+
+
 def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     """Fetch the ISIN code for a symbol, using DB first, then yfinance as fallback."""
     from src.database import get_isin_from_db, save_discovered_symbol
@@ -304,28 +330,36 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     if cached:
         return cached
 
+    isin = None
     # If yfinance circuit is open, we can't fetch the ISIN from yfinance.
-    if _check_yf_circuit():
-        return None
+    if not _check_yf_circuit():
+        yf_symbol = f"{db_symbol}{suffix}" if suffix and not db_symbol.endswith(suffix) else db_symbol
+        try:
+            ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
+            isin = ticker.isin
+            if isin:
+                isin = isin.strip()
+                if isin == '-' or not isin:
+                    isin = None
+        except Exception as e:
+            logger.debug(f"Failed to fetch ISIN for {base_symbol} from yfinance: {e}")
+            isin = None
 
-    yf_symbol = f"{db_symbol}{suffix}" if suffix and not db_symbol.endswith(suffix) else db_symbol
-    try:
-        ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
-        isin = ticker.isin
-        if isin:
-            isin = isin.strip()
-            if isin == '-' or not isin:
-                return None
-            # Save to DB with the base symbol (no suffix)
-            try:
-                save_country = settings.TARGET_COUNTRY if settings.COUNTRY_FILTER_STRICT else None
-                save_discovered_symbol(db_symbol, isin, None, "", country=save_country)
-            except Exception:
-                pass
-            return isin
-    except Exception as e:
-        logger.debug(f"Failed to fetch ISIN for {base_symbol}: {e}")
-    return None
+    # Fallback to Borsa Italiana search if yfinance failed or circuit is open
+    if not isin:
+        bi_isin, _, _ = _get_isin_and_info_from_borsa_italiana(db_symbol)
+        if bi_isin:
+            isin = bi_isin
+
+    if isin:
+        # Save to DB with the base symbol (no suffix)
+        try:
+            save_country = settings.TARGET_COUNTRY if settings.COUNTRY_FILTER_STRICT else None
+            save_discovered_symbol(db_symbol, isin, None, "", country=save_country)
+        except Exception:
+            pass
+
+    return isin
 
 
 # Borsa Italiana timeframe conversion map (daily data → resampled via pandas)
@@ -764,25 +798,41 @@ def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optio
     Returns a tuple (country, name) on success, or (None, None) if yfinance
     could not provide the information after all retries.
     """
-    if _check_yf_circuit():
-        return None, None
-    import time as _time
-    for attempt in range(max_retries + 1):
-        try:
-            ticker = yf.Ticker(symbol, session=_get_yf_session())
-            info = ticker.info
-            country = info.get("country")
-            name = info.get("longName") or info.get("shortName")
-            if country or name:
-                return country, name
-            # country is None or empty – retry if attempts remain
-            if attempt < max_retries:
-                _time.sleep(0.5 * (2 ** attempt))
-                continue
-        except Exception as e:
-            logger.debug(f"Failed to fetch info for {symbol} (attempt {attempt + 1}/{max_retries + 1}): {e}")
-            if attempt < max_retries:
-                _time.sleep(0.5 * (2 ** attempt))
+    country, name = None, None
+    if not _check_yf_circuit():
+        import time as _time
+        for attempt in range(max_retries + 1):
+            try:
+                ticker = yf.Ticker(symbol, session=_get_yf_session())
+                info = ticker.info
+                country = info.get("country")
+                name = info.get("longName") or info.get("shortName")
+                if country or name:
+                    break
+                # country is None or empty – retry if attempts remain
+                if attempt < max_retries:
+                    _time.sleep(0.5 * (2 ** attempt))
+                    continue
+            except Exception as e:
+                logger.debug(f"Failed to fetch info for {symbol} (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                if attempt < max_retries:
+                    _time.sleep(0.5 * (2 ** attempt))
+
+    # Fallback to Borsa Italiana search if yfinance failed or circuit is open
+    if not country or not name:
+        # Strip suffix for Borsa Italiana search
+        db_symbol = symbol
+        if settings.TICKER_SUFFIX and db_symbol.endswith(settings.TICKER_SUFFIX):
+            db_symbol = db_symbol[:-len(settings.TICKER_SUFFIX)]
+
+        bi_isin, bi_country, bi_name = _get_isin_and_info_from_borsa_italiana(db_symbol)
+        if not country:
+            country = bi_country
+        if not name:
+            name = bi_name
+
+    if country or name:
+        return country, name
     return None, None
 
 
