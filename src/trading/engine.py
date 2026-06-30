@@ -4167,6 +4167,37 @@ class TradingEngine:
                     )
                     self.effective_max_symbols = settings.MIN_SYMBOLS
 
+                # --- Fallback: fill remaining slots if LLM returned fewer than MIN_SYMBOLS ---
+                if (
+                    settings.MIN_SYMBOLS > 0
+                    and pause_trading is not True
+                    and len(deduped) < settings.MIN_SYMBOLS
+                ):
+                    # Try to fill remaining slots from composite-score-sorted sample_pairs
+                    existing_syms = {e["symbol"] for e in deduped}
+                    default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+                    needed = settings.MIN_SYMBOLS - len(deduped)
+                    filled = 0
+                    for sym in sorted_by_composite:
+                        if filled >= needed:
+                            break
+                        if sym in existing_syms:
+                            continue
+                        if self._is_excluded(sym, default_tf):
+                            continue
+                        # Check if we can afford the minimum trade cost
+                        min_cost = market_limits.get(sym, {}).get("min_cost", 0)
+                        if base_balance >= min_cost:
+                            deduped.append({"symbol": sym, "timeframe": default_tf})
+                            existing_syms.add(sym)
+                            filled += 1
+                    if filled > 0:
+                        logger.info(
+                            f"LLM returned only {len(deduped) - filled} symbols; "
+                            f"filled {filled} additional slots from composite scores to reach MIN_SYMBOLS={settings.MIN_SYMBOLS}"
+                        )
+                        self.effective_max_symbols = max(self.effective_max_symbols, len(deduped))
+
                 # Parse max_positions_per_sector from LLM
                 max_positions_per_sector = parsed.get("max_positions_per_sector")
                 if max_positions_per_sector is not None and isinstance(max_positions_per_sector, int) and max_positions_per_sector > 0:
