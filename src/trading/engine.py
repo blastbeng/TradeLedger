@@ -187,6 +187,7 @@ class TradingEngine:
         self._trade_pattern_cache: Optional[Dict[str, Any]] = None
         self._trade_pattern_cache_trade_count: int = -1
         self._trade_history_version: int = 0
+        self._realized_pnl_offset: float = 0.0
 
         # Cache for tradable assets list (refreshed every 5 minutes)
         self._tradable_assets_cache: List[str] = []
@@ -2105,7 +2106,7 @@ class TradingEngine:
 
         # Compute drawdown based on total equity (initial balance + cumulative realized P&L)
         equity_series = []
-        running_equity = self.initial_balance
+        running_equity = self.initial_balance + self._realized_pnl_offset
         for trade in trades_snapshot:
             if trade.get("side") == "sell":
                 running_equity += trade.get("realized_pnl", 0.0)
@@ -2145,7 +2146,7 @@ class TradingEngine:
             "stock_performance": symbol_perf,
             "strategy_performance": strategy_perf,
             "equity_curve": {
-                "total_pnl": round(sum(t.get("realized_pnl", 0.0) for t in trades_snapshot if t.get("side") == "sell"), 4),
+                "total_pnl": round(self._realized_pnl_offset + sum(t.get("realized_pnl", 0.0) for t in trades_snapshot if t.get("side") == "sell"), 4),
                 "recent_10_trades_pnl": round(total_recent_pnl, 4),
                 "trend": trend,
                 "drawdown_pct": round(drawdown_pct, 2),
@@ -2693,6 +2694,12 @@ class TradingEngine:
         self._trade_history_version += 1
         self.trade_history.append(trade)
         if len(self.trade_history) > MAX_TRADES_IN_MEMORY:
+            # Accumulate realized P&L of pruned trades so the equity curve
+            # in _compute_performance_metrics remains accurate.
+            pruned = self.trade_history[:-MAX_TRADES_IN_MEMORY]
+            for t in pruned:
+                if t.get("side") == "sell":
+                    self._realized_pnl_offset += t.get("realized_pnl", 0.0)
             # Keep only the most recent trades
             self.trade_history = self.trade_history[-MAX_TRADES_IN_MEMORY:]
 
@@ -2745,6 +2752,13 @@ class TradingEngine:
                     pos["_last_trailing_check_ts"] = time.time()
 
         self.trade_history = get_all_trades()[-MAX_TRADES_IN_MEMORY:]
+        # Compute the realized P&L offset for trades that were pruned at load time
+        all_trades = get_all_trades()
+        self._realized_pnl_offset = sum(
+            t.get("realized_pnl", 0.0)
+            for t in all_trades[:-MAX_TRADES_IN_MEMORY]
+            if t.get("side") == "sell"
+        )
         self.queued_orders = state.get("queued_orders", [])
         for q in self.queued_orders:
             q['order_book'] = None
