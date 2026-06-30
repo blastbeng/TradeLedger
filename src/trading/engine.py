@@ -10177,8 +10177,10 @@ class TradingEngine:
             return False
 
         # Fetch LLM-driven skip thresholds from Redis.
-        # If the LLM has not configured the skip logic, do not skip – always
-        # call the LLM so it can decide based on the current market data.
+        # Fall back to sensible hardcoded defaults when the LLM has not
+        # configured them, so the skip logic is functional even before the
+        # LLM provides values. The LLM can override these at any time via
+        # its stock selection response.
         skip_price_mult_raw = await asyncio.to_thread(self.redis.get, "trading:skip_eval_price_change_atr_mult")
         skip_price_mult = float(skip_price_mult_raw) if skip_price_mult_raw else 1.0
 
