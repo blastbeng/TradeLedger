@@ -235,11 +235,7 @@ Key principles:
   - **Tobin Tax (Italian State Tax):** 0.12% of trade value, applied ONLY on BUY orders.
   - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately 0.60% of the trade value PLUS €5.00 in fixed fees (for larger trades > €1,500). For smaller trades, the €3.50 minimum commission applies on both sides, making the total fixed cost €12.00.
   - **CRITICAL:** You MUST ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 trade, total fees are ~€12.12 (1.21%), so `take_profit_pct` must be > 1.22%. For a €10,000 trade, total fees are ~€65 (0.65%), so `take_profit_pct` must be > 0.66%. Never set a take-profit target lower than the break-even cost.
-- **BTP Bond Transaction Costs:** BTP bonds have different fees:
-  - **Bank Commission:** 0.24% of trade value, with a minimum of €3.50. No fixed execution fee.
-  - **Tobin Tax:** Exempt (sovereign bonds are not subject to Tobin tax).
-  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately 0.48% of the trade value (for larger trades). For smaller trades, the €3.50 minimum applies on both sides, making the total fixed cost €7.00.
-  - **CRITICAL:** For BTPs, ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 BTP trade, total fees are ~€7.00 (0.70%), so `take_profit_pct` must be > 0.71%. For a €10,000 BTP trade, total fees are ~€48 (0.48%), so `take_profit_pct` must be > 0.49%.
+__BTP_FEE_SECTION__
 - **Required parameter for every BUY/SELL:**
   - `"take_profit_pct"`: a decimal between 0.005 and 2.0 (e.g., 0.05 for 5%).
 
@@ -332,6 +328,22 @@ Output strict JSON only. The response must start with '{' or '[' and end with '}
 SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
     "__MAX_BACKTEST_VARIANTS__", str(settings.MAX_BACKTEST_VARIANTS)
 )
+
+# Replace BTP fee section based on primary issuance setting
+if settings.BTP_IS_PRIMARY_ISSUANCE:
+    btp_fee_text = """- **BTP Bond Transaction Costs:** BTP bonds purchased via primary issuance have zero fees.
+  - **Bank Commission:** €0.00 (exempt for primary issuance).
+  - **Tobin Tax:** Exempt (sovereign bonds are not subject to Tobin tax).
+  - **Total Round-Trip Cost:** €0.00.
+  - **CRITICAL:** For BTPs, `take_profit_pct` can be as low as 0.001 (0.1%) since there are no transaction costs."""
+else:
+    btp_fee_text = """- **BTP Bond Transaction Costs:** BTP bonds have different fees:
+  - **Bank Commission:** 0.24% of trade value, with a minimum of €3.50. No fixed execution fee.
+  - **Tobin Tax:** Exempt (sovereign bonds are not subject to Tobin tax).
+  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately 0.48% of the trade value (for larger trades). For smaller trades, the €3.50 minimum applies on both sides, making the total fixed cost €7.00.
+  - **CRITICAL:** For BTPs, ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 BTP trade, total fees are ~€7.00 (0.70%), so `take_profit_pct` must be > 0.71%. For a €10,000 BTP trade, total fees are ~€48 (0.48%), so `take_profit_pct` must be > 0.49%."""
+
+SYSTEM_PROMPT = SYSTEM_PROMPT.replace("__BTP_FEE_SECTION__", btp_fee_text)
 
 def build_stock_selection_prompt(
     available_symbols: List[str],
