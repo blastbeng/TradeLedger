@@ -1798,22 +1798,27 @@ class TradingEngine:
 
         timestamps = sorted(c["timestamp"] for c in candles)
 
-        # Find and fill gaps larger than 1.5x the expected interval
-        gaps_found = 0
-        gaps_filled = 0
-        max_gaps_per_cycle = 5  # Limit gap fills per cycle to avoid rate limits
+        # Find all gaps larger than 1.5x the expected interval
+        gaps: List[Tuple[int, int, int]] = []  # (gap_size, gap_start, gap_end)
         for i in range(len(timestamps) - 1):
-            if gaps_filled >= max_gaps_per_cycle:
-                break
             gap = timestamps[i + 1] - timestamps[i]
             if gap > interval_ms * 1.5:
-                gaps_found += 1
                 gap_start = timestamps[i] + interval_ms
                 gap_end = timestamps[i + 1] - interval_ms
                 if gap_end > gap_start:
-                    logger.debug(f"Gap detected for {symbol} {timeframe}: {gap_start} → {gap_end} (size {gap}ms)")
-                    await self._backfill_ohlcv(symbol, timeframe, gap_start, gap_end, ignore_existing=True)
-                    gaps_filled += 1
+                    gaps.append((gap, gap_start, gap_end))
+
+        gaps_found = len(gaps)
+        gaps_filled = 0
+        max_gaps_per_cycle = 5  # Limit gap fills per cycle to avoid rate limits
+
+        # Sort by gap size descending so the largest (most impactful) gaps are filled first
+        gaps.sort(key=lambda g: g[0], reverse=True)
+
+        for gap_size, gap_start, gap_end in gaps[:max_gaps_per_cycle]:
+            logger.debug(f"Gap detected for {symbol} {timeframe}: {gap_start} → {gap_end} (size {gap_size}ms)")
+            await self._backfill_ohlcv(symbol, timeframe, gap_start, gap_end, ignore_existing=True)
+            gaps_filled += 1
 
         if gaps_found == 0:
             logger.debug(f"No gaps found for {symbol} {timeframe}")
