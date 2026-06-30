@@ -306,6 +306,7 @@ Output strict JSON only. The response must start with '{' or '[' and end with '}
 - **Earnings & Corporate Events:** Stocks can experience large price gaps due to earnings reports, FDA decisions, or other corporate events. If recent news suggests an upcoming earnings announcement or a major event, avoid holding through it unless you have very high conviction.
 - **ETFs:** ETFs generally have lower volatility and smoother trends than individual stocks. Be aware of decay in leveraged ETFs if held long.
 - **BTP Bonds (Italian Sovereign Bonds):** The asset universe may also include BTPs identified by their ISIN code (e.g., IT0001234567). BTPs are fixed-income securities with significantly lower volatility compared to stocks. When trading BTPs, use wider stop-losses (or ATR-based stops if ATR is available), longer max hold times, and smaller take-profit targets relative to stocks. They are suitable for capital preservation and steady income.
+  - **Trailing Stops Not Supported:** Intesa Sanpaolo Investo does not support trailing stop orders for BTP bonds. Do NOT set `trailing_stop` to true for BTP positions. If you do, the engine will silently ignore it and the position will only be protected by the fixed stop-loss.
   - **Yield to Maturity (YTM) Assessment:** The `ticker` object includes `coupon` (annual coupon rate as a decimal, e.g., 0.0725 for 7.25%) and `maturity` (expiration date). Bond prices are quoted as a percentage of par value (e.g., a price of 101.68 means 101.68% of face value). To assess if a BTP is a good buy, calculate its approximate Yield to Maturity (YTM):
     - `Annual Coupon = coupon × 100` (e.g., 7.25)
     - `Years to Maturity = (maturity_date - current_date).days / 365`
@@ -1820,6 +1821,7 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
 - `Years to Maturity = (maturity_date - current_date).days / 365`
 - `Approximate YTM = (Annual Coupon + (100 - Current Price) / Years to Maturity) / ((100 + Current Price) / 2)`
 If the YTM is attractive relative to current Italian government bond yields, it is a good buy. If the price is well above par (e.g., >110) and YTM is low, the upside is limited and there is higher downside risk if interest rates rise. ATR and OHLCV data are available for BTPs via yfinance and should be used for technical analysis like any other asset.
+**Trailing Stops Not Supported for BTPs:** Intesa Sanpaolo Investo does not support trailing stop orders for BTP bonds. Do NOT set `trailing_stop` to true for BTP positions. If you do, the engine will silently ignore it and the position will only be protected by the fixed stop-loss.
 """
     # --- Fundamental Data ---
     if fundamentals:
