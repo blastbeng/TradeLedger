@@ -9033,21 +9033,6 @@ class TradingEngine:
                         f"{settings.BTP_MAX_TAKE_PROFIT_PCT:.4%}"
                     )
                     tp_pct = settings.BTP_MAX_TAKE_PROFIT_PCT
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"⚠️ Skipping BUY {display_symbol}: missing take_profit_pct and ATR unavailable.",
-                            summary={"symbol": symbol, "action": "SKIP", "reason": "Missing take_profit_pct and ATR unavailable"}
-                        )
-                    return
-            # --- BTP take-profit cap: enforce smaller targets for bonds ---
-            _buy_base = symbol.split("/")[0]
-            if re.match(r'^IT[A-Z0-9]{10}$', _buy_base) and tp_pct is not None and tp_pct > 0:
-                if tp_pct > settings.BTP_MAX_TAKE_PROFIT_PCT:
-                    logger.info(
-                        f"BTP take-profit capped for {symbol}: {tp_pct:.4%} -> "
-                        f"{settings.BTP_MAX_TAKE_PROFIT_PCT:.4%}"
-                    )
-                    tp_pct = settings.BTP_MAX_TAKE_PROFIT_PCT
             trailing_stop = params["trailing_stop"]
             trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
 
