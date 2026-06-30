@@ -140,6 +140,13 @@ def backtest_strategy(
     if direction not in ("long", "short", "both"):
         direction = "long"
 
+    if not backtest_entry_config:
+        result = _empty_result()
+        result["error"] = "backtest_entry_config is required — cannot default to entering every candle"
+        if _return_trades:
+            return [], result
+        return result
+
     if direction == "both":
         long_trades, _ = backtest_strategy(
             candles=candles, stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
@@ -209,8 +216,6 @@ def backtest_strategy(
     total_pnl_currency = 0.0
 
     # Parse configurable entry logic
-    if backtest_entry_config is None:
-        backtest_entry_config = {}
     entry_ema_period = backtest_entry_config.get("ema_period", 0)
     entry_ema_direction = backtest_entry_config.get("ema_direction", "above")
     entry_min_adx = backtest_entry_config.get("min_adx", 0.0)
@@ -694,6 +699,7 @@ def _empty_result() -> Dict[str, Any]:
         "partial_tp_count": 0,
         "buy_and_hold_pct": 0.0,
         "insufficient_data": True,
+        "error": "",
         "total_pnl_currency": 0.0,
         "final_balance": 0.0,
         "total_return_pct": 0.0,
@@ -780,6 +786,8 @@ def _compute_stats(
 
 def format_backtest_summary(stats: Dict[str, Any], entry_config_used: bool = True) -> str:
     """Format backtest statistics into a human-readable string for LLM prompts and notifications."""
+    if stats.get("error"):
+        return stats["error"]
     if stats.get("insufficient_data") or stats.get("total_trades", 0) == 0:
         return "Insufficient data for backtesting."
 
