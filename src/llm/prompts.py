@@ -604,6 +604,12 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
             "news sentiment, trend quality scores, and other provided metrics. "
             "Do not pause trading solely due to missing OHLCV if other indicators suggest strong opportunities.\n"
         )
+    prompt += (
+        "\n**CRITICAL — Only assign timeframes that have OHLCV data.** "
+        "The Multi-timeframe OHLCV summary above shows exactly which timeframes have data for each symbol. "
+        "You MUST only assign a timeframe to a symbol if that timeframe appears in the symbol's OHLCV summary. "
+        "If a symbol has no OHLCV data at all, do NOT select it — there is nothing to analyze.\n"
+    )
     if correlation_matrix:
         # Trim to only include symbols that appear in the candidate list
         candidate_set = set(available_symbols)
@@ -818,7 +824,18 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
 **Combined Shortlist from All Batches (deduplicated):**
 {json.dumps(shortlist)}
 
-Select between {settings.MIN_SYMBOLS if settings.MIN_SYMBOLS > 0 else 0} and {max_symbols} assets from the shortlist above. You may keep current assets if they are still promising, or replace them. Each symbol can only appear once. Choose the single best timeframe for each stock.
+"""
+    if available_timeframes_by_symbol:
+        prompt += "**Available timeframes per symbol (ONLY select from these):**\n"
+        for sym, tfs in available_timeframes_by_symbol.items():
+            if tfs:
+                prompt += f"  {sym}: {', '.join(tfs)}\n"
+        prompt += (
+            "\n**CRITICAL — Only assign timeframes that have OHLCV data.** "
+            "You MUST only assign a timeframe to a symbol if it appears in the list above for that symbol. "
+            "If a symbol has no available timeframes, do NOT select it.\n\n"
+        )
+    prompt += f"""Select between {settings.MIN_SYMBOLS if settings.MIN_SYMBOLS > 0 else 0} and {max_symbols} assets from the shortlist above. You may keep current assets if they are still promising, or replace them. Each symbol can only appear once. Choose the single best timeframe for each stock.
 
 **Important:** Unless the market is in a clear crisis, you MUST select at least 1-2 stocks. **HYBRID ALLOCATION:** You may allocate ALL available capital to a single high-conviction trade if you believe it is highly profitable, even if this leaves no capital for other tickers. However, if you can leave some capital for other promising setups, do so. **Do NOT place small trades that are unprofitable after fees** just to fill slots — if a trade cannot be profitable with the available capital after accounting for transaction costs, skip it entirely. Prioritize quality over quantity. You may concentrate capital on your best 1–3 setups.
 
