@@ -592,20 +592,26 @@ class PaperTrader:
 
     def get_order(self, order_id: str) -> Optional[PaperOrder]:
         """Get order by ID. Checks and updates open orders against current price."""
-        order = self._orders.get(order_id)
-        if order is None:
-            return None
-        if order.status != "open":
-            return order
+        with self._lock:
+            order = self._orders.get(order_id)
+            if order is None:
+                return None
+            if order.status != "open":
+                return order
+            symbol = order.symbol
 
-        price = self._get_current_price(order.symbol)
+        price = self._get_current_price(symbol)
         if price is None:
             return order
 
-        base = order.symbol.split("/")[0] if "/" in order.symbol else order.symbol
-        quote = order.symbol.split("/")[1] if "/" in order.symbol else self.base_currency
+        base = symbol.split("/")[0] if "/" in symbol else symbol
+        quote = symbol.split("/")[1] if "/" in symbol else self.base_currency
 
         with self._lock:
+            # Re-check status in case it changed while fetching the price
+            if order.status != "open":
+                return order
+
             # Trailing stop
             if order.order_type == "trailing_stop":
                 if order.side == "sell":
