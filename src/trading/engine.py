@@ -8199,11 +8199,13 @@ class TradingEngine:
                             if review_count > max_partial_tp_reviews:
                                 logger.info(f"Single partial TP for {symbol}: max reviews reached, executing.")
                                 await self._execute_partial_tp_single(symbol, current_price, None, ticker)
-                                pos.pop("_partial_tp_triggered_single", None)
-                                pos.pop("_partial_tp_single_review_count", None)
+                                async with self._positions_lock:
+                                    pos.pop("_partial_tp_triggered_single", None)
+                                    pos.pop("_partial_tp_single_review_count", None)
                             else:
-                                pos["_partial_tp_triggered_single"] = True
-                                pos["_partial_tp_single_review_count"] = review_count
+                                async with self._positions_lock:
+                                    pos["_partial_tp_triggered_single"] = True
+                                    pos["_partial_tp_single_review_count"] = review_count
                                 self._last_strategy_eval.pop(symbol, None)
                                 logger.info(f"Single partial TP triggered for {symbol} – asking LLM (review {review_count})")
                                 if self.notifier:
