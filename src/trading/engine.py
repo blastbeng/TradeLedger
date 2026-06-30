@@ -10102,6 +10102,7 @@ class TradingEngine:
                 self._balance_cache = None
                 await asyncio.to_thread(insert_trade, order)
                 await self._save_state(force=True)
+                self._portfolio_exposure_cache = None
                 if self.notifier:
                     # Human-readable labels for common exit reasons
                     reason_labels = {
