@@ -12908,7 +12908,8 @@ class TradingEngine:
         """Normalize an LLM-returned symbol to match the format in sample_pairs.
 
         The LLM may return symbols without the /EUR suffix (e.g., 'ENI.MI' instead
-        of 'ENI.MI/EUR'). This method tries multiple formats to find a match.
+        of 'ENI.MI/EUR'), or with/without exchange-specific suffixes (e.g., 'ENI'
+        vs 'ENI.MI'). This method tries multiple formats to find a match.
         Returns the matched pair string, or None if no match is found.
         """
         if sym in sample_pairs:
@@ -12921,6 +12922,25 @@ class TradingEngine:
         base = sym.split("/")[0]
         for pair in sample_pairs:
             if pair.split("/")[0] == base:
+                return pair
+        # Try matching by stripping exchange suffixes from both sides
+        # e.g., LLM returns 'ENI' but sample has 'ENI.MI', or vice versa
+        configured_suffix = getattr(settings, 'TICKER_SUFFIX', '')
+
+        def _strip_suffix(symbol_base: str) -> str:
+            # Strip the configured ticker suffix first
+            if configured_suffix and symbol_base.endswith(configured_suffix):
+                return symbol_base[:-len(configured_suffix)]
+            # Strip common exchange suffixes (e.g., .MI, .PA, .L, .N, .SW)
+            parts = symbol_base.rsplit('.', 1)
+            if len(parts) == 2 and 1 <= len(parts[1]) <= 3 and parts[1].isalpha() and parts[1].isupper():
+                return parts[0]
+            return symbol_base
+
+        stripped_base = _strip_suffix(base)
+        for pair in sample_pairs:
+            pair_base = pair.split("/")[0]
+            if stripped_base == _strip_suffix(pair_base):
                 return pair
         return None
 
