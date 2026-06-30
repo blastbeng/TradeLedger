@@ -12,11 +12,7 @@ from exchanges.market_data import _get_isin_from_yfinance, get_borsa_italiana_ca
 def main():
     # List of sample symbols to test (stocks and ETFs)
     test_symbols = [
-        "AAPL",   # Apple Inc.
-        "MSFT",   # Microsoft Corp.
-        "SPY",    # SPDR S&P 500 ETF Trust
-        "QQQ",    # Invesco QQQ Trust
-        "ENI.MI", # Eni S.p.A. (Italian stock)
+        "NPI",
     ]
 
     print("\n--- Testing _get_isin_from_yfinance ---")
@@ -34,10 +30,8 @@ def main():
     print("\n--- Testing get_borsa_italiana_candles ---")
     # Test a few symbols and timeframes
     candle_test_cases = [
-        ("ENI.MI", "1d", 5),
-        ("ENI.MI", "1M", 5),
-        ("ISP.MI", "1d", 5),
-        ("AAPL", "1d", 5), # US stock, likely to fail or fallback
+        ("NPI", "1d", 5),
+        ("NPI", "1M", 5)
     ]
     for symbol, timeframe, limit in candle_test_cases:
         print(f"\nFetching {timeframe} candles for: {symbol} (limit: {limit})")
