@@ -12219,7 +12219,8 @@ class TradingEngine:
                     if not order_id:
                         # Old queued entries without order_id – remove them safely
                         logger.warning(f"Queued order for {queued['symbol']} missing order_id, removing.")
-                        self.queued_orders.remove(queued)
+                        async with self._queued_orders_lock:
+                            self.queued_orders.remove(queued)
                         continue
 
                     # --- Timeout check: cancel stale queued limit orders ---
@@ -12258,7 +12259,8 @@ class TradingEngine:
                             except Exception as e:
                                 logger.error(f"Failed to cancel timed-out order {order_id}: {e}")
                             # Remove from queue regardless of cancel success
-                            self.queued_orders.remove(queued)
+                            async with self._queued_orders_lock:
+                                self.queued_orders.remove(queued)
                             self._state_dirty = True
                             # If this was an exit order, cancel its OCO pair
                             if queued.get("is_exit_order"):
@@ -12331,40 +12333,67 @@ class TradingEngine:
                                 if current_price <= stop_price:
                                     # Stop triggered – cancel OCO pair immediately
                                     oco_pair_id = queued["oco_pair"]
+
+                                    # --- Race condition guard: check if the OCO pair
+                                    # (take-profit) has already filled before cancelling.
+                                    # If it has, we must NOT cancel it; the fill-detection
+                                    # code below will process the fill. Cancelling an
+                                    # already-filled order can cause a double-sell. ---
+                                    oco_already_filled = False
                                     try:
-                                        await asyncio.to_thread(self.trader.cancel_order, oco_pair_id)
+                                        oco_order_obj = await asyncio.to_thread(
+                                            self.trader.get_order, oco_pair_id
+                                        )
+                                        if oco_order_obj is not None and oco_order_obj.status == "filled":
+                                            oco_already_filled = True
+                                    except Exception:
+                                        pass
+
+                                    if oco_already_filled:
                                         logger.info(
-                                            f"Stop triggered for {queued['symbol']} at {current_price:.4f}, "
-                                            f"cancelled OCO pair {oco_pair_id}"
+                                            f"OCO pair {oco_pair_id} already filled for "
+                                            f"{queued['symbol']}; skipping cancel to avoid double-sell."
                                         )
-                                    except Exception as e:
-                                        logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
-                                    # Remove the cancelled take-profit from queued_orders
-                                    self.queued_orders = [
-                                        q for q in self.queued_orders
-                                        if q.get("order_id") != oco_pair_id
-                                    ]
-                                    # Clear OCO reference so we don't try again
-                                    queued["oco_pair"] = None
-                                    # Clear take-profit order ID from position
-                                    pos = self.positions.get(queued["symbol"])
-                                    if pos:
-                                        pos.pop("take_profit_order_id", None)
-                                    # Notify user
-                                    if self.notifier:
-                                        stock_name = await self._get_stock_name(queued["symbol"])
-                                        display_symbol = self._format_symbol_display(
-                                            queued["symbol"], stock_name, queued.get("timeframe")
-                                        )
-                                        await self.notifier.send_notification(
-                                            f"🛑 Stop triggered for {display_symbol} at {current_price:.4f}, "
-                                            f"take‑profit order cancelled.",
-                                            summary={
-                                                "symbol": queued["symbol"],
-                                                "action": "CANCEL",
-                                                "reason": "Stop triggered, OCO pair cancelled",
-                                            }
-                                        )
+                                        queued["oco_pair"] = None
+                                        pos = self.positions.get(queued["symbol"])
+                                        if pos:
+                                            pos.pop("take_profit_order_id", None)
+                                    else:
+                                        try:
+                                            await asyncio.to_thread(self.trader.cancel_order, oco_pair_id)
+                                            logger.info(
+                                                f"Stop triggered for {queued['symbol']} at {current_price:.4f}, "
+                                                f"cancelled OCO pair {oco_pair_id}"
+                                            )
+                                        except Exception as e:
+                                            logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
+                                        # Remove the cancelled take-profit from queued_orders (with lock)
+                                        async with self._queued_orders_lock:
+                                            self.queued_orders = [
+                                                q for q in self.queued_orders
+                                                if q.get("order_id") != oco_pair_id
+                                            ]
+                                        # Clear OCO reference so we don't try again
+                                        queued["oco_pair"] = None
+                                        # Clear take-profit order ID from position
+                                        pos = self.positions.get(queued["symbol"])
+                                        if pos:
+                                            pos.pop("take_profit_order_id", None)
+                                        # Notify user
+                                        if self.notifier:
+                                            stock_name = await self._get_stock_name(queued["symbol"])
+                                            display_symbol = self._format_symbol_display(
+                                                queued["symbol"], stock_name, queued.get("timeframe")
+                                            )
+                                            await self.notifier.send_notification(
+                                                f"🛑 Stop triggered for {display_symbol} at {current_price:.4f}, "
+                                                f"take‑profit order cancelled.",
+                                                summary={
+                                                    "symbol": queued["symbol"],
+                                                    "action": "CANCEL",
+                                                    "reason": "Stop triggered, OCO pair cancelled",
+                                                }
+                                            )
                                     self._state_dirty = True
 
                     # Determine how much has been filled since the last check
