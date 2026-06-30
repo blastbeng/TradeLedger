@@ -4147,6 +4147,17 @@ class TradingEngine:
                     if not self._is_excluded(e["symbol"], e["timeframe"])
                 ]
 
+                # --- Extract pause_trading early so MIN_SYMBOLS enforcement can respect it ---
+                pause_trading = parsed.get("pause_trading")
+                if isinstance(pause_trading, str):
+                    low = pause_trading.strip().lower()
+                    if low in ("true", "1"):
+                        pause_trading = True
+                    elif low in ("false", "0"):
+                        pause_trading = False
+                    else:
+                        pause_trading = None
+
                 # Use the LLM's chosen number of symbols to update effective_max_symbols
                 if llm_max_stocks is not None and isinstance(llm_max_stocks, int) and 0 <= llm_max_stocks <= self.max_symbols:
                     self.effective_max_symbols = llm_max_stocks
@@ -4381,20 +4392,9 @@ class TradingEngine:
                         logger.warning(f"Invalid stock_revaluation_interval_seconds: {new_interval} (must be >= 3600)")
 
                 # Optional: LLM can request to pause/resume trading
-                pause_trading = parsed.get("pause_trading")
+                # (pause_trading was already extracted above, before MIN_SYMBOLS enforcement)
                 pause_reason = parsed.get("pause_reason", "")
                 pause_duration = parsed.get("pause_duration_seconds")
-
-                # Normalise string booleans from the LLM (e.g. "false" → False)
-                if isinstance(pause_trading, str):
-                    low = pause_trading.strip().lower()
-                    if low in ("true", "1"):
-                        pause_trading = True
-                    elif low in ("false", "0"):
-                        pause_trading = False
-                    else:
-                        logger.warning(f"Unrecognised pause_trading string: {pause_trading}")
-                        pause_trading = None
 
                 # --- Auto-resume cooldown: ignore pause requests shortly after an auto-resume ---
                 cooldown_active = await asyncio.to_thread(self.redis.get, "trading:auto_resume_cooldown")
