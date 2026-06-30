@@ -625,7 +625,9 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
                 if ind.get('bb_upper') is not None:
                     tf_lines.append(f"    BB Upper={ind['bb_upper']:.4f} Middle={ind['bb_middle']:.4f} Lower={ind['bb_lower']:.4f}")
                 if ind.get('ema_9') is not None:
-                    tf_lines.append(f"    EMA9={ind['ema_9']:.4f} EMA21={ind['ema_21']:.4f}")
+                    ema9_str = f"EMA9={ind['ema_9']:.4f}"
+                    ema21_str = f" EMA21={ind['ema_21']:.4f}" if ind.get('ema_21') is not None else ""
+                    tf_lines.append(f"    {ema9_str}{ema21_str}")
                 if ind.get('stochastic_k') is not None:
                     d_str = f"{ind['stochastic_d']:.2f}" if ind['stochastic_d'] is not None else "N/A"
                     tf_lines.append(f"    Stoch %K={ind['stochastic_k']:.2f} %D={d_str}")
