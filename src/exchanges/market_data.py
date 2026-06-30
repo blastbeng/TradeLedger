@@ -318,7 +318,8 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
                 return None
             # Save to DB with the base symbol (no suffix)
             try:
-                save_discovered_symbol(db_symbol, isin, None, "")
+                save_country = settings.TARGET_COUNTRY if settings.COUNTRY_FILTER_STRICT else None
+                save_discovered_symbol(db_symbol, isin, None, "", country=save_country)
             except Exception:
                 pass
             return isin
@@ -1194,6 +1195,8 @@ def get_tradable_assets() -> List[str]:
                     # Skip symbols confirmed to be non-Italian
                     if db_country is not None and db_country.lower() != target_country:
                         continue
+                    if settings.COUNTRY_FILTER_STRICT and db_country is None and not re.match(r'^IT[A-Z0-9]{10}$', db_sym):
+                        continue
                     if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
                         db_only_list.append(db_sym)
                     else:
@@ -1206,12 +1209,15 @@ def get_tradable_assets() -> List[str]:
             logger.warning(f"Failed to recover symbols from DB: {e}")
         return []
 
-    # Save discovered symbols to DB (ISINs will be fetched on demand)
-    try:
-        etf_set = set(etf_symbols)
-        _save_discovered_assets_to_db(base_symbols, list(etf_set))
-    except Exception as e:
-        logger.warning(f"Failed to save discovered assets to DB: {e}")
+    # Save discovered symbols to DB.
+    # In strict mode, defer saving until AFTER country filtering to avoid
+    # polluting the DB with non-Italian symbols.
+    if not settings.COUNTRY_FILTER_STRICT:
+        try:
+            etf_set = set(etf_symbols)
+            _save_discovered_assets_to_db(base_symbols, list(etf_set))
+        except Exception as e:
+            logger.warning(f"Failed to save discovered assets to DB: {e}")
 
     suffix = settings.TICKER_SUFFIX
     candidates = []
@@ -1240,6 +1246,8 @@ def get_tradable_assets() -> List[str]:
                     # Skip symbols confirmed to be non-Italian
                     if db_country is not None and db_country.lower() != target_country:
                         continue
+                    if settings.COUNTRY_FILTER_STRICT and db_country is None and not re.match(r'^IT[A-Z0-9]{10}$', db_sym):
+                        continue
                     if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
                         if db_sym not in existing_set:
                             cached_list.append(db_sym)
@@ -1266,8 +1274,9 @@ def get_tradable_assets() -> List[str]:
             continue
 
         country = _fetch_country(symbol)
-        # Save the fetched country to the database for future filtering
-        if country is not None:
+        # Save the fetched country to the database for future filtering.
+        # In strict mode, only save Italian symbols to DB.
+        if country is not None and (not settings.COUNTRY_FILTER_STRICT or country.lower() == target_country):
             try:
                 from src.database import save_discovered_symbol
                 db_base = symbol
@@ -1291,6 +1300,32 @@ def get_tradable_assets() -> List[str]:
             filtered.append(symbol)
         else:
             logger.debug(f"Symbol {symbol} skipped (country={country}, target={target_country})")
+
+    # In strict mode, save only confirmed-Italian symbols to DB
+    if settings.COUNTRY_FILTER_STRICT:
+        try:
+            from src.database import save_discovered_symbols_batch
+            etf_set = set(etf_symbols)
+            symbols_to_save = []
+            for symbol in filtered:
+                if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+                    continue  # BTPs are saved separately
+                base = symbol
+                if suffix and base.endswith(suffix):
+                    base = base[:-len(suffix)]
+                asset_type = "etf" if base in etf_set else "stock"
+                symbols_to_save.append({
+                    "symbol": base,
+                    "isin": None,
+                    "asset_type": asset_type,
+                    "name": "",
+                    "country": target_country,
+                })
+            if symbols_to_save:
+                save_discovered_symbols_batch(symbols_to_save)
+                logger.info(f"Saved {len(symbols_to_save)} confirmed-Italian symbols to DB (strict mode)")
+        except Exception as e:
+            logger.warning(f"Failed to save filtered assets to DB: {e}")
 
     # Cache the filtered list for 24 hours
     try:
