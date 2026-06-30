@@ -12233,12 +12233,13 @@ class TradingEngine:
 
         # Mark this level as triggered before the sell
         if symbol in self.positions:
-            triggered = self.positions[symbol].get("partial_tp_levels_triggered", [])
-            if level_index not in triggered:
-                triggered.append(level_index)
-                self.positions[symbol]["partial_tp_levels_triggered"] = triggered
-            if "partial_tp_depth_wait_start" in self.positions[symbol]:
-                self.positions[symbol]["partial_tp_depth_wait_start"].pop(level_index, None)
+            async with self._positions_lock:
+                triggered = self.positions[symbol].get("partial_tp_levels_triggered", [])
+                if level_index not in triggered:
+                    triggered.append(level_index)
+                    self.positions[symbol]["partial_tp_levels_triggered"] = triggered
+                if "partial_tp_depth_wait_start" in self.positions[symbol]:
+                    self.positions[symbol]["partial_tp_depth_wait_start"].pop(level_index, None)
 
         def _cleanup(sym, position):
             position.pop("_partial_tp_triggered", None)
