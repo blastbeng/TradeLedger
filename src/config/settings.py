@@ -168,6 +168,17 @@ class Settings(BaseSettings):
             raise ValueError("BTP_HARD_MAX_LOSS_PCT must be between 0.0 and 1.0")
         return v
 
+    # BTP-specific maximum take-profit percentage (0.03 = 3%) — BTPs trade in
+    # narrow ranges, so take-profit targets should be much smaller than stocks.
+    BTP_MAX_TAKE_PROFIT_PCT: float = 0.03
+
+    @field_validator("BTP_MAX_TAKE_PROFIT_PCT")
+    @classmethod
+    def validate_btp_max_take_profit_pct(cls, v: float) -> float:
+        if not (0.0 < v <= 1.0):
+            raise ValueError("BTP_MAX_TAKE_PROFIT_PCT must be between 0.0 and 1.0")
+        return v
+
     # Maximum LLM stop-loss reviews before force-selling
     MAX_STOP_LOSS_REVIEWS: int = 10
 
