@@ -35,9 +35,8 @@ class ManualTradeRequest(BaseModel):
 
 security = HTTPBasic(auto_error=False)
 
-async def verify_auth(request: Request):
+async def verify_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)):
     if settings.WEB_USERNAME and settings.WEB_PASSWORD:
-        credentials = await security(request)
         if not credentials or not (
             secrets.compare_digest(credentials.username, settings.WEB_USERNAME) and
             secrets.compare_digest(credentials.password, settings.WEB_PASSWORD)
