@@ -296,29 +296,6 @@ Your risk appetite must adapt dynamically to market and portfolio conditions. Do
   If you prefer not to use risk-based sizing, you may set `position_size_fraction` based on confidence and setup quality. The engine respects your decision as long as it does not exceed available balance or exchange minimums.
 
 **Pause/Resume:**
-````
-
-src/llm/prompts.py
-````python
-<<<<<<< SEARCH
-    if atr is not None and current_price is not None and current_price > 0:
-        atr_pct = atr / current_price
-        min_sl = min_stop_atr_mult * atr_pct
-        prompt += (
-            f"\n**Current ATR%: {atr_pct:.4%}**. "
-            f"The validator enforces a minimum fixed stop-loss of {min_stop_atr_mult} × ATR% = {min_sl:.4%}. "
-            f"Your fixed stop_loss_pct must be at least this value.\n"
-            f"\n**Position Sizing Guidance (you decide the final value):**\n"
-            f"  Total portfolio value: ~{portfolio_total_value:.2f} {base_currency}\n"
-            f"  Current price: {current_price:.4f}\n"
-            f"  ATR: {atr:.6f}\n"
-            f"  If you use ATR-based stop (multiplier M), risk per share = M × ATR = M × {atr:.6f}.\n"
-            f"  If you want to risk R% of portfolio: max_quantity = (portfolio_value × R%) / (M × ATR).\n"
-            f"  position_size_fraction = (max_quantity × current_price) / portfolio_value.\n"
-            f"  Example: M=2, R=1% → risk/share = {2*atr:.6f}, max_qty = {portfolio_total_value*0.01/(2*atr):.2f}, "
-            f"fraction = {(portfolio_total_value*0.01/(2*atr)*current_price)/portfolio_total_value:.4f}.\n"
-            f"  Adjust R and M based on your confidence, backtest results, fees, and market conditions.\n"
-        )
 - You may include `"pause_trading"` (boolean) in your stock selection JSON to pause/resume trading. Always include a `"pause_reason"` string when setting pause_trading. You may also set `"pause_duration_seconds"` (positive integer) to auto-resume after a delay.
 - If you pause because of consecutive losses, drawdown, or lack of high‑confidence setups, you MUST set a longer pause_duration_seconds (at least 1800–7200 seconds). A very short pause will almost certainly result in the same market conditions and an immediate re‑pause.
 - Use shorter pauses (e.g., 600–1800s) only when you expect a specific short‑term event to pass.
@@ -1315,13 +1292,24 @@ Maximum symbols to trade: {max_symbols}
     # --- Volatility, order book imbalance, and position P&L context ---
     if atr is not None:
         prompt += f"ATR (14-period, {assigned_timeframe or 'default'}): {atr:.6f}\n"
-    if atr is not None and current_price is not None and current_price > 0:
+    
+    if atr is not None and current_price is not None and current_price > 0.
         atr_pct = atr / current_price
         min_sl = min_stop_atr_mult * atr_pct
         prompt += (
             f"\n**Current ATR%: {atr_pct:.4%}**. "
             f"The validator enforces a minimum fixed stop-loss of {min_stop_atr_mult} × ATR% = {min_sl:.4%}. "
             f"Your fixed stop_loss_pct must be at least this value.\n"
+            f"\n**Position Sizing Guidance (you decide the final value):**\n"
+            f"  Total portfolio value: ~{portfolio_total_value:.2f} {base_currency}\n"
+            f"  Current price: {current_price:.4f}\n"
+            f"  ATR: {atr:.6f}\n"
+            f"  If you use ATR-based stop (multiplier M), risk per share = M × ATR = M × {atr:.6f}.\n"
+            f"  If you want to risk R% of portfolio: max_quantity = (portfolio_value × R%) / (M × ATR).\n"
+            f"  position_size_fraction = (max_quantity × current_price) / portfolio_value.\n"
+            f"  Example: M=2, R=1% → risk/share = {2*atr:.6f}, max_qty = {portfolio_total_value*0.01/(2*atr):.2f}, "
+            f"fraction = {(portfolio_total_value*0.01/(2*atr)*current_price)/portfolio_total_value:.4f}.\n"
+            f"  Adjust R and M based on your confidence, backtest results, fees, and market conditions.\n"
         )
     if atr_percentile is not None:
         prompt += f"ATR percentile (relative to last 100 observations): {atr_percentile:.1f}%\n"
