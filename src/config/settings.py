@@ -326,6 +326,18 @@ class Settings(BaseSettings):
     # 900 seconds (15 minutes) is suitable for medium/long-term trading.
     QUOTE_REFRESH_INTERVAL_SECONDS: int = 900
 
+    # Maximum age (seconds) for a quote to be considered fresh enough for trading.
+    # The actual threshold is scaled by the symbol's timeframe (longer timeframes
+    # allow staler quotes). Set to 0 to disable the staleness guard.
+    QUOTE_MAX_STALENESS_SECONDS: float = 900.0  # 15 minutes
+
+    @field_validator("QUOTE_MAX_STALENESS_SECONDS")
+    @classmethod
+    def validate_quote_max_staleness(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("QUOTE_MAX_STALENESS_SECONDS must be >= 0")
+        return v
+
     # Full asset OHLCV download interval (seconds) – how often to backfill
     # OHLCV data for ALL tradable assets (stocks, ETFs, BTPs), not just the
     # currently selected symbols.
