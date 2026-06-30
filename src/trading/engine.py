@@ -13981,7 +13981,16 @@ class TradingEngine:
             if preliminary_signal.backtest_variants:
                 variants_to_test = list(preliminary_signal.backtest_variants)
             else:
-                variants_to_test.append(preliminary_signal.strategy_params or {})
+                # Fallback: use the preliminary signal's own params as a single variant
+                fallback_params = dict(preliminary_signal.strategy_params or {})
+                if "backtest_entry_config" not in fallback_params:
+                    fallback_params["backtest_entry_config"] = {
+                        "ema_period": 21,
+                        "ema_direction": "above",
+                        "min_adx": 20,
+                        "logic": "and",
+                    }
+                variants_to_test.append(fallback_params)
             # --- Deduplicate variants with identical key risk parameters ---
             variants_to_test = self._deduplicate_variants(variants_to_test)
             # Safety cap: limit to configured max variants to prevent excessive backtest time
