@@ -1623,6 +1623,10 @@ def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, na
     ISIN in the database is kept (not overwritten with NULL). This is critical
     because yfinance can return None when rate-limited.
     """
+    if isin:
+        isin = isin.strip()
+        if isin == '-' or not isin:
+            isin = None
     conn = get_connection()
     try:
         sql = _adapt_sql(

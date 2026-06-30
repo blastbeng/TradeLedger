@@ -313,6 +313,9 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
         ticker = yf.Ticker(yf_symbol, session=_get_yf_session())
         isin = ticker.isin
         if isin:
+            isin = isin.strip()
+            if isin == '-' or not isin:
+                return None
             # Save to DB with the base symbol (no suffix)
             try:
                 save_discovered_symbol(db_symbol, isin, None, "")
