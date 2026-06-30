@@ -2520,13 +2520,32 @@ class TradingEngine:
 
             # Try common European date formats
             if maturity_dt is None:
+                # Normalize Italian month names/abbreviations to English
+                # so strptime with %b/%B works regardless of system locale.
+                _italian_months = {
+                    # Abbreviations (case-insensitive matching)
+                    "gen": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr",
+                    "mag": "May", "giu": "Jun", "lug": "Jul", "ago": "Aug",
+                    "set": "Sep", "ott": "Oct", "nov": "Nov", "dic": "Dec",
+                    # Full names
+                    "gennaio": "January", "febbraio": "February", "marzo": "March",
+                    "aprile": "April", "maggio": "May", "giugno": "June",
+                    "luglio": "July", "agosto": "August", "settembre": "September",
+                    "ottobre": "October", "novembre": "November", "dicembre": "December",
+                }
+                _normalized = maturity_str_clean
+                for it_month, en_month in _italian_months.items():
+                    _normalized = _normalized.replace(it_month, en_month)
+                    _normalized = _normalized.replace(it_month.capitalize(), en_month)
+                maturity_str_clean = _normalized
+
                 _date_formats = [
                     "%d/%m/%Y",       # 01/10/2025
                     "%d-%m-%Y",       # 01-10-2025
                     "%d.%m.%Y",       # 01.10.2025
                     "%d/%m/%y",       # 01/10/25
-                    "%d %b %Y",       # 01 Oct 2025
-                    "%d %B %Y",       # 01 October 2025
+                    "%d %b %Y",       # 01 Oct 2025 (also handles Italian after normalization)
+                    "%d %B %Y",       # 01 October 2025 (also handles Italian after normalization)
                     "%B %d, %Y",      # October 01, 2025
                     "%Y-%m-%d",       # 2025-10-01 (ISO date only)
                     "%Y/%m/%d",       # 2025/10/01
