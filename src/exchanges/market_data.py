@@ -758,31 +758,32 @@ def _merge_candles(borsa_candles: Optional[List[List]], yf_candles: Optional[Lis
     return sorted(merged.values(), key=lambda c: c[0])
 
 
-def _fetch_country(symbol: str, max_retries: int = 2) -> Optional[str]:
-    """Fetch the country property from yfinance info for a symbol, with retries.
+def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optional[str]]:
+    """Fetch the country and name from yfinance info for a symbol, with retries.
 
-    Returns the country string on success, or None if yfinance could not
-    provide the information after all retries.
+    Returns a tuple (country, name) on success, or (None, None) if yfinance
+    could not provide the information after all retries.
     """
     if _check_yf_circuit():
-        return None
+        return None, None
     import time as _time
     for attempt in range(max_retries + 1):
         try:
             ticker = yf.Ticker(symbol, session=_get_yf_session())
             info = ticker.info
             country = info.get("country")
+            name = info.get("longName") or info.get("shortName")
             if country:
-                return country
+                return country, name
             # country is None or empty – retry if attempts remain
             if attempt < max_retries:
                 _time.sleep(0.5 * (2 ** attempt))
                 continue
         except Exception as e:
-            logger.debug(f"Failed to fetch country for {symbol} (attempt {attempt + 1}/{max_retries + 1}): {e}")
+            logger.debug(f"Failed to fetch info for {symbol} (attempt {attempt + 1}/{max_retries + 1}): {e}")
             if attempt < max_retries:
                 _time.sleep(0.5 * (2 ** attempt))
-    return None
+    return None, None
 
 
 def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
@@ -1273,8 +1274,8 @@ def get_tradable_assets() -> List[str]:
                 filtered.append(symbol)
             continue
 
-        country = _fetch_country(symbol)
-        # Save the fetched country to the database for future filtering.
+        country, name = _fetch_info(symbol)
+        # Save the fetched country and name to the database for future filtering.
         # In strict mode, only save Italian symbols to DB.
         if country is not None and (not settings.COUNTRY_FILTER_STRICT or country.lower() == target_country):
             try:
@@ -1282,7 +1283,7 @@ def get_tradable_assets() -> List[str]:
                 db_base = symbol
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
-                save_discovered_symbol(db_base, None, None, "", country=country)
+                save_discovered_symbol(db_base, None, None, name or "", country=country)
             except Exception:
                 pass
         if country is None:
