@@ -12940,6 +12940,23 @@ class TradingEngine:
         except Exception:
             pass
 
+        # Fetch portfolio caps for position sizing simulation
+        bt_global_risk_mult = 1.0
+        bt_max_port_exp = None
+        bt_max_port_risk = None
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "trading:global_risk_multiplier")
+            if raw:
+                bt_global_risk_mult = float(raw)
+            raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_exposure_pct")
+            if raw:
+                bt_max_port_exp = float(raw)
+            raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_stop_risk_pct")
+            if raw:
+                bt_max_port_risk = float(raw)
+        except Exception:
+            pass
+
         if bt_candles and len(bt_candles) >= 20:
             bt_kwargs = dict(
                 stop_loss_pct=bt_sl_pct,
@@ -12972,6 +12989,17 @@ class TradingEngine:
                 slippage_max_pct=0.01,
                 backtest_entry_config=bt_entry_config,
                 direction="long",
+                simulate_position_sizing=True,
+                initial_balance=base_balance,
+                confidence=signal.confidence,
+                confidence_sizing_weight=bt_params.get("confidence_sizing_weight", 0.0),
+                global_risk_multiplier=bt_global_risk_mult,
+                position_size_multiplier=bt_params.get("position_size_multiplier", 1.0),
+                max_risk_per_trade_pct=bt_params.get("max_risk_per_trade_pct"),
+                max_portfolio_risk_pct=bt_params.get("max_portfolio_risk_pct"),
+                max_portfolio_exposure_pct=bt_max_port_exp,
+                max_portfolio_stop_risk_pct=bt_max_port_risk,
+                position_size_fraction=bt_position_fraction,
             )
             backtest_stats = await asyncio.to_thread(
                 backtest_strategy,

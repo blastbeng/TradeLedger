@@ -92,6 +92,17 @@ def backtest_strategy(
     max_rsi: float = 100.0,
     macd_hist_values: Optional[List[Optional[float]]] = None,
     backtest_entry_config: Optional[Dict[str, Any]] = None,
+    simulate_position_sizing: bool = False,
+    initial_balance: float = 10000.0,
+    confidence: float = 0.5,
+    confidence_sizing_weight: float = 0.0,
+    global_risk_multiplier: float = 1.0,
+    position_size_multiplier: float = 1.0,
+    max_risk_per_trade_pct: Optional[float] = None,
+    max_portfolio_risk_pct: Optional[float] = None,
+    max_portfolio_exposure_pct: Optional[float] = None,
+    max_portfolio_stop_risk_pct: Optional[float] = None,
+    position_size_fraction: float = 0.1,
     direction: str = "long",
     _return_trades: bool = False,
 ) -> Dict[str, Any]:
@@ -153,6 +164,7 @@ def backtest_strategy(
             rsi_values=rsi_values, max_rsi=max_rsi,
             macd_hist_values=macd_hist_values,
             backtest_entry_config=backtest_entry_config,
+            simulate_position_sizing=False,
             direction="long", _return_trades=True,
         )
         short_trades, _ = backtest_strategy(
@@ -178,6 +190,7 @@ def backtest_strategy(
             rsi_values=rsi_values, max_rsi=max_rsi,
             macd_hist_values=macd_hist_values,
             backtest_entry_config=backtest_entry_config,
+            simulate_position_sizing=False,
             direction="short", _return_trades=True,
         )
         all_trades = long_trades + short_trades
@@ -189,6 +202,11 @@ def backtest_strategy(
         return _compute_stats(all_trades, buy_and_hold_pct=buy_and_hold_pct)
 
     is_short = direction == "short"
+
+    # --- Position sizing simulation state ---
+    _psim = simulate_position_sizing and direction != "both"
+    cash = initial_balance if _psim else 0.0
+    total_pnl_currency = 0.0
 
     # Parse configurable entry logic
     if backtest_entry_config is None:
@@ -282,6 +300,32 @@ def backtest_strategy(
         if entry_price <= 0:
             i += 1
             continue
+
+        # --- Compute position size for this trade ---
+        if _psim:
+            portfolio_value = cash
+            desired_amount = portfolio_value * position_size_fraction
+            if confidence_sizing_weight > 0 and confidence < 1.0:
+                confidence_mult = 1.0 - confidence_sizing_weight * (1.0 - confidence)
+                desired_amount *= confidence_mult
+            desired_amount *= global_risk_multiplier
+            desired_amount *= position_size_multiplier
+            hard_max = float('inf')
+            if max_risk_per_trade_pct is not None and stop_loss_pct > 0:
+                hard_max = min(hard_max, (portfolio_value * max_risk_per_trade_pct) / stop_loss_pct)
+            if max_portfolio_risk_pct is not None and stop_loss_pct > 0:
+                hard_max = min(hard_max, (portfolio_value * max_portfolio_risk_pct) / stop_loss_pct)
+            if max_portfolio_exposure_pct is not None:
+                hard_max = min(hard_max, portfolio_value * max_portfolio_exposure_pct)
+            if max_portfolio_stop_risk_pct is not None and stop_loss_pct > 0:
+                hard_max = min(hard_max, (portfolio_value * max_portfolio_stop_risk_pct) / stop_loss_pct)
+            hard_max = min(hard_max, cash)
+            trade_amount = min(desired_amount, hard_max)
+            if trade_amount <= 0:
+                i += 1
+                continue
+        else:
+            trade_amount = trade_value or 10000.0
 
         # Dynamic ATR-based stop-loss
         if stop_loss_atr_multiple is not None and atr_values is not None and i < len(atr_values) and atr_values[i] is not None and atr_values[i] > 0:
@@ -488,6 +532,8 @@ def backtest_strategy(
                             "exit_reason": f"partial_tp_{lvl_idx}",
                             "pnl_pct": partial_net,
                             "hold_time_seconds": (candle_ts - entry_ts) / 1000.0,
+                            "trade_amount": trade_amount,
+                            "pnl_currency": trade_amount * partial_net if _psim else 0.0,
                         })
 
             # --- If all partial TPs executed, exit the remaining position ---
@@ -582,7 +628,17 @@ def backtest_strategy(
                 "exit_reason": exit_reason,
                 "pnl_pct": net_pnl_pct,
                 "hold_time_seconds": hold_time_seconds,
+                "trade_amount": trade_amount,
+                "pnl_currency": trade_amount * net_pnl_pct if _psim else 0.0,
             })
+
+        # --- Update portfolio after all trades for this entry ---
+        if _psim:
+            for pt in partial_trades:
+                cash += pt["pnl_currency"]
+            if remaining_fraction > 0 and trades:
+                cash += trades[-1]["pnl_currency"]
+            total_pnl_currency = cash - initial_balance
 
         # Move to the next candle after the exit
         # Apply cooldown if the trade was a loss
@@ -607,7 +663,14 @@ def backtest_strategy(
             return [], _empty_result()
         return _empty_result()
 
-    stats = _compute_stats(trades, buy_and_hold_pct=buy_and_hold_pct)
+    stats = _compute_stats(
+        trades,
+        buy_and_hold_pct=buy_and_hold_pct,
+        initial_balance=initial_balance if _psim else 0.0,
+        final_cash=cash if _psim else 0.0,
+        total_pnl_currency=total_pnl_currency if _psim else 0.0,
+        simulate_position_sizing=_psim,
+    )
     if _return_trades:
         return trades, stats
     return stats
@@ -629,10 +692,20 @@ def _empty_result() -> Dict[str, Any]:
         "partial_tp_count": 0,
         "buy_and_hold_pct": 0.0,
         "insufficient_data": True,
+        "total_pnl_currency": 0.0,
+        "final_balance": 0.0,
+        "total_return_pct": 0.0,
     }
 
 
-def _compute_stats(trades: List[Dict[str, Any]], buy_and_hold_pct: float = 0.0) -> Dict[str, Any]:
+def _compute_stats(
+    trades: List[Dict[str, Any]],
+    buy_and_hold_pct: float = 0.0,
+    initial_balance: float = 0.0,
+    final_cash: float = 0.0,
+    total_pnl_currency: float = 0.0,
+    simulate_position_sizing: bool = False,
+) -> Dict[str, Any]:
     wins = [t for t in trades if t["pnl_pct"] > 0]
     losses = [t for t in trades if t["pnl_pct"] <= 0]
 
@@ -697,6 +770,9 @@ def _compute_stats(trades: List[Dict[str, Any]], buy_and_hold_pct: float = 0.0) 
         "partial_tp_count": partial_tp_count,
         "buy_and_hold_pct": round(buy_and_hold_pct, 4),
         "insufficient_data": False,
+        "total_pnl_currency": round(total_pnl_currency, 4) if simulate_position_sizing and initial_balance > 0 else 0.0,
+        "final_balance": round(final_cash, 4) if simulate_position_sizing and initial_balance > 0 else 0.0,
+        "total_return_pct": round((final_cash - initial_balance) / initial_balance, 4) if simulate_position_sizing and initial_balance > 0 else 0.0,
     }
 
 
@@ -706,6 +782,13 @@ def format_backtest_summary(stats: Dict[str, Any], entry_config_used: bool = Tru
         return "Insufficient data for backtesting."
 
     entry_note = "" if entry_config_used else " [NO ENTRY FILTER — enters every candle]"
+    portfolio_part = ""
+    if stats.get("total_pnl_currency", 0) != 0 and stats.get("final_balance", 0) > 0:
+        portfolio_part = (
+            f", Portfolio P&L: {stats['total_pnl_currency']:+.2f}"
+            f", Final balance: {stats['final_balance']:.2f}"
+            f", Total return: {stats.get('total_return_pct', 0)*100:+.2f}%"
+        )
     return (
         f"Python backtest ({stats['total_trades']} trades){entry_note}: "
         f"Win rate: {stats['win_rate']*100:.1f}%, "
@@ -718,6 +801,7 @@ def format_backtest_summary(stats: Dict[str, Any], entry_config_used: bool = Tru
         f"Avg hold: {stats['avg_hold_time_seconds']/3600:.1f}h, "
         f"Max consec. losses: {stats['max_consecutive_losses']}, "
         f"Partial TPs: {stats.get('partial_tp_count', 0)}"
+        f"{portfolio_part}"
     )
 
 
