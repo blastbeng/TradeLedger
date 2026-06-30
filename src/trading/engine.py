@@ -337,7 +337,7 @@ class TradingEngine:
                     if db_entry.get("asset_type") == "btp" and db_entry["symbol"] not in existing_isins:
                         bonds.append({
                             "isin": db_entry["symbol"],
-                            "name": db_entry.get("name", db_entry["symbol"]),
+                            "name": db_entry.get("name") or db_entry["symbol"],
                             "last_price": None,
                             "change_pct": 0.0,
                             "coupon": db_entry.get("coupon"),
@@ -1610,6 +1610,22 @@ class TradingEngine:
                 db_name = await asyncio.to_thread(get_symbol_name_from_db, base)
                 if db_name:
                     return db_name
+            except Exception:
+                pass
+
+            # If we got a name from the BTP cache, save it to DB for future lookups
+            try:
+                btp_bonds = await self._get_btp_bonds()
+                for b in btp_bonds:
+                    if b["isin"] == base:
+                        name = b.get("name") or base
+                        if name and name != b["isin"]:
+                            from src.database import save_discovered_symbol
+                            await asyncio.to_thread(
+                                save_discovered_symbol, base, base, "btp", name,
+                                country="italy"
+                            )
+                            return name
             except Exception:
                 pass
             return base
@@ -3109,6 +3125,27 @@ class TradingEngine:
         etf_symbols = await self._get_etf_symbols()
         etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
         available_pairs = stock_pairs + btp_pairs
+
+        # --- Filter: only include symbols that have a name in discovered_symbols ---
+        from src.database import get_discovered_symbols_with_names
+        symbols_with_names = await asyncio.to_thread(get_discovered_symbols_with_names)
+        _suffix = settings.TICKER_SUFFIX
+
+        def _has_name(pair: str) -> bool:
+            base = pair.split("/")[0]
+            db_base = base
+            if _suffix and db_base.endswith(_suffix):
+                db_base = db_base[:-len(_suffix)]
+            return db_base in symbols_with_names or base in symbols_with_names
+
+        available_pairs = [p for p in available_pairs if _has_name(p)]
+        btp_pairs = [p for p in btp_pairs if p.split("/")[0] in symbols_with_names]
+        etf_pairs = [p for p in etf_pairs if _has_name(p)]
+
+        if not available_pairs and not btp_pairs:
+            logger.warning("No symbols with names in discovered_symbols. Skipping re-evaluation.")
+            await asyncio.to_thread(self.redis.set, last_key, now)
+            return
 
         logger.info("Re-evaluation step 3/12: RSS and news-driven symbol discovery...")
         # --- RSS-based ticker discovery: scan news feeds for symbols with TICKER_SUFFIX ---

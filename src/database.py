@@ -1741,6 +1741,17 @@ def get_symbol_name_from_db(symbol: str) -> Optional[str]:
         conn.close()
 
 
+def get_discovered_symbols_with_names() -> set:
+    """Return a set of base symbols from discovered_symbols that have a non-empty name."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql("SELECT symbol FROM discovered_symbols WHERE name IS NOT NULL AND name != ''")
+        rows = conn.execute(sql).fetchall()
+        return {row["symbol"] for row in rows}
+    finally:
+        conn.close()
+
+
 def get_isin_map_from_db(symbols: List[str]) -> Dict[str, Optional[str]]:
     """Return a dict mapping symbol -> ISIN for multiple symbols in a single query."""
     if not symbols:
