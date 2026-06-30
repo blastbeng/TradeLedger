@@ -2586,8 +2586,13 @@ class TradingEngine:
             # BTP has matured – close at par value
             logger.info(f"BTP {symbol} has matured (maturity: {maturity_str}). Closing at par value.")
             self.current_symbols.remove(entry)
+            # Refund reserved cycle capital for any removed buy orders
             async with self._queued_orders_lock:
+                removed_buys = [q for q in self.queued_orders if q['symbol'] == symbol and q['side'] == 'buy']
                 self.queued_orders = [q for q in self.queued_orders if q['symbol'] != symbol]
+            if removed_buys:
+                async with self._cycle_spent_lock:
+                    self._cycle_spent = max(0.0, self._cycle_spent - sum(q.get('amount', 0.0) for q in removed_buys))
             if symbol in self.positions:
                 await self._cancel_exit_orders(symbol)
                 async with self._positions_lock:
@@ -2637,9 +2642,13 @@ class TradingEngine:
             if symbol not in available_pairs:
                 logger.warning(f"Stock {symbol} no longer available. Removing from tracking.")
                 self.current_symbols.remove(entry)
-                # Remove any queued orders for this delisted symbol
+                # Remove any queued orders for this delisted symbol and refund reserved capital
                 async with self._queued_orders_lock:
+                    removed_buys = [q for q in self.queued_orders if q['symbol'] == symbol and q['side'] == 'buy']
                     self.queued_orders = [q for q in self.queued_orders if q['symbol'] != symbol]
+                if removed_buys:
+                    async with self._cycle_spent_lock:
+                        self._cycle_spent = max(0.0, self._cycle_spent - sum(q.get('amount', 0.0) for q in removed_buys))
                 if symbol in self.positions:
                     await self._cancel_exit_orders(symbol)
                     async with self._positions_lock:
@@ -12388,6 +12397,10 @@ class TradingEngine:
                                 await asyncio.to_thread(self.trader.cancel_order, order_id)
                             except Exception as e:
                                 logger.error(f"Failed to cancel timed-out order {order_id}: {e}")
+                            # Refund remaining reserved capital for buy orders
+                            if queued['side'] == 'buy':
+                                async with self._cycle_spent_lock:
+                                    self._cycle_spent = max(0.0, self._cycle_spent - queued.get('amount', 0.0))
                             # Remove from queue regardless of cancel success
                             async with self._queued_orders_lock:
                                 if queued in self.queued_orders:
@@ -12436,6 +12449,10 @@ class TradingEngine:
                     paper_order = await asyncio.to_thread(self.trader.get_order, order_id)
                     if paper_order is None:
                         logger.warning(f"Order {order_id} not found for {queued['symbol']}, removing from queue.")
+                        # Refund remaining reserved capital for buy orders
+                        if queued['side'] == 'buy':
+                            async with self._cycle_spent_lock:
+                                self._cycle_spent = max(0.0, self._cycle_spent - queued.get('amount', 0.0))
                         async with self._queued_orders_lock:
                             if queued in self.queued_orders:
                                 self.queued_orders.remove(queued)
@@ -12662,6 +12679,10 @@ class TradingEngine:
                         logger.warning(
                             f"Queued order {order_id} for {queued['symbol']} ended as {status}, removing."
                         )
+                        # Refund remaining reserved capital for buy orders
+                        if queued['side'] == 'buy':
+                            async with self._cycle_spent_lock:
+                                self._cycle_spent = max(0.0, self._cycle_spent - queued.get('amount', 0.0))
                         if self.notifier:
                             stock_name = await self._get_stock_name(queued['symbol'])
                             tf = queued.get('timeframe')
