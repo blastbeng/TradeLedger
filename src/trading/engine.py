@@ -59,12 +59,6 @@ logger = logging.getLogger(__name__)
 SYMBOL_REEVALUATION_INTERVAL = 14400  # seconds (4 hours) – medium/long-term
 DEFAULT_STRATEGY_INTERVAL = 3600   # fallback when no timeframe or no symbols (1 hour)
 MIN_SYMBOL_REEVALUATION_INTERVAL = 3600  # 1 hour – prevents rapid toggling
-MAX_STOP_LOSS_REVIEWS = 10   # force-sell after this many consecutive stop-loss reviews
-MAX_TAKE_PROFIT_REVIEWS = 10   # force-sell after this many consecutive take-profit reviews
-# Hard maximum unrealized loss that forces exit regardless of LLM stop-loss review decisions
-HARD_MAX_LOSS_PCT = 0.15  # 15% unrealized loss forces immediate exit
-# Timeframe threshold for reducing max stop-loss reviews (30 days = 1M candles)
-LONG_TERM_TF_SECONDS = 2_592_000
 MAX_TRADES_IN_MEMORY = 1000  # cap in-memory trade history to prevent unbounded growth
 
 
@@ -1416,7 +1410,7 @@ class TradingEngine:
                         pos_tf_secs = self._timeframe_to_seconds(pos_tf)
                         if min_tf_seconds is None or pos_tf_secs < min_tf_seconds:
                             min_tf_seconds = pos_tf_secs
-                if min_tf_seconds is not None and min_tf_seconds >= 2_592_000:  # >= 1 month
+                if min_tf_seconds is not None and min_tf_seconds >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
                     risk_interval = max(3600, min(86400, int(min_tf_seconds * 0.01)))
                 else:
                     risk_interval = settings.RISK_CHECK_INTERVAL_SECONDS
@@ -6230,8 +6224,8 @@ class TradingEngine:
             dust_sweep_review_count = pos.get("_dust_sweep_review_count", 0)
 
         # Read LLM-decided review limits for the prompt
-        max_sl_reviews_prompt = MAX_STOP_LOSS_REVIEWS
-        max_tp_reviews_prompt = MAX_TAKE_PROFIT_REVIEWS
+        max_sl_reviews_prompt = settings.MAX_STOP_LOSS_REVIEWS
+        max_tp_reviews_prompt = settings.MAX_TAKE_PROFIT_REVIEWS
         try:
             raw = await asyncio.to_thread(self.redis.get, "trading:max_stop_loss_reviews")
             if raw:
@@ -6255,7 +6249,7 @@ class TradingEngine:
             pass
 
         # Scale stop-loss review limit for long-term timeframes
-        if tf_seconds >= LONG_TERM_TF_SECONDS:  # >= 1 month
+        if tf_seconds >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
             max_sl_reviews_prompt = min(max_sl_reviews_prompt, 3)
         elif tf_seconds >= 604_800:  # >= 1 week
             max_sl_reviews_prompt = min(max_sl_reviews_prompt, 5)
@@ -8010,8 +8004,8 @@ class TradingEngine:
             return
 
         # Read LLM-decided review limits from Redis once (before the per-position loop)
-        max_sl_reviews = MAX_STOP_LOSS_REVIEWS
-        max_tp_reviews = MAX_TAKE_PROFIT_REVIEWS
+        max_sl_reviews = settings.MAX_STOP_LOSS_REVIEWS
+        max_tp_reviews = settings.MAX_TAKE_PROFIT_REVIEWS
         max_partial_tp_reviews = settings.MAX_PARTIAL_TP_REVIEWS
         max_dust_sweep_reviews = settings.MAX_DUST_SWEEP_REVIEWS
         try:
@@ -8069,15 +8063,15 @@ class TradingEngine:
                 entry_price = pos["price"]
                 if entry_price > 0:
                     unrealized_loss_pct = (entry_price - current_price) / entry_price
-                    if unrealized_loss_pct >= HARD_MAX_LOSS_PCT:
+                    if unrealized_loss_pct >= settings.HARD_MAX_LOSS_PCT:
                         logger.warning(
                             f"Hard max loss threshold reached for {symbol}: "
-                            f"unrealized loss {unrealized_loss_pct:.2%} >= {HARD_MAX_LOSS_PCT:.2%}. Forcing SELL."
+                            f"unrealized loss {unrealized_loss_pct:.2%} >= {settings.HARD_MAX_LOSS_PCT:.2%}. Forcing SELL."
                         )
                         if self.notifier:
                             await self.notifier.send_notification(
                                 f"⛔ Hard stop for {display_symbol}: unrealized loss {unrealized_loss_pct:.2%} "
-                                f"exceeds maximum {HARD_MAX_LOSS_PCT:.2%} – force selling.",
+                                f"exceeds maximum {settings.HARD_MAX_LOSS_PCT:.2%} – force selling.",
                                 summary={
                                     "symbol": symbol,
                                     "action": "SELL",
@@ -8697,7 +8691,7 @@ class TradingEngine:
                     pos_tf = pos.get("timeframe")
                     if pos_tf:
                         pos_tf_secs = self._timeframe_to_seconds(pos_tf)
-                        if pos_tf_secs >= LONG_TERM_TF_SECONDS:  # >= 1 month
+                        if pos_tf_secs >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
                             effective_max_sl_reviews = min(effective_max_sl_reviews, 3)
                         elif pos_tf_secs >= 604_800:  # >= 1 week
                             effective_max_sl_reviews = min(effective_max_sl_reviews, 5)
@@ -13290,8 +13284,8 @@ class TradingEngine:
         else:
             min_order_cost = None
 
-        max_sl_reviews = MAX_STOP_LOSS_REVIEWS
-        max_tp_reviews = MAX_TAKE_PROFIT_REVIEWS
+        max_sl_reviews = settings.MAX_STOP_LOSS_REVIEWS
+        max_tp_reviews = settings.MAX_TAKE_PROFIT_REVIEWS
         max_partial_tp_reviews = settings.MAX_PARTIAL_TP_REVIEWS
         max_dust_sweep_reviews = settings.MAX_DUST_SWEEP_REVIEWS
         try:
@@ -13307,7 +13301,7 @@ class TradingEngine:
             pass
 
         # Scale stop-loss review limit for long-term timeframes (same as _process_symbol)
-        if tf_seconds >= LONG_TERM_TF_SECONDS:  # >= 1 month
+        if tf_seconds >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
             max_sl_reviews = min(max_sl_reviews, 3)
         elif tf_seconds >= 604_800:  # >= 1 week
             max_sl_reviews = min(max_sl_reviews, 5)

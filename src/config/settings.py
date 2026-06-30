@@ -136,6 +136,49 @@ class Settings(BaseSettings):
             raise ValueError("MIN_LLM_PAUSE_DURATION must be >= 300")
         return v
 
+    # Hard maximum unrealized loss percentage that forces immediate exit
+    # regardless of LLM stop-loss review decisions (0.15 = 15%)
+    HARD_MAX_LOSS_PCT: float = 0.15
+
+    @field_validator("HARD_MAX_LOSS_PCT")
+    @classmethod
+    def validate_hard_max_loss_pct(cls, v: float) -> float:
+        if not (0.0 < v <= 1.0):
+            raise ValueError("HARD_MAX_LOSS_PCT must be between 0.0 and 1.0")
+        return v
+
+    # Maximum LLM stop-loss reviews before force-selling
+    MAX_STOP_LOSS_REVIEWS: int = 10
+
+    @field_validator("MAX_STOP_LOSS_REVIEWS")
+    @classmethod
+    def validate_max_stop_loss_reviews(cls, v: int) -> int:
+        if v < 1 or v > 50:
+            raise ValueError("MAX_STOP_LOSS_REVIEWS must be between 1 and 50")
+        return v
+
+    # Maximum LLM take-profit reviews before force-selling
+    MAX_TAKE_PROFIT_REVIEWS: int = 10
+
+    @field_validator("MAX_TAKE_PROFIT_REVIEWS")
+    @classmethod
+    def validate_max_take_profit_reviews(cls, v: int) -> int:
+        if v < 1 or v > 50:
+            raise ValueError("MAX_TAKE_PROFIT_REVIEWS must be between 1 and 50")
+        return v
+
+    # Timeframe threshold (in seconds) for reducing max stop-loss reviews
+    # (2592000 = 30 days / 1 month). Positions on timeframes >= this value
+    # get a reduced review cap to prevent excessive loss accumulation.
+    LONG_TERM_TF_SECONDS: int = 2_592_000
+
+    @field_validator("LONG_TERM_TF_SECONDS")
+    @classmethod
+    def validate_long_term_tf_seconds(cls, v: int) -> int:
+        if v < 86400:
+            raise ValueError("LONG_TERM_TF_SECONDS must be >= 86400 (1 day)")
+        return v
+
     # Maximum number of consecutive partial take-profit reviews before force-executing
     MAX_PARTIAL_TP_REVIEWS: int = 10
 
