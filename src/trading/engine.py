@@ -9380,8 +9380,9 @@ class TradingEngine:
                 available_stop_risk_budget = max(0.0, (total_value * max_port_risk) - total_open_stop_risk)
                 hard_max = min(hard_max, available_stop_risk_budget / sl_pct)
 
-            # Cap at remaining cycle budget
-            available = max(0.0, quote_balance - self._cycle_spent)
+            # Cap at remaining cycle budget (use lock for consistent read)
+            async with self._cycle_spent_lock:
+                available = max(0.0, quote_balance - self._cycle_spent)
             hard_max = min(hard_max, available)
 
             # Final amount: min of LLM's desired amount and the single hard ceiling
