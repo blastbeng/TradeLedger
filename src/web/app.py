@@ -12,6 +12,7 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
+from src.database import get_all_discovered_symbols
 from typing import Optional
 from pydantic import BaseModel
 
@@ -255,6 +256,12 @@ async def manual_trade(req: ManualTradeRequest):
         raise HTTPException(status_code=400, detail="Quantity must be positive")
     if req.money_spent <= 0:
         raise HTTPException(status_code=400, detail="Money spent must be positive")
+
+    # Validate ticker against discovered symbols
+    known_symbols = await run_in_threadpool(get_all_discovered_symbols)
+    if not any(s.get("symbol") == req.ticker for s in known_symbols):
+        raise HTTPException(status_code=400, detail=f"Unknown ticker: {req.ticker}. Please use a valid discovered symbol.")
+
     result = await engine.log_manual_trade(req.ticker, req.side, req.quantity, req.money_spent, req.fee)
     return result
 
