@@ -770,7 +770,8 @@ class TradingEngine:
                                         pass
                                 except (ValueError, TypeError):
                                     pass
-                            return   # skip the original duration logic
+                            await asyncio.sleep(30)
+                            continue   # skip the original duration logic, proceed to next loop iteration
                         if pause_start_raw and pause_duration_raw:
                             try:
                                 pause_start = float(pause_start_raw)
