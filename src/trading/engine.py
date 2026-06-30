@@ -5252,8 +5252,11 @@ class TradingEngine:
         ):
             # Return cached ticker-dependent values, but recompute available capital
             # from the current cycle_spent (which changes during the cycle).
-            result = dict(self._portfolio_exposure_cache)
+            # Acquire the lock before copying the cache so the cache read and
+            # _cycle_spent read are atomic — prevents a race where another
+            # coroutine modifies _cycle_spent between the copy and the lock.
             async with self._cycle_spent_lock:
+                result = dict(self._portfolio_exposure_cache)
                 result["portfolio_available_capital"] = max(0.0, base_balance - self._cycle_spent)
             return result
 
