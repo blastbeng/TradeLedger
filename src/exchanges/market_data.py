@@ -1,4 +1,5 @@
 import asyncio
+import atexit
 import collections
 import hashlib
 import logging
@@ -34,6 +35,9 @@ _get_quotes_lock = threading.Lock()
 _yf_download_executor = concurrent.futures.ThreadPoolExecutor(
     max_workers=2, thread_name_prefix="yf-download-timeout"
 )
+
+# Ensure the executor is shut down cleanly on program exit
+atexit.register(_yf_download_executor.shutdown, wait=False)
 
 
 def _yf_download_with_timeout(symbols, **kwargs):
