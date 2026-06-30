@@ -9658,6 +9658,10 @@ class TradingEngine:
                     }
                     async with self._queued_orders_lock:
                         self.queued_orders.append(queued_entry)
+                    # Reserve capital when the order is queued, not just when it fills,
+                    # so subsequent symbols in the same cycle see reduced available capital.
+                    async with self._cycle_spent_lock:
+                        self._cycle_spent += amount
                     if self.notifier:
                         await self.notifier.send_notification(
                             f"⏳ BUY {order_type} order for {display_symbol} queued{price_str}",
@@ -9696,7 +9700,9 @@ class TradingEngine:
                     async with self._queued_orders_lock:
                         self.queued_orders.append(queued_entry)
                 async with self._cycle_spent_lock:
-                    self._cycle_spent += order['cost']
+                    # Reserve the full desired amount, not just the filled portion,
+                    # so the queued remainder is also accounted for in this cycle.
+                    self._cycle_spent += amount
                 # Update or create position
                 # Extract fee info for cost basis tracking
                 fee = order.get('fee', {})
@@ -12846,8 +12852,8 @@ class TradingEngine:
         trade_dict['buy_reasoning'] = (signal_dict.get('reasoning', '') or '')[:200]
         self._append_trade(trade_dict)
         self._balance_cache = None
-        async with self._cycle_spent_lock:
-            self._cycle_spent += trade_dict['cost']
+        # Note: _cycle_spent was already updated when the order was queued
+        # in _execute_signal, so we do NOT add to it here to avoid double-counting.
         await asyncio.to_thread(insert_trade, trade_dict)
         await self._save_state(force=True)
         self._portfolio_exposure_cache = None
