@@ -315,6 +315,16 @@ class Settings(BaseSettings):
     # For medium/long-term, 15 minutes is sufficient.
     ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS: int = 900
 
+    # Cooldown between entry-signal forced LLM evaluations (seconds)
+    ENTRY_SIGNAL_COOLDOWN_SECONDS: int = 30
+
+    @field_validator("ENTRY_SIGNAL_COOLDOWN_SECONDS")
+    @classmethod
+    def validate_entry_signal_cooldown_seconds(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("ENTRY_SIGNAL_COOLDOWN_SECONDS must be >= 0")
+        return v
+
     # OHLCV timeframes for multi-timeframe analysis
     # Default order is longest to shortest to ensure larger timeframes are fetched first
     OHLCV_TIMEFRAMES: list[str] = ["1Y", "6M", "3M", "1M", "1w", "1d", "1h"]

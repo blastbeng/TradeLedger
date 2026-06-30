@@ -10383,7 +10383,7 @@ class TradingEngine:
                     # Avoid re‑triggering too often – enforce a cooldown of at least
                     # the normal strategy interval.
                     # Use a short, dedicated cooldown so the bot reacts quickly to new signals
-                    cooldown = getattr(settings, 'ENTRY_SIGNAL_COOLDOWN_SECONDS', 30)
+                    cooldown = settings.ENTRY_SIGNAL_COOLDOWN_SECONDS
                     last_forced = self._force_eval_time.get(symbol, 0)
                     if time.time() - last_forced < cooldown:
                         continue
