@@ -828,7 +828,7 @@ Select between {settings.MIN_SYMBOLS if settings.MIN_SYMBOLS > 0 else 0} and {ma
             f"Selecting fewer than {settings.MIN_SYMBOLS} is NOT allowed unless you are pausing trading entirely. "
             f"Use small position_size_fraction values (0.01-0.05) for lower-conviction symbols to fill the remaining slots.\n"
         )
-    prompt += """
+
     # Add open positions
     if open_positions:
         prompt += "\n**Open positions (these will continue to be managed even if trading is paused):**\n"
