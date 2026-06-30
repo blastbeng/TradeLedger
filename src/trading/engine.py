@@ -2878,9 +2878,19 @@ class TradingEngine:
         # Restore pending entries (reconstruct Signal objects from dicts)
         raw_pending = state.get("pending_entries", {})
         self._pending_entries = {}
+        import dataclasses as _dc
+        valid_signal_keys = {f.name for f in _dc.fields(Signal)}
         for symbol, entry in raw_pending.items():
             try:
-                signal = Signal(**entry["signal"])
+                signal_dict = entry["signal"]
+                filtered = {k: v for k, v in signal_dict.items() if k in valid_signal_keys}
+                if "action" not in filtered:
+                    filtered["action"] = "HOLD"
+                if "confidence" not in filtered:
+                    filtered["confidence"] = 0.0
+                if "reasoning" not in filtered:
+                    filtered["reasoning"] = ""
+                signal = Signal(**filtered)
                 self._pending_entries[symbol] = {
                     "signal": signal,
                     "deadline": entry["deadline"],
