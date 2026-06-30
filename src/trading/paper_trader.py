@@ -60,6 +60,7 @@ class PaperTrader:
         self.slippage_base_pct = 0.001  # 0.1% base slippage
         self.slippage_max_pct = 0.01    # 1.0% max slippage
         self._balances_dirty = False
+        self._slippage_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, slippage)
         self._load_balances()
 
     # ------------------------------------------------------------------
@@ -176,6 +177,13 @@ class PaperTrader:
         Adapts the backtester's dynamic slippage model to live trading by using
         the most recent daily candle and a 20-day average volume.
         """
+        # Check cache first
+        cached = self._slippage_cache.get(symbol)
+        if cached:
+            ts, cached_slippage = cached
+            if time.time() - ts < 60:
+                return cached_slippage
+
         base = symbol.split("/")[0] if "/" in symbol else symbol
         try:
             candles = get_ohlcv(base, "1d", limit=21)
@@ -203,7 +211,9 @@ class PaperTrader:
                 atr_pct = atr / price
                 slippage += atr_pct * 0.05
                 
-            return min(slippage, self.slippage_max_pct)
+            final_slippage = min(slippage, self.slippage_max_pct)
+            self._slippage_cache[symbol] = (time.time(), final_slippage)
+            return final_slippage
         except Exception as e:
             logger.warning(f"Failed to compute dynamic slippage for {symbol}: {e}")
             return self.slippage_base_pct
