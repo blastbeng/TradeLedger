@@ -257,9 +257,10 @@ async def manual_trade(req: ManualTradeRequest):
     if req.money_spent <= 0:
         raise HTTPException(status_code=400, detail="Money spent must be positive")
 
-    # Validate ticker against discovered symbols
+    # Validate ticker against discovered symbols (case-insensitive)
     known_symbols = await run_in_threadpool(get_all_discovered_symbols)
-    if not any(s.get("symbol") == req.ticker for s in known_symbols):
+    ticker_upper = req.ticker.upper()
+    if not any(s.get("symbol", "").upper() == ticker_upper for s in known_symbols):
         raise HTTPException(status_code=400, detail=f"Unknown ticker: {req.ticker}. Please use a valid discovered symbol.")
 
     result = await engine.log_manual_trade(req.ticker, req.side, req.quantity, req.money_spent, req.fee)
