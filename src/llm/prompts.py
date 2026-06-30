@@ -337,11 +337,25 @@ if settings.BTP_IS_PRIMARY_ISSUANCE:
   - **Total Round-Trip Cost:** €0.00.
   - **CRITICAL:** For BTPs, `take_profit_pct` can be as low as 0.001 (0.1%) since there are no transaction costs."""
 else:
-    btp_fee_text = """- **BTP Bond Transaction Costs:** BTP bonds have different fees:
-  - **Bank Commission:** 0.24% of trade value, with a minimum of €3.50. No fixed execution fee.
+    btp_fee_perc_pct = settings.BTP_FEE_PERC * 100
+    btp_min_fee_eur = settings.BTP_MIN_FEE
+    round_trip_perc_pct = btp_fee_perc_pct * 2
+    small_trade_fixed_cost = btp_min_fee_eur * 2
+
+    # Calculate examples for €1,000 and €10,000 trades
+    trade_1000_fee = max(btp_min_fee_eur, 1000 * settings.BTP_FEE_PERC)
+    trade_1000_total = trade_1000_fee * 2
+    trade_1000_pct = (trade_1000_total / 1000) * 100
+
+    trade_10000_fee = max(btp_min_fee_eur, 10000 * settings.BTP_FEE_PERC)
+    trade_10000_total = trade_10000_fee * 2
+    trade_10000_pct = (trade_10000_total / 10000) * 100
+
+    btp_fee_text = f"""- **BTP Bond Transaction Costs:** BTP bonds have different fees:
+  - **Bank Commission:** {btp_fee_perc_pct:.2f}% of trade value, with a minimum of €{btp_min_fee_eur:.2f}. No fixed execution fee.
   - **Tobin Tax:** Exempt (sovereign bonds are not subject to Tobin tax).
-  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately 0.48% of the trade value (for larger trades). For smaller trades, the €3.50 minimum applies on both sides, making the total fixed cost €7.00.
-  - **CRITICAL:** For BTPs, ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 BTP trade, total fees are ~€7.00 (0.70%), so `take_profit_pct` must be > 0.71%. For a €10,000 BTP trade, total fees are ~€48 (0.48%), so `take_profit_pct` must be > 0.49%."""
+  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately {round_trip_perc_pct:.2f}% of the trade value (for larger trades). For smaller trades, the €{btp_min_fee_eur:.2f} minimum applies on both sides, making the total fixed cost €{small_trade_fixed_cost:.2f}.
+  - **CRITICAL:** For BTPs, ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 BTP trade, total fees are ~€{trade_1000_total:.2f} ({trade_1000_pct:.2f}%), so `take_profit_pct` must be > {trade_1000_pct + 0.01:.2f}%. For a €10,000 BTP trade, total fees are ~€{trade_10000_total:.2f} ({trade_10000_pct:.2f}%), so `take_profit_pct` must be > {trade_10000_pct + 0.01:.2f}%."""
 
 SYSTEM_PROMPT = SYSTEM_PROMPT.replace("__BTP_FEE_SECTION__", btp_fee_text)
 
