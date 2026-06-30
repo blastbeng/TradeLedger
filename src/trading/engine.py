@@ -19,7 +19,7 @@ from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
 from src.trading.paper_trader import PaperTrader
 from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import (
-    SYSTEM_PROMPT,
+    build_system_prompt,
     build_stock_selection_prompt,
     build_final_selection_prompt,
     build_analysis_prompt,
@@ -30,7 +30,10 @@ from src.llm.prompts import (
     get_cached_news_summary,
 )
 
-COMPACTED_SYSTEM_PROMPT = compact_prompt(SYSTEM_PROMPT)
+def _get_compacted_system_prompt() -> str:
+    """Build the compacted system prompt dynamically to pick up settings.reload()."""
+    return compact_prompt(build_system_prompt())
+
 from src.indicators import (
     compute_ema,
     compute_all_indicators,
@@ -3962,7 +3965,7 @@ class TradingEngine:
                         asyncio.to_thread(
                             get_cached_llm_response,
                             compact_prompt(chunk_prompt),
-                            COMPACTED_SYSTEM_PROMPT,
+                            _get_compacted_system_prompt(),
                             300,
                             market_hash=chunk_market_hash,
                             model_type="mind",
@@ -4000,7 +4003,7 @@ class TradingEngine:
                     try:
                         correction_result = await asyncio.wait_for(
                             asyncio.to_thread(
-                                get_cached_llm_response, compact_prompt(correction), COMPACTED_SYSTEM_PROMPT, 120,
+                                get_cached_llm_response, compact_prompt(correction), _get_compacted_system_prompt(), 120,
                                 model_type="actuator", temperature=effective_temp,
                             ),
                             timeout=settings.LLM_TIMEOUT
@@ -4059,7 +4062,7 @@ class TradingEngine:
                         asyncio.to_thread(
                             get_cached_llm_response,
                             compact_prompt(final_prompt),
-                            COMPACTED_SYSTEM_PROMPT,
+                            _get_compacted_system_prompt(),
                             300,
                             model_type="mind",
                             temperature=effective_temp,
@@ -4153,7 +4156,7 @@ class TradingEngine:
                 try:
                     correction_result = await asyncio.wait_for(
                         asyncio.to_thread(
-                            get_cached_llm_response, compact_prompt(correction_prompt), COMPACTED_SYSTEM_PROMPT, 120,
+                            get_cached_llm_response, compact_prompt(correction_prompt), _get_compacted_system_prompt(), 120,
                             model_type="actuator",
                             temperature=effective_temp,
                         ),
@@ -5031,7 +5034,7 @@ class TradingEngine:
             try:
                 pause_result = await asyncio.wait_for(
                     asyncio.to_thread(
-                        get_cached_llm_response, compact_prompt(prompt), COMPACTED_SYSTEM_PROMPT, 120,
+                        get_cached_llm_response, compact_prompt(prompt), _get_compacted_system_prompt(), 120,
                         model_type="actuator",
                         temperature=effective_temp,
                     ),
@@ -5814,7 +5817,7 @@ class TradingEngine:
                         asyncio.to_thread(
                             get_cached_llm_response,
                             compact_prompt(step2_prompt),
-                            COMPACTED_SYSTEM_PROMPT,
+                            _get_compacted_system_prompt(),
                             60,
                             model_type=strategy_model_type,
                             temperature=effective_temp,
@@ -5841,7 +5844,7 @@ class TradingEngine:
                                 asyncio.to_thread(
                                     get_cached_llm_response,
                                     compact_prompt(correction),
-                                    COMPACTED_SYSTEM_PROMPT, 30,
+                                    _get_compacted_system_prompt(), 30,
                                     model_type="actuator",
                                     temperature=effective_temp,
                                 ),
@@ -6975,7 +6978,7 @@ class TradingEngine:
                     asyncio.to_thread(
                         get_cached_llm_response,
                         compact_prompt(analysis_prompt),
-                        COMPACTED_SYSTEM_PROMPT,
+                        _get_compacted_system_prompt(),
                         60,
                         market_hash=market_hash,
                         model_type=strategy_model_type,
@@ -7001,7 +7004,7 @@ class TradingEngine:
                         asyncio.to_thread(
                             get_cached_llm_response,
                             compact_prompt(correction_prompt),
-                            COMPACTED_SYSTEM_PROMPT, 30,
+                            _get_compacted_system_prompt(), 30,
                             model_type="actuator",
                             temperature=effective_temp,
                         ),
@@ -7120,7 +7123,7 @@ class TradingEngine:
                         asyncio.to_thread(
                             get_cached_llm_response,
                             compact_prompt(variants_prompt),
-                            COMPACTED_SYSTEM_PROMPT,
+                            _get_compacted_system_prompt(),
                             60,
                             market_hash=variants_market_hash,
                             model_type=strategy_model_type,
@@ -7168,7 +7171,7 @@ class TradingEngine:
                     try:
                         response2 = await asyncio.wait_for(
                             asyncio.to_thread(
-                                get_cached_llm_response, compact_prompt(correction_prompt), COMPACTED_SYSTEM_PROMPT, 30,
+                                get_cached_llm_response, compact_prompt(correction_prompt), _get_compacted_system_prompt(), 30,
                                 model_type="actuator",
                                 temperature=effective_temp,
                             ),
@@ -13976,7 +13979,7 @@ class TradingEngine:
                 asyncio.to_thread(
                     get_cached_llm_response,
                     compact_prompt(data["analysis_prompt"]),
-                    COMPACTED_SYSTEM_PROMPT, 60,
+                    _get_compacted_system_prompt(), 60,
                     market_hash=market_hash,
                     model_type=model_type,
                     temperature=temperature,
@@ -14025,7 +14028,7 @@ class TradingEngine:
                 asyncio.to_thread(
                     get_cached_llm_response,
                     compact_prompt(variants_prompt),
-                    COMPACTED_SYSTEM_PROMPT, 60,
+                    _get_compacted_system_prompt(), 60,
                     market_hash=compute_market_hash({"step": "1b", "analysis": analysis}),
                     model_type=model_type,
                     temperature=temperature,
@@ -14133,7 +14136,7 @@ class TradingEngine:
                 asyncio.to_thread(
                     get_cached_llm_response,
                     compact_prompt(data["analysis_prompt"]),
-                    COMPACTED_SYSTEM_PROMPT, 60,
+                    _get_compacted_system_prompt(), 60,
                     market_hash=market_hash,
                     model_type=model_type,
                     temperature=temperature,
@@ -14182,7 +14185,7 @@ class TradingEngine:
                 asyncio.to_thread(
                     get_cached_llm_response,
                     compact_prompt(variants_prompt),
-                    COMPACTED_SYSTEM_PROMPT, 60,
+                    _get_compacted_system_prompt(), 60,
                     market_hash=compute_market_hash({"step": "1b", "analysis": analysis}),
                     model_type=model_type,
                     temperature=temperature,
@@ -14298,7 +14301,7 @@ class TradingEngine:
                 asyncio.to_thread(
                     get_cached_llm_response,
                     compact_prompt(step2_prompt),
-                    COMPACTED_SYSTEM_PROMPT,
+                    _get_compacted_system_prompt(),
                     60,
                     model_type=model_type,
                     temperature=temperature,
@@ -14330,7 +14333,7 @@ class TradingEngine:
                     asyncio.to_thread(
                         get_cached_llm_response,
                         compact_prompt(correction),
-                        COMPACTED_SYSTEM_PROMPT, 30,
+                        _get_compacted_system_prompt(), 30,
                         model_type="actuator",
                         temperature=temperature,
                     ),
