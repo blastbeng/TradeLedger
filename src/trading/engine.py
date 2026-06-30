@@ -386,6 +386,7 @@ class TradingEngine:
 
     async def _get_all_position_tickers(self) -> Dict[str, Dict[str, Any]]:
         """Fetch tickers for all open positions, batching missing ones into a single API call."""
+        self._portfolio_exposure_cache = None
         tickers: Dict[str, Dict[str, Any]] = {}
         missing: List[str] = []
         for sym in self.positions:
@@ -407,6 +408,7 @@ class TradingEngine:
         Uses get_quotes_cached (Redis/DB only, no network calls) to avoid
         blocking the default asyncio thread pool with slow yfinance requests.
         """
+        self._portfolio_exposure_cache = None
         tickers: Dict[str, Dict[str, Any]] = {}
         missing: List[str] = []
         for sym in self.positions:
