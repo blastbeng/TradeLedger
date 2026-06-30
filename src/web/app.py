@@ -36,8 +36,11 @@ class ManualTradeRequest(BaseModel):
 security = HTTPBasic(auto_error=False)
 
 async def verify_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)):
-    if settings.WEB_API_KEY:
-        if not credentials or not secrets.compare_digest(credentials.password, settings.WEB_API_KEY):
+    if settings.WEB_USERNAME and settings.WEB_PASSWORD:
+        if not credentials or not (
+            secrets.compare_digest(credentials.username, settings.WEB_USERNAME) and
+            secrets.compare_digest(credentials.password, settings.WEB_PASSWORD)
+        ):
             raise HTTPException(
                 status_code=401,
                 detail="Unauthorized",
