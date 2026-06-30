@@ -7072,8 +7072,8 @@ class TradingEngine:
                     reasoning=analysis_result.get("reasoning", ""),
                 )
                 preliminary_signal.model_type = strategy_model_type
-                preliminary_signal.llm_provider = llm_provider
-                preliminary_signal.llm_model = llm_model
+                preliminary_signal.llm_provider = llm_provider or "fallback"
+                preliminary_signal.llm_model = llm_model or "default_hold"
                 # Skip backtests and Step 2 — go directly to notification
                 signal = preliminary_signal
                 combined_bt_summary = ""
