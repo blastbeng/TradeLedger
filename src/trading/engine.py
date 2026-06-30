@@ -8262,10 +8262,10 @@ class TradingEngine:
                                                 atr_is_stale = False
                                                 if ind_ts is not None:
                                                     tf_secs = self._timeframe_to_seconds(tf)
-                                                    # Cap max age at 7 days so long timeframes
-                                                    # (5Y, 3Y, etc.) don't get an absurdly
-                                                    # large staleness window.
-                                                    max_age_secs = min(tf_secs * 2, 604800)
+                                                    # Cap max age at 1 day so long timeframes
+                                                    # (5Y, 3Y, etc.) don't use stale ATR values
+                                                    # for trailing stop calculations.
+                                                    max_age_secs = min(tf_secs * 2, 86400)
                                                     # The indicator timestamp is the candle's
                                                     # start time.  The candle covers a period
                                                     # of tf_secs, so the most recent data is
