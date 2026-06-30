@@ -3,9 +3,11 @@ import json
 import logging
 import math
 import os
+import secrets
 import time
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from fastapi.concurrency import run_in_threadpool
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from src.config.settings import settings
@@ -31,7 +33,19 @@ class ManualTradeRequest(BaseModel):
     money_spent: float
     fee: float = 0.0
 
-app = FastAPI(title="Trade Ledger")
+security = HTTPBasic(auto_error=False)
+
+async def verify_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)):
+    if settings.WEB_API_KEY:
+        if not credentials or not secrets.compare_digest(credentials.password, settings.WEB_API_KEY):
+            raise HTTPException(
+                status_code=401,
+                detail="Unauthorized",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+    return True
+
+app = FastAPI(title="Trade Ledger", dependencies=[Depends(verify_auth)])
 
 logger = logging.getLogger(__name__)
 

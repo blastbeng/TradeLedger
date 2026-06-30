@@ -701,6 +701,7 @@ class Settings(BaseSettings):
     # Web
     WEB_HOST: str = "0.0.0.0"
     WEB_PORT: int = 8083
+    WEB_API_KEY: Optional[str] = None
 
     # Logging
     LOG_LEVEL: str = "INFO"
