@@ -8346,7 +8346,7 @@ class TradingEngine:
                                                 if ind_ts is not None:
                                                     tf_secs = self._timeframe_to_seconds(tf)
                                                     # Cap max age at 1 day so long timeframes
-                                                    # (5Y, 3Y, etc.) don't use stale ATR values
+                                                    # (1Y, etc.) don't use stale ATR values
                                                     # for trailing stop calculations.
                                                     max_age_secs = min(tf_secs * 2, 86400)
                                                     # The indicator timestamp is the candle's
@@ -10292,7 +10292,7 @@ class TradingEngine:
             return False
 
         # If DB indicators are missing (common for long timeframes like
-        # 5Y/3Y/1Y where indicators may not be stored), compute them
+        # 1Y where indicators may not be stored), compute them
         # on-the-fly from the OHLCV candles so entry signal detection
         # still works.
         if not ind:
