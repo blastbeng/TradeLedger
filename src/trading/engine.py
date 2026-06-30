@@ -6041,6 +6041,103 @@ class TradingEngine:
 
         return False
 
+    async def _fetch_symbol_market_data(self, symbol: str, assigned_tf: str) -> Optional[Dict[str, Any]]:
+        """Fetch all raw market data for a symbol: ticker, fundamentals, balance, OHLCV, and multi-TF indicators.
+
+        Returns a dict with all fetched data, or None if ticker is unavailable.
+        Both _process_symbol and _prepare_simulation_data use this to avoid duplication.
+        """
+        base_symbol = symbol.split("/")[0]
+        is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
+        tf_seconds = self._timeframe_to_seconds(assigned_tf)
+
+        # --- Fetch ticker ---
+        async with self._exchange_semaphore:
+            quotes = await self._get_quotes_async([base_symbol], timeout=45.0)
+            ticker = quotes.get(base_symbol)
+        if ticker is None:
+            return None
+        current_price = ticker['last']
+
+        # --- Yahoo Finance fallback for missing bid/ask ---
+        if ticker is not None and not is_btp:
+            bid = ticker.get('bid')
+            ask = ticker.get('ask')
+            if bid is None or ask is None:
+                yahoo = await asyncio.to_thread(get_yahoo_quote, base_symbol)
+                if yahoo:
+                    if bid is None:
+                        ticker['bid'] = yahoo.get('bid')
+                    if ask is None:
+                        ticker['ask'] = yahoo.get('ask')
+                    logger.info(f"Yahoo Finance quote merged for {symbol}: bid={ticker.get('bid')}, ask={ticker.get('ask')}")
+
+        # --- Fetch fundamental data ---
+        fundamentals = None
+        if settings.YAHOO_FINANCE_ENABLED and not is_btp:
+            fundamentals = await asyncio.to_thread(get_yahoo_fundamentals, base_symbol)
+
+        # --- Fetch balance ---
+        balance = await self._get_cached_balance()
+        base_balance = balance.get(self.base_currency, 0.0)
+
+        # --- Fetch OHLCV from database ---
+        ohlcv_data = {}
+        if settings.OHLCV_TIMEFRAMES:
+            async def _fetch_ohlcv_tf(tf):
+                try:
+                    db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
+                    if db_candles:
+                        return tf, [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+                except Exception as e:
+                    logger.debug(f"DB OHLCV fetch failed for {symbol} {tf}: {e}")
+                return tf, None
+            ohlcv_results = await asyncio.gather(*[_fetch_ohlcv_tf(tf) for tf in settings.OHLCV_TIMEFRAMES])
+            for tf, candles in ohlcv_results:
+                if candles:
+                    ohlcv_data[tf] = candles
+
+        # --- Compute multi-TF indicators ---
+        _inds = await self._compute_multi_tf_indicators(symbol, ohlcv_data, assigned_tf)
+
+        return {
+            "ticker": ticker,
+            "current_price": current_price,
+            "fundamentals": fundamentals,
+            "balance": balance,
+            "base_balance": base_balance,
+            "ohlcv_data": ohlcv_data,
+            "is_btp": is_btp,
+            "tf_seconds": tf_seconds,
+            "multi_tf_indicators": _inds["multi_tf_indicators"],
+            "multi_tf_raw_candles": _inds["multi_tf_raw_candles"],
+            "atr": _inds["atr"],
+            "rsi": _inds["rsi"],
+            "macd": _inds["macd"],
+            "macd_signal": _inds["macd_signal"],
+            "macd_hist": _inds["macd_hist"],
+            "bb_upper": _inds["bb_upper"],
+            "bb_middle": _inds["bb_middle"],
+            "bb_lower": _inds["bb_lower"],
+            "ema_9": _inds["ema_9"],
+            "ema_21": _inds["ema_21"],
+            "stochastic_k": _inds["stochastic_k"],
+            "stochastic_d": _inds["stochastic_d"],
+            "adx": _inds["adx"],
+            "plus_di": _inds["plus_di"],
+            "minus_di": _inds["minus_di"],
+            "obv": _inds["obv"],
+            "mfi": _inds["mfi"],
+            "cci": _inds["cci"],
+            "williams_r": _inds["williams_r"],
+            "ichimoku": _inds["ichimoku"],
+            "donchian_channels": _inds["donchian_channels"],
+            "parabolic_sar": _inds["parabolic_sar"],
+            "keltner_channels": _inds["keltner_channels"],
+            "vwap": _inds["vwap"],
+            "daily_pivot_points": _inds["daily_pivot_points"],
+        }
+
     async def _process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False):
         """Fetch market data, get LLM strategy, validate, and execute."""
         symbol = symbol_entry["symbol"]
@@ -6164,36 +6261,45 @@ class TradingEngine:
             max_sl_reviews_prompt = min(max_sl_reviews_prompt, 5)
 
         try:
-            async with self._exchange_semaphore:
-                base = symbol.split("/")[0]
-                quotes = await self._get_quotes_async([base], timeout=45.0)
-                ticker = quotes.get(base)
-            if ticker is None:
+            symbol_data = await self._fetch_symbol_market_data(symbol, assigned_tf)
+            if symbol_data is None:
                 logger.warning(f"No ticker data for {symbol}, skipping.")
                 return
-            current_price = ticker['last']
-
-            # --- Yahoo Finance fallback for missing bid/ask (IEX or any feed) ---
-            if ticker is not None and not is_btp:
-                bid = ticker.get('bid')
-                ask = ticker.get('ask')
-                if bid is None or ask is None:
-                    yahoo = await asyncio.to_thread(get_yahoo_quote, symbol.split("/")[0])
-                    if yahoo:
-                        if bid is None:
-                            ticker['bid'] = yahoo.get('bid')
-                        if ask is None:
-                            ticker['ask'] = yahoo.get('ask')
-                        # Do NOT overwrite 'last' from yfinance; it's more real-time
-                        logger.info(f"Yahoo Finance quote merged for {symbol}: bid={ticker.get('bid')}, ask={ticker.get('ask')}")
-
-            # --- Fetch fundamental data for medium/long-term context ---
-            fundamentals = None
-            if settings.YAHOO_FINANCE_ENABLED and not is_btp:
-                fundamentals = await asyncio.to_thread(get_yahoo_fundamentals, symbol.split("/")[0])
-
-            balance = await self._get_cached_balance()
-            base_balance = balance.get(self.base_currency, 0.0)
+            ticker = symbol_data["ticker"]
+            current_price = symbol_data["current_price"]
+            fundamentals = symbol_data["fundamentals"]
+            balance = symbol_data["balance"]
+            base_balance = symbol_data["base_balance"]
+            ohlcv_data = symbol_data["ohlcv_data"]
+            is_btp = symbol_data["is_btp"]
+            tf_seconds = symbol_data["tf_seconds"]
+            multi_tf_indicators = symbol_data["multi_tf_indicators"]
+            multi_tf_raw_candles = symbol_data["multi_tf_raw_candles"]
+            atr = symbol_data["atr"]
+            rsi = symbol_data["rsi"]
+            macd = symbol_data["macd"]
+            macd_signal = symbol_data["macd_signal"]
+            macd_hist = symbol_data["macd_hist"]
+            bb_upper = symbol_data["bb_upper"]
+            bb_middle = symbol_data["bb_middle"]
+            bb_lower = symbol_data["bb_lower"]
+            ema_9 = symbol_data["ema_9"]
+            ema_21 = symbol_data["ema_21"]
+            stochastic_k = symbol_data["stochastic_k"]
+            stochastic_d = symbol_data["stochastic_d"]
+            adx = symbol_data["adx"]
+            plus_di = symbol_data["plus_di"]
+            minus_di = symbol_data["minus_di"]
+            obv = symbol_data["obv"]
+            mfi = symbol_data["mfi"]
+            cci = symbol_data["cci"]
+            williams_r = symbol_data["williams_r"]
+            ichimoku = symbol_data["ichimoku"]
+            donchian_channels = symbol_data["donchian_channels"]
+            parabolic_sar = symbol_data["parabolic_sar"]
+            keltner_channels = symbol_data["keltner_channels"]
+            vwap = symbol_data["vwap"]
+            daily_pivot_points = symbol_data["daily_pivot_points"]
             has_position = symbol in self.positions
             # If we have an open position, we must continue evaluating it for SELL signals
             # even when base_balance is 0 (all capital deployed) or effective_max_symbols is 0.
@@ -6210,26 +6316,6 @@ class TradingEngine:
                     f"Evaluating {symbol} for position management only "
                     f"(base_balance={base_balance:.2f}, no new capital available)."
                 )
-
-            # Fetch OHLCV from database first (background tasks keep it populated).
-            # Only fall back to API if DB has no data for the assigned timeframe.
-            ohlcv_data = {}
-            if settings.OHLCV_TIMEFRAMES:
-                async def _fetch_ohlcv_tf(tf):
-                    try:
-                        db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
-                        if db_candles:
-                            return tf, [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
-                    except Exception as e:
-                        logger.debug(f"DB OHLCV fetch failed for {symbol} {tf}: {e}")
-                    return tf, None
-                ohlcv_results = await asyncio.gather(*[_fetch_ohlcv_tf(tf) for tf in settings.OHLCV_TIMEFRAMES])
-                for tf, candles in ohlcv_results:
-                    if candles:
-                        ohlcv_data[tf] = candles
-
-                # No API fallback: rely entirely on the database (populated by background tasks).
-                # If the DB is empty, the symbol will be skipped by the no_ohlcv check below.
 
             # --- Skip if no meaningful market data is available ---
             # If we have no OHLCV candles at all, there is nothing for the LLM to analyse.
@@ -6324,36 +6410,6 @@ class TradingEngine:
             # --- Compute additional metrics for the LLM ---
             # Build indicator config from position or defaults
             ind_cfg = self.positions.get(symbol, {}).get('indicator_config') if symbol in self.positions else None
-
-            # Compute indicators for all timeframes
-            _inds = await self._compute_multi_tf_indicators(symbol, ohlcv_data, assigned_tf)
-            multi_tf_indicators = _inds["multi_tf_indicators"]
-            multi_tf_raw_candles = _inds["multi_tf_raw_candles"]
-            atr = _inds["atr"]
-            rsi = _inds["rsi"]
-            macd = _inds["macd"]
-            macd_signal = _inds["macd_signal"]
-            macd_hist = _inds["macd_hist"]
-            bb_upper = _inds["bb_upper"]
-            bb_middle = _inds["bb_middle"]
-            bb_lower = _inds["bb_lower"]
-            ema_9 = _inds["ema_9"]
-            ema_21 = _inds["ema_21"]
-            stochastic_k = _inds["stochastic_k"]
-            stochastic_d = _inds["stochastic_d"]
-            adx = _inds["adx"]
-            plus_di = _inds["plus_di"]
-            minus_di = _inds["minus_di"]
-            obv = _inds["obv"]
-            mfi = _inds["mfi"]
-            cci = _inds["cci"]
-            williams_r = _inds["williams_r"]
-            ichimoku = _inds["ichimoku"]
-            donchian_channels = _inds["donchian_channels"]
-            parabolic_sar = _inds["parabolic_sar"]
-            keltner_channels = _inds["keltner_channels"]
-            vwap = _inds["vwap"]
-            daily_pivot_points = _inds["daily_pivot_points"]
 
             _ctx = await self._gather_prompt_context(
                 symbol=symbol,
@@ -13032,81 +13088,49 @@ class TradingEngine:
             return {"error": f"Symbol {symbol} not found in current_symbols"}
         
         assigned_tf = symbol_entry["timeframe"]
-        tf_seconds = self._timeframe_to_seconds(assigned_tf)
-        base_symbol = symbol.split("/")[0]
-        is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
 
-        async with self._exchange_semaphore:
-            quotes = await self._get_quotes_async([base_symbol], timeout=45.0)
-            ticker = quotes.get(base_symbol)
-        if ticker is None:
+        symbol_data = await self._fetch_symbol_market_data(symbol, assigned_tf)
+        if symbol_data is None:
             return {"error": "No ticker data"}
-        current_price = ticker['last']
-
-        if not is_btp:
-            bid = ticker.get('bid')
-            ask = ticker.get('ask')
-            if bid is None or ask is None:
-                yahoo = await asyncio.to_thread(get_yahoo_quote, base_symbol)
-                if yahoo:
-                    if bid is None: ticker['bid'] = yahoo.get('bid')
-                    if ask is None: ticker['ask'] = yahoo.get('ask')
-
-        fundamentals = None
-        if settings.YAHOO_FINANCE_ENABLED and not is_btp:
-            fundamentals = await asyncio.to_thread(get_yahoo_fundamentals, base_symbol)
-
-        balance = await self._get_cached_balance()
-        base_balance = balance.get(self.base_currency, 0.0)
+        ticker = symbol_data["ticker"]
+        current_price = symbol_data["current_price"]
+        fundamentals = symbol_data["fundamentals"]
+        balance = symbol_data["balance"]
+        base_balance = symbol_data["base_balance"]
+        ohlcv_data = symbol_data["ohlcv_data"]
+        is_btp = symbol_data["is_btp"]
+        tf_seconds = symbol_data["tf_seconds"]
+        multi_tf_indicators = symbol_data["multi_tf_indicators"]
+        multi_tf_raw_candles = symbol_data["multi_tf_raw_candles"]
+        atr = symbol_data["atr"]
+        rsi = symbol_data["rsi"]
+        macd = symbol_data["macd"]
+        macd_signal = symbol_data["macd_signal"]
+        macd_hist = symbol_data["macd_hist"]
+        bb_upper = symbol_data["bb_upper"]
+        bb_middle = symbol_data["bb_middle"]
+        bb_lower = symbol_data["bb_lower"]
+        ema_9 = symbol_data["ema_9"]
+        ema_21 = symbol_data["ema_21"]
+        stochastic_k = symbol_data["stochastic_k"]
+        stochastic_d = symbol_data["stochastic_d"]
+        adx = symbol_data["adx"]
+        plus_di = symbol_data["plus_di"]
+        minus_di = symbol_data["minus_di"]
+        obv = symbol_data["obv"]
+        mfi = symbol_data["mfi"]
+        cci = symbol_data["cci"]
+        williams_r = symbol_data["williams_r"]
+        ichimoku = symbol_data["ichimoku"]
+        donchian_channels = symbol_data["donchian_channels"]
+        parabolic_sar = symbol_data["parabolic_sar"]
+        keltner_channels = symbol_data["keltner_channels"]
+        vwap = symbol_data["vwap"]
+        daily_pivot_points = symbol_data["daily_pivot_points"]
         per_symbol_budget = base_balance / self.effective_max_symbols if self.effective_max_symbols > 0 else 0.0
-
-        ohlcv_data = {}
-        if settings.OHLCV_TIMEFRAMES:
-            async def _sim_fetch_ohlcv_tf(tf):
-                try:
-                    db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
-                    if db_candles:
-                        return tf, [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
-                except Exception:
-                    pass
-                return tf, None
-            sim_ohlcv_results = await asyncio.gather(*[_sim_fetch_ohlcv_tf(tf) for tf in settings.OHLCV_TIMEFRAMES])
-            for tf, candles in sim_ohlcv_results:
-                if candles:
-                    ohlcv_data[tf] = candles
-            # No API fallback: rely entirely on the database (populated by background tasks).
 
         # Fetch indicator config from position if exists
         ind_cfg = self.positions.get(symbol, {}).get('indicator_config') if symbol in self.positions else None
-
-        _inds = await self._compute_multi_tf_indicators(symbol, ohlcv_data, assigned_tf)
-        multi_tf_indicators = _inds["multi_tf_indicators"]
-        multi_tf_raw_candles = _inds["multi_tf_raw_candles"]
-        atr = _inds["atr"]
-        rsi = _inds["rsi"]
-        macd = _inds["macd"]
-        macd_signal = _inds["macd_signal"]
-        macd_hist = _inds["macd_hist"]
-        bb_upper = _inds["bb_upper"]
-        bb_middle = _inds["bb_middle"]
-        bb_lower = _inds["bb_lower"]
-        ema_9 = _inds["ema_9"]
-        ema_21 = _inds["ema_21"]
-        stochastic_k = _inds["stochastic_k"]
-        stochastic_d = _inds["stochastic_d"]
-        adx = _inds["adx"]
-        plus_di = _inds["plus_di"]
-        minus_di = _inds["minus_di"]
-        obv = _inds["obv"]
-        mfi = _inds["mfi"]
-        cci = _inds["cci"]
-        williams_r = _inds["williams_r"]
-        ichimoku = _inds["ichimoku"]
-        donchian_channels = _inds["donchian_channels"]
-        parabolic_sar = _inds["parabolic_sar"]
-        keltner_channels = _inds["keltner_channels"]
-        vwap = _inds["vwap"]
-        daily_pivot_points = _inds["daily_pivot_points"]
 
         atr_multi_tf = {}
         for tf in settings.OHLCV_TIMEFRAMES:
