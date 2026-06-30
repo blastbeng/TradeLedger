@@ -8360,8 +8360,9 @@ class TradingEngine:
                             continue
                         # First expiry – ask LLM
                         expired_count = pos.get("_max_hold_expired_count", 0) + 1
-                        pos["_max_hold_expired"] = True
-                        pos["_max_hold_expired_count"] = expired_count
+                        async with self._positions_lock:
+                            pos["_max_hold_expired"] = True
+                            pos["_max_hold_expired_count"] = expired_count
 
                         # Force re‑evaluation on the next main loop tick
                         self._last_strategy_eval.pop(symbol, None)
