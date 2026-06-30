@@ -12010,33 +12010,37 @@ class TradingEngine:
         except Exception as e:
             logger.error(f"Failed to place replacement stop order for {symbol}: {e}")
 
-    async def _execute_partial_tp_single(
+    async def _execute_partial_sell(
         self,
         symbol: str,
-        current_price: float,
-        atr: Optional[float],
-        ticker: Dict[str, Any],
-    ) -> None:
-        """Execute a single partial take-profit sell for a position."""
+        sell_amount: float,
+        level_label: str,
+        exit_reason: str,
+        ticker: Optional[Dict[str, Any]] = None,
+        atr: Optional[float] = None,
+        current_price: float = 0.0,
+        cleanup_callback=None,
+        extra_summary: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Execute a partial sell (used by partial take-profit single and multi-level).
+
+        Handles order creation, cost-basis proration, position update, exit-order
+        replacement, dust sweep, trade recording, and notification.
+
+        cleanup_callback(symbol, position_dict) is called inside the positions lock
+        after the position amount/cost is updated (only when the position survives).
+        """
         pos = self.positions.get(symbol)
         if not pos:
-            logger.warning(f"Cannot execute partial TP for {symbol}: no position.")
-            return
+            logger.warning(f"Cannot execute partial sell for {symbol}: no position.")
+            return False
 
         stock_name = await self._get_stock_name(symbol)
-        tf = pos.get("timeframe") if pos else None
+        tf = pos.get("timeframe")
         display_symbol = self._format_symbol_display(symbol, stock_name, tf)
-
-        fraction = pos.get("partial_take_profit_fraction")
-        if fraction is None or fraction <= 0 or fraction >= 1:
-            logger.warning(f"Invalid partial_take_profit_fraction for {symbol}: {fraction}")
-            return
-
-        sell_amount = pos["amount"] * fraction
         base, quote = symbol.split("/")
 
         # Check minimum sell size
-        # Fetch minimum order size from asset info
         try:
             asset = await self._get_asset_info(symbol)
             min_amount = float(asset.min_order_size) if asset.min_order_size else None
@@ -12045,12 +12049,12 @@ class TradingEngine:
         except Exception:
             min_amount = None
         if min_amount is not None and sell_amount < float(min_amount):
-            logger.info(f"Partial TP sell amount {sell_amount:.6f} below min {min_amount} for {symbol}, skipping.")
-            return
+            logger.info(f"{level_label} sell amount {sell_amount:.6f} below min {min_amount} for {symbol}, skipping.")
+            return False
 
         if not await self._is_market_open():
-            logger.info(f"Partial TP (single) for {symbol} skipped: market closed.")
-            return
+            logger.info(f"{level_label} for {symbol} skipped: market closed.")
+            return False
 
         need_limit = not self._is_regular_hours()
         limit_price = None
@@ -12058,53 +12062,45 @@ class TradingEngine:
         if need_limit:
             limit_price = self._default_limit_price(symbol, "SELL", ticker, atr=atr)
             if limit_price is None:
-                logger.error(f"Cannot place limit order for partial TP on {symbol}: no limit price.")
-                return
-
-        if limit_price is not None and limit_price <= 0:
-            logger.error(f"Invalid limit_price for partial TP on {symbol}, skipping.")
-            return
+                logger.error(f"Cannot place limit order for {level_label} on {symbol}: no limit price.")
+                return False
+            if limit_price <= 0:
+                logger.error(f"Invalid limit_price for {level_label} on {symbol}, skipping.")
+                return False
 
         try:
             order = await asyncio.to_thread(
                 self.trader.create_market_sell_order, symbol, sell_amount,
                 settings.ORDER_FILL_TIMEOUT_SECONDS, limit_price, time_in_force
             )
-            logger.info(f"Partial TP SELL {symbol}: {sell_amount:.6f} @ {order.get('price', current_price):.4f}")
-
-            # Use actual filled amount from the order
             filled_amount = order.get("amount", sell_amount)
+            fill_price = order.get("price", current_price)
+            logger.info(f"{level_label} SELL {symbol}: {filled_amount:.6f} @ {fill_price:.4f}")
 
-            # Compute fee
             fee = order.get("fee", {})
             fee_cost = float(fee.get("cost", 0.0) or 0.0)
             fee_currency = fee.get("currency", "")
-            # Prorated cost basis for the sold portion
             cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
             net_base = pos.get("net_base", pos["amount"])
             prorated_cost_basis = cost_basis * (filled_amount / net_base) if net_base > 0 else 0.0
-
             net_quote = order["cost"] - (fee_cost if fee_currency == quote else 0.0)
             realized_pnl = net_quote - prorated_cost_basis
 
             order["realized_pnl"] = realized_pnl
             order["cost_basis"] = prorated_cost_basis
-            order["exit_reason"] = "partial_take_profit"
+            order["exit_reason"] = exit_reason
             order["strategy_type"] = pos.get("strategy_type", "unknown")
             order["timeframe"] = pos.get("timeframe")
             if "timestamp" in pos:
                 order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
 
-            # Update position: reduce amount, cost_basis, net_base
             remaining_amount = pos["amount"] - filled_amount
             remaining_cost_basis = cost_basis - prorated_cost_basis
             remaining_net_base = net_base - filled_amount
 
-            # Cancel old exit orders because quantity changed
             await self._cancel_exit_orders(symbol)
 
             if remaining_amount <= 0 or remaining_net_base <= 0:
-                # Position fully closed (shouldn't normally happen with partial, but handle gracefully)
                 async with self._positions_lock:
                     self.positions.pop(symbol, None)
                 self._strategy_intervals.pop(symbol, None)
@@ -12117,20 +12113,14 @@ class TradingEngine:
                     self.positions[symbol]["cost_basis"] = remaining_cost_basis
                     self.positions[symbol]["net_base"] = remaining_net_base
                     self.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
-                    # Clear single partial TP flags
-                    self.positions[symbol].pop("partial_tp_triggered", None)
-                    self.positions[symbol].pop("_partial_tp_triggered_single", None)
-                    self.positions[symbol].pop("_partial_tp_single_review_count", None)
+                    if cleanup_callback:
+                        cleanup_callback(symbol, self.positions[symbol])
 
-                # Check if remaining amount is dust
-                is_dust = False
-                if min_amount is not None and remaining_amount < float(min_amount):
-                    is_dust = True
+                is_dust = min_amount is not None and remaining_amount < float(min_amount)
                 if is_dust:
-                    logger.info(f"Remaining {remaining_amount:.6f} {base} is dust after partial TP for {symbol}, sweeping.")
+                    logger.info(f"Remaining {remaining_amount:.6f} {base} is dust after {level_label} for {symbol}, sweeping.")
                     await self._sweep_dust(symbol)
                 else:
-                    # Replace exit orders for the remaining amount
                     from src.strategies.base import Signal
                     dummy_params = {
                         "trailing_take_profit": self.positions[symbol].get("trailing_take_profit", False),
@@ -12140,7 +12130,7 @@ class TradingEngine:
                     dummy_signal = Signal(
                         action="BUY",
                         confidence=1.0,
-                        reasoning="Replacing exit orders after partial TP",
+                        reasoning=f"Replacing exit orders after {level_label}",
                         stop_loss_order_type=self.positions[symbol].get("stop_loss_order_type"),
                         stop_loss_stop_price=self.positions[symbol].get("stop_loss"),
                         stop_loss_limit_price=None,
@@ -12161,44 +12151,72 @@ class TradingEngine:
 
             if self.notifier:
                 pnl_pct = (realized_pnl / prorated_cost_basis * 100) if prorated_cost_basis > 0 else 0.0
+                summary = {
+                    "symbol": symbol,
+                    "action": "SELL",
+                    "reason": level_label,
+                    "amount": filled_amount,
+                    "price": fill_price,
+                    "realized_pnl": realized_pnl,
+                    "exit_reason": exit_reason,
+                }
+                if extra_summary:
+                    summary.update(extra_summary)
                 await self.notifier.send_notification(
-                    f"🔸 Partial TP SELL {display_symbol}: {filled_amount:.6f} @ {order.get('price', current_price):.4f} "
+                    f"🔸 {level_label} SELL {display_symbol}: {filled_amount:.6f} @ {fill_price:.4f} "
                     f"| P&L: {realized_pnl:+.4f} ({pnl_pct:+.2f}%)",
-                    summary={
-                        "symbol": symbol,
-                        "action": "SELL",
-                        "reason": "Partial take-profit",
-                        "amount": filled_amount,
-                        "price": order.get("price", current_price),
-                        "realized_pnl": realized_pnl,
-                        "exit_reason": "partial_take_profit",
-                    }
+                    summary=summary,
                 )
+            return True
         except Exception as e:
-            logger.error(f"Partial TP sell failed for {symbol}: {e}")
+            logger.error(f"{level_label} sell failed for {symbol}: {e}")
             if self.notifier:
                 await self.notifier.send_notification(
-                    f"❌ Partial TP sell failed for {display_symbol}: {e}",
-                    summary={"symbol": symbol, "action": "ERROR", "reason": f"Partial TP sell failed: {e}"[:200]}
+                    f"❌ {level_label} sell failed for {display_symbol}: {e}",
+                    summary={"symbol": symbol, "action": "ERROR", "reason": f"{level_label} sell failed: {e}"[:200]}
                 )
+            return False
+
+    async def _execute_partial_tp_single(
+        self, symbol: str, current_price: float, atr: Optional[float], ticker: Dict[str, Any]
+    ) -> None:
+        """Execute a single partial take-profit sell for a position."""
+        pos = self.positions.get(symbol)
+        if not pos:
+            logger.warning(f"Cannot execute partial TP for {symbol}: no position.")
+            return
+
+        fraction = pos.get("partial_take_profit_fraction")
+        if fraction is None or fraction <= 0 or fraction >= 1:
+            logger.warning(f"Invalid partial_take_profit_fraction for {symbol}: {fraction}")
+            return
+
+        sell_amount = pos["amount"] * fraction
+
+        def _cleanup(sym, position):
+            position.pop("partial_tp_triggered", None)
+            position.pop("_partial_tp_triggered_single", None)
+            position.pop("_partial_tp_single_review_count", None)
+
+        await self._execute_partial_sell(
+            symbol=symbol,
+            sell_amount=sell_amount,
+            level_label="Partial TP",
+            exit_reason="partial_take_profit",
+            ticker=ticker,
+            atr=atr,
+            current_price=current_price,
+            cleanup_callback=_cleanup,
+        )
 
     async def _execute_partial_tp_level(
-        self,
-        symbol: str,
-        level_index: int,
-        current_price: float,
-        atr: Optional[float],
-        ticker: Dict[str, Any],
+        self, symbol: str, level_index: int, current_price: float, atr: Optional[float], ticker: Dict[str, Any]
     ) -> None:
         """Execute a partial take-profit sell for a specific level."""
         pos = self.positions.get(symbol)
         if not pos:
             logger.warning(f"Cannot execute partial TP level for {symbol}: no position.")
             return
-
-        stock_name = await self._get_stock_name(symbol)
-        tf = pos.get("timeframe") if pos else None
-        display_symbol = self._format_symbol_display(symbol, stock_name, tf)
 
         levels = pos.get("partial_take_profit_levels")
         if not levels or level_index >= len(levels):
@@ -12212,167 +12230,35 @@ class TradingEngine:
             return
 
         sell_amount = pos["amount"] * fraction
-        base, quote = symbol.split("/")
 
-        # Check minimum sell size
-        # Fetch minimum order size from asset info
-        try:
-            asset = await self._get_asset_info(symbol)
-            min_amount = float(asset.min_order_size) if asset.min_order_size else None
-            if not asset.fractionable and (min_amount is None or min_amount < 1.0):
-                min_amount = 1.0
-        except Exception:
-            min_amount = None
-        if min_amount is not None and sell_amount < float(min_amount):
-            logger.info(f"Partial TP level {level_index} sell amount {sell_amount:.6f} below min for {symbol}, skipping.")
-            return
+        # Mark this level as triggered before the sell
+        if symbol in self.positions:
+            triggered = self.positions[symbol].get("partial_tp_levels_triggered", [])
+            if level_index not in triggered:
+                triggered.append(level_index)
+                self.positions[symbol]["partial_tp_levels_triggered"] = triggered
+            if "partial_tp_depth_wait_start" in self.positions[symbol]:
+                self.positions[symbol]["partial_tp_depth_wait_start"].pop(level_index, None)
 
-        if not await self._is_market_open():
-            logger.info(f"Partial TP level {level_index} for {symbol} skipped: market closed.")
-            return
+        def _cleanup(sym, position):
+            position.pop("_partial_tp_triggered", None)
+            position.pop("_partial_tp_review_count", None)
+            triggered_levels = position.get("_partial_tp_triggered_levels", [])
+            position["_partial_tp_triggered_levels"] = [
+                x for x in triggered_levels if x != level_index
+            ]
 
-        need_limit = not self._is_regular_hours()
-        limit_price = None
-        time_in_force = "day"
-        if need_limit:
-            limit_price = self._default_limit_price(symbol, "SELL", ticker, atr=atr)
-            if limit_price is None:
-                logger.error(f"Cannot place limit order for partial TP level on {symbol}: no limit price.")
-                return
-
-        if limit_price is not None and limit_price <= 0:
-            logger.error(f"Invalid limit_price for partial TP level on {symbol}, skipping.")
-            return
-
-        try:
-            order = await asyncio.to_thread(
-                self.trader.create_market_sell_order, symbol, sell_amount,
-                settings.ORDER_FILL_TIMEOUT_SECONDS, limit_price, time_in_force
-            )
-            logger.info(f"Partial TP level {level_index} SELL {symbol}: {sell_amount:.6f} @ {order.get('price', current_price):.4f}")
-
-            # Use actual filled amount from the order
-            filled_amount = order.get("amount", sell_amount)
-
-            # Compute fee
-            fee = order.get("fee", {})
-            fee_cost = float(fee.get("cost", 0.0) or 0.0)
-            fee_currency = fee.get("currency", "")
-            # Prorated cost basis for the sold portion
-            cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
-            net_base = pos.get("net_base", pos["amount"])
-            prorated_cost_basis = cost_basis * (filled_amount / net_base) if net_base > 0 else 0.0
-
-            net_quote = order["cost"] - (fee_cost if fee_currency == quote else 0.0)
-            realized_pnl = net_quote - prorated_cost_basis
-
-            order["realized_pnl"] = realized_pnl
-            order["cost_basis"] = prorated_cost_basis
-            order["exit_reason"] = f"partial_take_profit_level_{level_index}"
-            order["strategy_type"] = pos.get("strategy_type", "unknown")
-            order["timeframe"] = pos.get("timeframe")
-            if "timestamp" in pos:
-                order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
-
-            # Mark this level as triggered
-            if symbol in self.positions:
-                triggered = self.positions[symbol].get("partial_tp_levels_triggered", [])
-                if level_index not in triggered:
-                    triggered.append(level_index)
-                    self.positions[symbol]["partial_tp_levels_triggered"] = triggered
-                # Clear depth wait state for this level
-                if "partial_tp_depth_wait_start" in self.positions[symbol]:
-                    self.positions[symbol]["partial_tp_depth_wait_start"].pop(level_index, None)
-
-            # Update position: reduce amount, cost_basis, net_base
-            remaining_amount = pos["amount"] - filled_amount
-            remaining_cost_basis = cost_basis - prorated_cost_basis
-            remaining_net_base = net_base - filled_amount
-
-            # Cancel old exit orders because quantity changed
-            await self._cancel_exit_orders(symbol)
-
-            if remaining_amount <= 0 or remaining_net_base <= 0:
-                # Position fully closed
-                self.positions.pop(symbol, None)
-                self._strategy_intervals.pop(symbol, None)
-                self._last_strategy_eval.pop(symbol, None)
-                self._pending_entries.pop(symbol, None)
-                await self._remove_symbol_if_paused(symbol)
-            else:
-                async with self._positions_lock:
-                    self.positions[symbol]["amount"] = remaining_amount
-                    self.positions[symbol]["cost_basis"] = remaining_cost_basis
-                    self.positions[symbol]["net_base"] = remaining_net_base
-                    self.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
-                    # Clear partial TP review flags for this level
-                    self.positions[symbol].pop("_partial_tp_triggered", None)
-                    self.positions[symbol].pop("_partial_tp_review_count", None)
-                    triggered_levels = self.positions[symbol].get("_partial_tp_triggered_levels", [])
-                    self.positions[symbol]["_partial_tp_triggered_levels"] = [
-                        x for x in triggered_levels if x != level_index
-                    ]
-
-                # Check if remaining amount is dust
-                is_dust = False
-                if min_amount is not None and remaining_amount < float(min_amount):
-                    is_dust = True
-                if is_dust:
-                    logger.info(f"Remaining {remaining_amount:.6f} {base} is dust after partial TP for {symbol}, sweeping.")
-                    await self._sweep_dust(symbol)
-                else:
-                    # Replace exit orders for the remaining amount
-                    from src.strategies.base import Signal
-                    dummy_params = {
-                        "trailing_take_profit": self.positions[symbol].get("trailing_take_profit", False),
-                        "partial_take_profit_levels": self.positions[symbol].get("partial_take_profit_levels"),
-                        "partial_take_profit_pct": self.positions[symbol].get("partial_take_profit_pct"),
-                    }
-                    dummy_signal = Signal(
-                        action="BUY",
-                        confidence=1.0,
-                        reasoning="Replacing exit orders after partial TP",
-                        stop_loss_order_type=self.positions[symbol].get("stop_loss_order_type"),
-                        stop_loss_stop_price=self.positions[symbol].get("stop_loss"),
-                        stop_loss_limit_price=None,
-                        take_profit_order_type=self.positions[symbol].get("take_profit_order_type"),
-                        take_profit_limit_price=self.positions[symbol].get("take_profit"),
-                        strategy_params=dummy_params,
-                    )
-                    exit_prices = {
-                        "stop_loss_price": self.positions[symbol].get("stop_loss"),
-                        "take_profit_price": self.positions[symbol].get("take_profit"),
-                    }
-                    await self._place_exit_orders(symbol, dummy_signal, exit_prices, self.positions[symbol].get("timeframe"))
-
-            self._append_trade(order)
-            await asyncio.to_thread(insert_trade, order)
-            await self._save_state(force=True)
-            self._portfolio_exposure_cache = None
-
-            if self.notifier:
-                pnl_pct = (realized_pnl / prorated_cost_basis * 100) if prorated_cost_basis > 0 else 0.0
-                await self.notifier.send_notification(
-                    f"🔸 Partial TP level {level_index} SELL {display_symbol}: {filled_amount:.6f} @ {order.get('price', current_price):.4f} "
-                    f"| P&L: {realized_pnl:+.4f} ({pnl_pct:+.2f}%)",
-                    summary={
-                        "symbol": symbol,
-                        "action": "SELL",
-                        "reason": f"Partial take-profit level {level_index}",
-                        "amount": filled_amount,
-                        "price": order.get("price", current_price),
-                        "realized_pnl": realized_pnl,
-                        "exit_reason": f"partial_take_profit_level_{level_index}",
-                        "level_index": level_index,
-                    }
-                )
-        except Exception as e:
-            logger.error(f"Partial TP level {level_index} sell failed for {symbol}: {e}")
-            if self.notifier:
-                await self.notifier.send_notification(
-                    f"❌ Partial TP level {level_index} sell failed for {display_symbol}: {e}",
-                    summary={"symbol": symbol, "action": "ERROR", "reason": f"Partial TP level sell failed: {e}"[:200]}
-                )
+        await self._execute_partial_sell(
+            symbol=symbol,
+            sell_amount=sell_amount,
+            level_label=f"Partial TP level {level_index}",
+            exit_reason=f"partial_take_profit_level_{level_index}",
+            ticker=ticker,
+            atr=atr,
+            current_price=current_price,
+            cleanup_callback=_cleanup,
+            extra_summary={"level_index": level_index},
+        )
 
     async def _sweep_dust(self, symbol: str):
         """Sell any remaining dust balance of a symbol after a partial sell."""
