@@ -9057,6 +9057,28 @@ class TradingEngine:
                 logger.warning(f"Cannot execute BUY for {symbol}: no valid current price.")
                 return
 
+            # --- Stale quote guard: skip BUY if the price is too old ---
+            tf = timeframe or (self.positions.get(symbol, {}).get("timeframe") if symbol in self.positions else None)
+            if tf and await self._is_quote_too_stale(ticker, tf):
+                age_seconds = (time.time() * 1000 - ticker.get("last_update", 0)) / 1000
+                logger.warning(
+                    f"Skipping BUY {symbol}: quote is {age_seconds:.0f}s old "
+                    f"(threshold scaled for timeframe {tf}). "
+                    f"Stale prices lead to incorrect position sizing and stop-loss calculations."
+                )
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"⚠️ Skipping BUY {display_symbol}: quote data is {age_seconds / 60:.0f} min old. "
+                        f"Waiting for fresher data.",
+                        summary={
+                            "symbol": symbol,
+                            "action": "SKIP",
+                            "reason": "Stale quote data",
+                            "age_seconds": round(age_seconds, 1),
+                        }
+                    )
+                return
+
             # Use LLM-provided risk parameters directly (no hardcoded minimums)
             # Determine take-profit percentage based on method
             if "take_profit_atr_multiple" in params and atr is not None and atr > 0 and current_price > 0:
