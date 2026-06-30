@@ -28,6 +28,46 @@ class Settings(BaseSettings):
     # designated strategy intervals.
     ENGINE_LOOP_INTERVAL_SECONDS: int = 60
 
+    # Symbol re-evaluation interval (seconds) – how often the LLM re-selects symbols
+    SYMBOL_REEVALUATION_INTERVAL: int = 14400  # 4 hours
+
+    @field_validator("SYMBOL_REEVALUATION_INTERVAL")
+    @classmethod
+    def validate_symbol_reevaluation_interval(cls, v: int) -> int:
+        if v < 300:
+            raise ValueError("SYMBOL_REEVALUATION_INTERVAL must be >= 300")
+        return v
+
+    # Fallback strategy evaluation interval (seconds) when no timeframe or no symbols
+    DEFAULT_STRATEGY_INTERVAL: int = 3600  # 1 hour
+
+    @field_validator("DEFAULT_STRATEGY_INTERVAL")
+    @classmethod
+    def validate_default_strategy_interval(cls, v: int) -> int:
+        if v < 60:
+            raise ValueError("DEFAULT_STRATEGY_INTERVAL must be >= 60")
+        return v
+
+    # Minimum symbol re-evaluation interval (seconds) – prevents rapid toggling
+    MIN_SYMBOL_REEVALUATION_INTERVAL: int = 3600  # 1 hour
+
+    @field_validator("MIN_SYMBOL_REEVALUATION_INTERVAL")
+    @classmethod
+    def validate_min_symbol_reevaluation_interval(cls, v: int) -> int:
+        if v < 300:
+            raise ValueError("MIN_SYMBOL_REEVALUATION_INTERVAL must be >= 300")
+        return v
+
+    # Maximum number of trades to keep in memory (prevents unbounded growth)
+    MAX_TRADES_IN_MEMORY: int = 1000
+
+    @field_validator("MAX_TRADES_IN_MEMORY")
+    @classmethod
+    def validate_max_trades_in_memory(cls, v: int) -> int:
+        if v < 100:
+            raise ValueError("MAX_TRADES_IN_MEMORY must be >= 100")
+        return v
+
     # Initial delay before first symbol evaluation (seconds)
     # Allows WebSocket and Telegram bot to initialize before first LLM call
     INITIAL_EVALUATION_DELAY_SECONDS: int = 15

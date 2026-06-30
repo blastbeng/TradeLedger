@@ -57,12 +57,6 @@ from src.database import load_trading_state, save_trading_state, insert_trade, g
 
 logger = logging.getLogger(__name__)
 
-SYMBOL_REEVALUATION_INTERVAL = 14400  # seconds (4 hours) – medium/long-term
-DEFAULT_STRATEGY_INTERVAL = 3600   # fallback when no timeframe or no symbols (1 hour)
-MIN_SYMBOL_REEVALUATION_INTERVAL = 3600  # 1 hour – prevents rapid toggling
-MAX_TRADES_IN_MEMORY = 1000  # cap in-memory trade history to prevent unbounded growth
-
-
 @dataclass
 class ClockInfo:
     """Market clock info for Euronext Milan (XMIL)."""
@@ -115,7 +109,7 @@ class TradingEngine:
         self._global_risk_multiplier: Optional[float] = None
         self._last_strategy_eval: Dict[str, float] = {}   # symbol -> timestamp of last strategy evaluation
         self._strategy_intervals: Dict[str, float] = {}    # symbol -> custom interval in seconds
-        self._symbol_reevaluation_interval = SYMBOL_REEVALUATION_INTERVAL
+        self._symbol_reevaluation_interval = settings.SYMBOL_REEVALUATION_INTERVAL
         self.notifier = None
 
         # _load_state() and _ensure_cost_basis() are now called in _initialize_clients()
@@ -2815,15 +2809,15 @@ class TradingEngine:
         """Append a trade to history and prune old entries to bound memory usage."""
         self._trade_history_version += 1
         self.trade_history.append(trade)
-        if len(self.trade_history) > MAX_TRADES_IN_MEMORY:
+        if len(self.trade_history) > settings.MAX_TRADES_IN_MEMORY:
             # Accumulate realized P&L of pruned trades so the equity curve
             # in _compute_performance_metrics remains accurate.
-            pruned = self.trade_history[:-MAX_TRADES_IN_MEMORY]
+            pruned = self.trade_history[:-settings.MAX_TRADES_IN_MEMORY]
             for t in pruned:
                 if t.get("side") == "sell":
                     self._realized_pnl_offset += t.get("realized_pnl", 0.0)
             # Keep only the most recent trades
-            self.trade_history = self.trade_history[-MAX_TRADES_IN_MEMORY:]
+            self.trade_history = self.trade_history[-settings.MAX_TRADES_IN_MEMORY:]
 
     def _load_state(self):
         """Load current symbols, positions, trade history, and initial balance from SQLite."""
@@ -2874,11 +2868,11 @@ class TradingEngine:
                     pos["_last_trailing_check_ts"] = time.time()
 
         all_trades = get_all_trades()
-        self.trade_history = all_trades[-MAX_TRADES_IN_MEMORY:]
+        self.trade_history = all_trades[-settings.MAX_TRADES_IN_MEMORY:]
         # Compute the realized P&L offset for trades that were pruned at load time
         self._realized_pnl_offset = sum(
             t.get("realized_pnl", 0.0)
-            for t in all_trades[:-MAX_TRADES_IN_MEMORY]
+            for t in all_trades[:-settings.MAX_TRADES_IN_MEMORY]
             if t.get("side") == "sell"
         )
         self.queued_orders = state.get("queued_orders", [])
@@ -4506,7 +4500,7 @@ class TradingEngine:
                 new_interval = parsed.get("stock_revaluation_interval_seconds")
                 if new_interval is not None:
                     if isinstance(new_interval, (int, float)) and new_interval >= 3600:
-                        clamped = max(new_interval, MIN_SYMBOL_REEVALUATION_INTERVAL)
+                        clamped = max(new_interval, settings.MIN_SYMBOL_REEVALUATION_INTERVAL)
                         self._symbol_reevaluation_interval = clamped
                         logger.info(f"LLM set symbol re-evaluation interval to {clamped}s (requested {new_interval}s)")
                     else:
@@ -4866,7 +4860,7 @@ class TradingEngine:
 
         # If no symbols were selected, shorten the re‑evaluation interval to retry sooner.
         if not self.current_symbols:
-            self._symbol_reevaluation_interval = max(self._symbol_reevaluation_interval, MIN_SYMBOL_REEVALUATION_INTERVAL)
+            self._symbol_reevaluation_interval = max(self._symbol_reevaluation_interval, settings.MIN_SYMBOL_REEVALUATION_INTERVAL)
             logger.info(f"No symbols selected – next re‑evaluation in {self._symbol_reevaluation_interval}s")
         # else: keep the current interval (may have been set by LLM via
         # stock_revaluation_interval_seconds, or the default SYMBOL_REEVALUATION_INTERVAL)
