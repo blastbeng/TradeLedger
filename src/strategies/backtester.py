@@ -369,8 +369,21 @@ def backtest_strategy(
                 continue
 
         entry_candle = candles[i]
-        entry_price = entry_candle[4]  # close
         entry_ts = entry_candle[0]
+
+        # Compute effective slippage for entry candle
+        if slippage_model == "dynamic" and avg_volume_series:
+            entry_slippage = _compute_dynamic_slippage(
+                i, candles, avg_volume_series, atr_values,
+                slippage_base_pct, slippage_max_pct,
+            )
+        else:
+            entry_slippage = slippage_pct
+
+        if is_short:
+            entry_price = entry_candle[4] * (1 - entry_slippage)
+        else:
+            entry_price = entry_candle[4] * (1 + entry_slippage)
 
         if entry_price <= 0:
             i += 1
