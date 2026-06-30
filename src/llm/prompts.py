@@ -1499,15 +1499,18 @@ Maximum symbols to trade: {max_symbols}
                     ind_compact['bb_l'] = round(ind['bb_lower'], 4)
                 if ind.get('ema_9') is not None:
                     ind_compact['ema9'] = round(ind['ema_9'], 4)
-                    ind_compact['ema21'] = round(ind['ema_21'], 4)
+                    if ind.get('ema_21') is not None:
+                        ind_compact['ema21'] = round(ind['ema_21'], 4)
                 if ind.get('stochastic_k') is not None:
                     ind_compact['stoch_k'] = round(ind['stochastic_k'], 2)
                     if ind.get('stochastic_d') is not None:
                         ind_compact['stoch_d'] = round(ind['stochastic_d'], 2)
                 if ind.get('adx') is not None:
                     ind_compact['adx'] = round(ind['adx'], 2)
-                    ind_compact['+di'] = round(ind['plus_di'], 2)
-                    ind_compact['-di'] = round(ind['minus_di'], 2)
+                    if ind.get('plus_di') is not None:
+                        ind_compact['+di'] = round(ind['plus_di'], 2)
+                    if ind.get('minus_di') is not None:
+                        ind_compact['-di'] = round(ind['minus_di'], 2)
                 if ind.get('obv') is not None: ind_compact['obv'] = round(ind['obv'], 2)
                 if ind.get('mfi') is not None: ind_compact['mfi'] = round(ind['mfi'], 2)
                 if ind.get('cci') is not None: ind_compact['cci'] = round(ind['cci'], 2)
