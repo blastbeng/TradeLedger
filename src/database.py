@@ -168,6 +168,7 @@ def _migrate_db():
         ("quotes", "quotevolume", "ALTER TABLE quotes ADD COLUMN quotevolume REAL"),
         ("discovered_symbols", "maturity", "ALTER TABLE discovered_symbols ADD COLUMN maturity TEXT"),
         ("discovered_symbols", "coupon", "ALTER TABLE discovered_symbols ADD COLUMN coupon REAL"),
+        ("discovered_symbols", "country", "ALTER TABLE discovered_symbols ADD COLUMN country TEXT"),
     ]
 
     max_retries = 3
@@ -318,6 +319,7 @@ def _get_init_statements() -> List[str]:
             name TEXT,
             maturity TEXT,
             coupon REAL,
+            country TEXT,
             discovered_at {float_type} NOT NULL
         )
         """,
@@ -1616,7 +1618,7 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
 
 @retry_on_db_lock()
-def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, name: str = "", maturity: Optional[str] = None, coupon: Optional[float] = None):
+def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, name: str = "", maturity: Optional[str] = None, coupon: Optional[float] = None, country: Optional[str] = None):
     """Insert or update a discovered symbol with its ISIN, maturity, and coupon.
 
     Uses COALESCE to preserve existing ISINs — if isin is None, the existing
@@ -1630,17 +1632,18 @@ def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, na
     conn = get_connection()
     try:
         sql = _adapt_sql(
-            "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, maturity, coupon, discovered_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, maturity, coupon, country, discovered_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
             "asset_type = COALESCE(EXCLUDED.asset_type, discovered_symbols.asset_type), "
             "name = COALESCE(NULLIF(EXCLUDED.name, ''), discovered_symbols.name), "
             "maturity = COALESCE(EXCLUDED.maturity, discovered_symbols.maturity), "
             "coupon = COALESCE(EXCLUDED.coupon, discovered_symbols.coupon), "
+            "country = COALESCE(EXCLUDED.country, discovered_symbols.country), "
             "discovered_at = EXCLUDED.discovered_at"
         )
-        conn.execute(sql, (symbol, isin, asset_type, name, maturity, coupon, time.time()))
+        conn.execute(sql, (symbol, isin, asset_type, name, maturity, coupon, country, time.time()))
         conn.commit()
     finally:
         conn.close()
@@ -1667,17 +1670,18 @@ def save_discovered_symbols_batch(symbols: List[Dict[str, Any]]):
                 else:
                     s["isin"] = isin_val
         sql = _adapt_sql(
-            "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, maturity, coupon, discovered_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, maturity, coupon, country, discovered_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
             "asset_type = COALESCE(EXCLUDED.asset_type, discovered_symbols.asset_type), "
             "name = COALESCE(NULLIF(EXCLUDED.name, ''), discovered_symbols.name), "
             "maturity = COALESCE(EXCLUDED.maturity, discovered_symbols.maturity), "
             "coupon = COALESCE(EXCLUDED.coupon, discovered_symbols.coupon), "
+            "country = COALESCE(EXCLUDED.country, discovered_symbols.country), "
             "discovered_at = EXCLUDED.discovered_at"
         )
-        rows = [(s["symbol"], s.get("isin"), s.get("asset_type", ""), s.get("name", ""), s.get("maturity"), s.get("coupon"), now) for s in symbols]
+        rows = [(s["symbol"], s.get("isin"), s.get("asset_type", ""), s.get("name", ""), s.get("maturity"), s.get("coupon"), s.get("country"), now) for s in symbols]
         conn.executemany(sql, rows)
         conn.commit()
     finally:
@@ -1688,7 +1692,7 @@ def get_all_discovered_symbols() -> List[Dict[str, Any]]:
     """Return all discovered symbols from the database."""
     conn = get_connection()
     try:
-        sql = _adapt_sql("SELECT symbol, isin, asset_type, name, maturity, coupon FROM discovered_symbols")
+        sql = _adapt_sql("SELECT symbol, isin, asset_type, name, maturity, coupon, country FROM discovered_symbols")
         rows = conn.execute(sql).fetchall()
         return [
             {
@@ -1698,6 +1702,7 @@ def get_all_discovered_symbols() -> List[Dict[str, Any]]:
                 "name": row["name"],
                 "maturity": row["maturity"],
                 "coupon": row["coupon"],
+                "country": row["country"],
             }
             for row in rows
         ]

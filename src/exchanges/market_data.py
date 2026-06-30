@@ -882,7 +882,7 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
                             if re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", isin):
                                 try:
                                     from src.database import save_discovered_symbol
-                                    save_discovered_symbol(base, isin, "stock", "")
+                                    save_discovered_symbol(base, isin, "stock", "", country="italy")
                                 except Exception:
                                     pass
                 
@@ -1013,7 +1013,7 @@ def discover_italian_ucits_etfs() -> List[str]:
         try:
             from src.database import save_discovered_symbols_batch
             symbols_to_save = [
-                {"symbol": sym, "isin": None, "asset_type": "etf", "name": ""}
+                {"symbol": sym, "isin": None, "asset_type": "etf", "name": "", "country": "italy"}
                 for sym in base_symbols
             ]
             if symbols_to_save:
@@ -1041,6 +1041,7 @@ def _save_discovered_assets_to_db(base_symbols: List[str], etf_symbols: List[str
             "isin": None,
             "asset_type": asset_type,
             "name": "",
+            "country": None,
         })
     if not symbols_to_save:
         return
@@ -1161,6 +1162,9 @@ def get_tradable_assets() -> List[str]:
                     existing_set = set(cached_list)
                     for db_entry in db_symbols:
                         db_sym = db_entry["symbol"]
+                        db_country = db_entry.get("country")
+                        if db_country is not None and db_country.lower() != target_country:
+                            continue
                         if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
                             if db_sym not in existing_set:
                                 cached_list.append(db_sym)
@@ -1185,13 +1189,18 @@ def get_tradable_assets() -> List[str]:
                 db_only_list = []
                 for db_entry in db_symbols:
                     db_sym = db_entry["symbol"]
+                    db_country = db_entry.get("country")
+                    # Skip symbols confirmed to be non-Italian
+                    if db_country is not None and db_country.lower() != target_country:
+                        continue
                     if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
                         db_only_list.append(db_sym)
                     else:
                         candidate = f"{db_sym}{suffix}" if suffix and not db_sym.endswith(suffix) else db_sym
                         db_only_list.append(candidate)
-                logger.info(f"Discovery failed but recovered {len(db_only_list)} symbols from DB only")
-                return db_only_list
+                if db_only_list:
+                    logger.info(f"Discovery failed but recovered {len(db_only_list)} symbols from DB only")
+                    return db_only_list
         except Exception as e:
             logger.warning(f"Failed to recover symbols from DB: {e}")
         return []
@@ -1226,6 +1235,10 @@ def get_tradable_assets() -> List[str]:
                 existing_set = set(cached_list)
                 for db_entry in db_symbols:
                     db_sym = db_entry["symbol"]
+                    db_country = db_entry.get("country")
+                    # Skip symbols confirmed to be non-Italian
+                    if db_country is not None and db_country.lower() != target_country:
+                        continue
                     if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
                         if db_sym not in existing_set:
                             cached_list.append(db_sym)
@@ -1253,6 +1266,15 @@ def get_tradable_assets() -> List[str]:
             continue
 
         country = _fetch_country(symbol)
+        # Save the fetched country to the database for future filtering
+        if country is not None:
+            try:
+                db_base = symbol
+                if suffix and db_base.endswith(suffix):
+                    db_base = db_base[:-len(suffix)]
+                save_discovered_symbol(db_base, None, None, "", country=country)
+            except Exception:
+                pass
         if country is None:
             # yfinance failed to return country info.
             # In lenient mode (default), keep the symbol because it was
@@ -1283,6 +1305,10 @@ def get_tradable_assets() -> List[str]:
         existing_set = set(filtered)
         for db_entry in db_symbols:
             db_sym = db_entry["symbol"]
+            db_country = db_entry.get("country")
+            # Skip symbols confirmed to be non-Italian
+            if db_country is not None and db_country.lower() != target_country:
+                continue
             if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
                 # BTP ISIN — add as-is (no suffix)
                 if db_sym not in existing_set:
@@ -2115,7 +2141,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
             from src.database import save_discovered_symbols_batch
             symbols_to_save = [
                 {"symbol": b["isin"], "isin": b["isin"], "asset_type": "btp", "name": b.get("name", ""),
-                 "maturity": b.get("maturity"), "coupon": b.get("coupon")}
+                 "maturity": b.get("maturity"), "coupon": b.get("coupon"), "country": "italy"}
                 for b in bonds
             ]
             if symbols_to_save:
