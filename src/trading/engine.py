@@ -11750,40 +11750,46 @@ class TradingEngine:
                 logger.error(f"Failed to place stop-loss order for {symbol}: {e}")
 
         elif sl_ot == "trailing_stop":
-            trail_offset = signal.stop_loss_trail_offset
-            if trail_offset is not None and trail_offset > 0:
-                try:
-                    order = await asyncio.to_thread(
-                        self.trader.create_trailing_stop_sell_order,
-                        symbol, qty, trail_offset,
-                        time_in_force="gtc", timeout=60.0
-                    )
-                    sl_order_id = order["id"]
-                    _trail_queued = {
-                        "symbol": symbol,
-                        "side": "sell",
-                        "amount": qty,
-                        "original_amount": qty,
-                        "limit_price": None,
-                        "stop_price": None,
-                        "trail_offset": trail_offset,
-                        "order_type": "trailing_stop",
-                        "time_in_force": "gtc",
-                        "signal": asdict(signal),
-                        "timeframe": timeframe,
-                        "atr": None,
-                        "exit_reason": "stop_loss",
-                        "order_id": sl_order_id,
-                        "queued_at": time.time(),
-                        "filled_qty": 0,
-                        "filled_cost": 0.0,
-                        "is_exit_order": True,
-                        "oco_pair": None,
-                    }
-                    async with self._queued_orders_lock:
-                        self.queued_orders.append(_trail_queued)
-                except Exception as e:
-                    logger.error(f"Failed to place trailing-stop order for {symbol}: {e}")
+            if is_btp_isin(symbol):
+                logger.warning(
+                    f"Skipping trailing-stop order for BTP {symbol}: "
+                    f"trailing stops are not supported for BTPs on Intesa Sanpaolo Investo."
+                )
+            else:
+                trail_offset = signal.stop_loss_trail_offset
+                if trail_offset is not None and trail_offset > 0:
+                    try:
+                        order = await asyncio.to_thread(
+                            self.trader.create_trailing_stop_sell_order,
+                            symbol, qty, trail_offset,
+                            time_in_force="gtc", timeout=60.0
+                        )
+                        sl_order_id = order["id"]
+                        _trail_queued = {
+                            "symbol": symbol,
+                            "side": "sell",
+                            "amount": qty,
+                            "original_amount": qty,
+                            "limit_price": None,
+                            "stop_price": None,
+                            "trail_offset": trail_offset,
+                            "order_type": "trailing_stop",
+                            "time_in_force": "gtc",
+                            "signal": asdict(signal),
+                            "timeframe": timeframe,
+                            "atr": None,
+                            "exit_reason": "stop_loss",
+                            "order_id": sl_order_id,
+                            "queued_at": time.time(),
+                            "filled_qty": 0,
+                            "filled_cost": 0.0,
+                            "is_exit_order": True,
+                            "oco_pair": None,
+                        }
+                        async with self._queued_orders_lock:
+                            self.queued_orders.append(_trail_queued)
+                    except Exception as e:
+                        logger.error(f"Failed to place trailing-stop order for {symbol}: {e}")
 
         # --- Take-profit order ---
         # If trailing_take_profit or partial take-profit is enabled, do not place a
