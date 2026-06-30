@@ -1506,14 +1506,25 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 """
                 WITH RankedCandles AS (
                     SELECT symbol, close, volume, timestamp, timeframe,
-                           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
+                           ROW_NUMBER() OVER (PARTITION BY symbol, timeframe ORDER BY timestamp DESC) as rn
                     FROM market_data
                     WHERE symbol = ANY(%s)
+                ),
+                LatestTimeframe AS (
+                    SELECT symbol, timeframe
+                    FROM (
+                        SELECT symbol, timeframe, timestamp,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as tf_rn
+                        FROM RankedCandles
+                        WHERE rn = 1
+                    ) t
+                    WHERE tf_rn = 1
                 )
-                SELECT symbol, close, volume, timestamp, timeframe
-                FROM RankedCandles
-                WHERE rn <= 2
-                ORDER BY symbol, timestamp DESC
+                SELECT r.symbol, r.close, r.volume, r.timestamp, r.timeframe
+                FROM RankedCandles r
+                JOIN LatestTimeframe l ON r.symbol = l.symbol AND r.timeframe = l.timeframe
+                WHERE r.rn <= 2
+                ORDER BY r.symbol, r.timestamp DESC
                 """
             )
             rows = conn.execute(sql, (full_pairs,)).fetchall()
@@ -1523,14 +1534,25 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 f"""
                 WITH RankedCandles AS (
                     SELECT symbol, close, volume, timestamp, timeframe,
-                           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
+                           ROW_NUMBER() OVER (PARTITION BY symbol, timeframe ORDER BY timestamp DESC) as rn
                     FROM market_data
                     WHERE symbol IN ({placeholders})
+                ),
+                LatestTimeframe AS (
+                    SELECT symbol, timeframe
+                    FROM (
+                        SELECT symbol, timeframe, timestamp,
+                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as tf_rn
+                        FROM RankedCandles
+                        WHERE rn = 1
+                    ) t
+                    WHERE tf_rn = 1
                 )
-                SELECT symbol, close, volume, timestamp, timeframe
-                FROM RankedCandles
-                WHERE rn <= 2
-                ORDER BY symbol, timestamp DESC
+                SELECT r.symbol, r.close, r.volume, r.timestamp, r.timeframe
+                FROM RankedCandles r
+                JOIN LatestTimeframe l ON r.symbol = l.symbol AND r.timeframe = l.timeframe
+                WHERE r.rn <= 2
+                ORDER BY r.symbol, r.timestamp DESC
                 """
             )
             rows = conn.execute(sql, full_pairs).fetchall()
