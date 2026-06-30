@@ -56,7 +56,7 @@ class Settings(BaseSettings):
 
     # Minimum number of symbols the LLM must select (when not pausing).
     # Set to 0 to let the LLM decide freely.
-    MIN_SYMBOLS: int = 0
+    MIN_SYMBOLS: int = 3
 
     @field_validator("MIN_SYMBOLS")
     @classmethod
