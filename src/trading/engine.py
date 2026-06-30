@@ -1921,8 +1921,23 @@ class TradingEngine:
                 now_ms = int(time.time() * 1000)
                 start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
 
-                # Download concurrently, respecting rate limits via _exchange_semaphore
-                random.shuffle(all_pairs)
+                # Prioritize symbols with missing data for configured timeframes
+                async def _has_missing_data(pair: str) -> bool:
+                    """Return True if pair is missing OHLCV data for any configured timeframe."""
+                    for tf in settings.OHLCV_TIMEFRAMES:
+                        latest_ts = await asyncio.to_thread(get_latest_ohlcv_timestamp, pair, tf)
+                        if latest_ts is None:
+                            return True
+                    return False
+
+                missing_checks = await asyncio.gather(*[_has_missing_data(pair) for pair in all_pairs])
+                pairs_missing = [pair for pair, missing in zip(all_pairs, missing_checks) if missing]
+                pairs_complete = [pair for pair, missing in zip(all_pairs, missing_checks) if not missing]
+                random.shuffle(pairs_missing)
+                random.shuffle(pairs_complete)
+                if pairs_missing:
+                    logger.info(f"Prioritizing {len(pairs_missing)} symbols with missing OHLCV data out of {len(all_pairs)} total.")
+                all_pairs = pairs_missing + pairs_complete
 
                 async def _download_symbol_data(pair: str):
                     loop = asyncio.get_running_loop()
