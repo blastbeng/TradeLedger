@@ -10180,18 +10180,13 @@ class TradingEngine:
         # If the LLM has not configured the skip logic, do not skip – always
         # call the LLM so it can decide based on the current market data.
         skip_price_mult_raw = await asyncio.to_thread(self.redis.get, "trading:skip_eval_price_change_atr_mult")
-        skip_price_mult = float(skip_price_mult_raw) if skip_price_mult_raw else None
+        skip_price_mult = float(skip_price_mult_raw) if skip_price_mult_raw else 1.0
 
         skip_rsi_raw = await asyncio.to_thread(self.redis.get, "trading:skip_eval_rsi_change")
-        skip_rsi = float(skip_rsi_raw) if skip_rsi_raw else None
+        skip_rsi = float(skip_rsi_raw) if skip_rsi_raw else 5.0
 
         skip_macd_raw = await asyncio.to_thread(self.redis.get, "trading:skip_eval_macd_hist_change")
-        skip_macd = float(skip_macd_raw) if skip_macd_raw else None
-
-        # If the core skip thresholds are missing, the LLM has not configured
-        # the skip logic – always call the LLM.
-        if skip_price_mult is None or skip_rsi is None or skip_macd is None:
-            return False
+        skip_macd = float(skip_macd_raw) if skip_macd_raw else 0.0005
 
         # Price change since last evaluation
         if last_price > 0:
