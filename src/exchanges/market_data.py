@@ -1921,6 +1921,7 @@ def get_multi_timeframe_bars(
         has_isin = db_isin is not None
 
         # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
+        borsa_candles = None
         if has_isin:
             borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
             if borsa_candles:
@@ -2024,6 +2025,7 @@ def get_bars_range(
     has_isin = db_isin is not None
 
     # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
+    borsa_candles = None
     if has_isin:
         borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
         if borsa_candles:
