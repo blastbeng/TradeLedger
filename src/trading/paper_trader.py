@@ -1,5 +1,6 @@
 import logging
 import time
+import threading
 import uuid
 from typing import Dict, List, Optional, Any
 
@@ -61,6 +62,7 @@ class PaperTrader:
         self.slippage_max_pct = 0.01    # 1.0% max slippage
         self._balances_dirty = False
         self._slippage_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, slippage)
+        self._lock = threading.Lock()
         self._load_balances()
 
     # ------------------------------------------------------------------
@@ -254,52 +256,53 @@ class PaperTrader:
             else:
                 fill_price = fill_price * (1 - slippage_pct)
 
-        if order.side == "buy":
-            # amount is in quote currency
-            base_amount = order.amount / fill_price
-            costs = calculate_transaction_costs("BUY", fill_price, base_amount, symbol=order.symbol)
-            total_cost = costs["net_value"]
-            fee_cost = costs["total_costs"]
-            fee_currency = quote
+        with self._lock:
+            if order.side == "buy":
+                # amount is in quote currency
+                base_amount = order.amount / fill_price
+                costs = calculate_transaction_costs("BUY", fill_price, base_amount, symbol=order.symbol)
+                total_cost = costs["net_value"]
+                fee_cost = costs["total_costs"]
+                fee_currency = quote
 
-            quote_balance = self._balances.get(quote, 0.0)
-            if total_cost > quote_balance:
-                order.status = "rejected"
-                logger.warning(
-                    f"Paper buy rejected for {order.symbol}: insufficient {quote} "
-                    f"(need {total_cost:.2f}, have {quote_balance:.2f})"
-                )
-                return
+                quote_balance = self._balances.get(quote, 0.0)
+                if total_cost > quote_balance:
+                    order.status = "rejected"
+                    logger.warning(
+                        f"Paper buy rejected for {order.symbol}: insufficient {quote} "
+                        f"(need {total_cost:.2f}, have {quote_balance:.2f})"
+                    )
+                    return
 
-            self._balances[quote] = quote_balance - total_cost
-            self._balances[base] = self._balances.get(base, 0.0) + base_amount
-            order.filled_qty = base_amount
-        else:
-            # amount is in base currency
-            base_amount = order.amount
-            base_balance = self._balances.get(base, 0.0)
-            if base_amount > base_balance:
-                order.status = "rejected"
-                logger.warning(
-                    f"Paper sell rejected for {order.symbol}: insufficient {base} "
-                    f"(need {base_amount:.6f}, have {base_balance:.6f})"
-                )
-                return
+                self._balances[quote] = quote_balance - total_cost
+                self._balances[base] = self._balances.get(base, 0.0) + base_amount
+                order.filled_qty = base_amount
+            else:
+                # amount is in base currency
+                base_amount = order.amount
+                base_balance = self._balances.get(base, 0.0)
+                if base_amount > base_balance:
+                    order.status = "rejected"
+                    logger.warning(
+                        f"Paper sell rejected for {order.symbol}: insufficient {base} "
+                        f"(need {base_amount:.6f}, have {base_balance:.6f})"
+                    )
+                    return
 
-            costs = calculate_transaction_costs("SELL", fill_price, base_amount, symbol=order.symbol)
-            net_quote = costs["net_value"]
-            fee_cost = costs["total_costs"]
-            fee_currency = quote
+                costs = calculate_transaction_costs("SELL", fill_price, base_amount, symbol=order.symbol)
+                net_quote = costs["net_value"]
+                fee_cost = costs["total_costs"]
+                fee_currency = quote
 
-            self._balances[base] = base_balance - base_amount
-            self._balances[quote] = self._balances.get(quote, 0.0) + net_quote
-            order.filled_qty = base_amount
+                self._balances[base] = base_balance - base_amount
+                self._balances[quote] = self._balances.get(quote, 0.0) + net_quote
+                order.filled_qty = base_amount
 
-        order.filled_avg_price = fill_price
-        order.status = "filled"
-        self._balances_dirty = True
-        self._save_orders()
-        self._save_balances()
+            order.filled_avg_price = fill_price
+            order.status = "filled"
+            self._balances_dirty = True
+            self._save_orders()
+            self._save_balances()
         logger.info(
             f"Paper order filled: {order.side} {order.symbol} "
             f"qty={order.filled_qty:.6f} @ {fill_price:.4f}"
@@ -358,37 +361,38 @@ class PaperTrader:
         fee_cost = costs["total_costs"]
         fee_currency = quote
 
-        quote_balance = self._balances.get(quote, 0.0)
-        if total_cost > quote_balance:
-            logger.warning(
-                f"Insufficient {quote} for buy: need {total_cost:.2f}, have {quote_balance:.2f}"
+        with self._lock:
+            quote_balance = self._balances.get(quote, 0.0)
+            if total_cost > quote_balance:
+                logger.warning(
+                    f"Insufficient {quote} for buy: need {total_cost:.2f}, have {quote_balance:.2f}"
+                )
+                return {
+                    "id": "", "status": "rejected", "symbol": symbol, "side": "buy",
+                    "amount": 0, "price": fill_price, "cost": 0,
+                    "fee": {"cost": 0, "currency": fee_currency},
+                    "timestamp": int(time.time() * 1000),
+                }
+
+            # NOTE: The paper trader assumes full fills for market orders to keep
+            # paper trading consistent with backtesting results. Partial fills
+            # based on volume are not simulated.
+            filled_base_amount = base_amount
+            filled_cost = filled_base_amount * fill_price
+
+            self._balances[quote] = quote_balance - (filled_cost + fee_cost)
+            self._balances[base] = self._balances.get(base, 0.0) + filled_base_amount
+            self._balances_dirty = True
+
+            order_id = self._generate_order_id()
+            order = PaperOrder(
+                order_id=order_id, symbol=symbol, side="buy", order_type="market",
+                amount=base_amount, price=fill_price, filled_qty=filled_base_amount,
+                filled_avg_price=fill_price, status="filled",
             )
-            return {
-                "id": "", "status": "rejected", "symbol": symbol, "side": "buy",
-                "amount": 0, "price": fill_price, "cost": 0,
-                "fee": {"cost": 0, "currency": fee_currency},
-                "timestamp": int(time.time() * 1000),
-            }
+            self._orders[order_id] = order
 
-        # NOTE: The paper trader assumes full fills for market orders to keep
-        # paper trading consistent with backtesting results. Partial fills
-        # based on volume are not simulated.
-        filled_base_amount = base_amount
-        filled_cost = filled_base_amount * fill_price
-
-        self._balances[quote] = quote_balance - (filled_cost + fee_cost)
-        self._balances[base] = self._balances.get(base, 0.0) + filled_base_amount
-        self._balances_dirty = True
-
-        order_id = self._generate_order_id()
-        order = PaperOrder(
-            order_id=order_id, symbol=symbol, side="buy", order_type="market",
-            amount=base_amount, price=fill_price, filled_qty=filled_base_amount,
-            filled_avg_price=fill_price, status="filled",
-        )
-        self._orders[order_id] = order
-
-        self._save_balances()
+            self._save_balances()
         return {
             "id": order_id, "status": "filled", "symbol": symbol, "side": "buy",
             "amount": filled_base_amount, "price": fill_price,
@@ -440,41 +444,42 @@ class PaperTrader:
         slippage_pct = self._get_dynamic_slippage(symbol, fill_price)
         fill_price = fill_price * (1 - slippage_pct)
 
-        base_balance = self._balances.get(base, 0.0)
-        if amount > base_balance:
-            logger.warning(
-                f"Insufficient {base} for sell: need {amount:.6f}, have {base_balance:.6f}"
+        with self._lock:
+            base_balance = self._balances.get(base, 0.0)
+            if amount > base_balance:
+                logger.warning(
+                    f"Insufficient {base} for sell: need {amount:.6f}, have {base_balance:.6f}"
+                )
+                return {
+                    "id": "", "status": "rejected", "symbol": symbol, "side": "sell",
+                    "amount": 0, "price": fill_price, "cost": 0,
+                    "fee": {"cost": 0, "currency": quote},
+                    "timestamp": int(time.time() * 1000),
+                }
+
+            # NOTE: The paper trader assumes full fills for market orders to keep
+            # paper trading consistent with backtesting results. Partial fills
+            # based on volume are not simulated.
+            filled_amount = amount
+
+            costs = calculate_transaction_costs("SELL", fill_price, filled_amount, symbol=symbol)
+            net_quote = costs["net_value"]
+            fee_cost = costs["total_costs"]
+            fee_currency = quote
+
+            self._balances[base] = base_balance - filled_amount
+            self._balances[quote] = self._balances.get(quote, 0.0) + net_quote
+            self._balances_dirty = True
+
+            order_id = self._generate_order_id()
+            order = PaperOrder(
+                order_id=order_id, symbol=symbol, side="sell", order_type="market",
+                amount=filled_amount, price=fill_price, filled_qty=filled_amount,
+                filled_avg_price=fill_price, status="filled",
             )
-            return {
-                "id": "", "status": "rejected", "symbol": symbol, "side": "sell",
-                "amount": 0, "price": fill_price, "cost": 0,
-                "fee": {"cost": 0, "currency": quote},
-                "timestamp": int(time.time() * 1000),
-            }
+            self._orders[order_id] = order
 
-        # NOTE: The paper trader assumes full fills for market orders to keep
-        # paper trading consistent with backtesting results. Partial fills
-        # based on volume are not simulated.
-        filled_amount = amount
-
-        costs = calculate_transaction_costs("SELL", fill_price, filled_amount, symbol=symbol)
-        net_quote = costs["net_value"]
-        fee_cost = costs["total_costs"]
-        fee_currency = quote
-
-        self._balances[base] = base_balance - filled_amount
-        self._balances[quote] = self._balances.get(quote, 0.0) + net_quote
-        self._balances_dirty = True
-
-        order_id = self._generate_order_id()
-        order = PaperOrder(
-            order_id=order_id, symbol=symbol, side="sell", order_type="market",
-            amount=filled_amount, price=fill_price, filled_qty=filled_amount,
-            filled_avg_price=fill_price, status="filled",
-        )
-        self._orders[order_id] = order
-
-        self._save_balances()
+            self._save_balances()
         return {
             "id": order_id, "status": "filled", "symbol": symbol, "side": "sell",
             "amount": filled_amount, "price": fill_price,
