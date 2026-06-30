@@ -186,6 +186,7 @@ class TradingEngine:
         # Trade pattern analysis cache – recomputed only when new trades are added
         self._trade_pattern_cache: Optional[Dict[str, Any]] = None
         self._trade_pattern_cache_trade_count: int = -1
+        self._trade_history_version: int = 0
 
         # Cache for tradable assets list (refreshed every 5 minutes)
         self._tradable_assets_cache: List[str] = []
@@ -2029,7 +2030,7 @@ class TradingEngine:
         # return the cached result to avoid expensive iteration over trade_history.
         now = time.time()
         if (
-            len(self.trade_history) == self._perf_cache_trade_count
+            self._trade_history_version == self._perf_cache_trade_count
             and self._perf_cache is not None
             and (now - self._perf_cache_time) < 60  # 60-second TTL for unrealized P&L freshness
         ):
@@ -2155,7 +2156,7 @@ class TradingEngine:
 
         # Update the cache so subsequent calls with the same trade count are fast
         self._perf_cache = result
-        self._perf_cache_trade_count = len(self.trade_history)
+        self._perf_cache_trade_count = self._trade_history_version
         self._perf_cache_time = now
 
         return result
@@ -2163,7 +2164,7 @@ class TradingEngine:
     def _compute_trade_pattern_analysis(self) -> Dict[str, Any]:
         """Analyze closed trades to identify which conditions, timeframes, and parameters
         have historically led to wins vs losses. Cached and only recomputed when new trades arrive."""
-        if len(self.trade_history) == self._trade_pattern_cache_trade_count and self._trade_pattern_cache is not None:
+        if self._trade_history_version == self._trade_pattern_cache_trade_count and self._trade_pattern_cache is not None:
             return self._trade_pattern_cache
 
         # Snapshot trade_history to avoid concurrent modification during iteration
@@ -2175,7 +2176,7 @@ class TradingEngine:
         if not sells:
             result: Dict[str, Any] = {}
             self._trade_pattern_cache = result
-            self._trade_pattern_cache_trade_count = len(self.trade_history)
+            self._trade_pattern_cache_trade_count = self._trade_history_version
             return result
 
         def _win_rate_stats(trades: list) -> Optional[Dict[str, Any]]:
@@ -2282,7 +2283,7 @@ class TradingEngine:
         }
 
         self._trade_pattern_cache = result
-        self._trade_pattern_cache_trade_count = len(self.trade_history)
+        self._trade_pattern_cache_trade_count = self._trade_history_version
         return result
 
     async def _classify_market_regime(
@@ -2689,6 +2690,7 @@ class TradingEngine:
 
     def _append_trade(self, trade: Dict[str, Any]):
         """Append a trade to history and prune old entries to bound memory usage."""
+        self._trade_history_version += 1
         self.trade_history.append(trade)
         if len(self.trade_history) > MAX_TRADES_IN_MEMORY:
             # Keep only the most recent trades
