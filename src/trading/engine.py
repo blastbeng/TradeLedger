@@ -11349,6 +11349,32 @@ class TradingEngine:
         self._global_risk_multiplier = value
         await asyncio.to_thread(save_trading_state, "global_risk_multiplier", value)
 
+    @staticmethod
+    def _validate_param_range(
+        name: str,
+        value: Any,
+        min_val: float,
+        max_val: float,
+        symbol: str,
+        allow_none: bool = True,
+    ) -> Optional[float]:
+        """Validate that a numeric parameter is within [min_val, max_val].
+        Returns the float value if valid, None if invalid or missing.
+        Logs a warning for invalid values."""
+        if value is None:
+            return None
+        try:
+            fval = float(value)
+        except (TypeError, ValueError):
+            logger.warning(f"Invalid {name}={value!r} for {symbol}: not a number")
+            return None
+        if fval < min_val or fval > max_val:
+            logger.warning(
+                f"Invalid {name}={fval} for {symbol}: outside range [{min_val}, {max_val}]"
+            )
+            return None
+        return fval
+
     async def _update_position_params(
         self,
         symbol: str,
@@ -11367,51 +11393,37 @@ class TradingEngine:
         # --- Stop-loss (supports fixed pct and ATR multiple) ---
         stop_method = params.get("stop_loss_method", "fixed")
         if stop_method == "atr_multiple" and atr is not None and atr > 0:
-            atr_mult = params.get("stop_loss_atr_multiple")
+            atr_mult = self._validate_param_range(
+                "stop_loss_atr_multiple", params.get("stop_loss_atr_multiple"),
+                0.01, 10.0, symbol,
+            )
             if atr_mult is not None:
                 sl_pct = (atr_mult * atr) / current_price
                 pos["stop_loss"] = current_price * (1 - sl_pct)
         elif "stop_loss_pct" in params:
-            sl_pct = params["stop_loss_pct"]
-            try:
-                sl_pct = float(sl_pct)
-            except (TypeError, ValueError):
-                logger.warning(
-                    "Ignoring invalid stop_loss_pct=%r for %s",
-                    params["stop_loss_pct"], symbol,
-                )
-                sl_pct = None
-            if sl_pct is not None and sl_pct > 0 and current_price > 0:
+            sl_pct = self._validate_param_range(
+                "stop_loss_pct", params["stop_loss_pct"],
+                0.0001, 0.95, symbol,
+            )
+            if sl_pct is not None and current_price > 0:
                 pos["stop_loss"] = current_price * (1 - sl_pct)
-            elif sl_pct is not None:
-                logger.warning(
-                    "Ignoring invalid stop_loss_pct=%s for %s (current_price=%s)",
-                    sl_pct, symbol, current_price,
-                )
 
         # --- Take-profit (supports fixed pct and ATR multiple) ---
         if "take_profit_atr_multiple" in params and atr is not None and atr > 0 and current_price > 0:
-            atr_mult = params["take_profit_atr_multiple"]
+            atr_mult = self._validate_param_range(
+                "take_profit_atr_multiple", params["take_profit_atr_multiple"],
+                0.01, 20.0, symbol,
+            )
             if atr_mult is not None:
                 tp_pct = (atr_mult * atr) / current_price
                 pos["take_profit"] = current_price * (1 + tp_pct)
         elif "take_profit_pct" in params:
-            tp_pct = params["take_profit_pct"]
-            try:
-                tp_pct = float(tp_pct)
-            except (TypeError, ValueError):
-                logger.warning(
-                    "Ignoring invalid take_profit_pct=%r for %s",
-                    params["take_profit_pct"], symbol,
-                )
-                tp_pct = None
-            if tp_pct is not None and tp_pct > 0 and current_price > 0:
+            tp_pct = self._validate_param_range(
+                "take_profit_pct", params["take_profit_pct"],
+                0.0001, 5.0, symbol,
+            )
+            if tp_pct is not None and current_price > 0:
                 pos["take_profit"] = current_price * (1 + tp_pct)
-            elif tp_pct is not None:
-                logger.warning(
-                    "Ignoring invalid take_profit_pct=%s for %s (current_price=%s)",
-                    tp_pct, symbol, current_price,
-                )
 
         # --- BTP take-profit cap: enforce smaller targets for bonds ---
         if is_btp_isin(symbol) and pos.get("take_profit") and current_price > 0:
@@ -11436,58 +11448,133 @@ class TradingEngine:
             else:
                 pos["trailing_stop"] = params["trailing_stop"]
         if "trailing_stop_distance_pct" in params:
-            pos["trailing_stop_distance_pct"] = params["trailing_stop_distance_pct"]
+            val = self._validate_param_range(
+                "trailing_stop_distance_pct", params["trailing_stop_distance_pct"],
+                0.0001, 0.95, symbol,
+            )
+            if val is not None:
+                pos["trailing_stop_distance_pct"] = val
         if "trailing_stop_activation_pct" in params:
-            pos["trailing_stop_activation_pct"] = params["trailing_stop_activation_pct"]
+            val = self._validate_param_range(
+                "trailing_stop_activation_pct", params["trailing_stop_activation_pct"],
+                0.0, 0.95, symbol,
+            )
+            if val is not None:
+                pos["trailing_stop_activation_pct"] = val
 
         # --- Trailing take-profit ---
         if "trailing_take_profit" in params:
             pos["trailing_take_profit"] = params["trailing_take_profit"]
         if "trailing_take_profit_distance_pct" in params:
-            pos["trailing_take_profit_distance_pct"] = params["trailing_take_profit_distance_pct"]
+            val = self._validate_param_range(
+                "trailing_take_profit_distance_pct", params["trailing_take_profit_distance_pct"],
+                0.0001, 0.95, symbol,
+            )
+            if val is not None:
+                pos["trailing_take_profit_distance_pct"] = val
 
         # --- Breakeven / lock-profit ---
         if "breakeven_activation_pct" in params:
-            pos["breakeven_activation_pct"] = params["breakeven_activation_pct"]
+            val = self._validate_param_range(
+                "breakeven_activation_pct", params["breakeven_activation_pct"],
+                0.0001, 0.95, symbol,
+            )
+            if val is not None:
+                pos["breakeven_activation_pct"] = val
         # --- Time-based exits ---
         if "max_hold_time_seconds" in params:
-            pos["max_hold_time_seconds"] = params["max_hold_time_seconds"]
-            # If the LLM explicitly sets a new hold time, clear any expiry flag
-            pos.pop("_max_hold_expired", None)
-            pos.pop("_max_hold_expired_count", None)
+            val = self._validate_param_range(
+                "max_hold_time_seconds", params["max_hold_time_seconds"],
+                1.0, 31_536_000.0, symbol,  # 1 second to ~1 year
+            )
+            if val is not None:
+                pos["max_hold_time_seconds"] = val
+                # If the LLM explicitly sets a new hold time, clear any expiry flag
+                pos.pop("_max_hold_expired", None)
+                pos.pop("_max_hold_expired_count", None)
 
         # --- Cooldown after loss ---
         if "cooldown_after_loss_seconds" in params:
-            pos["cooldown_after_loss_seconds"] = params["cooldown_after_loss_seconds"]
+            val = self._validate_param_range(
+                "cooldown_after_loss_seconds", params["cooldown_after_loss_seconds"],
+                0.0, 2_592_000.0, symbol,  # 0 to ~30 days
+            )
+            if val is not None:
+                pos["cooldown_after_loss_seconds"] = val
 
         # --- News sentiment exit ---
         if "news_sentiment_exit_threshold" in params:
-            pos["news_sentiment_exit_threshold"] = params["news_sentiment_exit_threshold"]
+            val = self._validate_param_range(
+                "news_sentiment_exit_threshold", params["news_sentiment_exit_threshold"],
+                -1.0, 0.0, symbol,
+            )
+            if val is not None:
+                pos["news_sentiment_exit_threshold"] = val
 
         # --- Max unrealized loss ---
         if "max_unrealized_loss_pct" in params:
-            pos["max_unrealized_loss_pct"] = params["max_unrealized_loss_pct"]
+            val = self._validate_param_range(
+                "max_unrealized_loss_pct", params["max_unrealized_loss_pct"],
+                0.0001, 0.95, symbol,
+            )
+            if val is not None:
+                pos["max_unrealized_loss_pct"] = val
 
         # --- Partial take-profit levels ---
         if "partial_take_profit_levels" in params:
-            pos["partial_take_profit_levels"] = params["partial_take_profit_levels"]
-            pos["partial_tp_levels_triggered"] = []
-            pos["partial_tp_depth_wait_start"] = {}
-            # Clear single-level fields to avoid confusion
-            pos["partial_take_profit_pct"] = None
-            pos["partial_take_profit_fraction"] = None
-            pos["partial_tp_triggered"] = None
+            raw_levels = params["partial_take_profit_levels"]
+            validated_levels = []
+            if isinstance(raw_levels, list):
+                for i, level in enumerate(raw_levels):
+                    if not isinstance(level, dict):
+                        continue
+                    lvl_tp = self._validate_param_range(
+                        f"partial_take_profit_levels[{i}].take_profit_pct",
+                        level.get("take_profit_pct"), 0.0001, 5.0, symbol,
+                    )
+                    lvl_frac = self._validate_param_range(
+                        f"partial_take_profit_levels[{i}].fraction",
+                        level.get("fraction"), 0.01, 0.99, symbol,
+                    )
+                    if lvl_tp is not None and lvl_frac is not None:
+                        validated_level = dict(level)
+                        validated_level["take_profit_pct"] = lvl_tp
+                        validated_level["fraction"] = lvl_frac
+                        validated_levels.append(validated_level)
+            if validated_levels:
+                pos["partial_take_profit_levels"] = validated_levels
+                pos["partial_tp_levels_triggered"] = []
+                pos["partial_tp_depth_wait_start"] = {}
+                # Clear single-level fields to avoid confusion
+                pos["partial_take_profit_pct"] = None
+                pos["partial_take_profit_fraction"] = None
+                pos["partial_tp_triggered"] = None
         else:
             if "partial_take_profit_pct" in params:
-                pos["partial_take_profit_pct"] = params["partial_take_profit_pct"]
+                val = self._validate_param_range(
+                    "partial_take_profit_pct", params["partial_take_profit_pct"],
+                    0.0001, 5.0, symbol,
+                )
+                if val is not None:
+                    pos["partial_take_profit_pct"] = val
             if "partial_take_profit_fraction" in params:
-                pos["partial_take_profit_fraction"] = params["partial_take_profit_fraction"]
+                val = self._validate_param_range(
+                    "partial_take_profit_fraction", params["partial_take_profit_fraction"],
+                    0.01, 0.99, symbol,
+                )
+                if val is not None:
+                    pos["partial_take_profit_fraction"] = val
             if "partial_tp_triggered" not in pos:
                 pos["partial_tp_triggered"] = False
 
         # --- Strategy interval ---
         if "strategy_interval_seconds" in params:
-            self._strategy_intervals[symbol] = params["strategy_interval_seconds"]
+            val = self._validate_param_range(
+                "strategy_interval_seconds", params["strategy_interval_seconds"],
+                60.0, 2_592_000.0, symbol,  # 1 minute to ~30 days
+            )
+            if val is not None:
+                self._strategy_intervals[symbol] = val
 
         # --- Indicator config ---
         if indicator_config is not None:
