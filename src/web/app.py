@@ -5,7 +5,7 @@ import math
 import os
 import secrets
 import time
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -35,8 +35,9 @@ class ManualTradeRequest(BaseModel):
 
 security = HTTPBasic(auto_error=False)
 
-async def verify_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)):
+async def verify_auth(request: Request):
     if settings.WEB_USERNAME and settings.WEB_PASSWORD:
+        credentials = await security(request)
         if not credentials or not (
             secrets.compare_digest(credentials.username, settings.WEB_USERNAME) and
             secrets.compare_digest(credentials.password, settings.WEB_PASSWORD)
