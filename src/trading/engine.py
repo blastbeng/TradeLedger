@@ -7210,6 +7210,10 @@ class TradingEngine:
                     ticker=ticker,
                 )
 
+            # Ensure llm_provider and llm_model are never None for notifications/signals
+            llm_provider = llm_provider or "fallback"
+            llm_model = llm_model or "default_hold"
+
             current_price = ticker['last']
 
             validated = validate_signal(
