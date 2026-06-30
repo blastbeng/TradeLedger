@@ -250,10 +250,6 @@ class Settings(BaseSettings):
             raise ValueError("DUST_KEEP_TIMEOUT_SECONDS must be >= 3600")
         return v
 
-    # Minimum seconds between forced LLM evaluations triggered by the entry signal monitor.
-    # Keeps the bot responsive without spamming the LLM.
-    ENTRY_SIGNAL_COOLDOWN_SECONDS: int = 300
-
     # Minimum seconds between condition-triggered re-evaluations
     TRIGGERED_REEVALUATION_COOLDOWN: int = 1800
 
