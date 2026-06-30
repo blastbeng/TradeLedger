@@ -13056,6 +13056,8 @@ class TradingEngine:
                 max_portfolio_exposure_pct=bt_max_port_exp,
                 max_portfolio_stop_risk_pct=bt_max_port_risk,
                 position_size_fraction=bt_position_fraction,
+                gap_tolerance_mult=1.5,
+                on_gaps="warn",
             )
             backtest_stats = await asyncio.to_thread(
                 backtest_strategy,

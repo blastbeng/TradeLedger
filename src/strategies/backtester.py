@@ -60,6 +60,45 @@ def _compute_dynamic_slippage(
     return min(slippage, max_pct)
 
 
+def _detect_gaps(candles: List[List], tolerance_mult: float = 1.5) -> Optional[List[Dict[str, Any]]]:
+    """Detect gaps in OHLCV data by comparing consecutive timestamps.
+
+    Returns a list of gap info dicts, or None if no significant gaps are found.
+    Each dict contains: index, expected_interval_ms, actual_gap_ms, gap_ratio.
+    """
+    if len(candles) < 3:
+        return None
+
+    # Compute the expected interval from the median of consecutive differences
+    intervals = []
+    for i in range(1, len(candles)):
+        diff = candles[i][0] - candles[i - 1][0]
+        if diff > 0:
+            intervals.append(diff)
+
+    if not intervals:
+        return None
+
+    sorted_intervals = sorted(intervals)
+    expected_interval = sorted_intervals[len(sorted_intervals) // 2]
+
+    if expected_interval <= 0:
+        return None
+
+    gaps = []
+    for i in range(1, len(candles)):
+        actual_gap = candles[i][0] - candles[i - 1][0]
+        if actual_gap > expected_interval * tolerance_mult:
+            gaps.append({
+                "index": i,
+                "expected_interval_ms": expected_interval,
+                "actual_gap_ms": actual_gap,
+                "gap_ratio": round(actual_gap / expected_interval, 2),
+            })
+
+    return gaps if gaps else None
+
+
 def backtest_strategy(
     candles: List[List],
     stop_loss_pct: float,
@@ -104,6 +143,8 @@ def backtest_strategy(
     max_portfolio_stop_risk_pct: Optional[float] = None,
     position_size_fraction: float = 0.1,
     direction: str = "long",
+    gap_tolerance_mult: float = 1.5,
+    on_gaps: str = "warn",
     _return_trades: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -147,6 +188,27 @@ def backtest_strategy(
             return [], result
         return result
 
+    # --- Gap detection ---
+    gap_warning = ""
+    detected_gaps = _detect_gaps(candles, gap_tolerance_mult)
+    if detected_gaps:
+        gap_count = len(detected_gaps)
+        max_gap_ratio = max(g["gap_ratio"] for g in detected_gaps)
+        gap_warning = (
+            f"⚠️ DATA GAPS DETECTED: {gap_count} gap(s) found in OHLCV data "
+            f"(max gap ratio: {max_gap_ratio:.1f}x expected interval). "
+            f"Backtest results may be inaccurate — gaps can cause false stop-loss "
+            f"triggers or missed take-profit events."
+        )
+        logger.warning(f"Backtest gap detection: {gap_warning}")
+        if on_gaps == "skip":
+            result = _empty_result()
+            result["error"] = gap_warning
+            result["gap_warning"] = gap_warning
+            if _return_trades:
+                return [], result
+            return result
+
     if direction == "both":
         long_trades, _ = backtest_strategy(
             candles=candles, stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
@@ -173,6 +235,8 @@ def backtest_strategy(
             backtest_entry_config=backtest_entry_config,
             simulate_position_sizing=False,
             direction="long", _return_trades=True,
+            gap_tolerance_mult=gap_tolerance_mult,
+            on_gaps=on_gaps,
         )
         short_trades, _ = backtest_strategy(
             candles=candles, stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
@@ -199,14 +263,20 @@ def backtest_strategy(
             backtest_entry_config=backtest_entry_config,
             simulate_position_sizing=False,
             direction="short", _return_trades=True,
+            gap_tolerance_mult=gap_tolerance_mult,
+            on_gaps=on_gaps,
         )
         all_trades = long_trades + short_trades
         buy_and_hold_pct = 0.0
         if len(candles) >= 2 and candles[0][4] > 0:
             buy_and_hold_pct = (candles[-1][4] - candles[0][4]) / candles[0][4]
         if not all_trades:
-            return _empty_result()
-        return _compute_stats(all_trades, buy_and_hold_pct=buy_and_hold_pct)
+            result = _empty_result()
+            result["gap_warning"] = gap_warning
+            return result
+        combined = _compute_stats(all_trades, buy_and_hold_pct=buy_and_hold_pct)
+        combined["gap_warning"] = gap_warning
+        return combined
 
     is_short = direction == "short"
 
@@ -678,6 +748,7 @@ def backtest_strategy(
         total_pnl_currency=total_pnl_currency if _psim else 0.0,
         simulate_position_sizing=_psim,
     )
+    stats["gap_warning"] = gap_warning
     if _return_trades:
         return trades, stats
     return stats
@@ -703,6 +774,7 @@ def _empty_result() -> Dict[str, Any]:
         "total_pnl_currency": 0.0,
         "final_balance": 0.0,
         "total_return_pct": 0.0,
+        "gap_warning": "",
     }
 
 
@@ -799,6 +871,9 @@ def format_backtest_summary(stats: Dict[str, Any], entry_config_used: bool = Tru
             f", Final balance: {stats['final_balance']:.2f}"
             f", Total return: {stats.get('total_return_pct', 0)*100:+.2f}%"
         )
+    gap_part = ""
+    if stats.get("gap_warning"):
+        gap_part = f"\n{stats['gap_warning']}"
     return (
         f"Python backtest ({stats['total_trades']} trades){entry_note}: "
         f"Win rate: {stats['win_rate']*100:.1f}%, "
@@ -812,6 +887,7 @@ def format_backtest_summary(stats: Dict[str, Any], entry_config_used: bool = Tru
         f"Max consec. losses: {stats['max_consecutive_losses']}, "
         f"Partial TPs: {stats.get('partial_tp_count', 0)}"
         f"{portfolio_part}"
+        f"{gap_part}"
     )
 
 
