@@ -1465,9 +1465,9 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 
     # Try to acquire the lock with a timeout to prevent indefinite blocking
     # when a previous yf.download call hangs and never releases the lock.
-    if not _get_quotes_lock.acquire(timeout=30):
+    if not _get_quotes_lock.acquire(timeout=5):
         logger.warning(
-            "get_quotes: could not acquire lock within 30s (previous call may be hung). "
+            "get_quotes: could not acquire lock within 5s (previous call may be hung). "
             "Falling back to cached/DB quotes only."
         )
         return get_quotes_cached(symbols)
