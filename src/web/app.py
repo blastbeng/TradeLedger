@@ -5,7 +5,7 @@ import math
 import os
 import secrets
 import time
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, APIRouter
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -48,7 +48,8 @@ async def verify_auth(credentials: Optional[HTTPBasicCredentials] = Depends(secu
             )
     return True
 
-app = FastAPI(title="Trade Ledger", dependencies=[Depends(verify_auth)])
+app = FastAPI(title="Trade Ledger")
+http_router = APIRouter(dependencies=[Depends(verify_auth)])
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +75,11 @@ def get_engine():
         raise HTTPException(status_code=503, detail="Engine not initialized")
     return _engine
 
-@app.get("/")
+@http_router.get("/")
 async def root():
     return FileResponse("src/web/static/index.html")
 
-@app.get("/health")
+@http_router.get("/health")
 async def health():
     redis_ok = check_redis_connection()
     from src.llm.llm_client import check_llm_health
@@ -93,7 +94,7 @@ async def health():
         "llm_actuator": llm_health.get("actuator", {}),
     }
 
-@app.get("/api/status")
+@http_router.get("/api/status")
 async def status():
     engine = get_engine()
     redis = get_redis_client()
@@ -127,7 +128,7 @@ async def status():
         "queued_orders": queued_orders_payload,
     }
 
-@app.get("/api/trades")
+@http_router.get("/api/trades")
 async def trades(limit: int = 0):
     engine = get_engine()
     open_trades = await engine.get_open_trades()
@@ -135,12 +136,12 @@ async def trades(limit: int = 0):
         t["display_symbol"] = await _get_display_symbol(engine, t["symbol"], t.get("timeframe"))
     return {"trades": open_trades}
 
-@app.get("/api/profit")
+@http_router.get("/api/profit")
 async def profit():
     engine = get_engine()
     return await engine.get_profit_summary()
 
-@app.get("/api/performance")
+@http_router.get("/api/performance")
 async def performance():
     engine = get_engine()
     perf = await engine.get_performance_summary()
@@ -154,12 +155,12 @@ async def performance():
         total["display_symbol"] = "TOTAL"
     return perf
 
-@app.get("/api/risk")
+@http_router.get("/api/risk")
 async def risk():
     engine = get_engine()
     return await engine.get_risk_metrics()
 
-@app.get("/api/news")
+@http_router.get("/api/news")
 async def news():
     engine = get_engine()
     symbols = engine.current_symbols
@@ -179,7 +180,7 @@ async def news():
     result = await asyncio.gather(*[_fetch_news_entry(entry) for entry in symbols])
     return list(result)
 
-@app.get("/api/messages")
+@http_router.get("/api/messages")
 async def messages():
     redis = get_redis_client()
     raw_messages = await asyncio.to_thread(redis.lrange, "web:messages", 0, -1)
@@ -192,7 +193,7 @@ async def messages():
             pass
     return messages
 
-@app.get("/api/logs")
+@http_router.get("/api/logs")
 async def logs(limit: int = 200):
     """Return the most recent log entries from Redis."""
     redis = get_redis_client()
@@ -208,7 +209,7 @@ async def logs(limit: int = 200):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/history")
+@http_router.get("/api/history")
 async def history(limit: int = 50):
     engine = get_engine()
     trades = engine.trade_history[-limit:]
@@ -219,7 +220,7 @@ async def history(limit: int = 50):
         trades = await asyncio.gather(*[_add_display_to_trade(t) for t in trades])
     return trades
 
-@app.post("/api/pause")
+@http_router.post("/api/pause")
 async def pause():
     engine = get_engine()
     redis = engine.redis
@@ -231,7 +232,7 @@ async def pause():
     await asyncio.to_thread(redis.delete, "trading:llm_pause_time")
     return {"status": "paused"}
 
-@app.post("/api/resume")
+@http_router.post("/api/resume")
 async def resume():
     engine = get_engine()
     if not await engine._is_market_open():
@@ -249,7 +250,7 @@ async def resume():
         await asyncio.to_thread(redis.delete, key)
     return {"status": "resumed"}
 
-@app.post("/api/sell")
+@http_router.post("/api/sell")
 async def sell(symbol: str = None):
     engine = get_engine()
     if not await engine._is_market_open():
@@ -261,7 +262,7 @@ async def sell(symbol: str = None):
         asyncio.create_task(engine.sell_all_positions())
         return {"status": "selling all"}
 
-@app.post("/api/manual-trade")
+@http_router.post("/api/manual-trade")
 async def manual_trade(req: ManualTradeRequest):
     engine = get_engine()
     if not await engine._is_market_open():
@@ -283,7 +284,7 @@ async def manual_trade(req: ManualTradeRequest):
     result = await engine.log_manual_trade(req.ticker, req.side, req.quantity, req.money_spent, req.fee)
     return result
 
-@app.get("/api/manual-trades")
+@http_router.get("/api/manual-trades")
 async def get_manual_trades():
     engine = get_engine()
     manual = [t for t in engine.trade_history if t.get("note") == "manual"]
@@ -291,23 +292,23 @@ async def get_manual_trades():
         t["display_symbol"] = t["symbol"]
     return manual
 
-@app.get("/api/discovered-symbols")
+@http_router.get("/api/discovered-symbols")
 async def discovered_symbols_api():
     """Return all discovered symbols for frontend autocomplete."""
     symbols = await run_in_threadpool(get_all_discovered_symbols)
     return [{"symbol": s.get("symbol"), "name": s.get("name", "")} for s in symbols]
 
-@app.get("/api/signals")
+@http_router.get("/api/signals")
 async def signals(limit: int = 20):
     engine = get_engine()
     return await run_in_threadpool(engine.get_recent_signals, limit)
 
-@app.post("/api/reload")
+@http_router.post("/api/reload")
 async def reload():
     await run_in_threadpool(settings.reload)
     return {"status": "reloaded"}
 
-@app.post("/api/config/update-interval")
+@http_router.post("/api/config/update-interval")
 async def update_interval(data: dict):
     """Update the WebSocket payload cache TTL to match the frontend's chosen interval."""
     global _ws_payload_ttl
@@ -315,19 +316,19 @@ async def update_interval(data: dict):
     _ws_payload_ttl = max(1.0, ms / 1000.0)  # convert ms to seconds, minimum 1s
     return {"status": "ok", "ttl_seconds": _ws_payload_ttl}
 
-@app.post("/api/force-reeval")
+@http_router.post("/api/force-reeval")
 async def force_reeval():
     engine = get_engine()
     engine.trigger_symbol_reevaluation(force=True)
     return {"status": "Forced re-evaluation triggered"}
 
-@app.post("/api/force-download")
+@http_router.post("/api/force-download")
 async def force_download():
     engine = get_engine()
     asyncio.create_task(engine.force_download_all_assets())
     return {"status": "Force download of all asset OHLCV data triggered"}
 
-@app.post("/api/restart")
+@http_router.post("/api/restart")
 def restart():
     """
     Restart the entire application by exiting the process.
@@ -335,7 +336,7 @@ def restart():
     """
     os._exit(0)
 
-@app.get("/api/config")
+@http_router.get("/api/config")
 def config():
     mind_provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
     actuator_provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
@@ -359,7 +360,7 @@ def config():
         "web_port": settings.WEB_PORT,
     }
 
-@app.get("/api/ohlcv/{symbol:path}")
+@http_router.get("/api/ohlcv/{symbol:path}")
 async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
     engine = get_engine()
     base_symbol = symbol.split("/")[0]
@@ -387,7 +388,7 @@ async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/ticker/{symbol:path}")
+@http_router.get("/api/ticker/{symbol:path}")
 async def ticker(symbol: str):
     engine = get_engine()
     base_symbol = symbol.split("/")[0]
@@ -414,7 +415,7 @@ async def ticker(symbol: str):
         "percentage": None,
     }
 
-@app.get("/api/tickers")
+@http_router.get("/api/tickers")
 async def tickers(symbols: str = ""):
     """Return quotes for a comma-separated list of symbols."""
     if not symbols:
@@ -554,12 +555,14 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
 
-@app.post("/api/simulate/backtest/{symbol:path}")
+@http_router.post("/api/simulate/backtest/{symbol:path}")
 async def simulate_backtest(symbol: str):
     engine = get_engine()
     return await engine.simulate_backtest(symbol)
 
-@app.post("/api/simulate/decision/{symbol:path}")
+@http_router.post("/api/simulate/decision/{symbol:path}")
 async def simulate_decision(symbol: str):
     engine = get_engine()
     return await engine.simulate_decision(symbol)
+
+app.include_router(http_router)
