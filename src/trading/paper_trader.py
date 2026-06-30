@@ -62,7 +62,7 @@ class PaperTrader:
         self.slippage_max_pct = 0.01    # 1.0% max slippage
         self._balances_dirty = False
         self._slippage_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, slippage)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._load_balances()
 
     # ------------------------------------------------------------------
@@ -337,14 +337,15 @@ class PaperTrader:
         if limit_price is not None:
             if price > limit_price:
                 # Not marketable – create open limit order
-                order_id = self._generate_order_id()
-                order = PaperOrder(
-                    order_id=order_id, symbol=symbol, side="buy",
-                    order_type="limit", amount=amount, limit_price=limit_price,
-                    time_in_force=time_in_force, status="open",
-                )
-                self._orders[order_id] = order
-                self._save_orders()
+                with self._lock:
+                    order_id = self._generate_order_id()
+                    order = PaperOrder(
+                        order_id=order_id, symbol=symbol, side="buy",
+                        order_type="limit", amount=amount, limit_price=limit_price,
+                        time_in_force=time_in_force, status="open",
+                    )
+                    self._orders[order_id] = order
+                    self._save_orders()
                 return self._make_order_dict(order)
             # Fill at the best available price (current price if lower than limit)
             fill_price = min(price, limit_price)
@@ -426,14 +427,15 @@ class PaperTrader:
         if limit_price is not None:
             if price < limit_price:
                 # Not marketable – create open limit order
-                order_id = self._generate_order_id()
-                order = PaperOrder(
-                    order_id=order_id, symbol=symbol, side="sell",
-                    order_type="limit", amount=amount, limit_price=limit_price,
-                    time_in_force=time_in_force, status="open",
-                )
-                self._orders[order_id] = order
-                self._save_orders()
+                with self._lock:
+                    order_id = self._generate_order_id()
+                    order = PaperOrder(
+                        order_id=order_id, symbol=symbol, side="sell",
+                        order_type="limit", amount=amount, limit_price=limit_price,
+                        time_in_force=time_in_force, status="open",
+                    )
+                    self._orders[order_id] = order
+                    self._save_orders()
                 return self._make_order_dict(order)
             # Fill at the best available price (current price if higher than limit)
             fill_price = max(price, limit_price)
@@ -496,84 +498,90 @@ class PaperTrader:
         self, symbol: str, amount: float, stop_price: float,
         time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
-        order_id = self._generate_order_id()
-        order = PaperOrder(
-            order_id=order_id, symbol=symbol, side="buy", order_type="stop",
-            amount=amount, stop_price=stop_price, time_in_force=time_in_force,
-            status="open",
-        )
-        self._orders[order_id] = order
-        self._save_orders()
+        with self._lock:
+            order_id = self._generate_order_id()
+            order = PaperOrder(
+                order_id=order_id, symbol=symbol, side="buy", order_type="stop",
+                amount=amount, stop_price=stop_price, time_in_force=time_in_force,
+                status="open",
+            )
+            self._orders[order_id] = order
+            self._save_orders()
         return self._make_order_dict(order)
 
     def create_stop_sell_order(
         self, symbol: str, amount: float, stop_price: float,
         time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
-        order_id = self._generate_order_id()
-        order = PaperOrder(
-            order_id=order_id, symbol=symbol, side="sell", order_type="stop",
-            amount=amount, stop_price=stop_price, time_in_force=time_in_force,
-            status="open",
-        )
-        self._orders[order_id] = order
-        self._save_orders()
+        with self._lock:
+            order_id = self._generate_order_id()
+            order = PaperOrder(
+                order_id=order_id, symbol=symbol, side="sell", order_type="stop",
+                amount=amount, stop_price=stop_price, time_in_force=time_in_force,
+                status="open",
+            )
+            self._orders[order_id] = order
+            self._save_orders()
         return self._make_order_dict(order)
 
     def create_stop_limit_buy_order(
         self, symbol: str, amount: float, stop_price: float,
         limit_price: float, time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
-        order_id = self._generate_order_id()
-        order = PaperOrder(
-            order_id=order_id, symbol=symbol, side="buy", order_type="stop_limit",
-            amount=amount, stop_price=stop_price, limit_price=limit_price,
-            time_in_force=time_in_force, status="open",
-        )
-        self._orders[order_id] = order
-        self._save_orders()
+        with self._lock:
+            order_id = self._generate_order_id()
+            order = PaperOrder(
+                order_id=order_id, symbol=symbol, side="buy", order_type="stop_limit",
+                amount=amount, stop_price=stop_price, limit_price=limit_price,
+                time_in_force=time_in_force, status="open",
+            )
+            self._orders[order_id] = order
+            self._save_orders()
         return self._make_order_dict(order)
 
     def create_stop_limit_sell_order(
         self, symbol: str, amount: float, stop_price: float,
         limit_price: float, time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
-        order_id = self._generate_order_id()
-        order = PaperOrder(
-            order_id=order_id, symbol=symbol, side="sell", order_type="stop_limit",
-            amount=amount, stop_price=stop_price, limit_price=limit_price,
-            time_in_force=time_in_force, status="open",
-        )
-        self._orders[order_id] = order
-        self._save_orders()
+        with self._lock:
+            order_id = self._generate_order_id()
+            order = PaperOrder(
+                order_id=order_id, symbol=symbol, side="sell", order_type="stop_limit",
+                amount=amount, stop_price=stop_price, limit_price=limit_price,
+                time_in_force=time_in_force, status="open",
+            )
+            self._orders[order_id] = order
+            self._save_orders()
         return self._make_order_dict(order)
 
     def create_trailing_stop_buy_order(
         self, symbol: str, amount: float, trail_offset: float,
         time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
-        order_id = self._generate_order_id()
-        order = PaperOrder(
-            order_id=order_id, symbol=symbol, side="buy", order_type="trailing_stop",
-            amount=amount, trail_offset=trail_offset, time_in_force=time_in_force,
-            status="open",
-        )
-        self._orders[order_id] = order
-        self._save_orders()
+        with self._lock:
+            order_id = self._generate_order_id()
+            order = PaperOrder(
+                order_id=order_id, symbol=symbol, side="buy", order_type="trailing_stop",
+                amount=amount, trail_offset=trail_offset, time_in_force=time_in_force,
+                status="open",
+            )
+            self._orders[order_id] = order
+            self._save_orders()
         return self._make_order_dict(order)
 
     def create_trailing_stop_sell_order(
         self, symbol: str, amount: float, trail_offset: float,
         time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
-        order_id = self._generate_order_id()
-        order = PaperOrder(
-            order_id=order_id, symbol=symbol, side="sell", order_type="trailing_stop",
-            amount=amount, trail_offset=trail_offset, time_in_force=time_in_force,
-            status="open",
-        )
-        self._orders[order_id] = order
-        self._save_orders()
+        with self._lock:
+            order_id = self._generate_order_id()
+            order = PaperOrder(
+                order_id=order_id, symbol=symbol, side="sell", order_type="trailing_stop",
+                amount=amount, trail_offset=trail_offset, time_in_force=time_in_force,
+                status="open",
+            )
+            self._orders[order_id] = order
+            self._save_orders()
         return self._make_order_dict(order)
 
     # ------------------------------------------------------------------
@@ -595,58 +603,59 @@ class PaperTrader:
         base = order.symbol.split("/")[0] if "/" in order.symbol else order.symbol
         quote = order.symbol.split("/")[1] if "/" in order.symbol else self.base_currency
 
-        # Trailing stop
-        if order.order_type == "trailing_stop":
-            if order.side == "sell":
-                if order._highest_price is None or price > order._highest_price:
-                    order._highest_price = price
-                if order._highest_price is not None and order.trail_offset is not None:
-                    trigger = order._highest_price - order.trail_offset
-                    if price <= trigger:
+        with self._lock:
+            # Trailing stop
+            if order.order_type == "trailing_stop":
+                if order.side == "sell":
+                    if order._highest_price is None or price > order._highest_price:
+                        order._highest_price = price
+                    if order._highest_price is not None and order.trail_offset is not None:
+                        trigger = order._highest_price - order.trail_offset
+                        if price <= trigger:
+                            self._fill_order(order, price, base, quote)
+                elif order.side == "buy":
+                    if order._lowest_price is None or price < order._lowest_price:
+                        order._lowest_price = price
+                    if order._lowest_price is not None and order.trail_offset is not None:
+                        trigger = order._lowest_price + order.trail_offset
+                        if price >= trigger:
+                            self._fill_order(order, price, base, quote)
+
+            # Stop orders
+            elif order.order_type == "stop":
+                if order.side == "buy" and order.stop_price is not None:
+                    if price >= order.stop_price:
                         self._fill_order(order, price, base, quote)
-            elif order.side == "buy":
-                if order._lowest_price is None or price < order._lowest_price:
-                    order._lowest_price = price
-                if order._lowest_price is not None and order.trail_offset is not None:
-                    trigger = order._lowest_price + order.trail_offset
-                    if price >= trigger:
+                elif order.side == "sell" and order.stop_price is not None:
+                    if price <= order.stop_price:
                         self._fill_order(order, price, base, quote)
 
-        # Stop orders
-        elif order.order_type == "stop":
-            if order.side == "buy" and order.stop_price is not None:
-                if price >= order.stop_price:
-                    self._fill_order(order, price, base, quote)
-            elif order.side == "sell" and order.stop_price is not None:
-                if price <= order.stop_price:
-                    self._fill_order(order, price, base, quote)
+            # Stop-limit orders
+            elif order.order_type == "stop_limit":
+                if order.side == "buy" and order.stop_price is not None:
+                    if price >= order.stop_price:
+                        fill = order.limit_price if order.limit_price else price
+                        self._fill_order(order, fill, base, quote)
+                elif order.side == "sell" and order.stop_price is not None:
+                    if price <= order.stop_price:
+                        fill = order.limit_price if order.limit_price else price
+                        self._fill_order(order, fill, base, quote)
 
-        # Stop-limit orders
-        elif order.order_type == "stop_limit":
-            if order.side == "buy" and order.stop_price is not None:
-                if price >= order.stop_price:
-                    fill = order.limit_price if order.limit_price else price
-                    self._fill_order(order, fill, base, quote)
-            elif order.side == "sell" and order.stop_price is not None:
-                if price <= order.stop_price:
-                    fill = order.limit_price if order.limit_price else price
-                    self._fill_order(order, fill, base, quote)
+            # Limit orders
+            elif order.order_type == "limit":
+                if order.side == "buy" and order.limit_price is not None:
+                    if price <= order.limit_price:
+                        # Fill at the best available price (current price if lower than limit)
+                        fill_price = min(price, order.limit_price)
+                        self._fill_order(order, fill_price, base, quote)
+                elif order.side == "sell" and order.limit_price is not None:
+                    if price >= order.limit_price:
+                        # Fill at the best available price (current price if higher than limit)
+                        fill_price = max(price, order.limit_price)
+                        self._fill_order(order, fill_price, base, quote)
 
-        # Limit orders
-        elif order.order_type == "limit":
-            if order.side == "buy" and order.limit_price is not None:
-                if price <= order.limit_price:
-                    # Fill at the best available price (current price if lower than limit)
-                    fill_price = min(price, order.limit_price)
-                    self._fill_order(order, fill_price, base, quote)
-            elif order.side == "sell" and order.limit_price is not None:
-                if price >= order.limit_price:
-                    # Fill at the best available price (current price if higher than limit)
-                    fill_price = max(price, order.limit_price)
-                    self._fill_order(order, fill_price, base, quote)
-
-        if order.status == "filled":
-            self._save_orders()
+            if order.status == "filled":
+                self._save_orders()
 
         return order
 
@@ -665,11 +674,12 @@ class PaperTrader:
         return result
 
     def cancel_order(self, order_id: str) -> bool:
-        order = self._orders.get(order_id)
-        if order is None or order.status != "open":
-            return False
-        order.status = "canceled"
-        self._save_orders()
+        with self._lock:
+            order = self._orders.get(order_id)
+            if order is None or order.status != "open":
+                return False
+            order.status = "canceled"
+            self._save_orders()
         return True
 
     def get_trade_history(self) -> List[Dict[str, Any]]:
