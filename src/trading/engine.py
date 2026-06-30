@@ -65,6 +65,7 @@ MAX_TAKE_PROFIT_REVIEWS = 10   # force-sell after this many consecutive take-pro
 HARD_MAX_LOSS_PCT = 0.15  # 15% unrealized loss forces immediate exit
 # Timeframe threshold for reducing max stop-loss reviews (30 days = 1M candles)
 LONG_TERM_TF_SECONDS = 2_592_000
+MAX_TRADES_IN_MEMORY = 1000  # cap in-memory trade history to prevent unbounded growth
 
 
 @dataclass
@@ -2492,7 +2493,7 @@ class TradingEngine:
                     "realized_pnl": realized_pnl,
                     "cost_basis": cost_basis,
                 }
-                self.trade_history.append(trade)
+                self._append_trade(trade)
                 await asyncio.to_thread(insert_trade, trade)
                 logger.info(f"Matured BTP {symbol}: closed {pos['amount']} at par value {par_value}.")
                 if self.notifier:
@@ -2556,7 +2557,7 @@ class TradingEngine:
                         "realized_pnl": realized_pnl,
                         "cost_basis": cost_basis,
                     }
-                    self.trade_history.append(trade)
+                    self._append_trade(trade)
                     await asyncio.to_thread(insert_trade, trade)
                     logger.warning(f"Delisted {symbol}: recorded forced sell of {pos['amount']} at {close_price}.")
                     await self._remove_symbol_if_paused(symbol)
@@ -2608,7 +2609,7 @@ class TradingEngine:
                 net_quote = cost - fee_cost
                 trade["realized_pnl"] = net_quote - prorated_cost_basis
                 trade["cost_basis"] = prorated_cost_basis
-                self.trade_history.append(trade)
+                self._append_trade(trade)
                 await asyncio.to_thread(insert_trade, trade)
                 logger.warning(
                     f"External sell detected for {symbol}: {sold_amount} sold at ~{current_price}. "
@@ -2686,6 +2687,13 @@ class TradingEngine:
         # Persist any changes made during reconciliation
         await self._save_state()
 
+    def _append_trade(self, trade: Dict[str, Any]):
+        """Append a trade to history and prune old entries to bound memory usage."""
+        self.trade_history.append(trade)
+        if len(self.trade_history) > MAX_TRADES_IN_MEMORY:
+            # Keep only the most recent trades
+            self.trade_history = self.trade_history[-MAX_TRADES_IN_MEMORY:]
+
     def _load_state(self):
         """Load current symbols, positions, trade history, and initial balance from SQLite."""
         state = load_trading_state()
@@ -2734,7 +2742,7 @@ class TradingEngine:
                 if "_last_trailing_check_ts" not in pos:
                     pos["_last_trailing_check_ts"] = time.time()
 
-        self.trade_history = get_all_trades()
+        self.trade_history = get_all_trades()[-MAX_TRADES_IN_MEMORY:]
         self.queued_orders = state.get("queued_orders", [])
         for q in self.queued_orders:
             q['order_book'] = None
@@ -7751,7 +7759,7 @@ class TradingEngine:
                 self.trader._balances_dirty = True
                 await asyncio.to_thread(self.trader._save_balances)
 
-        self.trade_history.append(trade)
+        self._append_trade(trade)
         await asyncio.to_thread(insert_trade, trade)
         await self._save_state()
         logger.info(f"Manual trade logged: {side} {quantity} {symbol} @ {price:.4f}")
@@ -9312,7 +9320,7 @@ class TradingEngine:
                 order["buy_reasoning"] = (signal.reasoning or "")[:200]
                 if hasattr(signal, 'backtest_summary') and signal.backtest_summary:
                     order["backtest_summary"] = signal.backtest_summary
-                self.trade_history.append(order)
+                self._append_trade(order)
                 self._balance_cache = None  # force refresh on next fetch
                 await asyncio.to_thread(insert_trade, order)
                 await self._save_state()
@@ -9708,7 +9716,7 @@ class TradingEngine:
                     self._last_decisions.pop(symbol, None)
                     self._pending_entries.pop(symbol, None)
                     await self._remove_symbol_if_paused(symbol)
-                self.trade_history.append(order)
+                self._append_trade(order)
                 self._balance_cache = None
                 await asyncio.to_thread(insert_trade, order)
                 await self._save_state()
@@ -11470,7 +11478,7 @@ class TradingEngine:
                     }
                     await self._place_exit_orders(symbol, dummy_signal, exit_prices, self.positions[symbol].get("timeframe"))
 
-            self.trade_history.append(order)
+            self._append_trade(order)
             await asyncio.to_thread(insert_trade, order)
             await self._save_state()
 
@@ -11660,7 +11668,7 @@ class TradingEngine:
                     }
                     await self._place_exit_orders(symbol, dummy_signal, exit_prices, self.positions[symbol].get("timeframe"))
 
-            self.trade_history.append(order)
+            self._append_trade(order)
             await asyncio.to_thread(insert_trade, order)
             await self._save_state()
 
@@ -11764,7 +11772,7 @@ class TradingEngine:
                 order["timeframe"] = pos.get("timeframe")
                 if "timestamp" in pos:
                     order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
-                self.trade_history.append(order)
+                self._append_trade(order)
                 await asyncio.to_thread(insert_trade, order)
 
             # Cancel any remaining exit orders before removing the position
@@ -12260,7 +12268,7 @@ class TradingEngine:
         trade_dict['timeframe'] = timeframe
         trade_dict['buy_confidence'] = signal_dict.get('confidence', 0.0)
         trade_dict['buy_reasoning'] = (signal_dict.get('reasoning', '') or '')[:200]
-        self.trade_history.append(trade_dict)
+        self._append_trade(trade_dict)
         self._balance_cache = None
         async with self._cycle_spent_lock:
             self._cycle_spent += trade_dict['cost']
@@ -12442,7 +12450,7 @@ class TradingEngine:
             self._pending_entries.pop(symbol, None)
             await self._remove_symbol_if_paused(symbol)
 
-        self.trade_history.append(trade_dict)
+        self._append_trade(trade_dict)
         self._balance_cache = None
         await asyncio.to_thread(insert_trade, trade_dict)
         await self._save_state()
