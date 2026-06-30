@@ -13190,6 +13190,7 @@ class TradingEngine:
 
         sentiment_trend_val = None
         if aggregate_sentiment:
+            base_symbol = symbol.split("/")[0]
             current_compound = aggregate_sentiment.get("avg_compound")
             prev_key = f"sentiment:prev:{base_symbol}"
             prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
