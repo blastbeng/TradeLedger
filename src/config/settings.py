@@ -178,6 +178,28 @@ class Settings(BaseSettings):
             raise ValueError("MAX_TAKE_PROFIT_REVIEWS must be between 1 and 50")
         return v
 
+    # Maximum LLM stop-loss reviews for long-term timeframes (>= 1 month).
+    # Overrides MAX_STOP_LOSS_REVIEWS when the position timeframe is >= 1 month.
+    LONG_TERM_MAX_STOP_LOSS_REVIEWS: int = 5
+
+    @field_validator("LONG_TERM_MAX_STOP_LOSS_REVIEWS")
+    @classmethod
+    def validate_long_term_max_stop_loss_reviews(cls, v: int) -> int:
+        if v < 1 or v > 50:
+            raise ValueError("LONG_TERM_MAX_STOP_LOSS_REVIEWS must be between 1 and 50")
+        return v
+
+    # Maximum LLM stop-loss reviews for weekly timeframes (>= 1 week, < 1 month).
+    # Overrides MAX_STOP_LOSS_REVIEWS when the position timeframe is >= 1 week.
+    WEEKLY_MAX_STOP_LOSS_REVIEWS: int = 7
+
+    @field_validator("WEEKLY_MAX_STOP_LOSS_REVIEWS")
+    @classmethod
+    def validate_weekly_max_stop_loss_reviews(cls, v: int) -> int:
+        if v < 1 or v > 50:
+            raise ValueError("WEEKLY_MAX_STOP_LOSS_REVIEWS must be between 1 and 50")
+        return v
+
     # Timeframe threshold (in seconds) for reducing max stop-loss reviews
     # (2592000 = 30 days / 1 month). Positions on timeframes >= this value
     # get a reduced review cap to prevent excessive loss accumulation.

@@ -6321,9 +6321,9 @@ class TradingEngine:
 
         # Scale stop-loss review limit for long-term timeframes
         if tf_seconds >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
-            max_sl_reviews_prompt = min(max_sl_reviews_prompt, 3)
+            max_sl_reviews_prompt = min(max_sl_reviews_prompt, settings.LONG_TERM_MAX_STOP_LOSS_REVIEWS)
         elif tf_seconds >= 604_800:  # >= 1 week
-            max_sl_reviews_prompt = min(max_sl_reviews_prompt, 5)
+            max_sl_reviews_prompt = min(max_sl_reviews_prompt, settings.WEEKLY_MAX_STOP_LOSS_REVIEWS)
 
         try:
             symbol_data = await self._fetch_symbol_market_data(symbol, assigned_tf)
@@ -8784,9 +8784,9 @@ class TradingEngine:
                     if pos_tf:
                         pos_tf_secs = self._timeframe_to_seconds(pos_tf)
                         if pos_tf_secs >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
-                            effective_max_sl_reviews = min(effective_max_sl_reviews, 3)
+                            effective_max_sl_reviews = min(effective_max_sl_reviews, settings.LONG_TERM_MAX_STOP_LOSS_REVIEWS)
                         elif pos_tf_secs >= 604_800:  # >= 1 week
-                            effective_max_sl_reviews = min(effective_max_sl_reviews, 5)
+                            effective_max_sl_reviews = min(effective_max_sl_reviews, settings.WEEKLY_MAX_STOP_LOSS_REVIEWS)
                     review_count = pos.get("_stop_loss_review_count", 0)
                     if review_count >= effective_max_sl_reviews:
                         # Fallback: force-sell after too many reviews
