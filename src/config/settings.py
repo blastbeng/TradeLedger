@@ -363,7 +363,7 @@ class Settings(BaseSettings):
 
     # OHLCV timeframes for multi-timeframe analysis
     # Default order is longest to shortest to ensure larger timeframes are fetched first
-    OHLCV_TIMEFRAMES: list[str] = ["1Y", "6M", "3M", "1M", "1w", "1d", "1h"]
+    OHLCV_TIMEFRAMES: list[str] = ["1h", "1d", "1w", "1M", "3M", "6M", "1Y", "3Y", "5Y"]
 
     # Market data download interval (seconds)
     MARKET_DATA_REFRESH_SECONDS: int = 900
