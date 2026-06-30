@@ -1568,10 +1568,7 @@ Maximum symbols to trade: {max_symbols}
             "Based on the indicators and statistical summaries above, propose **multiple** sets of strategy parameters "
             "for backtesting. Each set is a \"backtest variant\" — a complete set of trading parameters "
             "(stop_loss_pct, take_profit_pct, max_hold_time_seconds, trailing_stop, position_size_fraction, etc.).\n"
-            "**Backtest Entry Logic (Customizable):** By default, the backtester enters a long position at the close of **every candle** (no entry filters). "
-            "This tests the pure exit parameters (stop-loss, take-profit, trailing stop) on every candle. "
-            "**You SHOULD customize this entry logic** by including a `backtest_entry_config` object in each backtest variant's parameters. "
-            "This allows you to backtest the strategy with entry conditions that match your actual intended entry strategy, preventing misleading results.\n"
+            "**Backtest Entry Logic (REQUIRED):** You MUST include a `backtest_entry_config` object in every backtest variant. If omitted, the backtester will NOT run and will return an error.\n"
             "The `backtest_entry_config` object supports these fields (all optional — defaults shown):\n"
             "- `ema_period` (int, default 0): EMA period for trend filter. Set to 0 to disable EMA filter.\n"
             "- `ema_direction` (\"above\" or \"below\", default \"above\"): enter when close is above/below the EMA.\n"
@@ -1581,7 +1578,6 @@ Maximum symbols to trade: {max_symbols}
             "- `macd_filter` (\"positive\", \"negative\", or \"none\", default \"none\"): require MACD histogram above/below 0.\n"
             "- `logic` (\"and\" or \"or\", default \"and\"): combine all enabled filters with AND or OR logic.\n"
             "Example: `{\"backtest_entry_config\": {\"ema_period\": 21, \"ema_direction\": \"above\", \"min_adx\": 25, \"max_rsi\": 65, \"macd_filter\": \"positive\", \"logic\": \"and\"}}`\n"
-            "If you omit `backtest_entry_config`, the default (enter every candle) is used. **Always specify `backtest_entry_config` to match your intended entry strategy so the backtest results are accurate.**\n"
             "**Slippage Model:** The backtester uses **dynamic slippage** based on each candle's relative volume and volatility (ATR%). Low-volume candles incur higher slippage (up to 3× base), and high-volatility candles add proportional slippage. This means strategies that trade in thin or volatile markets will show more realistic execution costs. The base slippage is 0.1%, capped at 1%.\n"
             "**CRITICAL — `backtest_entry_config` is REQUIRED:** If you omit `backtest_entry_config`, the backtester will NOT run and will return an error. You MUST include a `backtest_entry_config` object in every backtest variant that matches your intended entry conditions (e.g., EMA trend filter, ADX strength, RSI range, MACD direction). Without it, backtest results would be misleading because entering every candle does not reflect any actual entry strategy.\n"
             "Your goal is to find parameters that would have been profitable given your chosen entry logic.\n"
@@ -2134,11 +2130,6 @@ Example: {{"backtest_entry_config": {{"ema_period": 21, "ema_direction": "above"
 - The sum of position_size_fraction across all stocks must not exceed 1.0
 - Use small fractions (0.01–0.05) for low conviction, larger for high conviction
 - If remaining balance is too small for a profitable trade after fees, set action to HOLD
-
-**Backtest Entry Logic:**
-Include a `backtest_entry_config` object in each variant to match your intended entry strategy.
-Supported fields: ema_period, ema_direction, min_adx, max_rsi, min_rsi, macd_filter, logic.
-Example: {{"backtest_entry_config": {{"ema_period": 21, "ema_direction": "above", "min_adx": 25, "max_rsi": 65, "macd_filter": "positive", "logic": "and"}}}}
 
 **Entry Condition (REQUIRED for every BUY):**
 Include an `entry_condition` object. Supported types: limit_price, rsi_threshold, delay, indicator_combo.
