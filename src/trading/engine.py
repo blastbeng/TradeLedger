@@ -8408,11 +8408,12 @@ class TradingEngine:
                                 q for q in self.queued_orders
                                 if q.get("order_id") != tp_order_id
                             ]
-                            pos.pop("take_profit_order_id", None)
                             for q in self.queued_orders:
                                 if q.get("order_id") == sl_order_id:
                                     q["oco_pair"] = None
                                     break
+                        async with self._positions_lock:
+                            pos.pop("take_profit_order_id", None)
                         if self.notifier:
                             await self.notifier.send_notification(
                                 f"🛑 Stop triggered for {display_symbol} at {current_price:.4f}, "
@@ -8454,9 +8455,10 @@ class TradingEngine:
                                     q for q in self.queued_orders
                                     if q.get("order_id") != sl_order_id
                                 ]
-                            pos.pop("stop_loss_order_id", None)
-                            pos.pop("stop_loss_order_type", None)
-                            pos.pop("_native_stop_price", None)
+                            async with self._positions_lock:
+                                pos.pop("stop_loss_order_id", None)
+                                pos.pop("stop_loss_order_type", None)
+                                pos.pop("_native_stop_price", None)
                             await self._execute_signal(
                                 symbol,
                                 Signal(action="SELL", confidence=1.0, reasoning="Stop-loss triggered (risk check)"),
@@ -8481,13 +8483,14 @@ class TradingEngine:
                                 q for q in self.queued_orders
                                 if q.get("order_id") != sl_order_id
                             ]
-                            pos.pop("stop_loss_order_id", None)
-                            pos.pop("stop_loss_order_type", None)
-                            pos.pop("_native_stop_price", None)
                             for q in self.queued_orders:
                                 if q.get("order_id") == tp_order_id:
                                     q["oco_pair"] = None
                                     break
+                        async with self._positions_lock:
+                            pos.pop("stop_loss_order_id", None)
+                            pos.pop("stop_loss_order_type", None)
+                            pos.pop("_native_stop_price", None)
                         if self.notifier:
                             await self.notifier.send_notification(
                                 f"🎯 Take‑profit reached for {display_symbol} at {current_price:.4f}, "
@@ -8526,7 +8529,8 @@ class TradingEngine:
                                     q for q in self.queued_orders
                                     if q.get("order_id") != tp_order_id
                                 ]
-                            pos.pop("take_profit_order_id", None)
+                            async with self._positions_lock:
+                                pos.pop("take_profit_order_id", None)
                             await self._execute_signal(
                                 symbol,
                                 Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered (risk check)"),
