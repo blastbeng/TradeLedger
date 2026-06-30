@@ -1292,8 +1292,7 @@ Maximum symbols to trade: {max_symbols}
     # --- Volatility, order book imbalance, and position P&L context ---
     if atr is not None:
         prompt += f"ATR (14-period, {assigned_timeframe or 'default'}): {atr:.6f}\n"
-    
-    if atr is not None and current_price is not None and current_price > 0.
+    if atr is not None and current_price is not None and current_price > 0:
         atr_pct = atr / current_price
         min_sl = min_stop_atr_mult * atr_pct
         prompt += (
