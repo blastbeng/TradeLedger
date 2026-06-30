@@ -1658,6 +1658,14 @@ def save_discovered_symbols_batch(symbols: List[Dict[str, Any]]):
     conn = get_connection()
     try:
         now = time.time()
+        for s in symbols:
+            isin_val = s.get("isin")
+            if isin_val:
+                isin_val = isin_val.strip()
+                if isin_val == '-' or not isin_val:
+                    s["isin"] = None
+                else:
+                    s["isin"] = isin_val
         sql = _adapt_sql(
             "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, maturity, coupon, discovered_at) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s) "
