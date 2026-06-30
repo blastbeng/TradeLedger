@@ -274,6 +274,12 @@ async def get_manual_trades():
         t["display_symbol"] = t["symbol"]
     return manual
 
+@app.get("/api/discovered-symbols")
+async def discovered_symbols_api():
+    """Return all discovered symbols for frontend autocomplete."""
+    symbols = await run_in_threadpool(get_all_discovered_symbols)
+    return [{"symbol": s.get("symbol"), "name": s.get("name", "")} for s in symbols]
+
 @app.get("/api/signals")
 async def signals(limit: int = 20):
     engine = get_engine()
