@@ -2687,7 +2687,7 @@ class TradingEngine:
                     )
 
         # Persist any changes made during reconciliation
-        await self._save_state()
+        await self._save_state(force=True)
 
     def _append_trade(self, trade: Dict[str, Any]):
         """Append a trade to history and prune old entries to bound memory usage."""
@@ -2810,16 +2810,25 @@ class TradingEngine:
             len(self.trade_history),
         )
 
-    async def _save_state(self):
+    async def _save_state(self, force: bool = False):
         """Persist current symbols, positions, and trade history to SQLite.
 
         Uses a lock to serialize concurrent calls and a debounce flag to
         coalesce multiple save requests into fewer DB write batches.
+
+        When *force* is True, the method waits for the lock instead of
+        debouncing, guaranteeing the state is flushed even if another
+        save is in progress.  Use force=True after critical state changes
+        (trade execution, position closure, etc.) to avoid data loss on crash.
         """
-        # If a save is already in progress, just mark that another is needed
+        # If a save is already in progress:
+        #   - force=True  → wait for the lock, then save (no debounce)
+        #   - force=False → mark pending and return (debounce)
         if self._state_lock.locked():
-            self._state_save_pending = True
-            return
+            if not force:
+                self._state_save_pending = True
+                return
+            # Fall through to acquire the lock (wait for the current save to finish)
 
         async with self._state_lock:
             await self._save_state_impl()
@@ -7777,7 +7786,7 @@ class TradingEngine:
 
         self._append_trade(trade)
         await asyncio.to_thread(insert_trade, trade)
-        await self._save_state()
+        await self._save_state(force=True)
         logger.info(f"Manual trade logged: {side} {quantity} {symbol} @ {price:.4f}")
         return {"status": "ok", "trade": trade}
 
@@ -9339,7 +9348,7 @@ class TradingEngine:
                 self._append_trade(order)
                 self._balance_cache = None  # force refresh on next fetch
                 await asyncio.to_thread(insert_trade, order)
-                await self._save_state()
+                await self._save_state(force=True)
                 if self.notifier:
                     # --- Format symbol for notification ---
                     stock_name = await self._get_stock_name(symbol)
@@ -9735,7 +9744,7 @@ class TradingEngine:
                 self._append_trade(order)
                 self._balance_cache = None
                 await asyncio.to_thread(insert_trade, order)
-                await self._save_state()
+                await self._save_state(force=True)
                 if self.notifier:
                     # Human-readable labels for common exit reasons
                     reason_labels = {
@@ -11496,7 +11505,7 @@ class TradingEngine:
 
             self._append_trade(order)
             await asyncio.to_thread(insert_trade, order)
-            await self._save_state()
+            await self._save_state(force=True)
 
             if self.notifier:
                 pnl_pct = (realized_pnl / prorated_cost_basis * 100) if prorated_cost_basis > 0 else 0.0
@@ -11686,7 +11695,7 @@ class TradingEngine:
 
             self._append_trade(order)
             await asyncio.to_thread(insert_trade, order)
-            await self._save_state()
+            await self._save_state(force=True)
 
             if self.notifier:
                 pnl_pct = (realized_pnl / prorated_cost_basis * 100) if prorated_cost_basis > 0 else 0.0
@@ -11790,6 +11799,7 @@ class TradingEngine:
                     order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
                 self._append_trade(order)
                 await asyncio.to_thread(insert_trade, order)
+                await self._save_state(force=True)
 
             # Cancel any remaining exit orders before removing the position
             await self._cancel_exit_orders(symbol)
@@ -12289,7 +12299,7 @@ class TradingEngine:
         async with self._cycle_spent_lock:
             self._cycle_spent += trade_dict['cost']
         await asyncio.to_thread(insert_trade, trade_dict)
-        await self._save_state()
+        await self._save_state(force=True)
         if self.notifier:
             stock_name = await self._get_stock_name(symbol)
             display_symbol = self._format_symbol_display(symbol, stock_name, timeframe)
@@ -12469,7 +12479,7 @@ class TradingEngine:
         self._append_trade(trade_dict)
         self._balance_cache = None
         await asyncio.to_thread(insert_trade, trade_dict)
-        await self._save_state()
+        await self._save_state(force=True)
         if self.notifier:
             reason_labels = {
                 "manual_sell": "🖐️ Manual",
