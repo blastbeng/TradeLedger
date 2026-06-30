@@ -199,7 +199,7 @@ def get_cached_news_summary(symbol: str, model_type: str = "actuator") -> dict:
     return result
 
 
-SYSTEM_PROMPT = """You are a professional stock, ETF, and BTP bond trading bot assistant focused on medium to long-term investment horizons. Your primary goal is to generate consistent profit by identifying assets with strong fundamentals, solid momentum, and favorable macro conditions over weeks to months. You must avoid large drawdowns and only trade when there is a clear edge. Your asset universe includes Italian stocks, UCITS ETFs, and Italian government bonds (BTPs).
+SYSTEM_PROMPT_TEMPLATE = """You are a professional stock, ETF, and BTP bond trading bot assistant focused on medium to long-term investment horizons. Your primary goal is to generate consistent profit by identifying assets with strong fundamentals, solid momentum, and favorable macro conditions over weeks to months. You must avoid large drawdowns and only trade when there is a clear edge. Your asset universe includes Italian stocks, UCITS ETFs, and Italian government bonds (BTPs).
 
 Key principles:
 - **CRITICAL — Primary timeframes: "5Y", "3Y", "1Y", "6M", "3M", "1M", "1w".** All of these long-term timeframes are EQUALLY valid as primary decision timeframes. You MUST use one of them as your primary decision timeframe whenever available. Do NOT always default to the longest timeframe (5Y) — instead, choose the most appropriate timeframe for each specific asset based on its volatility, trend stage, and your intended hold period. Diversify timeframe assignments across your selected symbols. Use "1d" and "1h" only for short‑term confirmation or finer entry/exit timing, or when long-term data is unavailable. When assigning timeframes to symbols, match the timeframe to the asset's characteristics: use "5Y" or "3Y" for very long-term holdings in stable, low-volatility assets; use "1Y" or "6M" for medium-to-long-term positions; use "3M" or "1M" for assets with moderate volatility or shorter expected hold periods; use "1w" for assets where weekly granularity best captures the trend. Never default to short-term timeframes if long-term data is available.
@@ -322,10 +322,18 @@ Output strict JSON only. The response must start with '{' or '[' and end with '}
 
 """
 
-# Replace placeholder with the configurable max backtest variants value
-SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
-    "__MAX_BACKTEST_VARIANTS__", str(settings.MAX_BACKTEST_VARIANTS)
-)
+def build_system_prompt() -> str:
+    """Build the system prompt with current settings values.
+
+    Called on demand so that settings.reload() picks up new fee values
+    and max backtest variants without requiring a module reimport.
+    """
+    prompt = SYSTEM_PROMPT_TEMPLATE.replace(
+        "__MAX_BACKTEST_VARIANTS__", str(settings.MAX_BACKTEST_VARIANTS)
+    )
+    prompt = prompt.replace("__STOCK_FEE_SECTION__", stock_fee_text)
+    prompt = prompt.replace("__BTP_FEE_SECTION__", btp_fee_text)
+    return prompt
 
 # Replace stock fee section with configurable settings
 stock_fee_perc_pct = settings.STOCK_FEE_PERC * 100
@@ -353,7 +361,7 @@ stock_fee_text = f"""- **Transaction Costs (Intesa Sanpaolo Investo):** The simu
   - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately {round_trip_perc_pct:.2f}% of the trade value PLUS €{total_fixed_fees:.2f} in fixed fees (for larger trades > €1,500). For smaller trades, the €{stock_fee_min_eur:.2f} minimum commission applies on both sides, making the total fixed cost €{small_trade_fixed_cost:.2f}.
   - **CRITICAL:** You MUST ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 trade, total fees are ~€{trade_1000_total:.2f} ({trade_1000_pct:.2f}%), so `take_profit_pct` must be > {trade_1000_pct + 0.01:.2f}%. For a €10,000 trade, total fees are ~€{trade_10000_total:.2f} ({trade_10000_pct:.2f}%), so `take_profit_pct` must be > {trade_10000_pct + 0.01:.2f}%. Never set a take-profit target lower than the break-even cost."""
 
-SYSTEM_PROMPT = SYSTEM_PROMPT.replace("__STOCK_FEE_SECTION__", stock_fee_text)
+SYSTEM_PROMPT = build_system_prompt()
 
 # Replace BTP fee section based on primary issuance setting
 if settings.BTP_IS_PRIMARY_ISSUANCE:
@@ -383,7 +391,6 @@ else:
   - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately {round_trip_perc_pct:.2f}% of the trade value (for larger trades). For smaller trades, the €{btp_min_fee_eur:.2f} minimum applies on both sides, making the total fixed cost €{small_trade_fixed_cost:.2f}.
   - **CRITICAL:** For BTPs, ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 BTP trade, total fees are ~€{trade_1000_total:.2f} ({trade_1000_pct:.2f}%), so `take_profit_pct` must be > {trade_1000_pct + 0.01:.2f}%. For a €10,000 BTP trade, total fees are ~€{trade_10000_total:.2f} ({trade_10000_pct:.2f}%), so `take_profit_pct` must be > {trade_10000_pct + 0.01:.2f}%."""
 
-SYSTEM_PROMPT = SYSTEM_PROMPT.replace("__BTP_FEE_SECTION__", btp_fee_text)
 
 def build_stock_selection_prompt(
     available_symbols: List[str],
