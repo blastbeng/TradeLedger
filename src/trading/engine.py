@@ -10570,9 +10570,14 @@ class TradingEngine:
                     return True
 
             # 5. MACD zero-line crossover (long-term momentum shift)
+            # Require a minimum magnitude to avoid firing on tiny swings
+            # that are common on long timeframes (1M, 3M, 6M, 1Y).
             prev_macd_val = prev.get("macd_val")
+            _atr = ind.get("atr")
             if (prev_macd_val is not None and macd_val is not None
-                    and prev_macd_val <= 0 and macd_val > 0):
+                    and prev_macd_val <= 0 and macd_val > 0
+                    and _atr is not None and _atr > 0
+                    and abs(macd_val) > 0.1 * _atr):
                 return True
 
             # 6. EMA golden cross (valid for long timeframes — major trend shift)
