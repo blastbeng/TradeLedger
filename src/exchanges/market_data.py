@@ -773,7 +773,7 @@ def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optio
             info = ticker.info
             country = info.get("country")
             name = info.get("longName") or info.get("shortName")
-            if country:
+            if country or name:
                 return country, name
             # country is None or empty – retry if attempts remain
             if attempt < max_retries:
@@ -1284,6 +1284,16 @@ def get_tradable_assets() -> List[str]:
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
                 save_discovered_symbol(db_base, None, None, name or "", country=country)
+            except Exception:
+                pass
+        elif name and not settings.COUNTRY_FILTER_STRICT:
+            # Country is None but name is available — save the name for display
+            try:
+                from src.database import save_discovered_symbol
+                db_base = symbol
+                if suffix and db_base.endswith(suffix):
+                    db_base = db_base[:-len(suffix)]
+                save_discovered_symbol(db_base, None, None, name or "", country=None)
             except Exception:
                 pass
         if country is None:

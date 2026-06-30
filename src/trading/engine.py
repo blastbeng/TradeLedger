@@ -1614,9 +1614,7 @@ class TradingEngine:
                 pass
             return base
 
-        if _check_yf_circuit():
-            return base
-
+        # Check Redis cache first
         cache_key = f"stock_name:{base}"
         try:
             cached = await asyncio.to_thread(self.redis.get, cache_key)
@@ -1624,6 +1622,22 @@ class TradingEngine:
                 return cached.decode() if isinstance(cached, bytes) else cached
         except Exception:
             pass
+
+        # Check discovered_symbols table (works even when yf circuit is open)
+        try:
+            from src.database import get_symbol_name_from_db
+            db_name = await asyncio.to_thread(get_symbol_name_from_db, base)
+            if db_name:
+                try:
+                    await asyncio.to_thread(self.redis.setex, cache_key, 7 * 24 * 3600, db_name)
+                except Exception:
+                    pass
+                return db_name
+        except Exception:
+            pass
+
+        if _check_yf_circuit():
+            return base
 
         try:
             def _fetch_yf_name():
@@ -1634,6 +1648,18 @@ class TradingEngine:
             name = await asyncio.to_thread(_fetch_yf_name)
         except Exception:
             name = base
+
+        # If yfinance returned a name, save it to the DB for future use
+        if name and name != base:
+            try:
+                from src.database import save_discovered_symbol
+                db_base = base
+                suffix = settings.TICKER_SUFFIX
+                if suffix and db_base.endswith(suffix):
+                    db_base = db_base[:-len(suffix)]
+                save_discovered_symbol(db_base, None, None, name, country=None)
+            except Exception:
+                pass
 
         # Cache for 7 days (names rarely change)
         try:
