@@ -29,40 +29,41 @@ def validate_signal(
     if signal.action in ("BUY", "SELL"):
         params = signal.strategy_params or {}
 
-        # Validate backtest_entry_config
-        if "backtest_entry_config" not in params:
-            return Signal(action="HOLD", confidence=0.0, reasoning="Missing required parameter: backtest_entry_config")
-        bec = params["backtest_entry_config"]
-        if not isinstance(bec, dict):
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config (must be a dict)")
+        # Validate backtest_entry_config (only required for BUY signals)
+        if signal.action == "BUY":
+            if "backtest_entry_config" not in params:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Missing required parameter: backtest_entry_config")
+            bec = params["backtest_entry_config"]
+            if not isinstance(bec, dict):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config (must be a dict)")
 
-        ema_period = bec.get("ema_period", 0)
-        if not isinstance(ema_period, int) or ema_period < 0:
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: ema_period must be a non-negative integer")
+            ema_period = bec.get("ema_period", 0)
+            if not isinstance(ema_period, int) or ema_period < 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: ema_period must be a non-negative integer")
 
-        ema_direction = bec.get("ema_direction", "above")
-        if ema_direction not in ("above", "below"):
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: ema_direction must be 'above' or 'below'")
+            ema_direction = bec.get("ema_direction", "above")
+            if ema_direction not in ("above", "below"):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: ema_direction must be 'above' or 'below'")
 
-        min_adx = bec.get("min_adx", 0.0)
-        if not isinstance(min_adx, (int, float)) or min_adx < 0:
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: min_adx must be a non-negative number")
+            min_adx = bec.get("min_adx", 0.0)
+            if not isinstance(min_adx, (int, float)) or min_adx < 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: min_adx must be a non-negative number")
 
-        max_rsi = bec.get("max_rsi", 100.0)
-        if not isinstance(max_rsi, (int, float)) or not (0 <= max_rsi <= 100):
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: max_rsi must be between 0 and 100")
+            max_rsi = bec.get("max_rsi", 100.0)
+            if not isinstance(max_rsi, (int, float)) or not (0 <= max_rsi <= 100):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: max_rsi must be between 0 and 100")
 
-        min_rsi = bec.get("min_rsi", 0.0)
-        if not isinstance(min_rsi, (int, float)) or not (0 <= min_rsi <= 100):
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: min_rsi must be between 0 and 100")
+            min_rsi = bec.get("min_rsi", 0.0)
+            if not isinstance(min_rsi, (int, float)) or not (0 <= min_rsi <= 100):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: min_rsi must be between 0 and 100")
 
-        macd_filter = bec.get("macd_filter", "none")
-        if macd_filter not in ("none", "positive", "negative"):
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: macd_filter must be 'none', 'positive', or 'negative'")
+            macd_filter = bec.get("macd_filter", "none")
+            if macd_filter not in ("none", "positive", "negative"):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: macd_filter must be 'none', 'positive', or 'negative'")
 
-        logic = bec.get("logic", "and")
-        if logic not in ("and", "or"):
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: logic must be 'and' or 'or'")
+            logic = bec.get("logic", "and")
+            if logic not in ("and", "or"):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: logic must be 'and' or 'or'")
 
         # Determine stop-loss method (default "fixed")
         stop_method = params.get("stop_loss_method", "fixed")
