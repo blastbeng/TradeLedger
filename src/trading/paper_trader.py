@@ -154,10 +154,12 @@ class PaperTrader:
         return order
 
     def fetch_balance(self) -> Dict[str, float]:
-        return dict(self._balances)
+        with self._lock:
+            return dict(self._balances)
 
     def get_balance(self, currency: str) -> float:
-        return self._balances.get(currency, 0.0)
+        with self._lock:
+            return self._balances.get(currency, 0.0)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -660,18 +662,19 @@ class PaperTrader:
         return order
 
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        result = []
-        for order in self._orders.values():
-            if order.status != "open":
-                continue
-            if symbol is not None and order.symbol != symbol:
-                continue
-            result.append({
-                "id": order.id,
-                "symbol": order.symbol,
-                "timestamp": order.timestamp,
-            })
-        return result
+        with self._lock:
+            result = []
+            for order in self._orders.values():
+                if order.status != "open":
+                    continue
+                if symbol is not None and order.symbol != symbol:
+                    continue
+                result.append({
+                    "id": order.id,
+                    "symbol": order.symbol,
+                    "timestamp": order.timestamp,
+                })
+            return result
 
     def cancel_order(self, order_id: str) -> bool:
         with self._lock:
