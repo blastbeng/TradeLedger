@@ -3169,9 +3169,15 @@ class TradingEngine:
             return await self._reevaluate_symbols_impl(force=force)
 
     async def _reevaluate_symbols_impl(self, force: bool = False):
-        # Reset per-cycle spending tracker so new buys are not blocked by prior cycle spending
+        # Reset per-cycle spending tracker, but carry over capital already reserved
+        # by queued buy orders from previous cycles so it is not re-allocated.
+        async with self._queued_orders_lock:
+            queued_buy_total = sum(
+                q.get('amount', 0.0) for q in self.queued_orders
+                if q.get('side') == 'buy'
+            )
         async with self._cycle_spent_lock:
-            self._cycle_spent = 0.0
+            self._cycle_spent = queued_buy_total
         logger.info("Re-evaluation step 1/12: Checking cooldown and fetching asset lists...")
 
         # Respect triggered re-evaluation cooldown for market-condition triggers only.
