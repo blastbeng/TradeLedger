@@ -2055,6 +2055,7 @@ class TradingEngine:
                 if plain_assets:
                     # Fetch quotes in batches to avoid yfinance timeouts on large symbol lists
                     await self._get_quotes_batched(plain_assets, timeout_per_chunk=90.0)
+                    self._portfolio_exposure_cache = None
             except Exception as e:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
             finally:
@@ -8285,6 +8286,7 @@ class TradingEngine:
         if missing_risk:
             try:
                 raw = await self._get_quotes_batched(missing_risk, timeout_per_chunk=45.0)
+                self._portfolio_exposure_cache = None
                 for sym in self.positions:
                     base = sym.split("/")[0]
                     if base in raw:
