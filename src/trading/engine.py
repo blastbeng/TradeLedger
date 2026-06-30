@@ -8122,27 +8122,33 @@ class TradingEngine:
                         if tf:
                             try:
                                 last_check_ts = pos.get("_last_trailing_check_ts", 0)
-                                # Throttle OHLCV fetches: only fetch every ~10% of the
-                                # timeframe interval, clamped between 5 min and 1 hour.
-                                # This prevents excessive DB queries on every 2-minute
-                                # risk check cycle for hundreds of positions.
                                 tf_secs = self._timeframe_to_seconds(tf)
-                                fetch_interval = max(300, min(3600, int(tf_secs * 0.1)))
                                 now_ts = time.time()
-                                # On first check (last_check_ts == 0), initialize
-                                # timestamp but don't fetch (avoids using pre-entry
-                                # candles, matching the original _load_state behavior).
-                                if last_check_ts == 0:
-                                    async with self._positions_lock:
-                                        pos["_last_trailing_check_ts"] = now_ts
-                                elif (now_ts - last_check_ts) >= fetch_interval:
-                                    since_ms = int(last_check_ts * 1000)
-                                    db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, since_ms=since_ms, limit=200)
-                                    if db_candles:
-                                        candle_high = max(c["high"] for c in db_candles)
-                                        candidate_prices.append(candle_high)
-                                    async with self._positions_lock:
-                                        pos["_last_trailing_check_ts"] = now_ts
+                                # Skip OHLCV fetch for very long timeframes (>= 1 month).
+                                # OHLCV data is too sparse (2-10 candles) to provide meaningful
+                                # intra-check price spikes. The ticker price alone is sufficient.
+                                if tf_secs >= 2_592_000:
+                                    if last_check_ts == 0:
+                                        async with self._positions_lock:
+                                            pos["_last_trailing_check_ts"] = now_ts
+                                else:
+                                    # Throttle OHLCV fetches: only fetch every ~10% of the
+                                    # timeframe interval, clamped between 5 min and 1 hour.
+                                    fetch_interval = max(300, min(3600, int(tf_secs * 0.1)))
+                                    # On first check (last_check_ts == 0), initialize
+                                    # timestamp but don't fetch (avoids using pre-entry
+                                    # candles, matching the original _load_state behavior).
+                                    if last_check_ts == 0:
+                                        async with self._positions_lock:
+                                            pos["_last_trailing_check_ts"] = now_ts
+                                    elif (now_ts - last_check_ts) >= fetch_interval:
+                                        since_ms = int(last_check_ts * 1000)
+                                        db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, since_ms=since_ms, limit=200)
+                                        if db_candles:
+                                            candle_high = max(c["high"] for c in db_candles)
+                                            candidate_prices.append(candle_high)
+                                        async with self._positions_lock:
+                                            pos["_last_trailing_check_ts"] = now_ts
                             except Exception as e:
                                 logger.debug(f"Failed to fetch OHLCV for trailing stop on {symbol}: {e}")
 
@@ -8157,54 +8163,69 @@ class TradingEngine:
                         # ATR-based trailing stop (Chandelier Exit)
                         atr_mult = pos.get("trailing_stop_atr_multiple")
                         if atr_mult is not None and atr_mult > 0:
-                            # Fetch ATR from DB if we don't have it in this loop
-                            if "_current_atr" not in pos or time.time() - pos.get("_atr_fetched_at", 0) > 300:
-                                tf = pos.get("timeframe")
-                                if tf:
-                                    try:
-                                        ind = await asyncio.to_thread(get_indicators, symbol, tf)
-                                        if ind and ind.get("atr") and ind["atr"] > 0:
-                                            # Check indicator staleness: if the latest candle
-                                            # used to compute ATR is older than 2× the timeframe
-                                            # interval, the ATR may not reflect current volatility.
-                                            ind_ts = ind.get("_indicator_timestamp")
-                                            atr_is_stale = False
-                                            if ind_ts is not None:
-                                                tf_secs = self._timeframe_to_seconds(tf)
-                                                # Cap max age at 7 days so long timeframes
-                                                # (5Y, 3Y, etc.) don't get an absurdly
-                                                # large staleness window.
-                                                max_age_secs = min(tf_secs * 2, 604800)
-                                                # The indicator timestamp is the candle's
-                                                # start time.  The candle covers a period
-                                                # of tf_secs, so the most recent data is
-                                                # tf_secs more recent than the timestamp.
-                                                # Subtract the candle duration to get the
-                                                # effective age of the data.
-                                                age_secs = (time.time() * 1000 - ind_ts) / 1000
-                                                effective_age = max(0, age_secs - tf_secs)
-                                                if effective_age > max_age_secs:
-                                                    logger.info(
-                                                        f"ATR for {symbol} {tf} is stale "
-                                                        f"(indicator data {effective_age/86400:.1f}d old, "
-                                                        f"max {max_age_secs/86400:.1f}d). "
-                                                        f"Falling back to fixed-percentage trailing stop."
-                                                    )
-                                                    atr_is_stale = True
-                                            async with self._positions_lock:
-                                                if not atr_is_stale:
-                                                    pos["_current_atr"] = ind["atr"]
-                                                else:
-                                                    pos["_current_atr"] = None
-                                                pos["_atr_fetched_at"] = time.time()
-                                    except Exception as e:
-                                        logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {e}")
-                            
-                            current_atr = pos.get("_current_atr")
+                            # Determine the position timeframe for ATR reliability check
+                            tf_for_atr = pos.get("timeframe")
+                            if not tf_for_atr:
+                                for entry in self.current_symbols:
+                                    if entry["symbol"] == symbol:
+                                        tf_for_atr = entry.get("timeframe")
+                                        break
+                            tf_secs_atr = self._timeframe_to_seconds(tf_for_atr) if tf_for_atr else 0
+                            # For very long timeframes (>= 1 month), ATR is computed from
+                            # too few candles (2-10) to be statistically reliable.
+                            # Skip ATR fetch and fall back to fixed percentage trailing stop.
+                            skip_atr = tf_secs_atr >= 2_592_000
+
+                            if not skip_atr:
+                                # Fetch ATR from DB if we don't have it in this loop
+                                if "_current_atr" not in pos or time.time() - pos.get("_atr_fetched_at", 0) > 300:
+                                    tf = pos.get("timeframe")
+                                    if tf:
+                                        try:
+                                            ind = await asyncio.to_thread(get_indicators, symbol, tf)
+                                            if ind and ind.get("atr") and ind["atr"] > 0:
+                                                # Check indicator staleness: if the latest candle
+                                                # used to compute ATR is older than 2× the timeframe
+                                                # interval, the ATR may not reflect current volatility.
+                                                ind_ts = ind.get("_indicator_timestamp")
+                                                atr_is_stale = False
+                                                if ind_ts is not None:
+                                                    tf_secs = self._timeframe_to_seconds(tf)
+                                                    # Cap max age at 7 days so long timeframes
+                                                    # (5Y, 3Y, etc.) don't get an absurdly
+                                                    # large staleness window.
+                                                    max_age_secs = min(tf_secs * 2, 604800)
+                                                    # The indicator timestamp is the candle's
+                                                    # start time.  The candle covers a period
+                                                    # of tf_secs, so the most recent data is
+                                                    # tf_secs more recent than the timestamp.
+                                                    # Subtract the candle duration to get the
+                                                    # effective age of the data.
+                                                    age_secs = (time.time() * 1000 - ind_ts) / 1000
+                                                    effective_age = max(0, age_secs - tf_secs)
+                                                    if effective_age > max_age_secs:
+                                                        logger.info(
+                                                            f"ATR for {symbol} {tf} is stale "
+                                                            f"(indicator data {effective_age/86400:.1f}d old, "
+                                                            f"max {max_age_secs/86400:.1f}d). "
+                                                            f"Falling back to fixed-percentage trailing stop."
+                                                        )
+                                                        atr_is_stale = True
+                                                async with self._positions_lock:
+                                                    if not atr_is_stale:
+                                                        pos["_current_atr"] = ind["atr"]
+                                                    else:
+                                                        pos["_current_atr"] = None
+                                                    pos["_atr_fetched_at"] = time.time()
+                                        except Exception as e:
+                                            logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {e}")
+
+                            current_atr = pos.get("_current_atr") if not skip_atr else None
                             if current_atr is not None and current_atr > 0:
                                 new_stop = highest_price - (current_atr * atr_mult)
                             else:
-                                # Fallback to fixed percentage if ATR fetch failed or is stale
+                                # Fallback to fixed percentage if ATR fetch failed, is stale,
+                                # or was skipped due to very long timeframe
                                 distance = pos.get("trailing_stop_distance_pct")
                                 if distance is not None:
                                     new_stop = highest_price * (1 - distance)
