@@ -1583,7 +1583,7 @@ Maximum symbols to trade: {max_symbols}
             "Example: `{\"backtest_entry_config\": {\"ema_period\": 21, \"ema_direction\": \"above\", \"min_adx\": 25, \"max_rsi\": 65, \"macd_filter\": \"positive\", \"logic\": \"and\"}}`\n"
             "If you omit `backtest_entry_config`, the default (enter every candle) is used. **Always specify `backtest_entry_config` to match your intended entry strategy so the backtest results are accurate.**\n"
             "**Slippage Model:** The backtester uses **dynamic slippage** based on each candle's relative volume and volatility (ATR%). Low-volume candles incur higher slippage (up to 3× base), and high-volatility candles add proportional slippage. This means strategies that trade in thin or volatile markets will show more realistic execution costs. The base slippage is 0.1%, capped at 1%.\n"
-            "**IMPORTANT — Always specify `backtest_entry_config`:** If you omit `backtest_entry_config`, the backtester enters a position at the close of **every single candle** with no entry filters. This tests only your exit parameters (stop-loss, take-profit, trailing stop) and does NOT reflect any actual entry strategy. To get meaningful backtest results, you MUST include a `backtest_entry_config` object that matches your intended entry conditions (e.g., EMA trend filter, ADX strength, RSI range, MACD direction).\n"
+            "**CRITICAL — `backtest_entry_config` is REQUIRED:** If you omit `backtest_entry_config`, the backtester will NOT run and will return an error. You MUST include a `backtest_entry_config` object in every backtest variant that matches your intended entry conditions (e.g., EMA trend filter, ADX strength, RSI range, MACD direction). Without it, backtest results would be misleading because entering every candle does not reflect any actual entry strategy.\n"
             "Your goal is to find parameters that would have been profitable given your chosen entry logic.\n"
             "**Key Recommendations:**\n"
             "- Prefer ATR-based stops and take-profits to adapt to volatility.\n"
@@ -2119,6 +2119,11 @@ Base currency: {base_currency}
         prompt += "Avoid repeating failed combinations. Prefer parameters similar to historically profitable ones.\n\n"
 
     prompt += f"""
+**Backtest Entry Logic (REQUIRED):**
+You MUST include a `backtest_entry_config` object in EVERY backtest variant. If omitted, the backtest will fail with an error and no results will be produced.
+Supported fields: ema_period, ema_direction, min_adx, max_rsi, min_rsi, macd_filter, logic.
+Example: {{"backtest_entry_config": {{"ema_period": 21, "ema_direction": "above", "min_adx": 25, "max_rsi": 65, "macd_filter": "positive", "logic": "and"}}}}
+
 **Validator Constraints:**
 - Minimum max_hold_time_seconds for {assigned_timeframe}: {validator_min} seconds
 - Minimum stop-loss: {min_stop_atr_mult} × ATR% (if ATR available)

@@ -879,6 +879,10 @@ def format_walk_forward_summary(wf_stats: Dict[str, Any]) -> str:
     per_window = wf_stats.get("per_window", [])
     if not per_window:
         return "No walk-forward windows could be computed."
+    # If all windows have errors, surface the first error
+    window_errors = [w.get("error") for w in per_window if w.get("error")]
+    if window_errors and len(window_errors) == len(per_window):
+        return f"Walk-forward failed: {window_errors[0]}"
     lines = [f"Walk-forward ({len(per_window)} windows):"]
     for w in per_window:
         lines.append(
