@@ -201,6 +201,8 @@ class TradingEngine:
         # Balance cache – avoids redundant API calls within an evaluation cycle
         self._balance_cache: Optional[Dict[str, float]] = None
         self._balance_cache_time: float = 0.0
+        self._portfolio_exposure_cache: Optional[Dict[str, float]] = None
+        self._portfolio_exposure_cache_time: float = 0.0
         self._sentiment_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, sentiment_dict)
         self.queued_orders: List[Dict[str, Any]] = []
         # Force immediate LLM evaluation when an entry signal is detected
@@ -2785,6 +2787,7 @@ class TradingEngine:
 
         # Persist any changes made during reconciliation
         await self._save_state(force=True)
+        self._portfolio_exposure_cache = None
 
     def _append_trade(self, trade: Dict[str, Any]):
         """Append a trade to history and prune old entries to bound memory usage."""
@@ -5213,6 +5216,18 @@ class TradingEngine:
 
     async def _compute_portfolio_exposure_summary(self, base_balance: float) -> Dict[str, float]:
         """Compute portfolio exposure, stop-loss risk, and available capital for the prompt."""
+        now = time.time()
+        if (
+            self._portfolio_exposure_cache is not None
+            and (now - self._portfolio_exposure_cache_time) < 30
+        ):
+            # Return cached ticker-dependent values, but recompute available capital
+            # from the current cycle_spent (which changes during the cycle).
+            result = dict(self._portfolio_exposure_cache)
+            async with self._cycle_spent_lock:
+                result["portfolio_available_capital"] = max(0.0, base_balance - self._cycle_spent)
+            return result
+
         portfolio_total_value = base_balance
         portfolio_exposure = 0.0
         portfolio_stop_risk = 0.0
@@ -5234,7 +5249,7 @@ class TradingEngine:
         portfolio_stop_risk_pct = (portfolio_stop_risk / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
         async with self._cycle_spent_lock:
             portfolio_available_capital = max(0.0, base_balance - self._cycle_spent)
-        return {
+        result = {
             "portfolio_total_value": portfolio_total_value,
             "portfolio_exposure": portfolio_exposure,
             "portfolio_stop_risk": portfolio_stop_risk,
@@ -5242,6 +5257,9 @@ class TradingEngine:
             "portfolio_stop_risk_pct": portfolio_stop_risk_pct,
             "portfolio_available_capital": portfolio_available_capital,
         }
+        self._portfolio_exposure_cache = result
+        self._portfolio_exposure_cache_time = now
+        return result
 
     async def _compute_multi_tf_indicators(
         self, symbol: str, ohlcv_data: Dict[str, List[List]], assigned_tf: str
@@ -9687,6 +9705,7 @@ class TradingEngine:
                 self._balance_cache = None  # force refresh on next fetch
                 await asyncio.to_thread(insert_trade, order)
                 await self._save_state(force=True)
+                self._portfolio_exposure_cache = None
                 if self.notifier:
                     # --- Format symbol for notification ---
                     stock_name = await self._get_stock_name(symbol)
@@ -12656,6 +12675,7 @@ class TradingEngine:
             self._cycle_spent += trade_dict['cost']
         await asyncio.to_thread(insert_trade, trade_dict)
         await self._save_state(force=True)
+        self._portfolio_exposure_cache = None
         if self.notifier:
             stock_name = await self._get_stock_name(symbol)
             display_symbol = self._format_symbol_display(symbol, stock_name, timeframe)
@@ -12836,6 +12856,7 @@ class TradingEngine:
         self._balance_cache = None
         await asyncio.to_thread(insert_trade, trade_dict)
         await self._save_state(force=True)
+        self._portfolio_exposure_cache = None
         if self.notifier:
             reason_labels = {
                 "manual_sell": "🖐️ Manual",
