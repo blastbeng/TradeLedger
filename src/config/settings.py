@@ -158,6 +158,16 @@ class Settings(BaseSettings):
             raise ValueError("HARD_MAX_LOSS_PCT must be between 0.0 and 1.0")
         return v
 
+    # BTP-specific hard max loss (0.05 = 5%) — BTPs are lower volatility than stocks
+    BTP_HARD_MAX_LOSS_PCT: float = 0.05
+
+    @field_validator("BTP_HARD_MAX_LOSS_PCT")
+    @classmethod
+    def validate_btp_hard_max_loss_pct(cls, v: float) -> float:
+        if not (0.0 < v <= 1.0):
+            raise ValueError("BTP_HARD_MAX_LOSS_PCT must be between 0.0 and 1.0")
+        return v
+
     # Maximum LLM stop-loss reviews before force-selling
     MAX_STOP_LOSS_REVIEWS: int = 10
 

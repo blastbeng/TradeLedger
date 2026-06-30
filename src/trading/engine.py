@@ -2485,8 +2485,10 @@ class TradingEngine:
             maturity_str = btp_maturity_map.get(base)
             if maturity_str is None:
                 continue
+            maturity_dt = None
+            maturity_str_clean = maturity_str.strip()
+            # Try ISO 8601 formats first (with or without time component)
             try:
-                maturity_str_clean = maturity_str.strip()
                 if "T" in maturity_str_clean:
                     maturity_dt = datetime.fromisoformat(maturity_str_clean.replace("Z", "+00:00"))
                 else:
@@ -2494,11 +2496,31 @@ class TradingEngine:
                 if maturity_dt.tzinfo is None:
                     maturity_dt = maturity_dt.replace(tzinfo=timezone.utc)
             except (ValueError, TypeError):
-                try:
-                    maturity_dt = datetime.strptime(maturity_str, "%d/%m/%Y").replace(tzinfo=timezone.utc)
-                except (ValueError, TypeError):
-                    logger.debug(f"Could not parse maturity date '{maturity_str}' for BTP {symbol}")
-                    continue
+                pass
+
+            # Try common European date formats
+            if maturity_dt is None:
+                _date_formats = [
+                    "%d/%m/%Y",       # 01/10/2025
+                    "%d-%m-%Y",       # 01-10-2025
+                    "%d.%m.%Y",       # 01.10.2025
+                    "%d/%m/%y",       # 01/10/25
+                    "%d %b %Y",       # 01 Oct 2025
+                    "%d %B %Y",       # 01 October 2025
+                    "%B %d, %Y",      # October 01, 2025
+                    "%Y-%m-%d",       # 2025-10-01 (ISO date only)
+                    "%Y/%m/%d",       # 2025/10/01
+                ]
+                for fmt in _date_formats:
+                    try:
+                        maturity_dt = datetime.strptime(maturity_str_clean, fmt).replace(tzinfo=timezone.utc)
+                        break
+                    except (ValueError, TypeError):
+                        continue
+
+            if maturity_dt is None:
+                logger.debug(f"Could not parse maturity date '{maturity_str}' for BTP {symbol}")
+                continue
             if now_dt < maturity_dt:
                 continue
             # BTP has matured – close at par value
@@ -8134,15 +8156,19 @@ class TradingEngine:
                 entry_price = pos["price"]
                 if entry_price > 0:
                     unrealized_loss_pct = (entry_price - current_price) / entry_price
-                    if unrealized_loss_pct >= settings.HARD_MAX_LOSS_PCT:
+                    # BTPs use a tighter hard max loss threshold (lower volatility)
+                    _base_sym = symbol.split("/")[0]
+                    _is_btp = re.match(r'^IT[A-Z0-9]{10}$', _base_sym) is not None
+                    _hard_max_loss = settings.BTP_HARD_MAX_LOSS_PCT if _is_btp else settings.HARD_MAX_LOSS_PCT
+                    if unrealized_loss_pct >= _hard_max_loss:
                         logger.warning(
                             f"Hard max loss threshold reached for {symbol}: "
-                            f"unrealized loss {unrealized_loss_pct:.2%} >= {settings.HARD_MAX_LOSS_PCT:.2%}. Forcing SELL."
+                            f"unrealized loss {unrealized_loss_pct:.2%} >= {_hard_max_loss:.2%}. Forcing SELL."
                         )
                         if self.notifier:
                             await self.notifier.send_notification(
                                 f"⛔ Hard stop for {display_symbol}: unrealized loss {unrealized_loss_pct:.2%} "
-                                f"exceeds maximum {settings.HARD_MAX_LOSS_PCT:.2%} – force selling.",
+                                f"exceeds maximum {_hard_max_loss:.2%} – force selling.",
                                 summary={
                                     "symbol": symbol,
                                     "action": "SELL",
@@ -8165,7 +8191,15 @@ class TradingEngine:
 
                 # Trailing stop update (only if enabled)
                 # Skip if a native trailing-stop order is already handling it
-                if pos.get("trailing_stop") and pos.get("stop_loss_order_type") != "trailing_stop":
+                # Skip for BTPs — they trade in narrow ranges and trailing stops
+                # are inappropriate for bond instruments.
+                _ts_base_sym = symbol.split("/")[0]
+                _ts_is_btp = re.match(r'^IT[A-Z0-9]{10}$', _ts_base_sym) is not None
+                if (
+                    pos.get("trailing_stop")
+                    and pos.get("stop_loss_order_type") != "trailing_stop"
+                    and not _ts_is_btp
+                ):
                     # Check activation threshold
                     activation_pct = pos.get("trailing_stop_activation_pct")
                     activated = True
