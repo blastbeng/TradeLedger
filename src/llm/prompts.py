@@ -230,11 +230,7 @@ Key principles:
   - In high-volatility environments, you may use a larger multiplier (5.0–8.0) to capture larger swings.
   - The engine will compute the take-profit distance as `take_profit_atr_multiple × ATR` and convert it to a percentage automatically.
   - **Required parameter:** `"take_profit_pct"` is ALWAYS required, even when using "atr_multiple" method. Used as a fallback if ATR is unavailable. When using "atr_multiple", set this to your best estimate of what the ATR-based take-profit would be.
-- **Transaction Costs (Intesa Sanpaolo Investo):** The simulator applies the following fees per trade:
-  - **Bank Commission:** 0.24% of trade value, with a minimum of €3.50. Plus a fixed execution fee of €2.50 per order.
-  - **Tobin Tax (Italian State Tax):** 0.12% of trade value, applied ONLY on BUY orders.
-  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately 0.60% of the trade value PLUS €5.00 in fixed fees (for larger trades > €1,500). For smaller trades, the €3.50 minimum commission applies on both sides, making the total fixed cost €12.00.
-  - **CRITICAL:** You MUST ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 trade, total fees are ~€12.12 (1.21%), so `take_profit_pct` must be > 1.22%. For a €10,000 trade, total fees are ~€65 (0.65%), so `take_profit_pct` must be > 0.66%. Never set a take-profit target lower than the break-even cost.
+__STOCK_FEE_SECTION__
 __BTP_FEE_SECTION__
 - **Required parameter for every BUY/SELL:**
   - `"take_profit_pct"`: a decimal between 0.005 and 2.0 (e.g., 0.05 for 5%).
@@ -328,6 +324,34 @@ Output strict JSON only. The response must start with '{' or '[' and end with '}
 SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
     "__MAX_BACKTEST_VARIANTS__", str(settings.MAX_BACKTEST_VARIANTS)
 )
+
+# Replace stock fee section with configurable settings
+stock_fee_perc_pct = settings.STOCK_FEE_PERC * 100
+stock_fee_min_eur = settings.STOCK_FEE_MIN
+stock_fee_fixed_eur = settings.STOCK_FEE_FIXED
+tobin_tax_pct = settings.TOBIN_TAX_RATE * 100
+round_trip_perc_pct = (settings.STOCK_FEE_PERC * 2 + settings.TOBIN_TAX_RATE) * 100
+total_fixed_fees = stock_fee_fixed_eur * 2
+small_trade_fixed_cost = stock_fee_min_eur * 2
+
+# Calculate examples for €1,000 and €10,000 trades
+trade_1000_buy_fee = max(stock_fee_min_eur, 1000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur + (1000 * settings.TOBIN_TAX_RATE)
+trade_1000_sell_fee = max(stock_fee_min_eur, 1000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur
+trade_1000_total = trade_1000_buy_fee + trade_1000_sell_fee
+trade_1000_pct = (trade_1000_total / 1000) * 100
+
+trade_10000_buy_fee = max(stock_fee_min_eur, 10000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur + (10000 * settings.TOBIN_TAX_RATE)
+trade_10000_sell_fee = max(stock_fee_min_eur, 10000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur
+trade_10000_total = trade_10000_buy_fee + trade_10000_sell_fee
+trade_10000_pct = (trade_10000_total / 10000) * 100
+
+stock_fee_text = f"""- **Transaction Costs (Intesa Sanpaolo Investo):** The simulator applies the following fees per trade:
+  - **Bank Commission:** {stock_fee_perc_pct:.2f}% of trade value, with a minimum of €{stock_fee_min_eur:.2f}. Plus a fixed execution fee of €{stock_fee_fixed_eur:.2f} per order.
+  - **Tobin Tax (Italian State Tax):** {tobin_tax_pct:.2f}% of trade value, applied ONLY on BUY orders.
+  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately {round_trip_perc_pct:.2f}% of the trade value PLUS €{total_fixed_fees:.2f} in fixed fees (for larger trades > €1,500). For smaller trades, the €{stock_fee_min_eur:.2f} minimum commission applies on both sides, making the total fixed cost €{small_trade_fixed_cost:.2f}.
+  - **CRITICAL:** You MUST ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 trade, total fees are ~€{trade_1000_total:.2f} ({trade_1000_pct:.2f}%), so `take_profit_pct` must be > {trade_1000_pct + 0.01:.2f}%. For a €10,000 trade, total fees are ~€{trade_10000_total:.2f} ({trade_10000_pct:.2f}%), so `take_profit_pct` must be > {trade_10000_pct + 0.01:.2f}%. Never set a take-profit target lower than the break-even cost."""
+
+SYSTEM_PROMPT = SYSTEM_PROMPT.replace("__STOCK_FEE_SECTION__", stock_fee_text)
 
 # Replace BTP fee section based on primary issuance setting
 if settings.BTP_IS_PRIMARY_ISSUANCE:
