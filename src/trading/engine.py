@@ -7987,20 +7987,23 @@ class TradingEngine:
                                 # timestamp but don't fetch (avoids using pre-entry
                                 # candles, matching the original _load_state behavior).
                                 if last_check_ts == 0:
-                                    pos["_last_trailing_check_ts"] = now_ts
+                                    async with self._positions_lock:
+                                        pos["_last_trailing_check_ts"] = now_ts
                                 elif (now_ts - last_check_ts) >= fetch_interval:
                                     since_ms = int(last_check_ts * 1000)
                                     db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, since_ms=since_ms, limit=200)
                                     if db_candles:
                                         candle_high = max(c["high"] for c in db_candles)
                                         candidate_prices.append(candle_high)
-                                    pos["_last_trailing_check_ts"] = now_ts
+                                    async with self._positions_lock:
+                                        pos["_last_trailing_check_ts"] = now_ts
                             except Exception as e:
                                 logger.debug(f"Failed to fetch OHLCV for trailing stop on {symbol}: {e}")
 
                         best_high = max(candidate_prices)
-                        if "_highest_price" not in pos or best_high > pos["_highest_price"]:
-                            pos["_highest_price"] = best_high
+                        async with self._positions_lock:
+                            if "_highest_price" not in pos or best_high > pos["_highest_price"]:
+                                pos["_highest_price"] = best_high
 
                         highest_price = pos["_highest_price"]
                         new_stop = None
@@ -8042,11 +8045,12 @@ class TradingEngine:
                                                         f"Falling back to fixed-percentage trailing stop."
                                                     )
                                                     atr_is_stale = True
-                                            if not atr_is_stale:
-                                                pos["_current_atr"] = ind["atr"]
-                                            else:
-                                                pos["_current_atr"] = None
-                                            pos["_atr_fetched_at"] = time.time()
+                                            async with self._positions_lock:
+                                                if not atr_is_stale:
+                                                    pos["_current_atr"] = ind["atr"]
+                                                else:
+                                                    pos["_current_atr"] = None
+                                                pos["_atr_fetched_at"] = time.time()
                                     except Exception as e:
                                         logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {e}")
                             
@@ -8064,13 +8068,15 @@ class TradingEngine:
                             if distance is not None:
                                 new_stop = highest_price * (1 - distance)
 
-                        if new_stop is not None and new_stop > pos["stop_loss"]:
-                            # Only update trailing stop if the improvement is at least 0.1%
-                            # to avoid over-tightening on micro-movements (medium/long-term)
-                            min_improvement = pos["stop_loss"] * 0.001
-                            if new_stop - pos["stop_loss"] >= min_improvement:
-                                pos["stop_loss"] = new_stop
-                                logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
+                        if new_stop is not None:
+                            async with self._positions_lock:
+                                if new_stop > pos["stop_loss"]:
+                                    # Only update trailing stop if the improvement is at least 0.1%
+                                    # to avoid over-tightening on micro-movements (medium/long-term)
+                                    min_improvement = pos["stop_loss"] * 0.001
+                                    if new_stop - pos["stop_loss"] >= min_improvement:
+                                        pos["stop_loss"] = new_stop
+                                        logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
 
                 # --- Trailing take-profit ---
                 if pos.get("trailing_take_profit") and pos.get("trailing_take_profit_distance_pct"):
