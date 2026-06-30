@@ -485,7 +485,7 @@ class TradingEngine:
             logger.warning(f"Failed to fetch sentiment for {base}: {e}")
             return None
 
-    async def _get_clock(self, ttl: float = 300.0) -> Optional[ClockInfo]:
+    async def _get_clock(self, ttl: float = 60.0) -> Optional[ClockInfo]:
         """Return Euronext Milan market clock info, cached for `ttl` seconds.
 
         Uses pandas_market_calendars only to detect holidays/weekends.
@@ -1216,7 +1216,7 @@ class TradingEngine:
                     self._last_market_closed_notify_time = 0.0
             except Exception as e:
                 logger.error(f"Market clock monitor error: {e}", exc_info=True)
-            await asyncio.sleep(300)  # check every 5 minutes (medium/long-term)
+            await asyncio.sleep(60)  # check every 1 minute
 
     async def _get_sentiment_str(self, symbol: str) -> str:
         """Get a short news sentiment string for notifications, including an LLM summary."""
