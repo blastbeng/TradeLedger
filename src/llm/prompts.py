@@ -322,6 +322,62 @@ Output strict JSON only. The response must start with '{' or '[' and end with '}
 
 """
 
+def _compute_stock_fee_text() -> str:
+    """Compute stock fee section text from current settings."""
+    stock_fee_perc_pct = settings.STOCK_FEE_PERC * 100
+    stock_fee_min_eur = settings.STOCK_FEE_MIN
+    stock_fee_fixed_eur = settings.STOCK_FEE_FIXED
+    tobin_tax_pct = settings.TOBIN_TAX_RATE * 100
+    round_trip_perc_pct = (settings.STOCK_FEE_PERC * 2 + settings.TOBIN_TAX_RATE) * 100
+    total_fixed_fees = stock_fee_fixed_eur * 2
+    small_trade_fixed_cost = stock_fee_min_eur * 2
+
+    trade_1000_buy_fee = max(stock_fee_min_eur, 1000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur + (1000 * settings.TOBIN_TAX_RATE)
+    trade_1000_sell_fee = max(stock_fee_min_eur, 1000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur
+    trade_1000_total = trade_1000_buy_fee + trade_1000_sell_fee
+    trade_1000_pct = (trade_1000_total / 1000) * 100
+
+    trade_10000_buy_fee = max(stock_fee_min_eur, 10000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur + (10000 * settings.TOBIN_TAX_RATE)
+    trade_10000_sell_fee = max(stock_fee_min_eur, 10000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur
+    trade_10000_total = trade_10000_buy_fee + trade_10000_sell_fee
+    trade_10000_pct = (trade_10000_total / 10000) * 100
+
+    return f"""- **Transaction Costs (Intesa Sanpaolo Investo):** The simulator applies the following fees per trade:
+  - **Bank Commission:** {stock_fee_perc_pct:.2f}% of trade value, with a minimum of €{stock_fee_min_eur:.2f}. Plus a fixed execution fee of €{stock_fee_fixed_eur:.2f} per order.
+  - **Tobin Tax (Italian State Tax):** {tobin_tax_pct:.2f}% of trade value, applied ONLY on BUY orders.
+  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately {round_trip_perc_pct:.2f}% of the trade value PLUS €{total_fixed_fees:.2f} in fixed fees (for larger trades > €1,500). For smaller trades, the €{stock_fee_min_eur:.2f} minimum commission applies on both sides, making the total fixed cost €{small_trade_fixed_cost:.2f}.
+  - **CRITICAL:** You MUST ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 trade, total fees are ~€{trade_1000_total:.2f} ({trade_1000_pct:.2f}%), so `take_profit_pct` must be > {trade_1000_pct + 0.01:.2f}%. For a €10,000 trade, total fees are ~€{trade_10000_total:.2f} ({trade_10000_pct:.2f}%), so `take_profit_pct` must be > {trade_10000_pct + 0.01:.2f}%. Never set a take-profit target lower than the break-even cost."""
+
+
+def _compute_btp_fee_text() -> str:
+    """Compute BTP fee section text from current settings."""
+    if settings.BTP_IS_PRIMARY_ISSUANCE:
+        return """- **BTP Bond Transaction Costs:** BTP bonds purchased via primary issuance have zero fees.
+  - **Bank Commission:** €0.00 (exempt for primary issuance).
+  - **Tobin Tax:** Exempt (sovereign bonds are not subject to Tobin tax).
+  - **Total Round-Trip Cost:** €0.00.
+  - **CRITICAL:** For BTPs, `take_profit_pct` can be as low as 0.001 (0.1%) since there are no transaction costs."""
+    else:
+        btp_fee_perc_pct = settings.BTP_FEE_PERC * 100
+        btp_min_fee_eur = settings.BTP_MIN_FEE
+        round_trip_perc_pct = btp_fee_perc_pct * 2
+        small_trade_fixed_cost = btp_min_fee_eur * 2
+
+        trade_1000_fee = max(btp_min_fee_eur, 1000 * settings.BTP_FEE_PERC)
+        trade_1000_total = trade_1000_fee * 2
+        trade_1000_pct = (trade_1000_total / 1000) * 100
+
+        trade_10000_fee = max(btp_min_fee_eur, 10000 * settings.BTP_FEE_PERC)
+        trade_10000_total = trade_10000_fee * 2
+        trade_10000_pct = (trade_10000_total / 10000) * 100
+
+        return f"""- **BTP Bond Transaction Costs:** BTP bonds have different fees:
+  - **Bank Commission:** {btp_fee_perc_pct:.2f}% of trade value, with a minimum of €{btp_min_fee_eur:.2f}. No fixed execution fee.
+  - **Tobin Tax:** Exempt (sovereign bonds are not subject to Tobin tax).
+  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately {round_trip_perc_pct:.2f}% of the trade value (for larger trades). For smaller trades, the €{btp_min_fee_eur:.2f} minimum applies on both sides, making the total fixed cost €{small_trade_fixed_cost:.2f}.
+  - **CRITICAL:** For BTPs, ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 BTP trade, total fees are ~€{trade_1000_total:.2f} ({trade_1000_pct:.2f}%), so `take_profit_pct` must be > {trade_1000_pct + 0.01:.2f}%. For a €10,000 BTP trade, total fees are ~€{trade_10000_total:.2f} ({trade_10000_pct:.2f}%), so `take_profit_pct` must be > {trade_10000_pct + 0.01:.2f}%."""
+
+
 def build_system_prompt() -> str:
     """Build the system prompt with current settings values.
 
@@ -331,63 +387,9 @@ def build_system_prompt() -> str:
     prompt = SYSTEM_PROMPT_TEMPLATE.replace(
         "__MAX_BACKTEST_VARIANTS__", str(settings.MAX_BACKTEST_VARIANTS)
     )
-    prompt = prompt.replace("__STOCK_FEE_SECTION__", stock_fee_text)
-    prompt = prompt.replace("__BTP_FEE_SECTION__", btp_fee_text)
+    prompt = prompt.replace("__STOCK_FEE_SECTION__", _compute_stock_fee_text())
+    prompt = prompt.replace("__BTP_FEE_SECTION__", _compute_btp_fee_text())
     return prompt
-
-# Replace stock fee section with configurable settings
-stock_fee_perc_pct = settings.STOCK_FEE_PERC * 100
-stock_fee_min_eur = settings.STOCK_FEE_MIN
-stock_fee_fixed_eur = settings.STOCK_FEE_FIXED
-tobin_tax_pct = settings.TOBIN_TAX_RATE * 100
-round_trip_perc_pct = (settings.STOCK_FEE_PERC * 2 + settings.TOBIN_TAX_RATE) * 100
-total_fixed_fees = stock_fee_fixed_eur * 2
-small_trade_fixed_cost = stock_fee_min_eur * 2
-
-# Calculate examples for €1,000 and €10,000 trades
-trade_1000_buy_fee = max(stock_fee_min_eur, 1000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur + (1000 * settings.TOBIN_TAX_RATE)
-trade_1000_sell_fee = max(stock_fee_min_eur, 1000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur
-trade_1000_total = trade_1000_buy_fee + trade_1000_sell_fee
-trade_1000_pct = (trade_1000_total / 1000) * 100
-
-trade_10000_buy_fee = max(stock_fee_min_eur, 10000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur + (10000 * settings.TOBIN_TAX_RATE)
-trade_10000_sell_fee = max(stock_fee_min_eur, 10000 * settings.STOCK_FEE_PERC) + stock_fee_fixed_eur
-trade_10000_total = trade_10000_buy_fee + trade_10000_sell_fee
-trade_10000_pct = (trade_10000_total / 10000) * 100
-
-stock_fee_text = f"""- **Transaction Costs (Intesa Sanpaolo Investo):** The simulator applies the following fees per trade:
-  - **Bank Commission:** {stock_fee_perc_pct:.2f}% of trade value, with a minimum of €{stock_fee_min_eur:.2f}. Plus a fixed execution fee of €{stock_fee_fixed_eur:.2f} per order.
-  - **Tobin Tax (Italian State Tax):** {tobin_tax_pct:.2f}% of trade value, applied ONLY on BUY orders.
-  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately {round_trip_perc_pct:.2f}% of the trade value PLUS €{total_fixed_fees:.2f} in fixed fees (for larger trades > €1,500). For smaller trades, the €{stock_fee_min_eur:.2f} minimum commission applies on both sides, making the total fixed cost €{small_trade_fixed_cost:.2f}.
-  - **CRITICAL:** You MUST ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 trade, total fees are ~€{trade_1000_total:.2f} ({trade_1000_pct:.2f}%), so `take_profit_pct` must be > {trade_1000_pct + 0.01:.2f}%. For a €10,000 trade, total fees are ~€{trade_10000_total:.2f} ({trade_10000_pct:.2f}%), so `take_profit_pct` must be > {trade_10000_pct + 0.01:.2f}%. Never set a take-profit target lower than the break-even cost."""
-
-# Replace BTP fee section based on primary issuance setting
-if settings.BTP_IS_PRIMARY_ISSUANCE:
-    btp_fee_text = """- **BTP Bond Transaction Costs:** BTP bonds purchased via primary issuance have zero fees.
-  - **Bank Commission:** €0.00 (exempt for primary issuance).
-  - **Tobin Tax:** Exempt (sovereign bonds are not subject to Tobin tax).
-  - **Total Round-Trip Cost:** €0.00.
-  - **CRITICAL:** For BTPs, `take_profit_pct` can be as low as 0.001 (0.1%) since there are no transaction costs."""
-else:
-    btp_fee_perc_pct = settings.BTP_FEE_PERC * 100
-    btp_min_fee_eur = settings.BTP_MIN_FEE
-    round_trip_perc_pct = btp_fee_perc_pct * 2
-    small_trade_fixed_cost = btp_min_fee_eur * 2
-
-    # Calculate examples for €1,000 and €10,000 trades
-    trade_1000_fee = max(btp_min_fee_eur, 1000 * settings.BTP_FEE_PERC)
-    trade_1000_total = trade_1000_fee * 2
-    trade_1000_pct = (trade_1000_total / 1000) * 100
-
-    trade_10000_fee = max(btp_min_fee_eur, 10000 * settings.BTP_FEE_PERC)
-    trade_10000_total = trade_10000_fee * 2
-    trade_10000_pct = (trade_10000_total / 10000) * 100
-
-    btp_fee_text = f"""- **BTP Bond Transaction Costs:** BTP bonds have different fees:
-  - **Bank Commission:** {btp_fee_perc_pct:.2f}% of trade value, with a minimum of €{btp_min_fee_eur:.2f}. No fixed execution fee.
-  - **Tobin Tax:** Exempt (sovereign bonds are not subject to Tobin tax).
-  - **Total Round-Trip Cost:** For a BUY followed by a SELL, the total fee is approximately {round_trip_perc_pct:.2f}% of the trade value (for larger trades). For smaller trades, the €{btp_min_fee_eur:.2f} minimum applies on both sides, making the total fixed cost €{small_trade_fixed_cost:.2f}.
-  - **CRITICAL:** For BTPs, ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 BTP trade, total fees are ~€{trade_1000_total:.2f} ({trade_1000_pct:.2f}%), so `take_profit_pct` must be > {trade_1000_pct + 0.01:.2f}%. For a €10,000 BTP trade, total fees are ~€{trade_10000_total:.2f} ({trade_10000_pct:.2f}%), so `take_profit_pct` must be > {trade_10000_pct + 0.01:.2f}%."""
 
 SYSTEM_PROMPT = build_system_prompt()
 
