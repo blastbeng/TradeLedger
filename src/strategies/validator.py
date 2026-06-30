@@ -310,6 +310,26 @@ def validate_signal(
             if og not in ("warn", "skip"):
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid on_gaps (must be 'warn' or 'skip')")
 
+        if "fee_rate" in params:
+            fr = params["fee_rate"]
+            if not isinstance(fr, (int, float)) or fr < 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid fee_rate")
+
+        if "max_trades" in params:
+            mt = params["max_trades"]
+            if not isinstance(mt, int) or mt <= 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_trades")
+
+        if "initial_balance" in params:
+            ib = params["initial_balance"]
+            if not isinstance(ib, (int, float)) or ib <= 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid initial_balance")
+
+        if "trade_value" in params:
+            tv = params["trade_value"]
+            if not isinstance(tv, (int, float)) or tv <= 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid trade_value")
+
         # Logical consistency checks (no hardcoded values)
         if sl is not None and tp <= sl:
             return Signal(action="HOLD", confidence=0.0, reasoning="take_profit_pct must be greater than stop_loss_pct")
