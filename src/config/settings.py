@@ -316,7 +316,7 @@ class Settings(BaseSettings):
 
     # OHLCV timeframes for multi-timeframe analysis
     # Default order is longest to shortest to ensure larger timeframes are fetched first
-    OHLCV_TIMEFRAMES: list[str] = ["5Y", "3Y", "1Y", "6M", "3M", "1M", "1w", "1d", "1h"]
+    OHLCV_TIMEFRAMES: list[str] = ["1Y", "6M", "3M", "1M", "1w", "1d", "1h"]
 
     # Market data download interval (seconds)
     MARKET_DATA_REFRESH_SECONDS: int = 900
@@ -384,7 +384,7 @@ class Settings(BaseSettings):
     def validate_ohlcv_timeframes(cls, v: list[str]) -> list[str]:
         if not isinstance(v, list) or not all(isinstance(tf, str) for tf in v):
             raise ValueError("OHLCV_TIMEFRAMES must be a list of strings")
-        allowed = {"1h", "1d", "1w", "1M", "3M", "6M", "1Y", "3Y", "5Y"}
+        allowed = {"1h", "1d", "1w", "1M", "3M", "6M", "1Y"}
         invalid = set(v) - allowed
         if invalid:
             raise ValueError(f"OHLCV_TIMEFRAMES contains unsupported timeframes: {invalid}. Allowed medium/long-term timeframes: {allowed}")

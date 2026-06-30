@@ -3053,8 +3053,6 @@ class TradingEngine:
                         tf_base_interval = 172800 # 2 days
                     elif tf in ("6M", "1Y"):
                         tf_base_interval = 604800 # 1 week
-                    elif tf in ("3Y", "5Y"):
-                        tf_base_interval = 1209600 # 2 weeks
                     else:
                         tf_base_interval = 3600 # 1 hour default
 
@@ -10393,7 +10391,7 @@ class TradingEngine:
         # crossovers, which fire on every candle for long timeframes because
         # indicators change dramatically between candles (e.g., RSI 20→80).
         tf_seconds = self._timeframe_to_seconds(timeframe)
-        if tf_seconds >= 2_592_000:  # >= 1 month (1M, 3M, 6M, 1Y, 3Y, 5Y)
+        if tf_seconds >= 2_592_000:  # >= 1 month (1M, 3M, 6M, 1Y)
             # 1. Trend direction reversal: +DI crosses above -DI
             prev_plus_di = prev.get("plus_di")
             prev_minus_di = prev.get("minus_di")
