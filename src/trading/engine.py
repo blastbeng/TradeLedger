@@ -8079,6 +8079,7 @@ class TradingEngine:
         self._append_trade(trade)
         await asyncio.to_thread(insert_trade, trade)
         await self._save_state(force=True)
+        self._portfolio_exposure_cache = None
         logger.info(f"Manual trade logged: {side} {quantity} {symbol} @ {price:.4f}")
         return {"status": "ok", "trade": trade}
 
@@ -11326,6 +11327,7 @@ class TradingEngine:
             pos["timeframe"] = timeframe
 
         logger.info(f"Updated risk parameters for {symbol} from LLM strategy_params")
+        self._portfolio_exposure_cache = None
         self._state_dirty = True
 
     def _compute_exit_order_prices(
@@ -11873,6 +11875,7 @@ class TradingEngine:
             self._append_trade(order)
             await asyncio.to_thread(insert_trade, order)
             await self._save_state(force=True)
+            self._portfolio_exposure_cache = None
 
             if self.notifier:
                 pnl_pct = (realized_pnl / prorated_cost_basis * 100) if prorated_cost_basis > 0 else 0.0
@@ -12063,6 +12066,7 @@ class TradingEngine:
             self._append_trade(order)
             await asyncio.to_thread(insert_trade, order)
             await self._save_state(force=True)
+            self._portfolio_exposure_cache = None
 
             if self.notifier:
                 pnl_pct = (realized_pnl / prorated_cost_basis * 100) if prorated_cost_basis > 0 else 0.0
@@ -12167,6 +12171,7 @@ class TradingEngine:
                 self._append_trade(order)
                 await asyncio.to_thread(insert_trade, order)
                 await self._save_state(force=True)
+                self._portfolio_exposure_cache = None
 
             # Cancel any remaining exit orders before removing the position
             await self._cancel_exit_orders(symbol)
