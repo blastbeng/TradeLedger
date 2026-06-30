@@ -52,6 +52,7 @@ from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary
 from src.utils.redis_client import get_redis_client
+from src.utils.symbol_utils import is_btp_isin
 from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results
 
 logger = logging.getLogger(__name__)
@@ -2503,7 +2504,7 @@ class TradingEngine:
         for entry in list(self.current_symbols):
             symbol = entry["symbol"]
             base = symbol.split("/")[0]
-            if not re.match(r'^IT[A-Z0-9]{10}$', base):
+            if not is_btp_isin(base):
                 continue
             maturity_str = btp_maturity_map.get(base)
             if maturity_str is None:
@@ -2628,7 +2629,7 @@ class TradingEngine:
                         pos = self.positions.pop(symbol)
                     cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
                     base = symbol.split("/")[0]
-                    is_btp = re.match(r'^IT[A-Z0-9]{10}$', base) is not None
+                    is_btp = is_btp_isin(base)
                     if is_btp:
                         close_price = 100.0  # par value for delisted BTPs
                         close_cost = pos["amount"] * close_price
@@ -6209,7 +6210,7 @@ class TradingEngine:
         Both _process_symbol and _prepare_simulation_data use this to avoid duplication.
         """
         base_symbol = symbol.split("/")[0]
-        is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
+        is_btp = is_btp_isin(base_symbol)
         tf_seconds = self._timeframe_to_seconds(assigned_tf)
 
         # --- Fetch ticker ---
@@ -8264,7 +8265,7 @@ class TradingEngine:
                     unrealized_loss_pct = (entry_price - current_price) / entry_price
                     # BTPs use a tighter hard max loss threshold (lower volatility)
                     _base_sym = symbol.split("/")[0]
-                    _is_btp = re.match(r'^IT[A-Z0-9]{10}$', _base_sym) is not None
+                    _is_btp = is_btp_isin(symbol)
                     _hard_max_loss = settings.BTP_HARD_MAX_LOSS_PCT if _is_btp else settings.HARD_MAX_LOSS_PCT
                     if unrealized_loss_pct >= _hard_max_loss:
                         logger.warning(
@@ -8300,7 +8301,7 @@ class TradingEngine:
                 # Skip for BTPs — they trade in narrow ranges and trailing stops
                 # are inappropriate for bond instruments.
                 _ts_base_sym = symbol.split("/")[0]
-                _ts_is_btp = re.match(r'^IT[A-Z0-9]{10}$', _ts_base_sym) is not None
+                _ts_is_btp = is_btp_isin(symbol)
                 # Warn if a BTP position has trailing_stop enabled (not supported by Intesa Sanpaolo Investo)
                 if _ts_is_btp and pos.get("trailing_stop") and not pos.get("_ts_btp_warned"):
                     logger.warning(
@@ -9151,7 +9152,7 @@ class TradingEngine:
             return
         base, quote = parts
         _exec_base = symbol.split("/")[0]
-        _exec_is_btp = re.match(r'^IT[A-Z0-9]{10}$', _exec_base) is not None
+        _exec_is_btp = is_btp_isin(symbol)
         balance = await self._get_cached_balance()
 
         if signal.action == "BUY":
@@ -9214,8 +9215,7 @@ class TradingEngine:
                         )
                     return
             # --- BTP take-profit cap: enforce smaller targets for bonds ---
-            _buy_base = symbol.split("/")[0]
-            if re.match(r'^IT[A-Z0-9]{10}$', _buy_base) and tp_pct is not None and tp_pct > 0:
+            if is_btp_isin(symbol) and tp_pct is not None and tp_pct > 0:
                 if tp_pct > settings.BTP_MAX_TAKE_PROFIT_PCT:
                     logger.info(
                         f"BTP take-profit capped for {symbol}: {tp_pct:.4%} -> "
@@ -11337,8 +11337,7 @@ class TradingEngine:
                 )
 
         # --- BTP take-profit cap: enforce smaller targets for bonds ---
-        base_sym = symbol.split("/")[0]
-        if re.match(r'^IT[A-Z0-9]{10}$', base_sym) and pos.get("take_profit") and current_price > 0:
+        if is_btp_isin(symbol) and pos.get("take_profit") and current_price > 0:
             tp_pct = (pos["take_profit"] - current_price) / current_price
             if tp_pct > settings.BTP_MAX_TAKE_PROFIT_PCT:
                 capped_tp = current_price * (1 + settings.BTP_MAX_TAKE_PROFIT_PCT)
@@ -11350,8 +11349,7 @@ class TradingEngine:
 
         # --- Trailing stop ---
         if "trailing_stop" in params:
-            _upd_base = symbol.split("/")[0]
-            _upd_is_btp = re.match(r'^IT[A-Z0-9]{10}$', _upd_base) is not None
+            _upd_is_btp = is_btp_isin(symbol)
             if _upd_is_btp and params["trailing_stop"]:
                 logger.warning(
                     f"LLM set trailing_stop=true for BTP {symbol} in position update, but trailing stops "
@@ -12713,8 +12711,7 @@ class TradingEngine:
         else:
             tp_pct = params.get("take_profit_pct")
         # --- BTP take-profit cap: enforce smaller targets for bonds ---
-        _qbuy_base = symbol.split("/")[0]
-        if re.match(r'^IT[A-Z0-9]{10}$', _qbuy_base) and tp_pct is not None and tp_pct > 0:
+        if is_btp_isin(symbol) and tp_pct is not None and tp_pct > 0:
             if tp_pct > settings.BTP_MAX_TAKE_PROFIT_PCT:
                 logger.info(
                     f"BTP take-profit capped for {symbol} (queued fill): {tp_pct:.4%} -> "
@@ -12722,8 +12719,7 @@ class TradingEngine:
                 )
                 tp_pct = settings.BTP_MAX_TAKE_PROFIT_PCT
         trailing_stop = params.get("trailing_stop", False)
-        _qbuy_base = symbol.split("/")[0]
-        _qbuy_is_btp = re.match(r'^IT[A-Z0-9]{10}$', _qbuy_base) is not None
+        _qbuy_is_btp = is_btp_isin(symbol)
         if _qbuy_is_btp and trailing_stop:
             logger.warning(
                 f"LLM set trailing_stop=true for BTP {symbol} (queued fill), but trailing stops are not supported "

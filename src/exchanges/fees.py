@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any
-import re
+from src.utils.symbol_utils import is_btp_isin
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def calculate_transaction_costs(operation_type: str, stock_price: float, quantit
     gross_value = stock_price * quantity
 
     # --- BTP Bond Fee Logic ---
-    is_btp = symbol is not None and re.match(r'^IT[A-Z0-9]{10}$', symbol.split("/")[0]) is not None
+    is_btp = is_btp_isin(symbol)
     if is_btp:
         if settings.BTP_IS_PRIMARY_ISSUANCE:
             bank_fee = 0.0

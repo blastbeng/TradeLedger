@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
+from src.utils.symbol_utils import is_btp_isin
 from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close_prices
 
 logger = logging.getLogger(__name__)
@@ -432,7 +433,7 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
     """
     base = symbol.split("/")[0] if "/" in symbol else symbol
 
-    if re.match(r'^IT[A-Z0-9]{10}$', base):
+    if is_btp_isin(base):
         isin = base
     else:
         isin = _get_isin_from_yfinance(base)
@@ -518,7 +519,7 @@ def get_borsa_italiana_candles(
     base = symbol.split("/")[0] if "/" in symbol else symbol
 
     # For BTPs, the symbol IS the ISIN
-    if re.match(r'^IT[A-Z0-9]{10}$', base):
+    if is_btp_isin(base):
         isin = base
     else:
         from src.database import get_isin_from_db
@@ -1252,7 +1253,7 @@ def get_tradable_assets() -> List[str]:
                         continue
                     if settings.COUNTRY_FILTER_STRICT and db_country is None and not re.match(r'^IT[A-Z0-9]{10}$', db_sym):
                         continue
-                    if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
+                    if is_btp_isin(db_sym):
                         db_only_list.append(db_sym)
                     else:
                         candidate = f"{db_sym}{suffix}" if suffix and not db_sym.endswith(suffix) else db_sym
@@ -1277,7 +1278,7 @@ def get_tradable_assets() -> List[str]:
     suffix = settings.TICKER_SUFFIX
     candidates = []
     for sym in base_symbols:
-        if re.match(r'^IT[A-Z0-9]{10}$', sym):
+        if is_btp_isin(sym):
             candidates.append(sym)          # BTP ISIN – no suffix
         else:
             candidates.append(f"{sym}{suffix}")
@@ -1303,7 +1304,7 @@ def get_tradable_assets() -> List[str]:
                         continue
                     if settings.COUNTRY_FILTER_STRICT and db_country is None and not re.match(r'^IT[A-Z0-9]{10}$', db_sym):
                         continue
-                    if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
+                    if is_btp_isin(db_sym):
                         if db_sym not in existing_set:
                             cached_list.append(db_sym)
                             existing_set.add(db_sym)
@@ -1323,7 +1324,7 @@ def get_tradable_assets() -> List[str]:
     filtered = []
     for symbol in candidates:
         # BTP ISINs start with IT and are Italian bonds, skip yfinance country check
-        if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+        if is_btp_isin(symbol):
             if target_country == "italy":
                 filtered.append(symbol)
             continue
@@ -1373,7 +1374,7 @@ def get_tradable_assets() -> List[str]:
             etf_set = set(etf_symbols)
             symbols_to_save = []
             for symbol in filtered:
-                if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+                if is_btp_isin(symbol):
                     continue  # BTPs are saved separately
                 base = symbol
                 if suffix and base.endswith(suffix):
@@ -1410,7 +1411,7 @@ def get_tradable_assets() -> List[str]:
             # Skip symbols confirmed to be non-Italian
             if db_country is not None and db_country.lower() != target_country:
                 continue
-            if re.match(r'^IT[A-Z0-9]{10}$', db_sym):
+            if is_btp_isin(db_sym):
                 # BTP ISIN — add as-is (no suffix)
                 if db_sym not in existing_set:
                     filtered.append(db_sym)
@@ -1431,7 +1432,7 @@ def get_tradable_assets() -> List[str]:
 
 def _enrich_quotes_with_btp_details(result: Dict[str, Dict[str, Any]], symbols: List[str]):
     """Enrich quote results with BTP maturity, coupon, and name from discovered_symbols."""
-    btp_symbols = [s for s in symbols if re.match(r'^IT[A-Z0-9]{10}$', s)]
+    btp_symbols = [s for s in symbols if is_btp_isin(s)]
     if not btp_symbols:
         return
     try:
@@ -1572,7 +1573,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
 
     # Filter out BTP ISINs as they are not supported by yfinance and should be served from DB
-    stock_symbols = [s for s in missing_symbols if not re.match(r'^IT[A-Z0-9]{10}$', s)]
+    stock_symbols = [s for s in missing_symbols if not is_btp_isin(s)]
 
     # --- Batch fetch ALL price data using yf.download (single HTTP request) ---
     # This replaces the slow sequential fast_info calls that caused timeouts.
@@ -1902,7 +1903,7 @@ def get_multi_timeframe_bars(
             pass
 
         # BTPs: only borsaitaliana, no yfinance
-        if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+        if is_btp_isin(symbol):
             borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
             result[tf] = borsa_candles or []
             if borsa_candles:
@@ -2006,7 +2007,7 @@ def get_bars_range(
         pass
 
     # BTPs: only borsaitaliana, no yfinance
-    if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+    if is_btp_isin(symbol):
         borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
         if borsa_candles:
             try:

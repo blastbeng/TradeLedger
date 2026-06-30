@@ -4,6 +4,7 @@ import re
 import time
 from typing import List, Dict, Any, Optional, Tuple
 from src.config.settings import settings
+from src.utils.symbol_utils import is_btp_isin
 from src.database import get_news_for_symbol, get_aggregate_sentiment_from_db, get_news_for_symbols
 from src.utils.redis_client import get_redis_client
 from src.llm.cache import get_cached_llm_response
@@ -1367,7 +1368,7 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"ATR across timeframes: {json.dumps(atr_multi_tf)}\n"
     # --- Transaction cost break-even calculation ---
     # Detect BTP bonds (ISIN format) to apply the correct fee structure.
-    _is_btp = bool(re.match(r'^IT[A-Z0-9]{10}', symbol.split("/")[0]))
+    _is_btp = is_btp_isin(symbol)
     trade_value = min(per_symbol_budget, remaining_balance if remaining_balance is not None else per_symbol_budget)
     if trade_value > 0:
         if _is_btp:
@@ -2108,7 +2109,7 @@ def build_backtest_variants_prompt(
         validator_min = int(min_hold_time_mult * tf_seconds)
 
     # Detect BTP for fee calculation
-    _is_btp = bool(_re.match(r'^IT[A-Z0-9]{10}', symbol.split("/")[0]))
+    _is_btp = is_btp_isin(symbol)
     trade_value = min(per_symbol_budget, remaining_balance if remaining_balance is not None else per_symbol_budget)
 
     prompt = f"""**Step 1b: Parameter Selection & Backtest Variants**
