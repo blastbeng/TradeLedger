@@ -220,6 +220,18 @@ class TradingEngine:
         logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
         self._load_state()
         self._ensure_cost_basis()
+        # Initialize _cycle_spent from any queued buy orders loaded from persisted
+        # state so capital is reserved immediately at startup, before the first
+        # re-evaluation cycle runs (which would otherwise leave _cycle_spent at 0.0
+        # and allow over-allocation of capital already reserved by stale orders).
+        queued_buy_total = sum(
+            q.get('amount', 0.0) for q in self.queued_orders
+            if q.get('side') == 'buy'
+        )
+        async with self._cycle_spent_lock:
+            self._cycle_spent = queued_buy_total
+        if queued_buy_total > 0:
+            logger.info(f"Initialized _cycle_spent={queued_buy_total:.2f} from {sum(1 for q in self.queued_orders if q.get('side') == 'buy')} queued buy orders.")
 
     def set_notifier(self, notifier):
         """Attach a notification service (e.g., TelegramBot)."""
