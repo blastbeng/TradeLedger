@@ -12238,8 +12238,14 @@ class TradingEngine:
                             tf_secs = self._timeframe_to_seconds(queued_tf)
                             # Use 50% of the timeframe as the timeout, with a
                             # minimum of the base timeout and a maximum of
-                            # 180 days (same cap as entry conditions).
-                            scaled_timeout = min(max(base_timeout, int(tf_secs * 0.5)), 15_552_000)
+                            # 7 days.  The previous 180-day cap allowed limit
+                            # orders on long timeframes (1Y, 3Y, 5Y) to linger
+                            # for months, leading to forgotten orders that
+                            # fill at unexpected times.  7 days is generous
+                            # enough for monthly/quarterly timeframes while
+                            # ensuring stale orders are cancelled and
+                            # re-evaluated in a timely manner.
+                            scaled_timeout = min(max(base_timeout, int(tf_secs * 0.5)), 604_800)
                         else:
                             scaled_timeout = base_timeout
                         if time.time() - queued_at > scaled_timeout:
