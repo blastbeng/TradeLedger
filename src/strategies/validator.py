@@ -202,6 +202,54 @@ def validate_signal(
             if not isinstance(bpd, (int, float)) or bpd < 30:
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_period_days (must be >= 30)")
 
+        if "partial_take_profit_levels" in params:
+            ptpl = params["partial_take_profit_levels"]
+            if not isinstance(ptpl, list):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels (must be a list)")
+            for level in ptpl:
+                if not isinstance(level, dict):
+                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels (items must be dicts)")
+                lvl_pct = level.get("take_profit_pct")
+                lvl_frac = level.get("fraction")
+                if not isinstance(lvl_pct, (int, float)) or lvl_pct <= 0:
+                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels: take_profit_pct must be > 0")
+                if not isinstance(lvl_frac, (int, float)) or not (0 < lvl_frac < 1.0):
+                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels: fraction must be between 0 and 1")
+
+        if "breakeven_activation_pct" in params:
+            bea = params["breakeven_activation_pct"]
+            if not isinstance(bea, (int, float)) or not (0 < bea <= 1.0):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid breakeven_activation_pct")
+
+        if "trailing_take_profit" in params:
+            ttp = params["trailing_take_profit"]
+            if not isinstance(ttp, bool):
+                return Signal(action="HOLD", confidence=0.0, reasoning="trailing_take_profit must be boolean")
+            if ttp:
+                ttpd = params.get("trailing_take_profit_distance_pct")
+                if not isinstance(ttpd, (int, float)) or not (0 < ttpd < 1.0):
+                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid or missing trailing_take_profit_distance_pct")
+
+        if "max_unrealized_loss_pct" in params:
+            mul = params["max_unrealized_loss_pct"]
+            if not isinstance(mul, (int, float)) or mul <= 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_unrealized_loss_pct")
+
+        if "max_portfolio_risk_pct" in params:
+            mpr = params["max_portfolio_risk_pct"]
+            if not isinstance(mpr, (int, float)) or not (0 < mpr <= 1.0):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_risk_pct")
+
+        if "max_portfolio_exposure_pct" in params:
+            mpe = params["max_portfolio_exposure_pct"]
+            if not isinstance(mpe, (int, float)) or not (0 < mpe <= 1.0):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_exposure_pct")
+
+        if "max_portfolio_stop_risk_pct" in params:
+            mps = params["max_portfolio_stop_risk_pct"]
+            if not isinstance(mps, (int, float)) or not (0 < mps <= 1.0):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_stop_risk_pct")
+
         # Logical consistency checks (no hardcoded values)
         if sl is not None and tp <= sl:
             return Signal(action="HOLD", confidence=0.0, reasoning="take_profit_pct must be greater than stop_loss_pct")
