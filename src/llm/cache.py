@@ -52,7 +52,8 @@ def get_cached_llm_response(
 
     # Build cache key
     if market_hash:
-        cache_key = f"llm:{settings.LLM_CACHE_VERSION}:{provider}:{model}:{model_type}:market:{market_hash}:t{cache_temp if cache_temp is not None else 'def'}"
+        sys_hash = hashlib.sha256(system_prompt.encode()).hexdigest()[:16] if system_prompt else "none"
+        cache_key = f"llm:{settings.LLM_CACHE_VERSION}:{provider}:{model}:{model_type}:market:{market_hash}:sys:{sys_hash}:t{cache_temp if cache_temp is not None else 'def'}"
     else:
         key_data = json.dumps(
             {"prompt": prompt, "system": system_prompt, "model_type": model_type,
