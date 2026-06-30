@@ -13394,9 +13394,9 @@ class TradingEngine:
 
         # Scale stop-loss review limit for long-term timeframes (same as _process_symbol)
         if tf_seconds >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
-            max_sl_reviews = min(max_sl_reviews, 3)
+            max_sl_reviews = min(max_sl_reviews, settings.LONG_TERM_MAX_STOP_LOSS_REVIEWS)
         elif tf_seconds >= 604_800:  # >= 1 week
-            max_sl_reviews = min(max_sl_reviews, 5)
+            max_sl_reviews = min(max_sl_reviews, settings.WEEKLY_MAX_STOP_LOSS_REVIEWS)
 
         trading_paused = False  # Force False for simulation
 
