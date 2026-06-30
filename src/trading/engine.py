@@ -8082,9 +8082,10 @@ class TradingEngine:
                 if pos.get("trailing_take_profit") and pos.get("trailing_take_profit_distance_pct"):
                     ttp_dist = pos["trailing_take_profit_distance_pct"]
                     new_tp = current_price * (1 + ttp_dist)
-                    if new_tp > pos["take_profit"]:
-                        pos["take_profit"] = new_tp
-                        logger.info(f"Trailing take-profit updated for {symbol}: new TP {new_tp:.4f}")
+                    async with self._positions_lock:
+                        if new_tp > pos["take_profit"]:
+                            pos["take_profit"] = new_tp
+                            logger.info(f"Trailing take-profit updated for {symbol}: new TP {new_tp:.4f}")
 
                 # --- Breakeven stop ---
                 breakeven_activation = pos.get("breakeven_activation_pct")
