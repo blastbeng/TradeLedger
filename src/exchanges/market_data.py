@@ -1618,6 +1618,14 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Failed to recompute change_24h/percentage from DB candles: {e}")
 
+    # Ensure bid/ask are never NULL when last is available — use last as fallback
+    for sym in result:
+        if result[sym].get("last") is not None and result[sym]["last"] > 0:
+            if result[sym].get("bid") is None:
+                result[sym]["bid"] = result[sym]["last"]
+            if result[sym].get("ask") is None:
+                result[sym]["ask"] = result[sym]["last"]
+
     # Cache the result per-symbol in Redis (5 minutes) and save to database
     quotes_to_save = {}
     for sym in result:
@@ -1763,6 +1771,14 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                         result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
         except Exception as e:
             logger.warning(f"get_quotes_cached: Failed to recompute change_24h/percentage from DB candles: {e}")
+
+    # Ensure bid/ask are never NULL when last is available — use last as fallback
+    for sym in result:
+        if result[sym].get("last") is not None and result[sym]["last"] > 0:
+            if result[sym].get("bid") is None:
+                result[sym]["bid"] = result[sym]["last"]
+            if result[sym].get("ask") is None:
+                result[sym]["ask"] = result[sym]["last"]
 
     # Persist DB close prices to Redis and the quotes table so that other
     # consumers (web dashboard, re-evaluation, etc.) can access them even

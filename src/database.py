@@ -1401,9 +1401,13 @@ def save_quotes_batch(quotes: Dict[str, Dict[str, Any]]):
                 INSERT INTO quotes (symbol, last, bid, ask, volume, change_24h, percentage, quotevolume, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (symbol) DO UPDATE SET
-                    last = EXCLUDED.last, bid = EXCLUDED.bid, ask = EXCLUDED.ask,
-                    volume = EXCLUDED.volume, change_24h = EXCLUDED.change_24h,
-                    percentage = EXCLUDED.percentage, quotevolume = EXCLUDED.quotevolume,
+                    last = EXCLUDED.last,
+                    bid = COALESCE(EXCLUDED.bid, quotes.bid),
+                    ask = COALESCE(EXCLUDED.ask, quotes.ask),
+                    volume = COALESCE(EXCLUDED.volume, quotes.volume),
+                    change_24h = EXCLUDED.change_24h,
+                    percentage = EXCLUDED.percentage,
+                    quotevolume = COALESCE(EXCLUDED.quotevolume, quotes.quotevolume),
                     updated_at = EXCLUDED.updated_at
                 """
             )
