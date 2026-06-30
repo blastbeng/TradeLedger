@@ -458,7 +458,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 # --- Cached payload: share across all WebSocket clients ---
                 now = time.time()
                 global _ws_payload_cache, _ws_payload_cache_time
-                if _ws_payload_cache is not None and (now - _ws_payload_cache_time) < _ws_payload_ttl:
+                market_open = await engine._is_market_open()
+                effective_ttl = _ws_payload_ttl if market_open else max(_ws_payload_ttl, 60.0)
+                if _ws_payload_cache is not None and (now - _ws_payload_cache_time) < effective_ttl:
                     payload = _ws_payload_cache
                 else:
                     # Build current_symbols with display (parallelized to avoid blocking)
@@ -509,8 +511,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         is_paused = paused_val == "1"
                     except Exception:
                         is_paused = False
-
-                    market_open = await engine._is_market_open()
 
                     # Fetch market status from Redis
                     market_status = None
