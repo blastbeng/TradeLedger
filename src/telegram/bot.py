@@ -919,36 +919,46 @@ class TelegramBot:
                 logger.warning(f"Failed to store message for web interface: {e}")
 
             # Send to Telegram
-            try:
-                # --- Determine if notification should be silent ---
-                disable_notification = False
-                if settings.TRADING_MODE == "paper":
-                    # In paper mode, all notifications are silent
-                    disable_notification = True
-                elif settings.TRADING_MODE == "notify":
-                    # In notify mode, only BUY/SELL signals are audible; everything else is silent
-                    action = summary.get("action", "") if summary else ""
-                    if action not in ("BUY", "SELL"):
-                        disable_notification = True
+            action = summary.get("action", "") if summary else ""
+            is_critical = action in ("BUY", "SELL", "ERROR")
+            max_retries = 3 if is_critical else 1
+            retry_delay = 2.0
 
-                max_len = 4000
-                if len(message) <= max_len:
-                    await self.app.bot.send_message(
-                        chat_id=int(chat_id),
-                        text=message,
-                        disable_notification=disable_notification,
-                    )
-                else:
-                    chunks = [message[i:i+max_len] for i in range(0, len(message), max_len)]
-                    for chunk in chunks:
+            for attempt in range(1, max_retries + 1):
+                try:
+                    # --- Determine if notification should be silent ---
+                    disable_notification = False
+                    if settings.TRADING_MODE == "paper":
+                        # In paper mode, all notifications are silent
+                        disable_notification = True
+                    elif settings.TRADING_MODE == "notify":
+                        # In notify mode, only BUY/SELL signals are audible; everything else is silent
+                        if action not in ("BUY", "SELL"):
+                            disable_notification = True
+
+                    max_len = 4000
+                    if len(message) <= max_len:
                         await self.app.bot.send_message(
                             chat_id=int(chat_id),
-                            text=chunk,
+                            text=message,
                             disable_notification=disable_notification,
                         )
-                logger.debug(f"Notification sent successfully (silent={disable_notification}).")
-            except Exception as e:
-                logger.error(f"Failed to send Telegram notification: {e}", exc_info=True)
+                    else:
+                        chunks = [message[i:i+max_len] for i in range(0, len(message), max_len)]
+                        for chunk in chunks:
+                            await self.app.bot.send_message(
+                                chat_id=int(chat_id),
+                                text=chunk,
+                                disable_notification=disable_notification,
+                            )
+                    logger.debug(f"Notification sent successfully (silent={disable_notification}).")
+                    break
+                except Exception as e:
+                    if attempt < max_retries:
+                        logger.warning(f"Failed to send Telegram notification (attempt {attempt}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        logger.error(f"Failed to send Telegram notification after {max_retries} attempts: {e}", exc_info=True)
         else:
             logger.info("Notification suppressed by verbosity setting.")
 
