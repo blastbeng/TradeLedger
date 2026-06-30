@@ -12258,7 +12258,8 @@ class TradingEngine:
                         # Old queued entries without order_id – remove them safely
                         logger.warning(f"Queued order for {queued['symbol']} missing order_id, removing.")
                         async with self._queued_orders_lock:
-                            self.queued_orders.remove(queued)
+                            if queued in self.queued_orders:
+                                self.queued_orders.remove(queued)
                         continue
 
                     # --- Timeout check: cancel stale queued limit orders ---
@@ -12298,7 +12299,8 @@ class TradingEngine:
                                 logger.error(f"Failed to cancel timed-out order {order_id}: {e}")
                             # Remove from queue regardless of cancel success
                             async with self._queued_orders_lock:
-                                self.queued_orders.remove(queued)
+                                if queued in self.queued_orders:
+                                    self.queued_orders.remove(queued)
                             self._state_dirty = True
                             # If this was an exit order, cancel its OCO pair
                             if queued.get("is_exit_order"):
@@ -12344,7 +12346,8 @@ class TradingEngine:
                     if paper_order is None:
                         logger.warning(f"Order {order_id} not found for {queued['symbol']}, removing from queue.")
                         async with self._queued_orders_lock:
-                            self.queued_orders.remove(queued)
+                            if queued in self.queued_orders:
+                                self.queued_orders.remove(queued)
                         self._state_dirty = True
                         continue
 
@@ -12560,7 +12563,8 @@ class TradingEngine:
                     if status == 'filled':
                         logger.info(f"Queued limit order {order_id} for {queued['symbol']} completely filled.")
                         async with self._queued_orders_lock:
-                            self.queued_orders.remove(queued)
+                            if queued in self.queued_orders:
+                                self.queued_orders.remove(queued)
                         self._state_dirty = True
 
                     elif status in ('rejected', 'canceled', 'cancelled', 'expired'):
@@ -12580,7 +12584,8 @@ class TradingEngine:
                                 }
                             )
                         async with self._queued_orders_lock:
-                            self.queued_orders.remove(queued)
+                            if queued in self.queued_orders:
+                                self.queued_orders.remove(queued)
                         self._state_dirty = True
                         if queued.get("is_exit_order"):
                             oco_pair_id = queued.get("oco_pair")
