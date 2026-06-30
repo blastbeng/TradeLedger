@@ -8473,6 +8473,7 @@ class TradingEngine:
                                     if new_stop - pos["stop_loss"] >= min_improvement:
                                         pos["stop_loss"] = new_stop
                                         logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
+                            self._portfolio_exposure_cache = None
 
                 # --- Trailing take-profit ---
                 if pos.get("trailing_take_profit") and pos.get("trailing_take_profit_distance_pct"):
@@ -8482,6 +8483,7 @@ class TradingEngine:
                         if new_tp > pos["take_profit"]:
                             pos["take_profit"] = new_tp
                             logger.info(f"Trailing take-profit updated for {symbol}: new TP {new_tp:.4f}")
+                    self._portfolio_exposure_cache = None
 
                 # --- Breakeven stop ---
                 breakeven_activation = pos.get("breakeven_activation_pct")
@@ -8494,6 +8496,7 @@ class TradingEngine:
                             if breakeven_price > pos["stop_loss"]:
                                 pos["stop_loss"] = breakeven_price
                                 logger.info(f"Breakeven stop activated for {symbol}: new stop {breakeven_price:.4f}")
+                        self._portfolio_exposure_cache = None
 
                 # --- Lock profit feature removed (was scalping-specific) ---
 
