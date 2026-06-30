@@ -8094,9 +8094,10 @@ class TradingEngine:
                     if current_price >= entry_price * (1 + breakeven_activation):
                         # Compute exact break-even price that covers exit fee
                         breakeven_price = entry_price
-                        if breakeven_price > pos["stop_loss"]:
-                            pos["stop_loss"] = breakeven_price
-                            logger.info(f"Breakeven stop activated for {symbol}: new stop {breakeven_price:.4f}")
+                        async with self._positions_lock:
+                            if breakeven_price > pos["stop_loss"]:
+                                pos["stop_loss"] = breakeven_price
+                                logger.info(f"Breakeven stop activated for {symbol}: new stop {breakeven_price:.4f}")
 
                 # --- Lock profit feature removed (was scalping-specific) ---
 
