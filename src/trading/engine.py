@@ -8108,7 +8108,8 @@ class TradingEngine:
                     original_stop = pos.get("_native_stop_price")
                     if original_stop is None:
                         # First time – store the current stop_loss as the baseline
-                        pos["_native_stop_price"] = pos["stop_loss"]
+                        async with self._positions_lock:
+                            pos["_native_stop_price"] = pos["stop_loss"]
                     else:
                         # Check if stop_loss has moved by more than a tick
                         tick = 0.01 if pos["stop_loss"] >= 1.0 else 0.0001
@@ -8121,7 +8122,8 @@ class TradingEngine:
                                 symbol, pos, original_stop, pos["stop_loss"]
                             )
                             # Update the stored baseline
-                            pos["_native_stop_price"] = pos["stop_loss"]
+                            async with self._positions_lock:
+                                pos["_native_stop_price"] = pos["stop_loss"]
 
                 # --- Partial take-profit ---
                 partial_levels = pos.get("partial_take_profit_levels")
