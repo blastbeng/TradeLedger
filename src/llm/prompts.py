@@ -337,6 +337,11 @@ Output strict JSON only. The response must start with '{' or '[' and end with '}
 - **Earnings & Corporate Events:** Stocks can experience large price gaps due to earnings reports, FDA decisions, or other corporate events. If recent news suggests an upcoming earnings announcement or a major event, avoid holding through it unless you have very high conviction.
 - **ETFs:** ETFs generally have lower volatility and smoother trends than individual stocks. Be aware of decay in leveraged ETFs if held long.
 - **BTP Bonds (Italian Sovereign Bonds):** The asset universe may also include BTPs identified by their ISIN code (e.g., IT0001234567). BTPs are fixed-income securities with significantly lower volatility compared to stocks. When trading BTPs, use wider stop-losses (or ATR-based stops if ATR is available), longer max hold times, and smaller take-profit targets relative to stocks. They are suitable for capital preservation and steady income.
+  - **Yield to Maturity (YTM) Assessment:** The `ticker` object includes `coupon` (annual coupon rate as a decimal, e.g., 0.0725 for 7.25%) and `maturity` (expiration date). Bond prices are quoted as a percentage of par value (e.g., a price of 101.68 means 101.68% of face value). To assess if a BTP is a good buy, calculate its approximate Yield to Maturity (YTM):
+    - `Annual Coupon = coupon × 100` (e.g., 7.25)
+    - `Years to Maturity = (maturity_date - current_date).days / 365`
+    - `Approximate YTM = (Annual Coupon + (100 - Current Price) / Years to Maturity) / ((100 + Current Price) / 2)`
+    - Compare the YTM to current Italian government bond yields (e.g., 10-year BTP yield) or your required return. If YTM is attractive relative to current market yields, the bond is a good buy. If the price is well above par (e.g., >110) and YTM is low, the upside is limited and there is higher downside risk if interest rates rise.
 
 - **Two-Step Decision Process with Multiple Backtest Variants:** You will now operate in two steps. 
   1. In the first step, you will analyze the market data, indicators, and statistical summaries, and propose **multiple** sets of strategy parameters for backtesting. Each set is called a "backtest variant" and should explore a different hypothesis (e.g., tight stop vs wide stop, short hold vs long hold, trailing stop on/off, different take-profit targets, etc.). You decide how many variants to return (minimum 1, recommended 3–5, maximum __MAX_BACKTEST_VARIANTS__). The engine will run a local Python backtest for EACH variant sequentially. If you provide more than __MAX_BACKTEST_VARIANTS__ variants, only the first __MAX_BACKTEST_VARIANTS__ will be tested. Running just one backtes may not be enough to intercept profitable configurations, so provide several diverse variants to maximize the chance of finding a winning strategy.
@@ -1744,7 +1749,12 @@ The validator enforces a hard minimum of {validator_min} seconds for this timefr
 
 You are trading spot only (no shorting). Only output SELL if you currently hold the asset.
 
-**Note on BTP Bonds:** If the symbol is a BTP bond (ISIN format like IT0001234567), adjust your strategy for lower volatility: use longer max hold times, smaller take-profit targets, and ensure stop-losses are wide enough to avoid being triggered by normal bond price fluctuations. The `ticker` object includes `name`, `coupon` (annual coupon rate), and `maturity` (expiration date). Bond prices are quoted as a percentage of par value (e.g., a price of 101.68 means 101.68% of face value). Use the coupon and current price to assess the yield to maturity and decide whether the bond is a good buy. ATR and OHLCV data are available for BTPs via yfinance and should be used for technical analysis like any other asset.
+**Note on BTP Bonds:** If the symbol is a BTP bond (ISIN format like IT0001234567), adjust your strategy for lower volatility: use longer max hold times, smaller take-profit targets, and ensure stop-losses are wide enough to avoid being triggered by normal bond price fluctuations. The `ticker` object includes `name`, `coupon` (annual coupon rate), and `maturity` (expiration date). Bond prices are quoted as a percentage of par value (e.g., a price of 101.68 means 101.68% of face value). 
+**BTP Valuation:** To decide if this BTP is a good buy, calculate its approximate Yield to Maturity (YTM):
+- `Annual Coupon = coupon × 100`
+- `Years to Maturity = (maturity_date - current_date).days / 365`
+- `Approximate YTM = (Annual Coupon + (100 - Current Price) / Years to Maturity) / ((100 + Current Price) / 2)`
+If the YTM is attractive relative to current Italian government bond yields, it is a good buy. If the price is well above par (e.g., >110) and YTM is low, the upside is limited and there is higher downside risk if interest rates rise. ATR and OHLCV data are available for BTPs via yfinance and should be used for technical analysis like any other asset.
 """
     # --- Fundamental Data ---
     if fundamentals:
