@@ -2751,9 +2751,9 @@ class TradingEngine:
                 if "_last_trailing_check_ts" not in pos:
                     pos["_last_trailing_check_ts"] = time.time()
 
-        self.trade_history = get_all_trades()[-MAX_TRADES_IN_MEMORY:]
-        # Compute the realized P&L offset for trades that were pruned at load time
         all_trades = get_all_trades()
+        self.trade_history = all_trades[-MAX_TRADES_IN_MEMORY:]
+        # Compute the realized P&L offset for trades that were pruned at load time
         self._realized_pnl_offset = sum(
             t.get("realized_pnl", 0.0)
             for t in all_trades[:-MAX_TRADES_IN_MEMORY]
