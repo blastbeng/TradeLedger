@@ -179,11 +179,17 @@ def validate_signal(
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid min_risk_reward_ratio")
             # Enforce the ratio if both sl and tp are available
             if sl is not None and tp is not None:
-                if tp / sl < mrr:
+                # If ATR-based stops/TPs are provided, use the ATR multipliers for the ratio
+                if tp_atr is not None and stop_method == "atr_multiple":
+                    actual_ratio = tp_atr / atr_mult
+                else:
+                    actual_ratio = tp / sl
+                
+                if actual_ratio < mrr:
                     return Signal(
                         action="HOLD",
                         confidence=0.0,
-                        reasoning=f"Risk/reward ratio {tp/sl:.2f} is below minimum {mrr:.2f}"
+                        reasoning=f"Risk/reward ratio {actual_ratio:.2f} is below minimum {mrr:.2f}"
                     )
         if "min_confidence" in params:
             mc = params["min_confidence"]
