@@ -250,6 +250,66 @@ def validate_signal(
             if not isinstance(mps, (int, float)) or not (0 < mps <= 1.0):
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_stop_risk_pct")
 
+        if "direction" in params:
+            d = params["direction"]
+            if d not in ("long", "short", "both"):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid direction (must be 'long', 'short', or 'both')")
+
+        if "fee_model" in params:
+            fm = params["fee_model"]
+            if fm not in ("flat", "intesa"):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid fee_model (must be 'flat' or 'intesa')")
+
+        if "slippage_model" in params:
+            sm = params["slippage_model"]
+            if sm not in ("fixed", "dynamic"):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_model (must be 'fixed' or 'dynamic')")
+
+        if "slippage_pct" in params:
+            sp = params["slippage_pct"]
+            if not isinstance(sp, (int, float)) or sp < 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_pct")
+
+        if "slippage_base_pct" in params:
+            sbp = params["slippage_base_pct"]
+            if not isinstance(sbp, (int, float)) or sbp <= 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_base_pct")
+
+        if "slippage_max_pct" in params:
+            smp = params["slippage_max_pct"]
+            if not isinstance(smp, (int, float)) or smp <= 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_max_pct")
+
+        if "simulate_position_sizing" in params:
+            sps = params["simulate_position_sizing"]
+            if not isinstance(sps, bool):
+                return Signal(action="HOLD", confidence=0.0, reasoning="simulate_position_sizing must be boolean")
+
+        if "global_risk_multiplier" in params:
+            grm = params["global_risk_multiplier"]
+            if not isinstance(grm, (int, float)) or grm <= 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid global_risk_multiplier")
+
+        if "position_size_multiplier" in params:
+            psm = params["position_size_multiplier"]
+            if not isinstance(psm, (int, float)) or psm <= 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid position_size_multiplier")
+
+        if "confidence_sizing_weight" in params:
+            csw = params["confidence_sizing_weight"]
+            if not isinstance(csw, (int, float)) or csw < 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid confidence_sizing_weight")
+
+        if "gap_tolerance_mult" in params:
+            gtm = params["gap_tolerance_mult"]
+            if not isinstance(gtm, (int, float)) or gtm <= 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid gap_tolerance_mult")
+
+        if "on_gaps" in params:
+            og = params["on_gaps"]
+            if og not in ("warn", "skip"):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid on_gaps (must be 'warn' or 'skip')")
+
         # Logical consistency checks (no hardcoded values)
         if sl is not None and tp <= sl:
             return Signal(action="HOLD", confidence=0.0, reasoning="take_profit_pct must be greater than stop_loss_pct")
