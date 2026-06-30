@@ -13250,10 +13250,10 @@ class TradingEngine:
             json.dumps(variant_params, sort_keys=True, default=str).encode()
         ).hexdigest()[:16]
 
-        # Check database for a recent identical backtest (dedup within 1 hour)
+        # Check database for a recent identical backtest (dedup within 6 hours)
         try:
             recent = await asyncio.to_thread(
-                get_recent_backtest_result, symbol, assigned_tf, params_hash, 3600
+                get_recent_backtest_result, symbol, assigned_tf, params_hash, 21600
             )
             if recent:
                 logger.debug(f"Backtest DB cache hit for {symbol} {assigned_tf} (params_hash={params_hash})")
