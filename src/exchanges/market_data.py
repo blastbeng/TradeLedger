@@ -1145,6 +1145,7 @@ def get_tradable_assets() -> List[str]:
             base_symbols = hardcoded
 
     suffix = settings.TICKER_SUFFIX
+    target_country = settings.TARGET_COUNTRY.lower()
     if not base_symbols:
         logger.warning("No tickers discovered from Wikipedia, Euronext, or news feeds. Checking Redis cache and DB for previously discovered symbols...")
         # Try Redis cache first (may have symbols from a previous successful run)
@@ -1255,7 +1256,6 @@ def get_tradable_assets() -> List[str]:
         pass
 
     # Filter candidates by country using yfinance
-    target_country = settings.TARGET_COUNTRY.lower()
     strict = settings.COUNTRY_FILTER_STRICT
     filtered = []
     for symbol in candidates:
@@ -1269,6 +1269,7 @@ def get_tradable_assets() -> List[str]:
         # Save the fetched country to the database for future filtering
         if country is not None:
             try:
+                from src.database import save_discovered_symbol
                 db_base = symbol
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
