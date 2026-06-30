@@ -1280,6 +1280,26 @@ class TradingEngine:
 
         return ""
 
+    async def _is_quote_too_stale(self, ticker: Dict[str, Any], timeframe: str) -> bool:
+        """Check if the quote is too stale for trading based on the configured threshold.
+
+        The staleness threshold is scaled by the symbol's timeframe: longer timeframes
+        tolerate staler quotes. Returns False if staleness cannot be determined or
+        if the guard is disabled.
+        """
+        if settings.QUOTE_MAX_STALENESS_SECONDS <= 0:
+            return False
+        last_update = ticker.get("last_update")
+        if last_update is None:
+            return False
+        age_seconds = (time.time() * 1000 - last_update) / 1000
+        # Scale the threshold by the timeframe: longer timeframes allow staler quotes.
+        # Use at least the configured max staleness, or 10% of the timeframe,
+        # whichever is greater (capped at 1 day for very long timeframes).
+        tf_seconds = self._timeframe_to_seconds(timeframe)
+        scaled_threshold = max(settings.QUOTE_MAX_STALENESS_SECONDS, min(tf_seconds * 0.1, 86400))
+        return age_seconds > scaled_threshold
+
     async def _fetch_vix(self) -> Optional[float]:
         """VIX is not available for the Italian market via yfinance. Returns None."""
         return None
@@ -6388,6 +6408,37 @@ class TradingEngine:
             vwap = symbol_data["vwap"]
             daily_pivot_points = symbol_data["daily_pivot_points"]
             has_position = symbol in self.positions
+
+            # --- Staleness guard: skip symbols with stale quotes (unless we have an open position) ---
+            if not has_position and await self._is_quote_too_stale(ticker, assigned_tf):
+                logger.info(
+                    f"Skipping {symbol}: quote data is too stale for timeframe {assigned_tf}."
+                )
+                stale_notify_key = f"trading:stale_quote_notify:{symbol}"
+                should_notify = True
+                try:
+                    last_notify_raw = await asyncio.to_thread(self.redis.get, stale_notify_key)
+                    if last_notify_raw:
+                        if (time.time() - float(last_notify_raw)) < 3600:
+                            should_notify = False
+                except Exception:
+                    pass
+                if should_notify and self.notifier:
+                    await self.notifier.send_notification(
+                        f"⏸️ Skipping {display_symbol}: quote data is too stale for timeframe {assigned_tf}.",
+                        summary={
+                            "symbol": symbol,
+                            "action": "SKIP",
+                            "reason": "Quote data too stale",
+                        }
+                    )
+                    try:
+                        await asyncio.to_thread(self.redis.setex, stale_notify_key, 3600, str(time.time()))
+                    except Exception:
+                        pass
+                self._force_eval.pop(symbol, None)
+                return
+
             # If we have an open position, we must continue evaluating it for SELL signals
             # even when base_balance is 0 (all capital deployed) or effective_max_symbols is 0.
             if not has_position and (base_balance <= 0 or self.effective_max_symbols == 0):
