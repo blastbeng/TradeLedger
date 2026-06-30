@@ -52,12 +52,13 @@ def get_cached_llm_response(
 
     # Build cache key
     if market_hash:
-        cache_key = f"llm:{provider}:{model}:{model_type}:market:{market_hash}:t{cache_temp if cache_temp is not None else 'def'}"
+        cache_key = f"llm:{settings.LLM_CACHE_VERSION}:{provider}:{model}:{model_type}:market:{market_hash}:t{cache_temp if cache_temp is not None else 'def'}"
     else:
         key_data = json.dumps(
             {"prompt": prompt, "system": system_prompt, "model_type": model_type,
              "provider": provider, "model": model,
-             "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE},
+             "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE,
+             "cache_version": settings.LLM_CACHE_VERSION},
             sort_keys=True
         )
         cache_key = f"llm:{hashlib.sha256(key_data.encode()).hexdigest()}"

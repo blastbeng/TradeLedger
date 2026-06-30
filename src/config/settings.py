@@ -1,3 +1,4 @@
+import uuid
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 from typing import Optional
@@ -469,6 +470,10 @@ class Settings(BaseSettings):
     # Enable automatic fallback to the other LLM provider if the primary fails.
     # Default: False (opt-in) to avoid masking configuration errors and unexpected costs.
     LLM_FALLBACK_ENABLED: bool = False
+
+    # Cache version key to invalidate LLM cache on settings reload.
+    # Automatically generated on instantiation; changes when settings.reload() is called.
+    LLM_CACHE_VERSION: str = str(uuid.uuid4())
 
     # Per‑role OpenAI settings (empty or None = use global OPENAI_*)
     OPENAI_MIND_API_KEY: Optional[str] = None
