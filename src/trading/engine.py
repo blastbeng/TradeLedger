@@ -8625,8 +8625,9 @@ class TradingEngine:
                         continue
                     # First or repeated trigger: set flag and ask LLM
                     if not pos.get("_take_profit_triggered"):
-                        pos["_take_profit_triggered"] = True
-                        pos["_take_profit_review_count"] = review_count + 1
+                        async with self._positions_lock:
+                            pos["_take_profit_triggered"] = True
+                            pos["_take_profit_review_count"] = review_count + 1
                         # Force immediate strategy re-evaluation for this symbol
                         self._last_strategy_eval.pop(symbol, None)
                         logger.info(
