@@ -521,9 +521,13 @@ def get_borsa_italiana_candles(
     if re.match(r'^IT[A-Z0-9]{10}$', base):
         isin = base
     else:
-        isin = _get_isin_from_yfinance(base)
+        from src.database import get_isin_from_db
+        db_symbol = base
+        if settings.TICKER_SUFFIX and db_symbol.endswith(settings.TICKER_SUFFIX):
+            db_symbol = db_symbol[:-len(settings.TICKER_SUFFIX)]
+        isin = get_isin_from_db(db_symbol)
         if not isin:
-            logger.debug(f"Could not get ISIN for {symbol}, skipping borsaitaliana")
+            logger.debug(f"No ISIN in DB for {symbol}, skipping borsaitaliana")
             return None
 
     # Determine market code for referer URL
@@ -1897,11 +1901,9 @@ def get_multi_timeframe_bars(
         except Exception:
             pass
 
-        # --- 1. Always try borsaitaliana first ---
-        borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
-
         # BTPs: only borsaitaliana, no yfinance
         if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+            borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
             result[tf] = borsa_candles or []
             if borsa_candles:
                 try:
@@ -1920,6 +1922,7 @@ def get_multi_timeframe_bars(
 
         # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
         if has_isin:
+            borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
             if borsa_candles:
                 result[tf] = borsa_candles[-limit:] if limit else borsa_candles
                 try:
@@ -2001,11 +2004,9 @@ def get_bars_range(
     except Exception:
         pass
 
-    # --- 1. Always try borsaitaliana first ---
-    borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
-
     # BTPs: only borsaitaliana, no yfinance
     if re.match(r'^IT[A-Z0-9]{10}$', symbol):
+        borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
         if borsa_candles:
             try:
                 redis_client.set(cache_key, json.dumps(borsa_candles), ex=300)
@@ -2024,6 +2025,7 @@ def get_bars_range(
 
     # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
     if has_isin:
+        borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
         if borsa_candles:
             if limit and len(borsa_candles) > limit:
                 borsa_candles = borsa_candles[-limit:]
