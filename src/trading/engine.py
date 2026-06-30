@@ -6311,7 +6311,7 @@ class TradingEngine:
         display_symbol = self._format_symbol_display(symbol, stock_name, assigned_tf)
 
         base_symbol = symbol.split("/")[0]
-        is_btp = re.match(r'^IT[A-Z0-9]{10}$', base_symbol) is not None
+        is_btp = is_btp_isin(base_symbol)
 
         # Read min viable trade amount (LLM override or settings default)
         min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
