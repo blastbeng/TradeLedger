@@ -1368,10 +1368,10 @@ Maximum symbols to trade: {max_symbols}
                 f"Set your `take_profit_pct` comfortably above this break-even percentage.\n"
             )
         else:
-            # Standard stock/ETF fees: max(3.50, V*0.0024) + 2.50 + V*0.0012 (buy)
-            # max(3.50, V*0.0024) + 2.50 (sell)
-            buy_fee = max(3.50, trade_value * 0.0024) + 2.50 + (trade_value * 0.0012)
-            sell_fee = max(3.50, trade_value * 0.0024) + 2.50
+            # Standard stock/ETF fees: max(STOCK_FEE_MIN, V*STOCK_FEE_PERC) + STOCK_FEE_FIXED + V*TOBIN_TAX_RATE (buy)
+            # max(STOCK_FEE_MIN, V*STOCK_FEE_PERC) + STOCK_FEE_FIXED (sell)
+            buy_fee = max(settings.STOCK_FEE_MIN, trade_value * settings.STOCK_FEE_PERC) + settings.STOCK_FEE_FIXED + (trade_value * settings.TOBIN_TAX_RATE)
+            sell_fee = max(settings.STOCK_FEE_MIN, trade_value * settings.STOCK_FEE_PERC) + settings.STOCK_FEE_FIXED
             total_fees = buy_fee + sell_fee
             break_even_pct = total_fees / trade_value
             prompt += (
@@ -2140,8 +2140,8 @@ Base currency: {base_currency}
                 buy_fee = max(_settings.BTP_MIN_FEE, trade_value * _settings.BTP_FEE_PERC)
                 sell_fee = max(_settings.BTP_MIN_FEE, trade_value * _settings.BTP_FEE_PERC)
         else:
-            buy_fee = max(3.50, trade_value * 0.0024) + 2.50 + (trade_value * 0.0012)
-            sell_fee = max(3.50, trade_value * 0.0024) + 2.50
+            buy_fee = max(_settings.STOCK_FEE_MIN, trade_value * _settings.STOCK_FEE_PERC) + _settings.STOCK_FEE_FIXED + (trade_value * _settings.TOBIN_TAX_RATE)
+            sell_fee = max(_settings.STOCK_FEE_MIN, trade_value * _settings.STOCK_FEE_PERC) + _settings.STOCK_FEE_FIXED
         total_fees = buy_fee + sell_fee
         break_even_pct = total_fees / trade_value
         prompt += (
