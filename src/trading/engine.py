@@ -4154,6 +4154,19 @@ class TradingEngine:
                     # Fallback: use the length of the deduped list, capped at the engine's max
                     self.effective_max_symbols = min(len(deduped), self.effective_max_symbols)
 
+                # --- Enforce minimum symbols (unless LLM explicitly paused) ---
+                if (
+                    settings.MIN_SYMBOLS > 0
+                    and pause_trading is not True
+                    and self.effective_max_symbols < settings.MIN_SYMBOLS
+                    and len(deduped) >= settings.MIN_SYMBOLS
+                ):
+                    logger.info(
+                        f"LLM selected {self.effective_max_symbols} symbols; "
+                        f"enforcing MIN_SYMBOLS={settings.MIN_SYMBOLS}"
+                    )
+                    self.effective_max_symbols = settings.MIN_SYMBOLS
+
                 # Parse max_positions_per_sector from LLM
                 max_positions_per_sector = parsed.get("max_positions_per_sector")
                 if max_positions_per_sector is not None and isinstance(max_positions_per_sector, int) and max_positions_per_sector > 0:

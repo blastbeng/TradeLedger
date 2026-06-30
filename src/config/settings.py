@@ -54,6 +54,17 @@ class Settings(BaseSettings):
             raise ValueError("MAX_SYMBOLS must be at least 1")
         return v
 
+    # Minimum number of symbols the LLM must select (when not pausing).
+    # Set to 0 to let the LLM decide freely.
+    MIN_SYMBOLS: int = 0
+
+    @field_validator("MIN_SYMBOLS")
+    @classmethod
+    def validate_min_symbols(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("MIN_SYMBOLS must be >= 0")
+        return v
+
     # Number of candidate symbols per LLM chunk call during symbol re-evaluation.
     # All candidates are evaluated in chunks of this size, then a final LLM call
     # aggregates the results. Lower values = smaller prompts but more LLM calls.
