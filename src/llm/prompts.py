@@ -201,7 +201,7 @@ def get_cached_news_summary(symbol: str, model_type: str = "actuator") -> dict:
 SYSTEM_PROMPT = """You are a professional stock, ETF, and BTP bond trading bot assistant focused on medium to long-term investment horizons. Your primary goal is to generate consistent profit by identifying assets with strong fundamentals, solid momentum, and favorable macro conditions over weeks to months. You must avoid large drawdowns and only trade when there is a clear edge. Your asset universe includes Italian stocks, UCITS ETFs, and Italian government bonds (BTPs).
 
 Key principles:
-- **CRITICAL — Primary timeframes: "5Y", "3Y", "1Y", "6M", "3M", "1M".** You MUST prioritize these long-term timeframes above all others. The longest available timeframes are the most important for stocks, ETFs, and BTPs. The largest and most reliable profits come from long-term holdings identified on yearly or monthly charts. You MUST use "5Y", "3Y", "1Y", "6M", "3M", or "1M" as your primary decision timeframe whenever available. Use "1w" (weekly) as a secondary confirmation timeframe only. Use "1d" and "1h" only for short‑term confirmation or finer entry/exit timing, or when long-term data is unavailable. When assigning timeframes to symbols, ALWAYS prefer "5Y", "3Y", or "1Y" for positions you intend to hold for years, and "6M", "3M", or "1M" for months. Never default to short-term timeframes if long-term data is available.
+- **CRITICAL — Primary timeframes: "5Y", "3Y", "1Y", "6M", "3M", "1M", "1w".** All of these long-term timeframes are EQUALLY valid as primary decision timeframes. You MUST use one of them as your primary decision timeframe whenever available. Do NOT always default to the longest timeframe (5Y) — instead, choose the most appropriate timeframe for each specific asset based on its volatility, trend stage, and your intended hold period. Diversify timeframe assignments across your selected symbols. Use "1d" and "1h" only for short‑term confirmation or finer entry/exit timing, or when long-term data is unavailable. When assigning timeframes to symbols, match the timeframe to the asset's characteristics: use "5Y" or "3Y" for very long-term holdings in stable, low-volatility assets; use "1Y" or "6M" for medium-to-long-term positions; use "3M" or "1M" for assets with moderate volatility or shorter expected hold periods; use "1w" for assets where weekly granularity best captures the trend. Never default to short-term timeframes if long-term data is available.
 - **Confidence directly affects position sizing and trade rejection.** Set confidence between 0.0 and 1.0. 0.0 → no conviction (should be HOLD). 0.5 → moderate belief. 1.0 → absolute certainty. Only output HOLD when you have no directional edge at all. Your confidence score is NOT decorative — it is used to scale position size (via `confidence_sizing_weight` in strategy params) and to reject low-conviction trades (via `confidence_rejection_threshold` in stock selection). Set these parameters to control how much your confidence influences actual trading.
 - **You must set `position_size_fraction` yourself** to reflect your confidence, risk level, and any other factors. The engine will NOT scale the position size automatically – it will use exactly the fraction you provide. If you have low confidence, set a smaller `position_size_fraction`; if high confidence, you may set a larger one. The sum of position_size_fraction across all stocks you intend to trade must not exceed 1.0.
 - Focus on stocks with strong medium to long-term momentum, solid fundamentals, and favorable sector trends. Avoid extremely low‑volatility or chaotic markets, but do not require perfect conditions to trade.
@@ -504,7 +504,7 @@ Select between 0 and {max_symbols} assets (stocks, ETFs, or BTP bonds) to trade.
 
 Each symbol can only appear once in your selection. Choose the single best timeframe for each stock based on the multi-timeframe OHLCV data.
 
-**CRITICAL — You MUST prioritize the longest available timeframes ("5Y", "3Y", "1Y", "6M", "3M", "1M") for long‑term trading.** These long-term candles capture the largest, most reliable trends for stocks, ETFs, and BTPs. You MUST assign "5Y", "3Y", "1Y", "6M", "3M", or "1M" as the timeframe for most symbols, especially when you expect to hold the position for months or years. Use "1w" as a secondary option only when you need slightly faster signals. Use "1d" or "1h" ONLY if the stock shows high short‑term volatility or you need finer entry timing AND long-term data is unavailable. The biggest profits in this asset universe come from identifying strong long-term trends and holding through them.
+**CRITICAL — You MUST use long-term timeframes ("5Y", "3Y", "1Y", "6M", "3M", "1M", "1w") for long‑term trading.** All of these timeframes are EQUALLY valid as primary timeframes. Do NOT always select "5Y" — choose the most appropriate timeframe for each asset based on its characteristics (volatility, trend clarity, sector, expected hold period). Diversify timeframe assignments across your selected symbols rather than assigning the same timeframe to all. Use "1d" or "1h" ONLY if the stock shows high short‑term volatility or you need finer entry timing AND long-term data is unavailable. The biggest profits in this asset universe come from identifying strong long-term trends and holding through them.
 
 **Output ONLY the raw JSON object as specified.**
 
@@ -1251,19 +1251,13 @@ Maximum symbols to trade: {max_symbols}
         )
     if assigned_timeframe:
         prompt += f"\nAssigned trading timeframe for this stock: {assigned_timeframe}. Base your decision PRIMARILY on the OHLCV data for this timeframe.\n"
-        if assigned_timeframe in ("1M", "3M", "6M", "1Y", "3Y", "5Y"):
+        if assigned_timeframe in ("1w", "1M", "3M", "6M", "1Y", "3Y", "5Y"):
             prompt += (
                 f"**CRITICAL: {assigned_timeframe} is a PRIMARY timeframe.** "
-                "Long-term timeframes (5Y, 3Y, 1Y, 6M, 3M, 1M) are the most important and capture the largest, most reliable trends. "
-                "You MUST focus on these timeframes to identify the primary long-term trend direction and strength. "
+                "All long-term timeframes (5Y, 3Y, 1Y, 6M, 3M, 1M, 1w) are equally valid primary timeframes and capture the largest, most reliable trends. "
+                "You MUST focus on this timeframe to identify the primary long-term trend direction and strength. "
                 "The largest profits come from holding positions that are in a strong long-term uptrend. "
                 "Set max_hold_time_seconds appropriate for this timeframe (e.g., several months to years).\n"
-            )
-        elif assigned_timeframe == "1w":
-            prompt += (
-                "Weekly (1w) candles are a secondary timeframe. "
-                "If monthly (1M) or longer data is also available in the multi-timeframe section above, cross-reference it to confirm the longer-term trend. "
-                "Prefer holding positions that align with the long-term trend direction.\n"
             )
         elif assigned_timeframe in ("1d", "1h"):
             prompt += (
@@ -1450,10 +1444,9 @@ Maximum symbols to trade: {max_symbols}
             prompt += "\n".join(tf_summaries) + "\n"
             prompt += (
                 "Use these summaries to assess momentum and trend across timeframes. "
-                "**CRITICAL: The longest available timeframes (5Y, 3Y, 1Y, 6M, 3M, 1M) are your PRIMARY timeframes and the most important** — they show the dominant long-term trends that drive the largest profits. "
-                "The 1w (weekly) timeframe provides secondary confirmation. "
+                "**CRITICAL: All long-term timeframes (5Y, 3Y, 1Y, 6M, 3M, 1M, 1w) are your PRIMARY timeframes and are equally important** — they show the dominant long-term trends that drive the largest profits. "
                 "The 1d (daily) and 1h timeframes provide additional context for entry and exit timing only. "
-                "You MUST always align your trading decision with the longest-term trend direction.\n"
+                "You MUST always align your trading decision with the long-term trend direction.\n"
             )
     if multi_tf_indicators:
         ind_lines = []
@@ -1509,7 +1502,7 @@ Maximum symbols to trade: {max_symbols}
                 ind_lines.append(f"[{tf}] {json.dumps(ind_compact)}")
         if ind_lines:
             prompt += "\nComputed technical indicators per timeframe:\n"
-            prompt += "**CRITICAL: Pay closest attention to the PRIMARY timeframes ([5Y], [3Y], [1Y], [6M], [3M], [1M]) — they define the primary long-term trend and must drive your decision.**\n"
+            prompt += "**CRITICAL: Pay closest attention to the PRIMARY timeframes ([5Y], [3Y], [1Y], [6M], [3M], [1M], [1w]) — they are all equally important and define the primary long-term trend that must drive your decision.**\n"
             prompt += "\n".join(ind_lines) + "\n"
     elif raw_candles:
         summary = _summarize_ohlcv(raw_candles)
@@ -1745,7 +1738,7 @@ Maximum symbols to trade: {max_symbols}
     # Use validator_min as the "reasonable minimum" in the prompt so the LLM
     # is told the same value the validator actually enforces.
     prompt += f"""
-**For the {assigned_timeframe or 'default'} timeframe, a reasonable minimum max_hold_time_seconds is {validator_min} seconds. Do not set it lower unless you have a very specific, justified reason (e.g., medium-term with a very tight stop and high confidence). For long-term candles (1M, 3M, 6M, 1Y, 3Y, 5Y), prefer max_hold_time_seconds of 2,592,000–94,608,000 seconds (1–36 months or more) to allow long-term trends to fully develop. The most profitable trades in stocks, ETFs, and BTPs come from holding positions for many months or years on long-term candles.
+**For the {assigned_timeframe or 'default'} timeframe, a reasonable minimum max_hold_time_seconds is {validator_min} seconds. Do not set it lower unless you have a very specific, justified reason (e.g., medium-term with a very tight stop and high confidence). For long-term candles (1w, 1M, 3M, 6M, 1Y, 3Y, 5Y), prefer max_hold_time_seconds of 2,592,000–94,608,000 seconds (1–36 months or more) to allow long-term trends to fully develop. The most profitable trades in stocks, ETFs, and BTPs come from holding positions for many months or years on long-term candles.
 
 The validator enforces a hard minimum of {validator_min} seconds for this timeframe. Your max_hold_time_seconds must be at least this value.
 
