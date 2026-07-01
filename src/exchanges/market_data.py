@@ -264,9 +264,8 @@ def _get_proxies() -> Optional[str]:
     # Trigger background refresh if pool is empty or stale (every 30 mins)
     if not _dynamic_rotator.valid_proxies or (time.time() - _dynamic_rotator._last_refresh > 1800):
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(_dynamic_rotator.refresh_proxy_pool())
+            loop = asyncio.get_running_loop()
+            loop.create_task(_dynamic_rotator.refresh_proxy_pool())
         except RuntimeError:
             pass  # No event loop running
 
