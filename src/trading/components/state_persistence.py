@@ -4,11 +4,15 @@ Handles saving and loading trading engine state to/from the database.
 Extracted from TradingEngine to reduce class size and improve maintainability.
 """
 import asyncio
+import dataclasses as _dc
 import logging
+import time
 from dataclasses import asdict
 from typing import Any
 
-from src.database import save_trading_state
+from src.config.settings import settings
+from src.database import save_trading_state, load_trading_state, get_all_trades
+from src.strategies.base import Signal
 
 logger = logging.getLogger(__name__)
 
@@ -73,3 +77,120 @@ class StatePersistence:
         logger.debug("Saved trading state: %d symbols, %d positions, %d trades",
                      len(engine.current_symbols), len(engine.positions), len(engine.trade_history))
         engine._state_dirty = False
+
+    def load_state(self):
+        """Load current symbols, positions, trade history, and initial balance from SQLite."""
+        engine = self.engine
+        state = load_trading_state()
+
+        raw_symbols = state.get("current_symbols", [])
+        # Convert old format (list of strings) to new format if needed
+        if raw_symbols and isinstance(raw_symbols[0], str):
+            default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+            engine.current_symbols = [{"symbol": s, "timeframe": default_tf} for s in raw_symbols]
+        else:
+            engine.current_symbols = raw_symbols
+        engine.positions = state.get("positions", {})
+        # Remove any position that lacks LLM-defined risk parameters.
+        # Such positions cannot be managed safely.
+        for symbol in list(engine.positions.keys()):
+            pos = engine.positions[symbol]
+            if "stop_loss" not in pos or "take_profit" not in pos:
+                logger.warning(
+                    f"Position for {symbol} is missing stop_loss/take_profit. "
+                    f"Will attempt to re-evaluate to obtain LLM risk parameters before force-closing."
+                )
+                pos["_needs_risk_params"] = True
+                pos["_needs_risk_params_attempts"] = 0
+                # Force immediate re-evaluation so the LLM can provide risk parameters
+                engine._force_eval[symbol] = True
+                engine._last_strategy_eval.pop(symbol, None)
+
+        # Discard positions with zero amount or zero price (corrupted state)
+        for symbol in list(engine.positions.keys()):
+            pos = engine.positions[symbol]
+            amount = pos.get("amount", 0)
+            price = pos.get("price", 0)
+            if amount <= 0 or price <= 0:
+                logger.warning(
+                    f"Position for {symbol} has invalid amount={amount} or price={price}. Removing it."
+                )
+                del engine.positions[symbol]
+
+        # Initialize trailing stop tracking fields for positions with trailing stops.
+        # This ensures _highest_price is not set to a pre-entry price on the first
+        # check after a restart (which would make the trailing stop too tight).
+        for symbol, pos in engine.positions.items():
+            if pos.get("trailing_stop"):
+                if "_highest_price" not in pos:
+                    pos["_highest_price"] = pos.get("price", 0.0)
+                if "_last_trailing_check_ts" not in pos:
+                    pos["_last_trailing_check_ts"] = time.time()
+
+        all_trades = get_all_trades()
+        engine.trade_history = all_trades[-settings.MAX_TRADES_IN_MEMORY:]
+        # Compute the realized P&L offset for trades that were pruned at load time
+        engine._realized_pnl_offset = sum(
+            t.get("realized_pnl", 0.0)
+            for t in all_trades[:-settings.MAX_TRADES_IN_MEMORY]
+            if t.get("side") == "sell"
+        )
+        engine.queued_orders = state.get("queued_orders", [])
+        for q in engine.queued_orders:
+            q['order_book'] = None
+        engine.recent_signals = state.get("recent_signals", [])
+        engine._symbol_first_seen = state.get("symbol_first_seen", {})
+        engine._entry_signal_state = state.get("entry_signal_state", {})
+        engine._last_eval_snapshot = state.get("last_eval_snapshot", {})
+        engine._force_eval = state.get("force_eval", {})
+        engine._force_eval_time = state.get("force_eval_time", {})
+        engine._strategy_intervals = state.get("strategy_intervals", {})
+        engine._last_decisions = state.get("last_decisions", {})
+        engine.last_loss_time = state.get("last_loss_time", {})
+        engine.cooldown_durations = state.get("cooldown_durations", {})
+        engine._global_risk_multiplier = state.get("global_risk_multiplier")
+
+        # Restore pending entries (reconstruct Signal objects from dicts)
+        raw_pending = state.get("pending_entries", {})
+        engine._pending_entries = {}
+        valid_signal_keys = {f.name for f in _dc.fields(Signal)}
+        for symbol, entry in raw_pending.items():
+            try:
+                signal_dict = entry["signal"]
+                filtered = {k: v for k, v in signal_dict.items() if k in valid_signal_keys}
+                if "action" not in filtered:
+                    filtered["action"] = "HOLD"
+                if "confidence" not in filtered:
+                    filtered["confidence"] = 0.0
+                if "reasoning" not in filtered:
+                    filtered["reasoning"] = ""
+                signal = Signal(**filtered)
+                engine._pending_entries[symbol] = {
+                    "signal": signal,
+                    "deadline": entry["deadline"],
+                    "timeframe": entry["timeframe"],
+                    "condition": entry["condition"],
+                }
+            except Exception as e:
+                logger.warning(f"Failed to restore pending entry for {symbol}: {e}")
+
+        # Prune any pending entries whose deadline has already passed
+        now = time.time()
+        expired = [sym for sym, e in engine._pending_entries.items() if now >= e["deadline"]]
+        for sym in expired:
+            logger.info(f"Discarding expired pending entry for {sym} (deadline passed during downtime).")
+            del engine._pending_entries[sym]
+
+        if "initial_balance" in state:
+            engine.initial_balance = float(state["initial_balance"])
+        else:
+            balance = engine.trader.fetch_balance()
+            engine.initial_balance = balance.get(engine.base_currency, 0.0)
+            save_trading_state("initial_balance", engine.initial_balance)
+
+        logger.info(
+            "Loaded trading state: %d symbols, %d positions, %d trades",
+            len(engine.current_symbols),
+            len(engine.positions),
+            len(engine.trade_history),
+        )
