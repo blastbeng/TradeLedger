@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
 from src.database import get_latest_ohlcv_timestamp
+from src.strategies.base import Signal
 
 logger = logging.getLogger(__name__)
 
@@ -287,3 +288,279 @@ class SignalProcessor:
 
         engine._force_eval.pop(symbol, None)
         return True
+
+    async def handle_triggered_flags(
+        self,
+        symbol: str,
+        display_symbol: str,
+        signal: Signal,
+        validated: Signal,
+        assigned_tf: str,
+        current_price: float,
+        atr: Optional[float],
+        ticker: Dict[str, Any],
+        max_hold_expired: bool,
+        stop_loss_triggered: bool,
+        take_profit_triggered: bool,
+        partial_tp_triggered: bool,
+        dust_sweep_triggered: bool,
+        strategy_model_type: str,
+        llm_provider: Optional[str],
+        llm_model: Optional[str],
+    ) -> bool:
+        """Handle triggered position flags (max hold, stop loss, take profit, partial TP, dust sweep).
+
+        Returns True if the caller should return immediately (flag was handled).
+        Returns False if the caller should continue with normal execution.
+        """
+        engine = self.engine
+        params = signal.strategy_params or {}
+
+        # --- Handle max‑hold‑expired LLM decision ---
+        if max_hold_expired and signal.action == "HOLD":
+            new_max_hold = params.get("max_hold_time_seconds") if params else None
+            if new_max_hold is not None and new_max_hold > 0:
+                logger.info(f"LLM extended max hold time for {symbol} to {new_max_hold}s")
+                if symbol in engine.positions:
+                    async with engine._positions_lock:
+                        engine.positions[symbol]["max_hold_time_seconds"] = new_max_hold
+                        engine.positions[symbol]["timestamp"] = int(time.time() * 1000)
+                        engine.positions[symbol].pop("_max_hold_expired", None)
+                        engine.positions[symbol].pop("_max_hold_expired_count", None)
+                for symbol_entry in engine.current_symbols:
+                    if symbol_entry["symbol"] == symbol:
+                        symbol_entry["entry_time"] = time.time()
+                        break
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"⏰ Max hold time for {display_symbol} extended to {new_max_hold}s by LLM.\n"
+                        f"Reasoning: {validated.reasoning}",
+                        summary={
+                            "symbol": symbol,
+                            "action": "HOLD",
+                            "reason": validated.reasoning,
+                            "new_max_hold_seconds": new_max_hold,
+                            "model_type": strategy_model_type,
+                            "llm_provider": llm_provider,
+                            "llm_model": llm_model,
+                        }
+                    )
+                await engine._update_position_params(
+                    symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
+                )
+                engine._state_dirty = True
+            else:
+                logger.warning(
+                    f"LLM returned HOLD without new max_hold_time_seconds for {symbol} "
+                    f"after max hold expiry – forcing SELL."
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"⏰ LLM did not extend hold time for {display_symbol} – closing position.",
+                        summary={
+                            "symbol": symbol, "action": "SELL",
+                            "reason": "Max hold expired, LLM did not extend",
+                            "exit_reason": "max_hold_time_llm_no_extend",
+                            "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model,
+                        }
+                    )
+                await engine._execute_signal(
+                    symbol, Signal(action="SELL", confidence=1.0, reasoning="Max hold expired, LLM did not extend"),
+                    exit_reason="max_hold_time_llm_no_extend"
+                )
+            return True
+
+        # --- Handle stop-loss-triggered LLM decision ---
+        if stop_loss_triggered and signal.action == "HOLD":
+            new_params = signal.strategy_params or {}
+            new_stop_method = new_params.get("stop_loss_method", "fixed")
+            new_stop_pct = None
+            if new_stop_method == "atr_multiple" and atr is not None and atr > 0:
+                atr_mult = new_params.get("stop_loss_atr_multiple")
+                if atr_mult is not None:
+                    new_stop_pct = (atr_mult * atr) / current_price
+            else:
+                new_stop_pct = new_params.get("stop_loss_pct")
+
+            if new_stop_pct is not None and new_stop_pct > 0:
+                logger.info(
+                    f"LLM decided to hold {symbol} after stop-loss trigger, "
+                    f"new stop_loss_pct={new_stop_pct:.4%}"
+                )
+                if symbol in engine.positions:
+                    async with engine._positions_lock:
+                        engine.positions[symbol]["stop_loss"] = current_price * (1 - new_stop_pct)
+                        engine.positions[symbol].pop("_stop_loss_triggered", None)
+                        engine.positions[symbol].pop("_stop_loss_review_count", None)
+                    await engine._update_position_params(
+                        symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
+                    )
+                    engine._state_dirty = True
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"🔄 {display_symbol}: LLM adjusted stop-loss to {new_stop_pct:.4%} – holding.\n"
+                        f"Reasoning: {validated.reasoning}",
+                        summary={
+                            "symbol": symbol, "action": "HOLD", "reason": validated.reasoning,
+                            "new_stop_loss_pct": new_stop_pct, "model_type": strategy_model_type,
+                            "llm_provider": llm_provider, "llm_model": llm_model,
+                        }
+                    )
+                return True
+            else:
+                logger.warning(
+                    f"LLM returned HOLD for {symbol} after stop-loss trigger but did not provide "
+                    f"a new stop-loss. Forcing SELL."
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"⛔ {display_symbol}: LLM did not provide new stop-loss – selling.",
+                        summary={
+                            "symbol": symbol, "action": "SELL",
+                            "reason": "Stop-loss triggered, LLM did not provide new stop",
+                            "exit_reason": "stop_loss_llm_no_action",
+                            "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model,
+                        }
+                    )
+                await engine._execute_signal(
+                    symbol, Signal(action="SELL", confidence=1.0, reasoning="Stop-loss triggered, LLM did not provide new stop"),
+                    exit_reason="stop_loss_llm_no_action"
+                )
+                return True
+
+        elif stop_loss_triggered and signal.action == "SELL":
+            if symbol in engine.positions:
+                async with engine._positions_lock:
+                    engine.positions[symbol].pop("_stop_loss_triggered", None)
+                    engine.positions[symbol].pop("_stop_loss_review_count", None)
+            # Continue to normal SELL execution
+
+        # --- Handle take-profit-triggered LLM decision ---
+        if take_profit_triggered and signal.action == "HOLD":
+            new_params = signal.strategy_params or {}
+            new_tp_pct = new_params.get("take_profit_pct")
+            if new_tp_pct is not None and new_tp_pct > 0:
+                logger.info(
+                    f"LLM decided to hold {symbol} after take-profit trigger, "
+                    f"new take_profit_pct={new_tp_pct:.4%}"
+                )
+                if symbol in engine.positions:
+                    async with engine._positions_lock:
+                        engine.positions[symbol]["take_profit"] = current_price * (1 + new_tp_pct)
+                        engine.positions[symbol].pop("_take_profit_triggered", None)
+                        engine.positions[symbol].pop("_take_profit_review_count", None)
+                    await engine._update_position_params(
+                        symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
+                    )
+                    engine._state_dirty = True
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"🔄 {display_symbol}: LLM adjusted take-profit to {new_tp_pct:.4%} – holding.\n"
+                        f"Reasoning: {validated.reasoning}",
+                        summary={
+                            "symbol": symbol, "action": "HOLD", "reason": validated.reasoning,
+                            "new_take_profit_pct": new_tp_pct, "model_type": strategy_model_type,
+                            "llm_provider": llm_provider, "llm_model": llm_model,
+                        }
+                    )
+                return True
+            else:
+                logger.warning(
+                    f"LLM returned HOLD for {symbol} after take-profit trigger but did not provide "
+                    f"a new take-profit. Forcing SELL."
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"🎯 {display_symbol}: LLM did not provide new take-profit – selling.",
+                        summary={
+                            "symbol": symbol, "action": "SELL",
+                            "reason": "Take-profit triggered, LLM did not provide new take-profit",
+                            "exit_reason": "take_profit_llm_no_action",
+                            "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model,
+                        }
+                    )
+                await engine._execute_signal(
+                    symbol, Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered, LLM did not provide new take-profit"),
+                    exit_reason="take_profit_llm_no_action"
+                )
+                return True
+
+        elif take_profit_triggered and signal.action == "SELL":
+            if symbol in engine.positions:
+                async with engine._positions_lock:
+                    engine.positions[symbol].pop("_take_profit_triggered", None)
+                    engine.positions[symbol].pop("_take_profit_review_count", None)
+            # Continue to normal SELL execution
+
+        # --- Handle partial TP triggered ---
+        if partial_tp_triggered and signal.action == "HOLD":
+            new_levels = params.get("partial_take_profit_levels") if params else None
+            if new_levels is not None:
+                async with engine._positions_lock:
+                    engine.positions[symbol]["partial_take_profit_levels"] = new_levels
+                    engine.positions[symbol].pop("_partial_tp_triggered", None)
+                    engine.positions[symbol].pop("_partial_tp_triggered_single", None)
+                    engine.positions[symbol].pop("_partial_tp_review_count", None)
+                    engine.positions[symbol].pop("_partial_tp_single_review_count", None)
+                    engine.positions[symbol].pop("_partial_tp_triggered_levels", None)
+                    engine.positions[symbol]["partial_tp_levels_triggered"] = []
+                    engine.positions[symbol]["partial_tp_depth_wait_start"] = {}
+                logger.info(f"LLM updated partial TP levels for {symbol}")
+                await engine._update_position_params(
+                    symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
+                )
+                engine._state_dirty = True
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"🔄 {display_symbol}: LLM adjusted partial TP levels – holding.",
+                        summary={"symbol": symbol, "action": "HOLD", "reason": "Partial TP levels adjusted by LLM", "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model}
+                    )
+                return True
+            else:
+                logger.info(f"LLM did not update partial TP levels for {symbol}, executing triggered level(s)")
+                if engine.positions[symbol].get("_partial_tp_triggered_single"):
+                    await engine._execute_partial_tp_single(symbol, current_price, None, ticker)
+                    async with engine._positions_lock:
+                        engine.positions[symbol].pop("_partial_tp_triggered_single", None)
+                        engine.positions[symbol].pop("_partial_tp_single_review_count", None)
+                if engine.positions[symbol].get("_partial_tp_triggered"):
+                    for lvl in engine.positions[symbol].get("_partial_tp_triggered_levels", []):
+                        await engine._execute_partial_tp_level(symbol, lvl, current_price, None, ticker)
+                    async with engine._positions_lock:
+                        engine.positions[symbol].pop("_partial_tp_triggered", None)
+                        engine.positions[symbol].pop("_partial_tp_review_count", None)
+                        engine.positions[symbol].pop("_partial_tp_triggered_levels", None)
+                return True
+
+        elif partial_tp_triggered and signal.action == "SELL":
+            async with engine._positions_lock:
+                engine.positions[symbol].pop("_partial_tp_triggered", None)
+                engine.positions[symbol].pop("_partial_tp_triggered_single", None)
+                engine.positions[symbol].pop("_partial_tp_review_count", None)
+                engine.positions[symbol].pop("_partial_tp_single_review_count", None)
+                engine.positions[symbol].pop("_partial_tp_triggered_levels", None)
+            # Continue to normal SELL execution
+
+        # --- Handle dust sweep triggered ---
+        if dust_sweep_triggered and signal.action == "HOLD":
+            async with engine._positions_lock:
+                engine.positions[symbol].pop("_dust_sweep_triggered", None)
+                if engine.positions[symbol].get("_dust_keep_since") is None:
+                    engine.positions[symbol]["_dust_keep_since"] = time.time()
+            engine._state_dirty = True
+            logger.info(f"LLM decided to hold dust for {symbol}")
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"🧹 {display_symbol}: LLM decided to keep dust – holding.",
+                    summary={"symbol": symbol, "action": "HOLD", "reason": "Dust kept by LLM"}
+                )
+            return True
+        elif dust_sweep_triggered and signal.action == "SELL":
+            async with engine._positions_lock:
+                engine.positions[symbol].pop("_dust_sweep_triggered", None)
+                engine.positions[symbol].pop("_dust_sweep_review_count", None)
+            logger.info(f"LLM decided to sell dust for {symbol}")
+            await engine._sweep_dust(symbol)
+            return True
+
+        return False

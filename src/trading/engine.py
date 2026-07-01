@@ -6286,7 +6286,7 @@ class TradingEngine:
             params = signal.strategy_params or {}
 
             # --- Handle triggered position flags (max hold, stop loss, take profit, partial TP, dust sweep) ---
-            if await self._handle_triggered_flags(
+            if await self._signal_processor.handle_triggered_flags(
                 symbol=symbol,
                 display_symbol=display_symbol,
                 signal=signal,
