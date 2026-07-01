@@ -9,6 +9,8 @@ import time
 from dataclasses import asdict
 from typing import Any, Dict, Optional
 
+from src.config.settings import settings
+from src.database import insert_trade
 from src.strategies.base import Signal
 from src.utils.symbol_utils import is_btp_isin
 
@@ -125,6 +127,174 @@ class OrderExecutor:
         pos.pop("take_profit_order_id", None)
         pos.pop("stop_loss_order_type", None)
         pos.pop("_native_stop_price", None)
+
+    async def execute_partial_sell(
+        self,
+        symbol: str,
+        sell_amount: float,
+        level_label: str,
+        exit_reason: str,
+        ticker: Optional[Dict[str, Any]] = None,
+        atr: Optional[float] = None,
+        current_price: float = 0.0,
+        cleanup_callback=None,
+        extra_summary: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Execute a partial sell (used by partial take-profit single and multi-level).
+
+        Handles order creation, cost-basis proration, position update, exit-order
+        replacement, dust sweep, trade recording, and notification.
+
+        cleanup_callback(symbol, position_dict) is called inside the positions lock
+        after the position amount/cost is updated (only when the position survives).
+        """
+        engine = self.engine
+        pos = engine.positions.get(symbol)
+        if not pos:
+            logger.warning(f"Cannot execute partial sell for {symbol}: no position.")
+            return False
+
+        stock_name = await engine._get_stock_name(symbol)
+        tf = pos.get("timeframe")
+        display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
+        base, quote = symbol.split("/")
+
+        # Check minimum sell size
+        try:
+            asset = await engine._get_asset_info(symbol)
+            min_amount = float(asset.min_order_size) if asset.min_order_size else None
+            if not asset.fractionable and (min_amount is None or min_amount < 1.0):
+                min_amount = 1.0
+        except Exception:
+            min_amount = None
+        if min_amount is not None and sell_amount < float(min_amount):
+            logger.info(f"{level_label} sell amount {sell_amount:.6f} below min {min_amount} for {symbol}, skipping.")
+            return False
+
+        if not await engine._is_market_open():
+            logger.info(f"{level_label} for {symbol} skipped: market closed.")
+            return False
+
+        need_limit = not engine._is_regular_hours()
+        limit_price = None
+        time_in_force = "day"
+        if need_limit:
+            limit_price = engine._default_limit_price(symbol, "SELL", ticker, atr=atr)
+            if limit_price is None:
+                logger.error(f"Cannot place limit order for {level_label} on {symbol}: no limit price.")
+                return False
+            if limit_price <= 0:
+                logger.error(f"Invalid limit_price for {level_label} on {symbol}, skipping.")
+                return False
+
+        try:
+            order = await asyncio.to_thread(
+                engine.trader.create_market_sell_order, symbol, sell_amount,
+                settings.ORDER_FILL_TIMEOUT_SECONDS, limit_price, time_in_force
+            )
+            filled_amount = order.get("amount", sell_amount)
+            fill_price = order.get("price", current_price)
+            logger.info(f"{level_label} SELL {symbol}: {filled_amount:.6f} @ {fill_price:.4f}")
+
+            fee = order.get("fee", {})
+            fee_cost = float(fee.get("cost", 0.0) or 0.0)
+            fee_currency = fee.get("currency", "")
+            cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
+            net_base = pos.get("net_base", pos["amount"])
+            prorated_cost_basis = cost_basis * (filled_amount / net_base) if net_base > 0 else 0.0
+            net_quote = order["cost"] - (fee_cost if fee_currency == quote else 0.0)
+            realized_pnl = net_quote - prorated_cost_basis
+
+            order["realized_pnl"] = realized_pnl
+            order["cost_basis"] = prorated_cost_basis
+            order["exit_reason"] = exit_reason
+            order["strategy_type"] = pos.get("strategy_type", "unknown")
+            order["timeframe"] = pos.get("timeframe")
+            if "timestamp" in pos:
+                order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
+
+            remaining_amount = pos["amount"] - filled_amount
+            remaining_cost_basis = cost_basis - prorated_cost_basis
+            remaining_net_base = net_base - filled_amount
+
+            await engine._cancel_exit_orders(symbol)
+
+            if remaining_amount <= 0 or remaining_net_base <= 0:
+                async with engine._positions_lock:
+                    engine.positions.pop(symbol, None)
+                engine._strategy_intervals.pop(symbol, None)
+                engine._last_strategy_eval.pop(symbol, None)
+                engine._pending_entries.pop(symbol, None)
+                await engine._remove_symbol_if_paused(symbol)
+            else:
+                async with engine._positions_lock:
+                    engine.positions[symbol]["amount"] = remaining_amount
+                    engine.positions[symbol]["cost_basis"] = remaining_cost_basis
+                    engine.positions[symbol]["net_base"] = remaining_net_base
+                    engine.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
+                    if cleanup_callback:
+                        cleanup_callback(symbol, engine.positions[symbol])
+
+                is_dust = min_amount is not None and remaining_amount < float(min_amount)
+                if is_dust:
+                    logger.info(f"Remaining {remaining_amount:.6f} {base} is dust after {level_label} for {symbol}, sweeping.")
+                    await engine._sweep_dust(symbol)
+                else:
+                    from src.strategies.base import Signal
+                    dummy_params = {
+                        "trailing_take_profit": engine.positions[symbol].get("trailing_take_profit", False),
+                        "partial_take_profit_levels": engine.positions[symbol].get("partial_take_profit_levels"),
+                        "partial_take_profit_pct": engine.positions[symbol].get("partial_take_profit_pct"),
+                    }
+                    dummy_signal = Signal(
+                        action="BUY",
+                        confidence=1.0,
+                        reasoning=f"Replacing exit orders after {level_label}",
+                        stop_loss_order_type=engine.positions[symbol].get("stop_loss_order_type"),
+                        stop_loss_stop_price=engine.positions[symbol].get("stop_loss"),
+                        stop_loss_limit_price=None,
+                        take_profit_order_type=engine.positions[symbol].get("take_profit_order_type"),
+                        take_profit_limit_price=engine.positions[symbol].get("take_profit"),
+                        strategy_params=dummy_params,
+                    )
+                    exit_prices = {
+                        "stop_loss_price": engine.positions[symbol].get("stop_loss"),
+                        "take_profit_price": engine.positions[symbol].get("take_profit"),
+                    }
+                    await engine._place_exit_orders(symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe"))
+
+            engine._append_trade(order)
+            await asyncio.to_thread(insert_trade, order)
+            await engine._save_state(force=True)
+            engine._portfolio_exposure_cache = None
+
+            if engine.notifier:
+                pnl_pct = (realized_pnl / prorated_cost_basis * 100) if prorated_cost_basis > 0 else 0.0
+                summary = {
+                    "symbol": symbol,
+                    "action": "SELL",
+                    "reason": level_label,
+                    "amount": filled_amount,
+                    "price": fill_price,
+                    "realized_pnl": realized_pnl,
+                    "exit_reason": exit_reason,
+                }
+                if extra_summary:
+                    summary.update(extra_summary)
+                await engine.notifier.send_notification(
+                    f"🔸 {level_label} SELL {display_symbol}: {filled_amount:.6f} @ {fill_price:.4f} "
+                    f"| P&L: {realized_pnl:+.4f} ({pnl_pct:+.2f}%)",
+                    summary=summary,
+                )
+            return True
+        except Exception as e:
+            logger.error(f"{level_label} sell failed for {symbol}: {e}")
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"❌ {level_label} sell failed for {display_symbol}: {e}",
+                    summary={"symbol": symbol, "action": "ERROR", "reason": f"{level_label} sell failed: {e}"[:200]}
+                )
+            return False
 
         base, quote = symbol.split("/")
         qty = pos["amount"]  # base quantity to sell
