@@ -58,8 +58,6 @@ class RedisLogHandler(logging.Handler):
         super().__init__()
         self.max_entries = max_entries
         self.setLevel(logging.INFO)   # only INFO and above to keep the list manageable
-        self._seen_keys: set = set()
-        self._seen_keys_max = 500
         self._queue: queue.Queue = queue.Queue(maxsize=1000)
         self._thread = threading.Thread(
             target=self._flush_loop, daemon=True, name="redis-log-flusher"
@@ -68,18 +66,6 @@ class RedisLogHandler(logging.Handler):
 
     def emit(self, record):
         try:
-            # Deduplication: skip if we've already processed this exact record.
-            # record.created is a float timestamp set when the LogRecord was
-            # constructed; it is identical across multiple handler calls for
-            # the same record.
-            key = (record.created, record.name, record.levelname, record.msg)
-            if key in self._seen_keys:
-                return
-            self._seen_keys.add(key)
-            # Prevent unbounded growth
-            if len(self._seen_keys) > self._seen_keys_max:
-                self._seen_keys.clear()
-
             entry = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "level": record.levelname,
