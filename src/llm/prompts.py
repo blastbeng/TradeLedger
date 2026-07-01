@@ -475,34 +475,6 @@ Reference equal-share budget per stock (suggestion only — you decide actual al
 Available timeframes: {json.dumps(available_timeframes)}
 Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols) if current_symbols else "None"}"""
 
-    prompt += (
-        f"\n**Capital Allocation — Fully Dynamic:**\n"
-        f"Your total available capital is {base_balance:.2f} {base_currency}.\n"
-        f"The 'Budget per stock' figure above is ONLY a reference (equal split). "
-        f"You are NOT required to allocate equally. You MUST decide the actual `position_size_fraction` "
-        f"for each stock dynamically based on your confidence, the quality of the setup, volatility, "
-        f"and all other parameters provided.\n"
-        f"Key rules:\n"
-        f"- The sum of `position_size_fraction` across ALL stocks you select must NOT exceed 1.0 "
-        f"(i.e., total allocated capital must not exceed your available {base_currency} balance).\n"
-        f"- Each trade amount is UNIQUE — do not default to equal splits. "
-        f"Allocate more to high-conviction setups and less to speculative ones.\n"
-        f"- **HYBRID ALLOCATION:** You may allocate ALL available capital to a single high-conviction trade "
-        f"if you believe it is highly profitable, even if this leaves no capital for other tickers. "
-        f"However, if you can leave some capital for other promising setups, do so. "
-        f"**Do NOT place small trades that are unprofitable after fees** just to fill slots — "
-        f"if a trade cannot be profitable with the available capital after accounting for transaction costs, "
-        f"skip it entirely rather than allocating a tiny unprofitable amount.\n"
-        f"- Even with a large number of symbols and a low portfolio value, you should still attempt trades. "
-        f"Use small `position_size_fraction` values (e.g., 0.01–0.05) if needed, "
-        f"but ONLY if the trade is still profitable after fees at that size.\n"
-        f"- If allocating capital to one high-conviction trade leaves no room for others, that is acceptable. "
-        f"Prioritize quality over quantity. You may concentrate capital on your best 1–3 setups.\n"
-        f"- The only hard floor is the exchange minimum order size (shown as `min_trade_cost` per symbol). "
-        f"Your `position_size_fraction × total_balance` must be ≥ that symbol's `min_trade_cost`.\n"
-        f"- If your available balance cannot meet the exchange minimum for any symbol, select 0 stocks.\n"
-    )
-
     # --- Open positions summary ---
     if open_positions:
         prompt += "\n**Open positions (these will continue to be managed even if trading is paused):**\n"
@@ -550,8 +522,6 @@ Select between {settings.MIN_SYMBOLS if settings.MIN_SYMBOLS > 0 else 0} and {ma
     prompt += """
 
 Each symbol can only appear once in your selection. Choose the single best timeframe for each stock based on the multi-timeframe OHLCV data.
-
-**CRITICAL — You MUST use long-term timeframes ("5Y", "3Y", "1Y", "6M", "3M", "1M", "1w") for long‑term trading.** All of these timeframes are EQUALLY valid as primary timeframes. Do NOT always select "5Y" — choose the most appropriate timeframe for each asset based on its characteristics (volatility, trend clarity, sector, expected hold period). Diversify timeframe assignments across your selected symbols rather than assigning the same timeframe to all. Use "1d" or "1h" ONLY if the stock shows high short‑term volatility or you need finer entry timing AND long-term data is unavailable. The biggest profits in this asset universe come from identifying strong long-term trends and holding through them.
 
 **Output ONLY the raw JSON object as specified.**
 
@@ -1192,25 +1162,6 @@ Maximum symbols to trade: {max_symbols}
                 "or total stop-loss risk is elevated, reduce your position_size_fraction or output HOLD. "
                 "If you have low exposure and low risk, you may allocate more capital to high-conviction trades.\n"
             )
-    prompt += (
-        "\n**Position Sizing — Single Hard Ceiling:** Your `position_size_fraction` is the PRIMARY driver. "
-        "The engine computes a single hard ceiling from all portfolio risk caps (exposure limit, stop-loss risk limit, "
-        "per-trade risk limit, remaining cycle budget) and caps your trade at that amount. "
-        "The global risk multiplier and per-symbol multiplier scale your desired amount. "
-        "Check the available capital and exposure/risk budgets above to ensure your fraction results in a "
-        "profitable trade after fees. If the available capital is too small for a profitable trade, output HOLD.\n"
-    )
-    # --- Dynamic portfolio risk adjustment ---
-    prompt += (
-        "\n**Dynamic Portfolio Risk Adjustment:**\n"
-        "You can include a `\"portfolio_risk_adjustment_factor\"` (0.1–1.0) in your strategy parameters. "
-        "This is your per-symbol vote on the overall portfolio risk for the current cycle. "
-        "The engine will take the **minimum** of this factor across all symbols evaluated in this cycle "
-        "and apply it as a global multiplier to all position sizes. "
-        "Use a lower value if you detect high volatility, an unfavorable market regime shift, or elevated risk. "
-        "Use 1.0 (or omit the field) if conditions are normal. "
-        "This gives you direct control over the global trading risk based on the latest market data.\n"
-    )
     if cycle_spent is not None and remaining_balance is not None:
         prompt += (
             f"Amount already allocated to other symbols in this cycle: {cycle_spent:.2f} {base_currency}\n"
@@ -1234,20 +1185,6 @@ Maximum symbols to trade: {max_symbols}
             "Adjust your position_size_fraction accordingly – if you want a certain exposure, "
             "you may need to set a higher fraction to compensate, or accept the reduced size.\n"
         )
-    prompt += (
-        f"**position_size_fraction** represents a fraction of your **total {base_currency} balance** (0.01 to 1.0). "
-        f"You decide the exact fraction dynamically — there is no equal-split requirement. "
-        f"Allocate more to high-conviction setups and less to speculative ones. "
-        f"**Important:** The sum of position_size_fraction across all stocks you intend to trade must not exceed 1.0 "
-        f"(total allocated capital must not exceed your available {base_currency} balance). "
-        f"Even with many symbols and limited capital, use small fractions (0.01–0.05) rather than skipping trades entirely.\n"
-    )
-    prompt += (
-        "If you are uncertain about a trade, prefer a **small position** "
-        "(`position_size_fraction` ≤ 0.1) with tight stops over outputting HOLD. "
-        "Multiple small positions diversify risk and increase the chance of capturing profitable moves. "
-        "Doing nothing guarantees zero profit.\n"
-    )
     # --- Queued orders for this symbol ---
     if queued_orders:
         symbol_queued = [q for q in queued_orders if q.get('symbol') == symbol]
@@ -1418,34 +1355,6 @@ Maximum symbols to trade: {max_symbols}
                 f"**Your `take_profit_pct` MUST be strictly greater than {break_even_pct*100:.2f}% to be profitable.**\n"
                 f"Set your `take_profit_pct` comfortably above this break-even percentage.\n"
             )
-    prompt += (
-        f"\n**Capital Allocation — Fully Dynamic:**\n"
-        f"Your total available {base_currency} balance is {base_balance:.2f}.\n"
-        f"The 'Suggested equal share per symbol' is ONLY a reference. You decide the actual `position_size_fraction`.\n"
-        f"- Set `position_size_fraction` based on your confidence, the quality of this setup, volatility (ATR), "
-        f"portfolio exposure, drawdown, and all other parameters. Each trade amount should be UNIQUE.\n"
-        f"- **HYBRID ALLOCATION:** You may allocate ALL available capital to this single trade "
-        f"if you believe it is highly profitable, even if this leaves no capital for other tickers. "
-        f"However, if you can leave some capital for other promising setups, do so. "
-        f"**Do NOT place a small trade that is unprofitable after fees** just because the equal-share budget seems small — "
-        f"if the trade cannot be profitable with the available capital after accounting for transaction costs, "
-        f"output HOLD instead of placing a tiny unprofitable trade.\n"
-        f"- Even a very small `position_size_fraction` (e.g., 0.01–0.05) is valid if your conviction is low or "
-        f"capital is limited, BUT ONLY if the trade is still profitable after fees at that size.\n"
-        f"- The sum of `position_size_fraction` across all stocks must not exceed 1.0 (total available balance).\n"
-    )
-    prompt += (
-        "\n**Confidence-Based Position Sizing:** You can set `confidence_sizing_weight` (0.0–1.0) in your strategy parameters "
-        "to make your confidence score directly affect the position size. The effective position size is: "
-        "`position_size_fraction × total_balance × (1.0 - confidence_sizing_weight × (1.0 - confidence))`. "
-        "Set to 0.0 to disable (default). Set to 1.0 to make position size directly proportional to confidence. "
-        "This makes your confidence score meaningful: high confidence → larger position, low confidence → smaller position.\n"
-    )
-    prompt += (
-        f"- The only hard floor is the exchange minimum order size: your `position_size_fraction × total_balance` "
-        f"must be ≥ the minimum order cost for this symbol (shown above as min_order_cost).\n"
-        f"- If the remaining balance is too small to meet the exchange minimum, reduce your fraction or output HOLD.\n"
-    )
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)
@@ -1819,19 +1728,9 @@ Maximum symbols to trade: {max_symbols}
     # Use validator_min as the "reasonable minimum" in the prompt so the LLM
     # is told the same value the validator actually enforces.
     prompt += f"""
-**For the {assigned_timeframe or 'default'} timeframe, a reasonable minimum max_hold_time_seconds is {validator_min} seconds. Do not set it lower unless you have a very specific, justified reason (e.g., medium-term with a very tight stop and high confidence). For long-term candles (1w, 1M, 3M, 6M, 1Y, 3Y, 5Y), prefer max_hold_time_seconds of 2,592,000–94,608,000 seconds (1–36 months or more) to allow long-term trends to fully develop. The most profitable trades in stocks, ETFs, and BTPs come from holding positions for many months or years on long-term candles.
-
-The validator enforces a hard minimum of {validator_min} seconds for this timeframe. Your max_hold_time_seconds must be at least this value.
+**For the {assigned_timeframe or 'default'} timeframe, a reasonable minimum max_hold_time_seconds is {validator_min} seconds. The validator enforces a hard minimum of {validator_min} seconds for this timeframe. Your max_hold_time_seconds must be at least this value.
 
 You are trading spot only (no shorting). Only output SELL if you currently hold the asset.
-
-**Note on BTP Bonds:** If the symbol is a BTP bond (ISIN format like IT0001234567), adjust your strategy for lower volatility: use longer max hold times, smaller take-profit targets, and ensure stop-losses are wide enough to avoid being triggered by normal bond price fluctuations. The `ticker` object includes `name`, `coupon` (annual coupon rate), and `maturity` (expiration date). Bond prices are quoted as a percentage of par value (e.g., a price of 101.68 means 101.68% of face value). 
-**BTP Valuation:** To decide if this BTP is a good buy, calculate its approximate Yield to Maturity (YTM):
-- `Annual Coupon = coupon × 100`
-- `Years to Maturity = (maturity_date - current_date).days / 365`
-- `Approximate YTM = (Annual Coupon + (100 - Current Price) / Years to Maturity) / ((100 + Current Price) / 2)`
-If the YTM is attractive relative to current Italian government bond yields, it is a good buy. If the price is well above par (e.g., >110) and YTM is low, the upside is limited and there is higher downside risk if interest rates rise. ATR and OHLCV data are available for BTPs via yfinance and should be used for technical analysis like any other asset.
-**Trailing Stops Not Supported for BTPs:** Intesa Sanpaolo Investo does not support trailing stop orders for BTP bonds. Do NOT set `trailing_stop` to true for BTP positions. If you do, the engine will silently ignore it and the position will only be protected by the fixed stop-loss.
 """
     # --- Fundamental Data ---
     if fundamentals:
