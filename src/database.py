@@ -1654,6 +1654,8 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             for db_base, prev_close in daily_prev_close.items():
                 if db_base in result:
                     result[db_base]["prev_close"] = prev_close
+    finally:
+        conn.close()
 
     # Save to Redis cache
     try:
@@ -1664,8 +1666,6 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         pass
 
     return result
-    finally:
-        conn.close()
 
 
 @retry_on_db_lock()
