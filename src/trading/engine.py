@@ -5388,105 +5388,24 @@ class TradingEngine:
         except Exception:
             pass
 
-        # --- Maximum symbol tenure (per-symbol, set by LLM) ---
-        max_tenure_hours = symbol_entry.get('max_tenure_hours')
-        if max_tenure_hours is not None and max_tenure_hours > 0 and 'entry_time' in symbol_entry:
-            tenure_seconds = max_tenure_hours * 3600
-            if time.time() - symbol_entry['entry_time'] > tenure_seconds:
-                logger.info(f"Max symbol tenure reached for {symbol} ({max_tenure_hours:.1f}h), forcing sell")
-                signal = Signal(action="SELL", confidence=1.0, reasoning="Max symbol tenure reached")
-                await self._execute_signal(symbol, signal, exit_reason="max_tenure")
-                self._force_eval.pop(symbol, None)
-                return
-
-        # --- Cooldown after a losing trade (LLM-defined) ---
-        # Only apply cooldown if there is NO open position for this symbol.
-        # An open position must be managed regardless of cooldown.
-        if symbol not in self.positions:
-            last_loss = self.last_loss_time.get(symbol)
-            if last_loss is not None:
-                cooldown = self.cooldown_durations.get(symbol, 0)
-                if cooldown > 0:
-                    elapsed = time.time() - last_loss
-                    if elapsed < cooldown:
-                        remaining = cooldown - elapsed
-                        logger.info(
-                            f"Skipping {symbol}: cooldown active ({remaining:.0f}s remaining after loss)"
-                        )
-                        self._force_eval.pop(symbol, None)
-                        return
-
-        # Skip if there is already a queued order for this symbol
-        async with self._queued_orders_lock:
-            has_queued = any(q['symbol'] == symbol for q in self.queued_orders)
-        if has_queued:
-            logger.info(f"Skipping {display_symbol}: order already queued.")
-            self._force_eval.pop(symbol, None)
+        _flags = await self._signal_processor.read_position_trigger_flags(symbol, symbol_entry)
+        if _flags is None:
             return
-
-        # --- Max hold expired flag ---
-        max_hold_expired = False
-        max_hold_expired_count = 0
-        if symbol in self.positions:
-            pos = self.positions[symbol]
-            if pos.get("_max_hold_expired"):
-                max_hold_expired = True
-                max_hold_expired_count = pos.get("_max_hold_expired_count", 1)
-
-        # --- Stop-loss triggered flag ---
-        stop_loss_triggered = False
-        stop_loss_review_count = 0
-        # --- Take-profit triggered flag ---
-        take_profit_triggered = False
-        take_profit_review_count = 0
-        # --- Partial TP and dust sweep triggers ---
-        partial_tp_triggered = False
-        partial_tp_review_count = 0
-        partial_tp_triggered_levels = []
-        dust_sweep_triggered = False
-        dust_sweep_review_count = 0
-        if symbol in self.positions:
-            pos = self.positions[symbol]
-            stop_loss_triggered = pos.get("_stop_loss_triggered", False)
-            stop_loss_review_count = pos.get("_stop_loss_review_count", 0)
-            take_profit_triggered = pos.get("_take_profit_triggered", False)
-            take_profit_review_count = pos.get("_take_profit_review_count", 0)
-            partial_tp_triggered = pos.get("_partial_tp_triggered", False) or pos.get("_partial_tp_triggered_single", False)
-            partial_tp_review_count = pos.get("_partial_tp_review_count", 0) or pos.get("_partial_tp_single_review_count", 0)
-            partial_tp_triggered_levels = pos.get("_partial_tp_triggered_levels", [])
-            dust_sweep_triggered = pos.get("_dust_sweep_triggered", False)
-            dust_sweep_review_count = pos.get("_dust_sweep_review_count", 0)
-
-        # Read LLM-decided review limits for the prompt
-        max_sl_reviews_prompt = settings.MAX_STOP_LOSS_REVIEWS
-        max_tp_reviews_prompt = settings.MAX_TAKE_PROFIT_REVIEWS
-        try:
-            raw = await asyncio.to_thread(self.redis.get, "trading:max_stop_loss_reviews")
-            if raw:
-                max_sl_reviews_prompt = int(raw)
-            raw = await asyncio.to_thread(self.redis.get, "trading:max_take_profit_reviews")
-            if raw:
-                max_tp_reviews_prompt = int(raw)
-        except Exception:
-            pass
-
-        max_partial_tp_reviews_prompt = settings.MAX_PARTIAL_TP_REVIEWS
-        max_dust_sweep_reviews_prompt = settings.MAX_DUST_SWEEP_REVIEWS
-        try:
-            raw = await asyncio.to_thread(self.redis.get, "trading:max_partial_tp_reviews")
-            if raw:
-                max_partial_tp_reviews_prompt = int(raw)
-            raw = await asyncio.to_thread(self.redis.get, "trading:max_dust_sweep_reviews")
-            if raw:
-                max_dust_sweep_reviews_prompt = int(raw)
-        except Exception:
-            pass
-
-        # Scale stop-loss review limit for long-term timeframes
-        if tf_seconds >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
-            max_sl_reviews_prompt = min(max_sl_reviews_prompt, settings.LONG_TERM_MAX_STOP_LOSS_REVIEWS)
-        elif tf_seconds >= 604_800:  # >= 1 week
-            max_sl_reviews_prompt = min(max_sl_reviews_prompt, settings.WEEKLY_MAX_STOP_LOSS_REVIEWS)
+        max_hold_expired = _flags["max_hold_expired"]
+        max_hold_expired_count = _flags["max_hold_expired_count"]
+        stop_loss_triggered = _flags["stop_loss_triggered"]
+        stop_loss_review_count = _flags["stop_loss_review_count"]
+        take_profit_triggered = _flags["take_profit_triggered"]
+        take_profit_review_count = _flags["take_profit_review_count"]
+        partial_tp_triggered = _flags["partial_tp_triggered"]
+        partial_tp_review_count = _flags["partial_tp_review_count"]
+        partial_tp_triggered_levels = _flags["partial_tp_triggered_levels"]
+        dust_sweep_triggered = _flags["dust_sweep_triggered"]
+        dust_sweep_review_count = _flags["dust_sweep_review_count"]
+        max_sl_reviews_prompt = _flags["max_sl_reviews_prompt"]
+        max_tp_reviews_prompt = _flags["max_tp_reviews_prompt"]
+        max_partial_tp_reviews_prompt = _flags["max_partial_tp_reviews_prompt"]
+        max_dust_sweep_reviews_prompt = _flags["max_dust_sweep_reviews_prompt"]
 
         try:
             symbol_data = await self._fetch_symbol_market_data(symbol, assigned_tf)
