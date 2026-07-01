@@ -4929,6 +4929,12 @@ class TradingEngine:
             self._last_decisions,
             self._entry_signal_state,
             self._force_eval_time,
+            self._last_strategy_eval,
+            self._strategy_intervals,
+            self._last_eval_snapshot,
+            self.last_loss_time,
+            self.cooldown_durations,
+            self._pending_entries,
         ):
             stale_keys = [s for s in state_dict if s not in active_symbols]
             for s in stale_keys:
