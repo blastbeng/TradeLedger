@@ -8215,28 +8215,7 @@ class TradingEngine:
                 # --- Lock profit feature removed (was scalping-specific) ---
 
                 # --- Update native stop order if stop price changed ---
-                if (pos.get("stop_loss_order_id")
-                        and pos.get("stop_loss_order_type") in ("stop", "stop_limit")):
-                    # Compare current stop_loss with the order's original stop price
-                    original_stop = pos.get("_native_stop_price")
-                    if original_stop is None:
-                        # First time – store the current stop_loss as the baseline
-                        async with self._positions_lock:
-                            pos["_native_stop_price"] = pos["stop_loss"]
-                    else:
-                        # Check if stop_loss has moved by more than a tick
-                        tick = 0.01 if pos["stop_loss"] >= 1.0 else 0.0001
-                        if abs(pos["stop_loss"] - original_stop) > tick * 0.5:
-                            logger.info(
-                                f"Stop price changed for {symbol}: {original_stop:.4f} -> {pos['stop_loss']:.4f}. "
-                                f"Replacing native stop order."
-                            )
-                            await self._replace_native_stop_order(
-                                symbol, pos, original_stop, pos["stop_loss"]
-                            )
-                            # Update the stored baseline
-                            async with self._positions_lock:
-                                pos["_native_stop_price"] = pos["stop_loss"]
+                await self._risk_manager.update_native_stop_order(symbol, pos)
 
                 # --- Partial take-profit ---
                 partial_levels = pos.get("partial_take_profit_levels")
