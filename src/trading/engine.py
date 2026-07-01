@@ -3199,6 +3199,8 @@ class TradingEngine:
         )
 
         # --- Final selection call ---
+        num_chunks = (len(sample_pairs) + settings.LLM_CHUNK_SIZE - 1) // settings.LLM_CHUNK_SIZE
+        total_steps = 10 + num_chunks + 2
         logger.info("Re-evaluation step %d/%d: Calling LLM for final selection from %d chunk results...", total_steps - 1, total_steps, len(chunk_results))
 
         response = None
