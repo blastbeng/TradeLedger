@@ -5823,6 +5823,7 @@ class TradingEngine:
         combined_bt_summary = ""
         llm_provider = None
         llm_model = None
+        backtest_results = []
 
         if preliminary_signal.action in ("BUY", "HOLD"):
             # Determine which variant param sets to backtest
@@ -6056,6 +6057,14 @@ class TradingEngine:
         else:
             # For SELL or HOLD, no backtest needed, use preliminary decision
             signal = preliminary_signal
+
+        # Store raw backtest stats dict on the signal for notification compaction
+        if backtest_results and backtest_results[0].get("stats"):
+            bt_stats = dict(backtest_results[0]["stats"])
+            bt_stats["timeframe"] = assigned_tf
+            signal.backtest_stats = bt_stats
+        else:
+            signal.backtest_stats = None
 
         return signal, combined_bt_summary, llm_provider, llm_model
 
@@ -7345,6 +7354,7 @@ class TradingEngine:
             )
             validated.model_type = getattr(signal, 'model_type', None)
             validated.backtest_summary = getattr(signal, 'backtest_summary', None)
+            validated.backtest_stats = getattr(signal, 'backtest_stats', None)
 
             # Clear _needs_risk_params flag if the LLM has now provided risk parameters
             if symbol in self.positions:
@@ -7521,7 +7531,7 @@ class TradingEngine:
                         "ichimoku": ichimoku,
                         "donchian_channels": donchian_channels,
                     },
-                    "backtest": getattr(validated, 'backtest_summary', None),
+                    "backtest": getattr(validated, 'backtest_stats', None),
                     "strategy_type": signal.strategy_type,
                     "market_regime": market_regime,
                     "model_type": getattr(validated, 'model_type', None),
