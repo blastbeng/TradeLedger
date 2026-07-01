@@ -8536,10 +8536,10 @@ class TradingEngine:
                                                 atr_is_stale = False
                                                 if ind_ts is not None:
                                                     # Compare against the latest candle timestamp
-                                                    # from multi_tf_raw_candles instead of wall-clock time
-                                                    latest_candle_ts = None
-                                                    if tf in multi_tf_raw_candles and multi_tf_raw_candles[tf]:
-                                                        latest_candle_ts = multi_tf_raw_candles[tf][-1][0]
+                                                    # from the database instead of wall-clock time
+                                                    latest_candle_ts = await asyncio.to_thread(
+                                                        get_latest_ohlcv_timestamp, symbol, tf
+                                                    )
                                                     if latest_candle_ts is not None:
                                                         tf_ms = self._timeframe_to_ms(tf)
                                                         if (latest_candle_ts - ind_ts) > 2 * tf_ms:
