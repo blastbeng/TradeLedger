@@ -489,6 +489,92 @@ class OrderExecutor:
                 )
             return False
 
+    async def execute_partial_tp_single(
+        self, symbol: str, current_price: float, atr: Optional[float], ticker: Dict[str, Any]
+    ) -> None:
+        """Execute a single partial take-profit sell for a position."""
+        engine = self.engine
+        pos = engine.positions.get(symbol)
+        if not pos:
+            logger.warning(f"Cannot execute partial TP for {symbol}: no position.")
+            return
+
+        fraction = pos.get("partial_take_profit_fraction")
+        if fraction is None or fraction <= 0 or fraction >= 1:
+            logger.warning(f"Invalid partial_take_profit_fraction for {symbol}: {fraction}")
+            return
+
+        sell_amount = pos["amount"] * fraction
+
+        def _cleanup(sym, position):
+            position.pop("partial_tp_triggered", None)
+            position.pop("_partial_tp_triggered_single", None)
+            position.pop("_partial_tp_single_review_count", None)
+
+        await self.execute_partial_sell(
+            symbol=symbol,
+            sell_amount=sell_amount,
+            level_label="Partial TP",
+            exit_reason="partial_take_profit",
+            ticker=ticker,
+            atr=atr,
+            current_price=current_price,
+            cleanup_callback=_cleanup,
+        )
+
+    async def execute_partial_tp_level(
+        self, symbol: str, level_index: int, current_price: float, atr: Optional[float], ticker: Dict[str, Any]
+    ) -> None:
+        """Execute a partial take-profit sell for a specific level."""
+        engine = self.engine
+        pos = engine.positions.get(symbol)
+        if not pos:
+            logger.warning(f"Cannot execute partial TP level for {symbol}: no position.")
+            return
+
+        levels = pos.get("partial_take_profit_levels")
+        if not levels or level_index >= len(levels):
+            logger.warning(f"Invalid partial TP level index {level_index} for {symbol}")
+            return
+
+        level = levels[level_index]
+        fraction = level.get("fraction")
+        if fraction is None or fraction <= 0 or fraction >= 1:
+            logger.warning(f"Invalid fraction for partial TP level {level_index} of {symbol}: {fraction}")
+            return
+
+        sell_amount = pos["amount"] * fraction
+
+        # Mark this level as triggered before the sell
+        if symbol in engine.positions:
+            async with engine._positions_lock:
+                triggered = engine.positions[symbol].get("partial_tp_levels_triggered", [])
+                if level_index not in triggered:
+                    triggered.append(level_index)
+                    engine.positions[symbol]["partial_tp_levels_triggered"] = triggered
+                if "partial_tp_depth_wait_start" in engine.positions[symbol]:
+                    engine.positions[symbol]["partial_tp_depth_wait_start"].pop(level_index, None)
+
+        def _cleanup(sym, position):
+            position.pop("_partial_tp_triggered", None)
+            position.pop("_partial_tp_review_count", None)
+            triggered_levels = position.get("_partial_tp_triggered_levels", [])
+            position["_partial_tp_triggered_levels"] = [
+                x for x in triggered_levels if x != level_index
+            ]
+
+        await self.execute_partial_sell(
+            symbol=symbol,
+            sell_amount=sell_amount,
+            level_label=f"Partial TP level {level_index}",
+            exit_reason=f"partial_take_profit_level_{level_index}",
+            ticker=ticker,
+            atr=atr,
+            current_price=current_price,
+            cleanup_callback=_cleanup,
+            extra_summary={"level_index": level_index},
+        )
+
     async def replace_native_stop_order(
         self,
         symbol: str,
