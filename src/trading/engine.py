@@ -57,6 +57,7 @@ from src.strategies.backtester import backtest_strategy, format_backtest_summary
 from src.utils.redis_client import get_redis_client
 from src.utils.symbol_utils import is_btp_isin
 from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results
+from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.state_persistence import StatePersistence
 
 logger = logging.getLogger(__name__)
@@ -143,6 +144,7 @@ class TradingEngine:
         self._state_dirty: bool = False
         # --- Extracted components ---
         self._state_persistence = StatePersistence(self)
+        self._order_executor = OrderExecutor(self)
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
@@ -11588,47 +11590,7 @@ class TradingEngine:
         signal: Signal,
         atr: Optional[float] = None,
     ) -> Dict[str, Optional[float]]:
-        """
-        Return a dict with keys:
-          - stop_loss_price: the trigger/limit price for the stop-loss order
-          - take_profit_price: the limit price for the take-profit order
-        Uses the LLM's exit order type fields; falls back to the standard
-        stop_loss_pct / take_profit_pct if exit order types are not provided.
-        """
-        params = signal.strategy_params or {}
-        stop_loss_pct = params.get("stop_loss_pct")
-        take_profit_pct = params.get("take_profit_pct")
-
-        # --- Stop-loss price ---
-        sl_ot = signal.stop_loss_order_type
-        if sl_ot == "stop":
-            sl_price = signal.stop_loss_stop_price
-            if sl_price is None and stop_loss_pct is not None:
-                sl_price = entry_price * (1 - stop_loss_pct)
-        elif sl_ot == "stop_limit":
-            sl_price = signal.stop_loss_stop_price
-            if sl_price is None and stop_loss_pct is not None:
-                sl_price = entry_price * (1 - stop_loss_pct)
-        elif sl_ot == "trailing_stop":
-            sl_price = None  # not a fixed price
-        else:
-            sl_price = None
-
-        # --- Take-profit price ---
-        tp_ot = signal.take_profit_order_type
-        if tp_ot == "limit":
-            tp_price = signal.take_profit_limit_price
-            if tp_price is None and take_profit_pct is not None:
-                tp_price = entry_price * (1 + take_profit_pct)
-        elif tp_ot == "market":
-            tp_price = None  # will be handled by risk loop later
-        else:
-            tp_price = None
-
-        return {
-            "stop_loss_price": sl_price,
-            "take_profit_price": tp_price,
-        }
+        return self._order_executor.compute_exit_order_prices(entry_price, signal, atr)
 
     async def _cancel_exit_orders(self, symbol: str):
         """Cancel any native stop-loss and take-profit orders for a symbol."""
