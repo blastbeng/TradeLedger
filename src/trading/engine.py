@@ -3438,71 +3438,6 @@ class TradingEngine:
         # which are checked at order execution time.
         min_viable_amount = 0.0
 
-        # Compute pairwise correlation matrix from OHLCV close prices (run in thread to avoid blocking)
-        def _compute_correlation_matrix():
-            corr_matrix: Dict[str, Dict[str, float]] = {}
-            if ohlcv_data and settings.OHLCV_TIMEFRAMES:
-                # Try timeframes from longest to shortest. For long timeframes
-                # (5Y, 3Y, 1Y) with very few candles, fall back to shorter
-                # timeframes that have more candles. Require a minimum of 20
-                # data points so the Pearson correlation is statistically
-                # significant.
-                MIN_CANDLES = 20
-                MIN_RETURNS = 19
-
-                returns_series: Dict[str, List[float]] = {}
-                used_tf = None
-                for tf in settings.OHLCV_TIMEFRAMES:
-                    close_series: Dict[str, List[float]] = {}
-                    for sym in sorted_by_vol:
-                        if sym in ohlcv_data and tf in ohlcv_data[sym]:
-                            candles = ohlcv_data[sym][tf]
-                            if len(candles) >= MIN_CANDLES:
-                                close_series[sym] = [c[4] for c in candles]
-                    # Compute percentage returns
-                    candidate_returns: Dict[str, List[float]] = {}
-                    for sym, closes in close_series.items():
-                        returns = [(closes[i] - closes[i - 1]) / closes[i - 1]
-                                   for i in range(1, len(closes)) if closes[i - 1] != 0]
-                        if len(returns) >= MIN_RETURNS:
-                            candidate_returns[sym] = returns
-                    # Use this timeframe if at least 2 symbols have enough data
-                    if len(candidate_returns) >= 2:
-                        returns_series = candidate_returns
-                        used_tf = tf
-                        break
-
-                if used_tf:
-                    logger.debug(
-                        f"Correlation matrix computed using {used_tf} timeframe "
-                        f"({len(returns_series)} symbols)"
-                    )
-                # Pairwise Pearson correlation
-                corr_symbols = list(returns_series.keys())
-                for sym_a in corr_symbols:
-                    corr_matrix[sym_a] = {}
-                    for sym_b in corr_symbols:
-                        if sym_a == sym_b:
-                            corr_matrix[sym_a][sym_b] = 1.0
-                        elif sym_b in corr_matrix and sym_a in corr_matrix[sym_b]:
-                            corr_matrix[sym_a][sym_b] = corr_matrix[sym_b][sym_a]
-                        else:
-                            ret_a = returns_series[sym_a]
-                            ret_b = returns_series[sym_b]
-                            min_len = min(len(ret_a), len(ret_b))
-                            if min_len < 2:
-                                continue
-                            a = ret_a[-min_len:]
-                            b = ret_b[-min_len:]
-                            mean_a = sum(a) / min_len
-                            mean_b = sum(b) / min_len
-                            cov = sum((a[k] - mean_a) * (b[k] - mean_b) for k in range(min_len)) / min_len
-                            std_a = (sum((x - mean_a) ** 2 for x in a) / min_len) ** 0.5
-                            std_b = (sum((x - mean_b) ** 2 for x in b) / min_len) ** 0.5
-                            if std_a > 0 and std_b > 0:
-                                corr_matrix[sym_a][sym_b] = round(cov / (std_a * std_b), 3)
-            return corr_matrix
-
         logger.info("Re-evaluation step 10/12: Computing correlation matrix and performance metrics...")
         # Cache correlation matrix in Redis for 30 minutes (it changes slowly)
         corr_cache_key = "reeval:correlation_matrix"
@@ -3514,7 +3449,9 @@ class TradingEngine:
         except Exception:
             pass
         if correlation_matrix is None:
-            correlation_matrix = await asyncio.to_thread(_compute_correlation_matrix)
+            correlation_matrix = await asyncio.to_thread(
+                self._symbol_reevaluator.compute_correlation_matrix, ohlcv_data, sorted_by_vol
+            )
             # Dynamic TTL: shorter during high-volatility / extreme market conditions
             corr_ttl = 1800  # default 30 minutes
             _mb = getattr(self, '_market_breadth', None)

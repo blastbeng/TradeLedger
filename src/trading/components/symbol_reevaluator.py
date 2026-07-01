@@ -7,7 +7,7 @@ Extracted from TradingEngine to reduce class size and improve maintainability.
 import asyncio
 import logging
 import time
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from src.config.settings import settings
 
@@ -114,3 +114,68 @@ class SymbolReevaluator:
                 cache_dict.pop(k, None)
             if stale_keys:
                 logger.debug(f"Cleaned {len(stale_keys)} stale entries from base-symbol caches")
+
+    def compute_correlation_matrix(
+        self,
+        ohlcv_data: Dict[str, List[List]],
+        sorted_by_vol: List[str],
+    ) -> Dict[str, Dict[str, float]]:
+        """Compute pairwise Pearson correlation matrix from OHLCV close prices.
+
+        Tries timeframes from longest to shortest, requiring a minimum of
+        20 candles and 19 returns for statistical significance.
+        """
+        corr_matrix: Dict[str, Dict[str, float]] = {}
+        if ohlcv_data and settings.OHLCV_TIMEFRAMES:
+            MIN_CANDLES = 20
+            MIN_RETURNS = 19
+
+            returns_series: Dict[str, List[float]] = {}
+            used_tf = None
+            for tf in settings.OHLCV_TIMEFRAMES:
+                close_series: Dict[str, List[float]] = {}
+                for sym in sorted_by_vol:
+                    if sym in ohlcv_data and tf in ohlcv_data[sym]:
+                        candles = ohlcv_data[sym][tf]
+                        if len(candles) >= MIN_CANDLES:
+                            close_series[sym] = [c[4] for c in candles]
+                candidate_returns: Dict[str, List[float]] = {}
+                for sym, closes in close_series.items():
+                    returns = [(closes[i] - closes[i - 1]) / closes[i - 1]
+                               for i in range(1, len(closes)) if closes[i - 1] != 0]
+                    if len(returns) >= MIN_RETURNS:
+                        candidate_returns[sym] = returns
+                if len(candidate_returns) >= 2:
+                    returns_series = candidate_returns
+                    used_tf = tf
+                    break
+
+            if used_tf:
+                logger.debug(
+                    f"Correlation matrix computed using {used_tf} timeframe "
+                    f"({len(returns_series)} symbols)"
+                )
+            corr_symbols = list(returns_series.keys())
+            for sym_a in corr_symbols:
+                corr_matrix[sym_a] = {}
+                for sym_b in corr_symbols:
+                    if sym_a == sym_b:
+                        corr_matrix[sym_a][sym_b] = 1.0
+                    elif sym_b in corr_matrix and sym_a in corr_matrix[sym_b]:
+                        corr_matrix[sym_a][sym_b] = corr_matrix[sym_b][sym_a]
+                    else:
+                        ret_a = returns_series[sym_a]
+                        ret_b = returns_series[sym_b]
+                        min_len = min(len(ret_a), len(ret_b))
+                        if min_len < 2:
+                            continue
+                        a = ret_a[-min_len:]
+                        b = ret_b[-min_len:]
+                        mean_a = sum(a) / min_len
+                        mean_b = sum(b) / min_len
+                        cov = sum((a[k] - mean_a) * (b[k] - mean_b) for k in range(min_len)) / min_len
+                        std_a = (sum((x - mean_a) ** 2 for x in a) / min_len) ** 0.5
+                        std_b = (sum((x - mean_b) ** 2 for x in b) / min_len) ** 0.5
+                        if std_a > 0 and std_b > 0:
+                            corr_matrix[sym_a][sym_b] = round(cov / (std_a * std_b), 3)
+        return corr_matrix
