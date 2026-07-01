@@ -599,6 +599,8 @@ class SymbolReevaluator:
         etf_sample_sorted = [s for s in sample_pairs if s in etf_pairs]
         sample_pairs = stock_sample_sorted + etf_sample_sorted + [s for s in sample_pairs if s in btp_pairs]
 
+        return balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs
+
     async def compute_market_limits(
         self,
         sample_pairs: List[str],
