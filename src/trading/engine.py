@@ -6956,59 +6956,17 @@ class TradingEngine:
             if amount is None:
                 return
 
-            need_limit = not self._is_regular_hours()
-            limit_price = None
-            time_in_force = "day"
-            # If LLM provided a limit_price, use it even during regular hours
-            llm_limit_price = params.get("limit_price")
-            if llm_limit_price is not None and llm_limit_price > 0:
-                limit_price = llm_limit_price
-                time_in_force = params.get("time_in_force", "day")
-                need_limit = True  # force limit order path
-                # Validate that the limit price is within a reasonable distance from the market
-                # Read LLM-controlled limit price max distance (fallback to static setting)
-                max_distance = settings.LIMIT_PRICE_MAX_DISTANCE_PCT
-                try:
-                    raw = await asyncio.to_thread(self.redis.get, "trading:limit_price_max_distance_pct")
-                    if raw:
-                        max_distance = float(raw)
-                except Exception:
-                    pass
-                if ticker and ticker.get('ask') and max_distance > 0:
-                    ask = ticker['ask']
-                    if limit_price < ask * (1 - max_distance):
-                        logger.warning(
-                            f"LLM limit_price {limit_price} for {symbol} is >{max_distance*100:.0f}% below ask {ask}. "
-                            f"Rejecting BUY to avoid indefinite queuing."
-                        )
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⚠️ Skipping BUY {display_symbol}: limit price {limit_price} too far below ask {ask}.",
-                                summary={"symbol": symbol, "action": "SKIP", "reason": "Limit price too far from market"}
-                            )
-                        return
-            elif need_limit:
-                limit_price = self._default_limit_price(symbol, "BUY", ticker, atr=atr)
-                time_in_force = params.get("time_in_force", "day")
-                if limit_price is None:
-                    logger.error(f"Cannot place limit order for {symbol}: no limit price available.")
-                    return
-
-            if limit_price is not None:
-                # Round to valid tick size ($0.01 for >=$1, $0.0001 for <$1)
-                if limit_price >= 1.0:
-                    limit_price = round(limit_price, 2)
-                else:
-                    limit_price = round(limit_price, 4)
-
-            if limit_price is not None and limit_price <= 0:
-                logger.error(f"Invalid limit_price {limit_price} for {symbol}, skipping.")
-                if self.notifier:
-                    await self.notifier.send_notification(
-                        f"❌ Invalid limit price for {display_symbol}, skipping.",
-                        summary={"symbol": symbol, "action": "SKIP", "reason": "Invalid limit price"}
-                    )
+            # --- Determine limit price for BUY ---
+            _limit_result = await self._order_executor.compute_buy_limit_price(
+                symbol=symbol,
+                display_symbol=display_symbol,
+                params=params,
+                ticker=ticker,
+                atr=atr,
+            )
+            if _limit_result is None:
                 return
+            limit_price, time_in_force, need_limit = _limit_result
 
             # --- Determine order type ---
             order_type = signal.order_type
