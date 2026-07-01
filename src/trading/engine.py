@@ -4942,6 +4942,19 @@ class TradingEngine:
             if stale_keys:
                 logger.debug(f"Cleaned {len(stale_keys)} stale entries from engine state dicts")
 
+        # --- Cleanup stale entries from base-symbol-keyed caches ---
+        active_bases = {s.split("/")[0] for s in active_symbols}
+        for cache_dict in (
+            self._sentiment_cache,
+            self._asset_cache,
+            self._asset_cache_time,
+        ):
+            stale_keys = [k for k in cache_dict if k not in active_bases]
+            for k in stale_keys:
+                cache_dict.pop(k, None)
+            if stale_keys:
+                logger.debug(f"Cleaned {len(stale_keys)} stale entries from base-symbol caches")
+
         self._state_dirty = True
         logger.info("Re-evaluation complete: %d symbols selected.", len(self.current_symbols))
         await asyncio.to_thread(self.redis.set, last_key, now)
