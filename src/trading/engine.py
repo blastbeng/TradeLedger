@@ -60,6 +60,7 @@ from src.database import load_trading_state, save_trading_state, insert_trade, g
 from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.risk_manager import RiskManager
 from src.trading.components.state_persistence import StatePersistence
+from src.trading.components.position_manager import PositionManager
 from src.trading.components.signal_processor import SignalProcessor
 from src.trading.components.symbol_reevaluator import SymbolReevaluator
 
@@ -151,6 +152,7 @@ class TradingEngine:
         self._risk_manager = RiskManager(self)
         self._symbol_reevaluator = SymbolReevaluator(self)
         self._signal_processor = SignalProcessor(self)
+        self._position_manager = PositionManager(self)
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
@@ -230,7 +232,7 @@ class TradingEngine:
         self.trader = PaperTrader()
         logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
         self._load_state()
-        self._ensure_cost_basis()
+        self._position_manager.ensure_cost_basis()
         # Initialize _cycle_spent from any queued buy orders loaded from persisted
         # state so capital is reserved immediately at startup, before the first
         # re-evaluation cycle runs (which would otherwise leave _cycle_spent at 0.0
@@ -2128,14 +2130,6 @@ class TradingEngine:
             except Exception as e:
                 logger.error(f"Ticker discovery refresh error: {e}", exc_info=True)
             await asyncio.sleep(3600)  # every 60 minutes (medium/long-term)
-
-    def _ensure_cost_basis(self):
-        """If positions lack cost_basis, compute it from amount and price (backward compat)."""
-        for sym, pos in self.positions.items():
-            if 'cost_basis' not in pos or 'net_base' not in pos:
-                # Assume no fees for old positions; cost_basis = amount * price
-                pos['cost_basis'] = pos['amount'] * pos['price']
-                pos['net_base'] = pos['amount']
 
     def _daily_realized_pnl(self) -> float:
         """Return the sum of realized P&L for trades closed today (UTC)."""
@@ -4251,56 +4245,6 @@ class TradingEngine:
             else:
                 logger.warning(f"Invalid resume_trading value in LLM response: {resume_trading}")
 
-    async def _compute_portfolio_exposure_summary(self, base_balance: float) -> Dict[str, float]:
-        """Compute portfolio exposure, stop-loss risk, and available capital for the prompt."""
-        now = time.time()
-        if (
-            self._portfolio_exposure_cache is not None
-            and (now - self._portfolio_exposure_cache_time) < 30
-        ):
-            # Return cached ticker-dependent values, but recompute available capital
-            # from the current cycle_spent (which changes during the cycle).
-            # Acquire the lock before copying the cache so the cache read and
-            # _cycle_spent read are atomic — prevents a race where another
-            # coroutine modifies _cycle_spent between the copy and the lock.
-            async with self._cycle_spent_lock:
-                result = dict(self._portfolio_exposure_cache)
-                result["portfolio_available_capital"] = max(0.0, base_balance - self._cycle_spent)
-            return result
-
-        portfolio_total_value = base_balance
-        portfolio_exposure = 0.0
-        portfolio_stop_risk = 0.0
-        pos_tickers = await self._get_all_position_tickers()
-        for sym, pos in self.positions.items():
-            try:
-                t = pos_tickers.get(sym)
-                price = t['last'] if t and t.get('last') else 0.0
-                pos_value = pos['amount'] * price
-                portfolio_exposure += pos_value
-                portfolio_total_value += pos_value
-                stop_loss = pos.get('stop_loss')
-                if stop_loss is not None and price > 0:
-                    loss_if_stop = pos_value * (price - stop_loss) / price
-                    portfolio_stop_risk += max(0, loss_if_stop)
-            except Exception:
-                pass
-        portfolio_exposure_pct = (portfolio_exposure / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
-        portfolio_stop_risk_pct = (portfolio_stop_risk / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
-        async with self._cycle_spent_lock:
-            portfolio_available_capital = max(0.0, base_balance - self._cycle_spent)
-        result = {
-            "portfolio_total_value": portfolio_total_value,
-            "portfolio_exposure": portfolio_exposure,
-            "portfolio_stop_risk": portfolio_stop_risk,
-            "portfolio_exposure_pct": portfolio_exposure_pct,
-            "portfolio_stop_risk_pct": portfolio_stop_risk_pct,
-            "portfolio_available_capital": portfolio_available_capital,
-        }
-        self._portfolio_exposure_cache = result
-        self._portfolio_exposure_cache_time = now
-        return result
-
     async def _compute_multi_tf_indicators(
         self, symbol: str, ohlcv_data: Dict[str, List[List]], assigned_tf: str
     ) -> Dict[str, Any]:
@@ -5263,7 +5207,7 @@ class TradingEngine:
             historical_backtest_results = _ctx["historical_backtest_results"]
 
             # --- Compute portfolio exposure summary for the prompt ---
-            _portfolio = await self._compute_portfolio_exposure_summary(base_balance)
+            _portfolio = await self._position_manager.compute_portfolio_exposure_summary(base_balance)
             portfolio_total_value = _portfolio["portfolio_total_value"]
             portfolio_exposure = _portfolio["portfolio_exposure"]
             portfolio_stop_risk = _portfolio["portfolio_stop_risk"]
@@ -9648,7 +9592,7 @@ class TradingEngine:
         if position_info:
             unrealized_pnl = (current_price - position_info['price']) * position_info['amount']
 
-        _portfolio = await self._compute_portfolio_exposure_summary(base_balance)
+        _portfolio = await self._position_manager.compute_portfolio_exposure_summary(base_balance)
         portfolio_total_value = _portfolio["portfolio_total_value"]
         portfolio_exposure = _portfolio["portfolio_exposure"]
         portfolio_stop_risk = _portfolio["portfolio_stop_risk"]
