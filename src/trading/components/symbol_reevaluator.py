@@ -599,4 +599,34 @@ class SymbolReevaluator:
         etf_sample_sorted = [s for s in sample_pairs if s in etf_pairs]
         sample_pairs = stock_sample_sorted + etf_sample_sorted + [s for s in sample_pairs if s in btp_pairs]
 
+    async def compute_market_limits(
+        self,
+        sample_pairs: List[str],
+        tickers: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Dict[str, float]]:
+        """Compute per-symbol market limits (min order size and min cost).
+
+        Returns a dict: {symbol: {"min_cost": float, "min_amount": float|None}}
+        """
+        engine = self.engine
+        market_limits: Dict[str, Dict[str, float]] = {}
+        for symbol in sample_pairs:
+            base = symbol.split('/')[0]
+            try:
+                asset = await engine._get_asset_info(symbol)
+                min_amount = float(asset.min_order_size) if asset.min_order_size else None
+            except Exception:
+                min_amount = None
+            ticker = tickers.get(symbol, {})
+            last_price = ticker.get('last', 0)
+            if min_amount is not None and last_price:
+                numeric_min_cost = min_amount * last_price
+            else:
+                numeric_min_cost = 0.0
+            market_limits[symbol] = {
+                'min_cost': numeric_min_cost,
+                'min_amount': min_amount,
+            }
+        return market_limits
+
         return balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs

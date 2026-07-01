@@ -3082,24 +3082,7 @@ class TradingEngine:
         )
 
         # Use asset info for minimum order size constraints
-        market_limits = {}
-        for symbol in sample_pairs:
-            base = symbol.split('/')[0]
-            try:
-                asset = await self._get_asset_info(symbol)
-                min_amount = float(asset.min_order_size) if asset.min_order_size else None
-            except Exception:
-                min_amount = None
-            ticker = tickers.get(symbol, {})
-            last_price = ticker.get('last', 0)
-            if min_amount is not None and last_price:
-                numeric_min_cost = min_amount * last_price
-            else:
-                numeric_min_cost = 0.0
-            market_limits[symbol] = {
-                'min_cost': numeric_min_cost,
-                'min_amount': min_amount,
-            }
+        market_limits = await self._symbol_reevaluator.compute_market_limits(sample_pairs, tickers)
 
         # effective_max_symbols is set by the LLM's max_stocks field.
         # Do NOT zero it out based on per-symbol budget calculations.
