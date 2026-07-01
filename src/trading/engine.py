@@ -5509,85 +5509,36 @@ class TradingEngine:
             effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity)
 
             # --- Step 1a: Call LLM for analysis ---
-            analysis_result = None
-            llm_provider = None
-            llm_model = None
-            try:
-                step1a_result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        get_cached_llm_response,
-                        compact_prompt(analysis_prompt),
-                        _get_compacted_system_prompt(),
-                        60,
-                        market_hash=market_hash,
-                        model_type=strategy_model_type,
-                        temperature=effective_temp,
-                    ),
-                    timeout=settings.LLM_TIMEOUT
-                )
-                step1a_response = step1a_result["response"]
-                llm_provider = step1a_result["provider"]
-                llm_model = step1a_result["model"]
-                logger.info(f"LLM Step 1a (analysis) completed for {symbol} (provider={llm_provider}, model={llm_model})")
-                analysis_result = self._parse_analysis_response(step1a_response)
-                if analysis_result is None:
-                    logger.warning(f"Failed to parse Step 1a analysis response for {symbol}. Retrying with correction.")
-                    correction_prompt = (
-                        "Your previous response was not valid JSON. "
-                        "You MUST output ONLY a single JSON object with fields: "
-                        '"action", "confidence", "reasoning", "strategy_direction". '
-                        "No markdown fences, no explanations, no extra text. "
-                        "Here is the original request:\n\n" + analysis_prompt
-                    )
-                    retry_result = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            get_cached_llm_response,
-                            compact_prompt(correction_prompt),
-                            _get_compacted_system_prompt(), 30,
-                            model_type="actuator",
-                            temperature=effective_temp,
-                        ),
-                        timeout=settings.LLM_TIMEOUT
-                    )
-                    analysis_result = self._parse_analysis_response(retry_result["response"])
-                    llm_provider = retry_result["provider"]
-                    llm_model = retry_result["model"]
-                # Update snapshot after a real LLM call
-                self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist)
-                self._force_eval.pop(symbol, None)
-            except asyncio.TimeoutError:
-                logger.warning(f"LLM Step 1a (analysis) timed out for {symbol}.")
-                if is_critical:
-                    reason = "LLM timeout"
-                    if max_hold_expired:
-                        reason = "Max hold expired, LLM timeout"
-                    elif stop_loss_triggered:
-                        reason = "Stop-loss triggered, LLM timeout"
-                    elif take_profit_triggered:
-                        reason = "Take-profit triggered, LLM timeout"
-                    elif partial_tp_triggered:
-                        reason = "Partial TP triggered, LLM timeout"
-                    elif dust_sweep_triggered:
-                        reason = "Dust sweep triggered, LLM timeout"
-                    logger.warning(f"Forcing SELL for {symbol} due to {reason}")
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"⏱️ LLM timeout for {display_symbol} with critical flag – forcing SELL.",
-                            summary={"symbol": symbol, "action": "SELL", "reason": reason, "model_type": strategy_model_type}
-                        )
-                    await self._execute_signal(
-                        symbol,
-                        Signal(action="SELL", confidence=1.0, reasoning=reason),
-                        exit_reason=reason.replace(" ", "_").lower()
-                    )
-                    return
-                # Non-critical timeout: fall through to fallback HOLD
-                self._force_eval.pop(symbol, None)
-                # Fall through to fallback HOLD below
-            except Exception as e:
-                logger.error(f"LLM Step 1a failed for {symbol}: {e}")
-                self._force_eval.pop(symbol, None)
-                # Fall through to fallback HOLD below
+            critical_reason = None
+            if is_critical:
+                critical_reason = "LLM timeout"
+                if max_hold_expired:
+                    critical_reason = "Max hold expired, LLM timeout"
+                elif stop_loss_triggered:
+                    critical_reason = "Stop-loss triggered, LLM timeout"
+                elif take_profit_triggered:
+                    critical_reason = "Take-profit triggered, LLM timeout"
+                elif partial_tp_triggered:
+                    critical_reason = "Partial TP triggered, LLM timeout"
+                elif dust_sweep_triggered:
+                    critical_reason = "Dust sweep triggered, LLM timeout"
+
+            analysis_result, llm_provider, llm_model, _should_return = await self._signal_processor.run_step1a_llm_call(
+                symbol=symbol,
+                display_symbol=display_symbol,
+                analysis_prompt=analysis_prompt,
+                system_prompt=_get_compacted_system_prompt(),
+                market_hash=market_hash,
+                strategy_model_type=strategy_model_type,
+                effective_temp=effective_temp,
+                current_price=current_price,
+                rsi=rsi,
+                macd_hist=macd_hist,
+                is_critical=is_critical,
+                critical_reason=critical_reason,
+            )
+            if _should_return:
+                return
 
             if analysis_result is None:
                 logger.warning(f"Step 1a analysis failed for {symbol} after all retries. Using fallback HOLD.")

@@ -10,6 +10,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
 from src.database import get_latest_ohlcv_timestamp
+from src.llm.cache import get_cached_llm_response
+from src.llm.prompts import compact_prompt
 from src.strategies.base import Signal
 
 logger = logging.getLogger(__name__)
@@ -991,3 +993,96 @@ class SignalProcessor:
                 "llm_model": llm_model,
             }
             await engine.notifier.send_notification(msg, summary=decision_summary)
+
+    async def run_step1a_llm_call(
+        self,
+        symbol: str,
+        display_symbol: str,
+        analysis_prompt: str,
+        system_prompt: str,
+        market_hash: str,
+        strategy_model_type: str,
+        effective_temp: float,
+        current_price: float,
+        rsi: Optional[float],
+        macd_hist: Optional[float],
+        is_critical: bool,
+        critical_reason: Optional[str],
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str], bool]:
+        """Run the Step 1a LLM call and handle timeouts/retries.
+
+        Returns (analysis_result, llm_provider, llm_model, should_return).
+        If should_return is True, the caller should return immediately.
+        """
+        engine = self.engine
+        analysis_result = None
+        llm_provider = None
+        llm_model = None
+
+        try:
+            step1a_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response,
+                    compact_prompt(analysis_prompt),
+                    system_prompt,
+                    60,
+                    market_hash=market_hash,
+                    model_type=strategy_model_type,
+                    temperature=effective_temp,
+                ),
+                timeout=settings.LLM_TIMEOUT
+            )
+            step1a_response = step1a_result["response"]
+            llm_provider = step1a_result["provider"]
+            llm_model = step1a_result["model"]
+            logger.info(f"LLM Step 1a (analysis) completed for {symbol} (provider={llm_provider}, model={llm_model})")
+            analysis_result = engine._parse_analysis_response(step1a_response)
+            if analysis_result is None:
+                logger.warning(f"Failed to parse Step 1a analysis response for {symbol}. Retrying with correction.")
+                correction_prompt = (
+                    "Your previous response was not valid JSON. "
+                    "You MUST output ONLY a single JSON object with fields: "
+                    '"action", "confidence", "reasoning", "strategy_direction". '
+                    "No markdown fences, no explanations, no extra text. "
+                    "Here is the original request:\n\n" + analysis_prompt
+                )
+                retry_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_cached_llm_response,
+                        compact_prompt(correction_prompt),
+                        system_prompt, 30,
+                        model_type="actuator",
+                        temperature=effective_temp,
+                    ),
+                    timeout=settings.LLM_TIMEOUT
+                )
+                analysis_result = engine._parse_analysis_response(retry_result["response"])
+                llm_provider = retry_result["provider"]
+                llm_model = retry_result["model"]
+            # Update snapshot after a real LLM call
+            engine._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist)
+            engine._force_eval.pop(symbol, None)
+        except asyncio.TimeoutError:
+            logger.warning(f"LLM Step 1a (analysis) timed out for {symbol}.")
+            if is_critical and critical_reason is not None:
+                logger.warning(f"Forcing SELL for {symbol} due to {critical_reason}")
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"⏱️ LLM timeout for {display_symbol} with critical flag – forcing SELL.",
+                        summary={"symbol": symbol, "action": "SELL", "reason": critical_reason, "model_type": strategy_model_type}
+                    )
+                await engine._execute_signal(
+                    symbol,
+                    Signal(action="SELL", confidence=1.0, reasoning=critical_reason),
+                    exit_reason=critical_reason.replace(" ", "_").lower()
+                )
+                return None, None, None, True
+            # Non-critical timeout: fall through to fallback HOLD
+            engine._force_eval.pop(symbol, None)
+            # Fall through to fallback HOLD below
+        except Exception as e:
+            logger.error(f"LLM Step 1a failed for {symbol}: {e}")
+            engine._force_eval.pop(symbol, None)
+            # Fall through to fallback HOLD below
+
+        return analysis_result, llm_provider, llm_model, False
