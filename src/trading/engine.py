@@ -4167,7 +4167,7 @@ class TradingEngine:
                     continue
                 # Apply minimum 24h volume filter if configured
                 if settings.FALLBACK_MIN_24H_VOLUME > 0:
-                    vol = _volume(sym)
+                    vol = tickers.get(sym, {}).get('quoteVolume', 0) or 0
                     if vol < settings.FALLBACK_MIN_24H_VOLUME:
                         continue
                 min_cost = market_limits.get(sym, {}).get('min_cost', 0)
