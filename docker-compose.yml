@@ -1,22 +1,5 @@
+---
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: trade-ledger-redis
-    restart: no
-    ports:
-      - "63795:6379"
-    volumes:
-      - ./redis/data:/data
-    environment:
-      - TZ=Europe/Rome
-      - PUID=1000
-      - PGID=1000
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   postgres:
     image: postgres:16-alpine
     container_name: trade-ledger-postgres
@@ -54,14 +37,9 @@ services:
       - HOME=/app/data
     user: "${PUID:-1000}:${PGID:-1000}"
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
     volumes:
       - ./src:/app/src   # for development hot-reload (optional)
       - ./data:/app/data
-
-volumes:
-  redis_data:
 
