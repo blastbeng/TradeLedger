@@ -8636,28 +8636,8 @@ class TradingEngine:
                             logger.info(f"News sentiment check failed for {symbol}: {e}")
 
                 # --- Soft stop: max unrealized loss ---
-                max_ul_pct = pos.get("max_unrealized_loss_pct")
-                if max_ul_pct is not None and max_ul_pct > 0:
-                    entry_price = pos["price"]
-                    if current_price <= entry_price * (1 - max_ul_pct):
-                        logger.info(f"Max unrealized loss reached for {symbol} ({max_ul_pct:.2%}). Closing position.")
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"📉 Soft stop triggered for {display_symbol} at {current_price:.4f} (max loss {max_ul_pct:.2%})",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "SELL",
-                                    "reason": "Max unrealized loss",
-                                    "price": current_price,
-                                    "exit_reason": "max_unrealized_loss",
-                                }
-                            )
-                        await self._execute_signal(
-                            symbol,
-                            Signal(action="SELL", confidence=1.0, reasoning="Max unrealized loss"),
-                            exit_reason="max_unrealized_loss"
-                        )
-                        continue
+                if await self._risk_manager.check_soft_stop(symbol, pos, current_price, display_symbol):
+                    continue
 
                 # --- Max hold time expired → ask LLM instead of auto‑closing ---
                 max_hold = pos.get("max_hold_time_seconds")

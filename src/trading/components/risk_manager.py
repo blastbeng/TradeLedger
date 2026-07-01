@@ -134,3 +134,40 @@ class RiskManager:
             )
             return True
         return False
+
+    async def check_soft_stop(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+        current_price: float,
+        display_symbol: str,
+    ) -> bool:
+        """Check if the position has exceeded the maximum unrealized loss threshold.
+
+        Returns True if the soft stop was triggered (caller should skip to
+        the next position), False otherwise.
+        """
+        engine = self.engine
+        max_ul_pct = pos.get("max_unrealized_loss_pct")
+        if max_ul_pct is not None and max_ul_pct > 0:
+            entry_price = pos["price"]
+            if current_price <= entry_price * (1 - max_ul_pct):
+                logger.info(f"Max unrealized loss reached for {symbol} ({max_ul_pct:.2%}). Closing position.")
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"📉 Soft stop triggered for {display_symbol} at {current_price:.4f} (max loss {max_ul_pct:.2%})",
+                        summary={
+                            "symbol": symbol,
+                            "action": "SELL",
+                            "reason": "Max unrealized loss",
+                            "price": current_price,
+                            "exit_reason": "max_unrealized_loss",
+                        }
+                    )
+                await engine._execute_signal(
+                    symbol,
+                    Signal(action="SELL", confidence=1.0, reasoning="Max unrealized loss"),
+                    exit_reason="max_unrealized_loss"
+                )
+                return True
+        return False
