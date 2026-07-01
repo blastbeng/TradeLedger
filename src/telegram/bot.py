@@ -823,40 +823,30 @@ class TelegramBot:
             elif key == "sentiment" and isinstance(value, dict):
                 value = round(value.get("avg_compound", 0), 2)
             # Compact backtest to a short win/loss summary
-            elif key == "backtest" and isinstance(value, str):
+            elif key == "backtest" and isinstance(value, dict):
                 value = TelegramBot._compact_backtest(value)
             compact[key] = value
         return compact
 
     @staticmethod
-    def _compact_backtest(text: str) -> str:
-        """Extract timeframe and win/loss summary from a backtest string."""
-        # Try to find timeframe like "15m backtest" or "Historical 15m backtest"
-        tf_match = re.search(r'(?:Historical\s+)?(\d+[mhdw])\s*backtest', text)
-        timeframe = tf_match.group(1) if tf_match else None
+    def _compact_backtest(stats: dict) -> str:
+        """Format a short win/loss summary directly from the backtest stats dict."""
+        if not isinstance(stats, dict):
+            # Fallback for non-dict inputs (e.g., if a string is accidentally passed)
+            text = str(stats)
+            if len(text) > 50:
+                text = text[:47] + "..."
+            return text
 
-        # Try to find "X trades, Y% win rate"
-        trades_winrate = re.search(r'(\d+)\s*trades?.*?(\d+)%\s*win\s*rate', text)
-        if trades_winrate:
-            trades = int(trades_winrate.group(1))
-            win_rate = int(trades_winrate.group(2))
-            wins = round(trades * win_rate / 100)
-            losses = trades - wins
-            prefix = f"{timeframe}: " if timeframe else ""
-            return f"{prefix}{trades} trades, {win_rate}% win ({wins}W/{losses}L)"
-
-        # Try to find "X wins, Y losses"
-        wins_losses = re.search(r'(\d+)\s*wins?.*?(\d+)\s*losses?', text)
-        if wins_losses:
-            wins = int(wins_losses.group(1))
-            losses = int(wins_losses.group(2))
-            prefix = f"{timeframe}: " if timeframe else ""
-            return f"{prefix}{wins}W/{losses}L"
-
-        # Fallback: truncate to 50 chars
-        if len(text) > 50:
-            text = text[:47] + "..."
-        return text
+        total_trades = stats.get("total_trades", 0)
+        win_rate = stats.get("win_rate", 0.0)
+        wins = stats.get("wins", 0)
+        losses = stats.get("losses", 0)
+        
+        timeframe = stats.get("timeframe", "")
+        prefix = f"{timeframe}: " if timeframe else ""
+        
+        return f"{prefix}{total_trades} trades, {win_rate*100:.0f}% win ({wins}W/{losses}L)"
 
     async def send_notification(self, message: str, summary: dict = None):
         """Send a notification to the stored chat ID and optionally log a summary."""
