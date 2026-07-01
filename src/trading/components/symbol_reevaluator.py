@@ -10,6 +10,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from src.config.settings import settings
+from src.database import get_ohlcv
 
 try:
     from src.news.fetcher import discover_trending_stocks, discover_tickers_from_news
@@ -277,3 +278,41 @@ class SymbolReevaluator:
                 logger.warning(f"News stock discovery failed: {e}")
 
         return available_pairs, btp_pairs, etf_pairs, old_symbols, last_key
+
+    async def fetch_ohlcv_from_db(
+        self, sorted_by_vol: List[str]
+    ) -> Tuple[Dict[str, Dict[str, List[List]]], Dict[str, List[str]]]:
+        """Fetch OHLCV data from the database for all candidate symbols.
+
+        Returns (ohlcv_data, available_timeframes_by_symbol) where:
+        - ohlcv_data: {symbol: {timeframe: [[ts, o, h, l, c, v], ...]}}
+        - available_timeframes_by_symbol: {symbol: [tf1, tf2, ...]}
+        """
+        ohlcv_data: Dict[str, Dict[str, List[List]]] = {}
+        if settings.OHLCV_TIMEFRAMES:
+            async def _fetch_ohlcv(sym: str):
+                data = {}
+                for tf in settings.OHLCV_TIMEFRAMES:
+                    try:
+                        db_candles = await asyncio.to_thread(
+                            get_ohlcv, sym, tf, limit=50
+                        )
+                        if db_candles:
+                            data[tf] = [
+                                [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
+                                for c in db_candles
+                            ]
+                    except Exception as e:
+                        logger.debug(f"DB OHLCV fetch failed for {sym} {tf}: {e}")
+                return sym, data
+            tasks = [_fetch_ohlcv(sym) for sym in sorted_by_vol]
+            results = await asyncio.gather(*tasks)
+            ohlcv_data = dict(results)
+
+        available_timeframes_by_symbol: Dict[str, List[str]] = {}
+        for sym, tf_data in ohlcv_data.items():
+            available_tfs = [tf for tf in settings.OHLCV_TIMEFRAMES if tf in tf_data and tf_data[tf]]
+            if available_tfs:
+                available_timeframes_by_symbol[sym] = available_tfs
+
+        return ohlcv_data, available_timeframes_by_symbol

@@ -3239,34 +3239,7 @@ class TradingEngine:
         # This avoids blocking reevaluation on slow API calls.
         sorted_by_vol = sample_pairs
         logger.info("Re-evaluation step 7/12: Fetching OHLCV from DB for %d symbols...", len(sorted_by_vol))
-
-        ohlcv_data = {}
-        if settings.OHLCV_TIMEFRAMES:
-            async def fetch_ohlcv_from_db(sym):
-                data = {}
-                for tf in settings.OHLCV_TIMEFRAMES:
-                    try:
-                        db_candles = await asyncio.to_thread(
-                            get_ohlcv, sym, tf, limit=50
-                        )
-                        if db_candles:
-                            data[tf] = [
-                                [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                                for c in db_candles
-                            ]
-                    except Exception as e:
-                        logger.debug(f"DB OHLCV fetch failed for {sym} {tf}: {e}")
-                return sym, data
-            tasks = [fetch_ohlcv_from_db(sym) for sym in sorted_by_vol]
-            results = await asyncio.gather(*tasks)
-            ohlcv_data = dict(results)
-
-        # Build available timeframes per symbol for validation and final selection prompt
-        available_timeframes_by_symbol = {}
-        for sym, tf_data in ohlcv_data.items():
-            available_tfs = [tf for tf in settings.OHLCV_TIMEFRAMES if tf in tf_data and tf_data[tf]]
-            if available_tfs:
-                available_timeframes_by_symbol[sym] = available_tfs
+        ohlcv_data, available_timeframes_by_symbol = await self._symbol_reevaluator.fetch_ohlcv_from_db(sorted_by_vol)
 
         logger.info("Re-evaluation step 8/12: Batch-fetching indicators for %d symbols...", len(sorted_by_vol))
         primary_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
