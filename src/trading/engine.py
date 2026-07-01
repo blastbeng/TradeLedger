@@ -6981,60 +6981,18 @@ class TradingEngine:
                     )
                 return
 
-            # Use LLM-provided risk parameters directly (no hardcoded minimums)
-            # Determine take-profit percentage based on method
-            if "take_profit_atr_multiple" in params and atr is not None and atr > 0 and current_price > 0:
-                tp_atr_mult = params["take_profit_atr_multiple"]
-                tp_pct = (tp_atr_mult * atr) / current_price
-                logger.info(f"ATR-based take-profit: ATR={atr}, multiplier={tp_atr_mult}, take_profit_pct={tp_pct:.4%}")
-            else:
-                if "take_profit_atr_multiple" in params:
-                    logger.warning(f"ATR unavailable for {symbol}, falling back to fixed take_profit_pct from LLM params.")
-                tp_pct = params.get("take_profit_pct")
-                if tp_pct is None or tp_pct <= 0:
-                    logger.warning(f"Cannot execute BUY for {symbol}: take_profit_pct missing/invalid and ATR unavailable.")
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"⚠️ Skipping BUY {display_symbol}: missing take_profit_pct and ATR unavailable.",
-                            summary={"symbol": symbol, "action": "SKIP", "reason": "Missing take_profit_pct and ATR unavailable"}
-                        )
-                    return
-            # --- BTP take-profit cap: enforce smaller targets for bonds ---
-            if is_btp_isin(symbol) and tp_pct is not None and tp_pct > 0:
-                if tp_pct > settings.BTP_MAX_TAKE_PROFIT_PCT:
-                    logger.info(
-                        f"BTP take-profit capped for {symbol}: {tp_pct:.4%} -> "
-                        f"{settings.BTP_MAX_TAKE_PROFIT_PCT:.4%}"
-                    )
-                    tp_pct = settings.BTP_MAX_TAKE_PROFIT_PCT
-            trailing_stop = params["trailing_stop"]
-            # Force trailing_stop off for BTPs — not supported by Intesa Sanpaolo Investo
-            if _exec_is_btp and trailing_stop:
-                logger.warning(
-                    f"LLM set trailing_stop=true for BTP {symbol}, but trailing stops are not supported "
-                    f"for BTPs on Intesa Sanpaolo Investo. Forcing trailing_stop=false."
-                )
-                trailing_stop = False
-            trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
-
-            # Determine stop-loss percentage based on method
-            stop_method = params.get("stop_loss_method", "fixed")
-            if stop_method == "atr_multiple" and atr is not None and atr > 0:
-                atr_mult = params["stop_loss_atr_multiple"]
-                sl_pct = (atr_mult * atr) / current_price
-                logger.info(f"ATR-based stop: ATR={atr}, multiplier={atr_mult}, stop_loss_pct={sl_pct:.4%}")
-            else:
-                if stop_method == "atr_multiple":
-                    logger.warning(f"ATR unavailable for {symbol}, falling back to fixed stop_loss_pct from LLM params.")
-                sl_pct = params.get("stop_loss_pct")
-                if sl_pct is None:
-                    logger.warning(f"Cannot execute BUY for {symbol}: stop_loss_pct missing and ATR method not applicable/available.")
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"⚠️ Skipping BUY {display_symbol}: missing stop_loss_pct and ATR unavailable.",
-                            summary={"symbol": symbol, "action": "SKIP", "reason": "Missing stop_loss_pct and ATR unavailable"}
-                        )
-                    return
+            # --- Compute stop-loss and take-profit parameters from LLM params ---
+            _sl_tp_result = await self._order_executor.compute_sl_tp_params(
+                symbol=symbol,
+                display_symbol=display_symbol,
+                params=params,
+                atr=atr,
+                current_price=current_price,
+                is_btp=_exec_is_btp,
+            )
+            if _sl_tp_result is None:
+                return
+            sl_pct, tp_pct, trailing_stop, trailing_stop_distance_pct = _sl_tp_result
 
             quote_balance = balance.get(quote, 0.0)
             position_fraction = params["position_size_fraction"]
