@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import secrets
+import sys
 import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, APIRouter
 from fastapi.concurrency import run_in_threadpool
@@ -334,7 +335,7 @@ def restart():
     Restart the entire application by exiting the process.
     Docker (or the process manager) will bring it back up.
     """
-    os._exit(0)
+    sys.exit(0)
 
 @http_router.get("/api/config")
 def config():
