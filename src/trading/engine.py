@@ -3242,69 +3242,9 @@ class TradingEngine:
         ohlcv_data, available_timeframes_by_symbol = await self._symbol_reevaluator.fetch_ohlcv_from_db(sorted_by_vol)
 
         logger.info("Re-evaluation step 8/12: Batch-fetching indicators for %d symbols...", len(sorted_by_vol))
-        primary_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
-
-        # Batch-fetch all indicators in a single DB query
-        batch_indicators = await asyncio.to_thread(
-            get_indicators_for_symbols, sorted_by_vol, settings.OHLCV_TIMEFRAMES
+        symbol_indicators, symbol_trend_scores = await self._symbol_reevaluator.fetch_indicators_and_trend_scores(
+            sorted_by_vol, sample_pairs
         )
-
-        def _compute_trend_score(sym: str, sym_indicators: Dict[str, Dict[str, Any]]) -> float:
-            trend_score = 0.0
-            try:
-                ind = sym_indicators.get(primary_tf, {})
-                score = 0.0
-                components = 0
-
-                adx_val = ind.get('adx')
-                if adx_val is not None:
-                    score += min(1.0, adx_val / 50.0)
-                    components += 1
-
-                ema_9_val = ind.get('ema_9')
-                ema_21_val = ind.get('ema_21')
-                if ema_9_val is not None and ema_21_val is not None:
-                    score += 1.0 if ema_9_val > ema_21_val else 0.0
-                    components += 1
-
-                rsi_val = ind.get('rsi')
-                if rsi_val is not None:
-                    if 40 <= rsi_val <= 70:
-                        score += 1.0
-                    elif 30 <= rsi_val <= 80:
-                        score += 0.5
-                    else:
-                        score += 0.0
-                    components += 1
-
-                macd_hist_val = ind.get('macd_hist')
-                if macd_hist_val is not None:
-                    score += 1.0 if macd_hist_val > 0 else 0.0
-                    components += 1
-
-                plus_di_val = ind.get('plus_di')
-                minus_di_val = ind.get('minus_di')
-                if plus_di_val is not None and minus_di_val is not None:
-                    score += 1.0 if plus_di_val > minus_di_val else 0.0
-                    components += 1
-
-                if components > 0:
-                    trend_score = round(score / components, 3)
-            except Exception:
-                pass
-            return trend_score
-
-        symbol_indicators = {}
-        symbol_trend_scores: Dict[str, float] = {}
-        for sym in sorted_by_vol:
-            sym_inds = batch_indicators.get(sym, {})
-            symbol_indicators[sym] = sym_inds
-            symbol_trend_scores[sym] = _compute_trend_score(sym, sym_inds)
-
-        # Ensure all sample_pairs have a trend score even if OHLCV was missing
-        for sym in sample_pairs:
-            if sym not in symbol_trend_scores:
-                symbol_trend_scores[sym] = 0.0
 
         # Use asset info for minimum order size constraints
         market_limits = {}
