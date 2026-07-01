@@ -4,9 +4,11 @@ import os
 import logging
 import time
 import functools
+import hashlib
 from typing import Dict, List, Any, Optional
 
 from src.config.settings import settings
+from src.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +288,7 @@ def _get_init_statements() -> List[str]:
         )
         """,
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_market_data_symbol_tf_ts ON market_data(symbol, timeframe, timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_market_data_symbol_tf_ts_desc ON market_data(symbol, timeframe, timestamp DESC)",
         "CREATE INDEX IF NOT EXISTS idx_market_data_timestamp ON market_data(timestamp)",
         f"""
         CREATE TABLE IF NOT EXISTS indicators (
@@ -1496,6 +1499,17 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     """
     if not symbols:
         return {}
+
+    # Try to get from Redis cache
+    try:
+        redis_client = get_redis_client()
+        cache_key = "latest_close_prices:" + hashlib.md5(json.dumps(sorted(symbols)).encode()).hexdigest()
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
     # Normalize input symbols to base form (strip /currency suffix)
     base_symbols = set(s.split('/')[0] for s in symbols)
     # Construct full pair symbols for exact matching in the database
@@ -1640,7 +1654,16 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             for db_base, prev_close in daily_prev_close.items():
                 if db_base in result:
                     result[db_base]["prev_close"] = prev_close
-        return result
+
+    # Save to Redis cache
+    try:
+        redis_client = get_redis_client()
+        cache_key = "latest_close_prices:" + hashlib.md5(json.dumps(sorted(symbols)).encode()).hexdigest()
+        redis_client.setex(cache_key, 60, json.dumps(result))
+    except Exception:
+        pass
+
+    return result
     finally:
         conn.close()
 
