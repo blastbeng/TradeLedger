@@ -4734,40 +4734,8 @@ class TradingEngine:
             await asyncio.to_thread(self.redis.set, "trading:last_triggered_reeval", str(time.time()))
             await asyncio.to_thread(self.redis.expire, "trading:last_triggered_reeval", 7200)
 
-        # --- Cleanup stale entries from engine state dicts ---
-        # Remove entries for symbols that are no longer tracked and have no open position.
-        active_symbols = {entry["symbol"] for entry in self.current_symbols}
-        active_symbols.update(self.positions.keys())
-        for state_dict in (
-            self._force_eval,
-            self._last_decisions,
-            self._entry_signal_state,
-            self._force_eval_time,
-            self._last_strategy_eval,
-            self._strategy_intervals,
-            self._last_eval_snapshot,
-            self.last_loss_time,
-            self.cooldown_durations,
-            self._pending_entries,
-        ):
-            stale_keys = [s for s in state_dict if s not in active_symbols]
-            for s in stale_keys:
-                state_dict.pop(s, None)
-            if stale_keys:
-                logger.debug(f"Cleaned {len(stale_keys)} stale entries from engine state dicts")
-
-        # --- Cleanup stale entries from base-symbol-keyed caches ---
-        active_bases = {s.split("/")[0] for s in active_symbols}
-        for cache_dict in (
-            self._sentiment_cache,
-            self._asset_cache,
-            self._asset_cache_time,
-        ):
-            stale_keys = [k for k in cache_dict if k not in active_bases]
-            for k in stale_keys:
-                cache_dict.pop(k, None)
-            if stale_keys:
-                logger.debug(f"Cleaned {len(stale_keys)} stale entries from base-symbol caches")
+        # --- Cleanup stale entries from engine state dicts and caches ---
+        self._symbol_reevaluator.cleanup_stale_state_entries()
 
         self._state_dirty = True
         logger.info("Re-evaluation complete: %d symbols selected.", len(self.current_symbols))

@@ -75,3 +75,42 @@ class SymbolReevaluator:
             return None
 
         return (is_user_forced, is_market_condition_trigger, now)
+
+    def cleanup_stale_state_entries(self):
+        """Remove stale entries from engine state dicts and base-symbol caches.
+
+        Called at the end of each re-evaluation cycle to prune entries for
+        symbols that are no longer tracked and have no open position.
+        """
+        engine = self.engine
+        active_symbols = {entry["symbol"] for entry in engine.current_symbols}
+        active_symbols.update(engine.positions.keys())
+        for state_dict in (
+            engine._force_eval,
+            engine._last_decisions,
+            engine._entry_signal_state,
+            engine._force_eval_time,
+            engine._last_strategy_eval,
+            engine._strategy_intervals,
+            engine._last_eval_snapshot,
+            engine.last_loss_time,
+            engine.cooldown_durations,
+            engine._pending_entries,
+        ):
+            stale_keys = [s for s in state_dict if s not in active_symbols]
+            for s in stale_keys:
+                state_dict.pop(s, None)
+            if stale_keys:
+                logger.debug(f"Cleaned {len(stale_keys)} stale entries from engine state dicts")
+
+        active_bases = {s.split("/")[0] for s in active_symbols}
+        for cache_dict in (
+            engine._sentiment_cache,
+            engine._asset_cache,
+            engine._asset_cache_time,
+        ):
+            stale_keys = [k for k in cache_dict if k not in active_bases]
+            for k in stale_keys:
+                cache_dict.pop(k, None)
+            if stale_keys:
+                logger.debug(f"Cleaned {len(stale_keys)} stale entries from base-symbol caches")
