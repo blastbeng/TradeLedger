@@ -60,6 +60,7 @@ from src.database import load_trading_state, save_trading_state, insert_trade, g
 from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.risk_manager import RiskManager
 from src.trading.components.state_persistence import StatePersistence
+from src.trading.components.symbol_reevaluator import SymbolReevaluator
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +148,7 @@ class TradingEngine:
         self._state_persistence = StatePersistence(self)
         self._order_executor = OrderExecutor(self)
         self._risk_manager = RiskManager(self)
+        self._symbol_reevaluator = SymbolReevaluator(self)
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
@@ -3047,48 +3049,10 @@ class TradingEngine:
             return await self._reevaluate_symbols_impl(force=force)
 
     async def _reevaluate_symbols_impl(self, force: bool = False):
-        # Reset per-cycle spending tracker, but carry over capital already reserved
-        # by queued buy orders from previous cycles so it is not re-allocated.
-        async with self._queued_orders_lock:
-            queued_buy_total = sum(
-                q.get('amount', 0.0) for q in self.queued_orders
-                if q.get('side') == 'buy'
-            )
-        async with self._cycle_spent_lock:
-            self._cycle_spent = queued_buy_total
-        logger.info("Re-evaluation step 1/12: Checking cooldown and fetching asset lists...")
-
-        # Respect triggered re-evaluation cooldown for market-condition triggers only.
-        # Pre-market re-evaluations are always allowed (they are time-critical).
-        # Forced re-evaluations (explicit user or critical condition requests) always bypass
-        # the cooldown since they are intentionally requested.
-        # Capture whether this is a market-condition trigger before clearing flags
-        is_market_condition_trigger = force and not self._pre_market_reeval and not self._user_forced_reeval
-
-        if is_market_condition_trigger:
-            # Check if this was triggered by the market condition monitor (not a user action).
-            # The market condition monitor sets _force_reeval directly without going through
-            # trigger_symbol_reevaluation, so we check the triggered cooldown key.
-            # User-initiated forced re-evaluations (from the web UI or Telegram) bypass this cooldown.
-            last_triggered = await asyncio.to_thread(self.redis.get, "trading:last_triggered_reeval")
-            if last_triggered:
-                elapsed = time.time() - float(last_triggered)
-                if elapsed < settings.TRIGGERED_REEVALUATION_COOLDOWN:
-                    logger.info(f"Forced re-evaluation skipped: triggered cooldown active ({settings.TRIGGERED_REEVALUATION_COOLDOWN - elapsed:.0f}s remaining)")
-                    return
-        is_user_forced = self._user_forced_reeval
-        # Clear the pre-market flag after reading it
-        self._pre_market_reeval = False
-        # Clear the user-forced flag after reading it
-        self._user_forced_reeval = False
-
-        # Only re-evaluate every SYMBOL_REVALUATION_INTERVAL
-        last_key = "trading:last_symbol_eval"
-        last_eval = await asyncio.to_thread(self.redis.get, last_key)
-        now = time.time()
-        if last_eval and (now - float(last_eval)) < self._symbol_reevaluation_interval and self.current_symbols and not force:
-            logger.info("Skipping symbol re-evaluation: last eval was recent and symbols are already loaded.")
+        _cooldown_result = await self._symbol_reevaluator.check_cooldown_and_reset(force)
+        if _cooldown_result is None:
             return
+        is_user_forced, is_market_condition_trigger, now = _cooldown_result
 
         logger.info("Re-evaluation step 2/12: Fetching tradable assets, BTPs, and ETFs...")
         old_symbols = list(self.current_symbols)
