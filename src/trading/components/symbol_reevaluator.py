@@ -630,3 +630,72 @@ class SymbolReevaluator:
                 'min_amount': min_amount,
             }
         return market_limits
+
+    def compute_composite_scores_and_shortlist(
+        self,
+        sample_pairs: List[str],
+        symbol_trend_scores: Dict[str, float],
+        news_sentiment: Dict[str, Any],
+        trade_pattern_analysis: Dict[str, Any],
+        etf_pairs: List[str],
+        btp_pairs: List[str],
+    ) -> Tuple[Dict[str, float], List[str]]:
+        """Compute composite opportunity scores and build the LLM shortlist.
+
+        Returns (composite_scores, shortlist) where:
+        - composite_scores: {symbol: float} (0.0–1.0)
+        - shortlist: deduplicated list of symbols sorted by composite score,
+          with currently held symbols, historically best symbols, configured
+          ETFs, all discovered ETFs, and all BTPs appended.
+        """
+        engine = self.engine
+
+        # --- Composite opportunity score (trend + sentiment) ---
+        composite_scores: Dict[str, float] = {}
+        for sym in sample_pairs:
+            trend = symbol_trend_scores.get(sym, 0.0)
+            base_sym = sym.split("/")[0] if "/" in sym else sym
+            sent = news_sentiment.get(base_sym, {}).get("avg_compound", 0.0) if news_sentiment else 0.0
+            sentiment_score = (sent + 1.0) / 2.0  # map -1..1 to 0..1
+            composite = 0.6 * trend + 0.4 * sentiment_score
+            composite_scores[sym] = round(composite, 3)
+
+        # Build a shortlist for the LLM: all symbols sorted by composite score,
+        # plus any currently held symbols and historically best symbols.
+        sorted_by_composite = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
+        shortlist = sorted_by_composite
+
+        # Always include currently held symbols (they must be managed)
+        for entry in engine.current_symbols:
+            sym = entry["symbol"]
+            if sym in sample_pairs and sym not in shortlist:
+                shortlist.append(sym)
+
+        # Always include historically best symbols (from trade pattern analysis)
+        if trade_pattern_analysis:
+            best_syms = [item["symbol"] for item in trade_pattern_analysis.get("best_symbols", [])]
+            for sym in best_syms:
+                if sym in sample_pairs and sym not in shortlist:
+                    shortlist.append(sym)
+
+        # Always include the configured ETFs
+        for etf in settings.ALWAYS_INCLUDE_ETFS:
+            pair = f"{etf}/{engine.base_currency}"
+            if pair in sample_pairs and pair not in shortlist:
+                shortlist.append(pair)
+
+        # Always include ALL discovered ETFs for the LLM to consider
+        for sym in etf_pairs:
+            if sym not in shortlist:
+                shortlist.append(sym)
+
+        # Always include all BTPs for the LLM to consider
+        for sym in btp_pairs:
+            if sym not in shortlist:
+                shortlist.append(sym)
+
+        # Deduplicate shortlist while preserving order
+        seen = set()
+        shortlist = [s for s in shortlist if not (s in seen or seen.add(s))]
+
+        return composite_scores, shortlist

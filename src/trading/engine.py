@@ -3140,59 +3140,11 @@ class TradingEngine:
         perf = await asyncio.to_thread(self._compute_performance_metrics)
         trade_pattern_analysis = await asyncio.to_thread(self._compute_trade_pattern_analysis)
 
-        # --- Composite opportunity score (trend + sentiment) ---
-        composite_scores: Dict[str, float] = {}
-        for sym in sample_pairs:
-            trend = symbol_trend_scores.get(sym, 0.0)
-            # Normalise sentiment compound to 0-1 (assuming range -1..1)
-            base_sym = sym.split("/")[0] if "/" in sym else sym
-            sent = news_sentiment.get(base_sym, {}).get("avg_compound", 0.0) if news_sentiment else 0.0
-            sentiment_score = (sent + 1.0) / 2.0  # map -1..1 to 0..1
-            composite = 0.6 * trend + 0.4 * sentiment_score
-            composite_scores[sym] = round(composite, 3)
-
-        # Build a shortlist for the LLM: all symbols sorted by composite score,
-        # plus any currently held symbols and historically best symbols.
+        # --- Composite opportunity score and shortlist building ---
+        composite_scores, shortlist = self._symbol_reevaluator.compute_composite_scores_and_shortlist(
+            sample_pairs, symbol_trend_scores, news_sentiment, trade_pattern_analysis, etf_pairs, btp_pairs
+        )
         sorted_by_composite = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
-        shortlist = sorted_by_composite
-
-        # Always include currently held symbols (they must be managed)
-        for entry in self.current_symbols:
-            sym = entry["symbol"]
-            if sym in sample_pairs and sym not in shortlist:
-                shortlist.append(sym)
-
-        # Always include historically best symbols (from trade pattern analysis)
-        if trade_pattern_analysis:
-            best_syms = [item["symbol"] for item in trade_pattern_analysis.get("best_symbols", [])]
-            for sym in best_syms:
-                if sym in sample_pairs and sym not in shortlist:
-                    shortlist.append(sym)
-
-        # Always include the configured ETFs
-        for etf in settings.ALWAYS_INCLUDE_ETFS:
-            pair = f"{etf}/{self.base_currency}"
-            if pair in sample_pairs and pair not in shortlist:
-                shortlist.append(pair)
-
-        # Always include ALL discovered ETFs for the LLM to consider
-        for sym in etf_pairs:
-            if sym not in shortlist:
-                shortlist.append(sym)
-
-        # Always include all BTPs for the LLM to consider
-        for sym in btp_pairs:
-            if sym not in shortlist:
-                shortlist.append(sym)
-
-        # Deduplicate shortlist while preserving order. The sample_pairs
-        # reconstruction (stocks + ETFs + BTPs) can introduce duplicates
-        # when a symbol appears in multiple category lists, and those
-        # duplicates propagate into shortlist via the initial
-        # sorted_by_composite assignment.
-        seen = set()
-        shortlist = [s for s in shortlist if not (s in seen or seen.add(s))]
-
         sample_pairs = shortlist
         logger.info(f"LLM candidate list: {len(sample_pairs)} symbols (will be evaluated in chunks)")
 
