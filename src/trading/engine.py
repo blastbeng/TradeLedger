@@ -3153,28 +3153,7 @@ class TradingEngine:
                 pass
 
         # Compute OHLCV summary for the prompt (do not pass raw candles to the LLM)
-        ohlcv_summary = {}
-        if ohlcv_data:
-            for symbol in sample_pairs:
-                if symbol in ohlcv_data:
-                    tf_data = ohlcv_data[symbol]
-                    summary = {}
-                    for tf, candles in tf_data.items():
-                        if not candles:
-                            continue
-                        open_price = candles[0][1]
-                        close_price = candles[-1][4]
-                        high = max(c[2] for c in candles)
-                        low = min(c[3] for c in candles)
-                        volume = sum(c[5] for c in candles)
-                        change_pct = ((close_price - open_price) / open_price) * 100 if open_price else 0
-                        summary[tf] = {
-                            "change_pct": round(change_pct, 2),
-                            "high": high,
-                            "low": low,
-                            "volume": volume,
-                        }
-                    ohlcv_summary[symbol] = summary
+        ohlcv_summary = self._symbol_reevaluator.compute_ohlcv_summary(ohlcv_data, sample_pairs)
 
         max_retries = 2
         # Compute prompt complexity for temperature selection

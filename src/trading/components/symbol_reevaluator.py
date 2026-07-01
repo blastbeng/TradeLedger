@@ -830,3 +830,36 @@ class SymbolReevaluator:
         await asyncio.to_thread(engine.redis.setex, "market:status", 3600, json.dumps(market_status))
 
         return symbol_events, session_info, market_breadth, full_market_breadth, vix
+
+    def compute_ohlcv_summary(
+        self,
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+        sample_pairs: List[str],
+    ) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """Compute a per-symbol OHLCV summary from raw candle data.
+
+        Returns {symbol: {timeframe: {change_pct, high, low, volume}}}.
+        """
+        ohlcv_summary: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        if ohlcv_data:
+            for symbol in sample_pairs:
+                if symbol in ohlcv_data:
+                    tf_data = ohlcv_data[symbol]
+                    summary: Dict[str, Dict[str, Any]] = {}
+                    for tf, candles in tf_data.items():
+                        if not candles:
+                            continue
+                        open_price = candles[0][1]
+                        close_price = candles[-1][4]
+                        high = max(c[2] for c in candles)
+                        low = min(c[3] for c in candles)
+                        volume = sum(c[5] for c in candles)
+                        change_pct = ((close_price - open_price) / open_price) * 100 if open_price else 0
+                        summary[tf] = {
+                            "change_pct": round(change_pct, 2),
+                            "high": high,
+                            "low": low,
+                            "volume": volume,
+                        }
+                    ohlcv_summary[symbol] = summary
+        return ohlcv_summary
