@@ -4920,6 +4920,22 @@ class TradingEngine:
             await asyncio.to_thread(self.redis.set, "trading:last_triggered_reeval", str(time.time()))
             await asyncio.to_thread(self.redis.expire, "trading:last_triggered_reeval", 7200)
 
+        # --- Cleanup stale entries from engine state dicts ---
+        # Remove entries for symbols that are no longer tracked and have no open position.
+        active_symbols = {entry["symbol"] for entry in self.current_symbols}
+        active_symbols.update(self.positions.keys())
+        for state_dict in (
+            self._force_eval,
+            self._last_decisions,
+            self._entry_signal_state,
+            self._force_eval_time,
+        ):
+            stale_keys = [s for s in state_dict if s not in active_symbols]
+            for s in stale_keys:
+                state_dict.pop(s, None)
+            if stale_keys:
+                logger.debug(f"Cleaned {len(stale_keys)} stale entries from engine state dicts")
+
         self._state_dirty = True
         logger.info("Re-evaluation complete: %d symbols selected.", len(self.current_symbols))
         await asyncio.to_thread(self.redis.set, last_key, now)
