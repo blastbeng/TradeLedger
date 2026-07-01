@@ -128,6 +128,215 @@ class OrderExecutor:
         pos.pop("stop_loss_order_type", None)
         pos.pop("_native_stop_price", None)
 
+    async def handle_queued_buy_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any]):
+        """Process a queued BUY limit order that has filled in the simulator."""
+        engine = self.engine
+        symbol = trade_dict['symbol']
+        parts = symbol.split("/")
+        if len(parts) != 2:
+            logger.error(f"Invalid symbol format in queued buy fill: {symbol}")
+            return
+        base, quote = parts
+        fee = trade_dict.get('fee', {})
+        fee_cost = float(fee.get('cost', 0.0) or 0.0)
+        fee_currency = fee.get('currency', '')
+        cost_basis = trade_dict['cost'] + (fee_cost if fee_currency == quote else 0.0)
+        net_base = trade_dict['amount'] - (fee_cost if fee_currency == base else 0.0)
+
+        signal_dict = queued.get('signal', {}) or {}
+        params = signal_dict.get('strategy_params', {}) or {}
+        timeframe = queued.get('timeframe')
+        atr = queued.get('atr')
+        fill_price = trade_dict['price']
+
+        # Determine stop-loss percentage based on method
+        stop_method = params.get("stop_loss_method", "fixed")
+        if stop_method == "atr_multiple" and atr is not None and atr > 0 and fill_price > 0:
+            atr_mult = params.get("stop_loss_atr_multiple")
+            if atr_mult is not None:
+                sl_pct = (atr_mult * atr) / fill_price
+            else:
+                sl_pct = params.get("stop_loss_pct")
+        else:
+            sl_pct = params.get("stop_loss_pct")
+
+        # Determine take-profit percentage based on method
+        if "take_profit_atr_multiple" in params and atr is not None and atr > 0 and fill_price > 0:
+            tp_atr_mult = params["take_profit_atr_multiple"]
+            tp_pct = (tp_atr_mult * atr) / fill_price
+        else:
+            tp_pct = params.get("take_profit_pct")
+        # --- BTP take-profit cap: enforce smaller targets for bonds ---
+        if is_btp_isin(symbol) and tp_pct is not None and tp_pct > 0:
+            if tp_pct > settings.BTP_MAX_TAKE_PROFIT_PCT:
+                logger.info(
+                    f"BTP take-profit capped for {symbol} (queued fill): {tp_pct:.4%} -> "
+                    f"{settings.BTP_MAX_TAKE_PROFIT_PCT:.4%}"
+                )
+                tp_pct = settings.BTP_MAX_TAKE_PROFIT_PCT
+        trailing_stop = params.get("trailing_stop", False)
+        _qbuy_is_btp = is_btp_isin(symbol)
+        if _qbuy_is_btp and trailing_stop:
+            logger.warning(
+                f"LLM set trailing_stop=true for BTP {symbol} (queued fill), but trailing stops are not supported "
+                f"for BTPs on Intesa Sanpaolo Investo. Forcing trailing_stop=false."
+            )
+            trailing_stop = False
+        trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
+        indicator_config = signal_dict.get('indicator_config')
+
+        if symbol in engine.positions:
+            old_cost_basis = engine.positions[symbol].get("cost_basis", engine.positions[symbol]["amount"] * engine.positions[symbol]["price"])
+            old_net_base = engine.positions[symbol].get("net_base", engine.positions[symbol]["amount"])
+            new_cost_basis = old_cost_basis + cost_basis
+            new_net_base = old_net_base + net_base
+            new_price = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
+            engine.positions[symbol]["amount"] = new_net_base
+            engine.positions[symbol]["price"] = new_price
+            engine.positions[symbol]["cost_basis"] = new_cost_basis
+            engine.positions[symbol]["net_base"] = new_net_base
+            # Preserve existing absolute SL/TP prices when scaling in.
+            # Recalculating based on the new weighted average would shift
+            # them from where the LLM originally intended.
+            engine.positions[symbol]["take_profit_atr_multiple"] = params.get("take_profit_atr_multiple")
+            engine.positions[symbol]["trailing_stop"] = trailing_stop
+            engine.positions[symbol]["trailing_stop_distance_pct"] = trailing_stop_distance_pct
+            engine.positions[symbol]["max_hold_time_seconds"] = params.get("max_hold_time_seconds")
+            engine.positions[symbol]["trailing_stop_activation_pct"] = params.get("trailing_stop_activation_pct")
+            engine.positions[symbol]["trailing_take_profit"] = params.get("trailing_take_profit", False)
+            engine.positions[symbol]["trailing_take_profit_distance_pct"] = params.get("trailing_take_profit_distance_pct")
+            engine.positions[symbol]["breakeven_activation_pct"] = params.get("breakeven_activation_pct")
+            partial_levels = params.get("partial_take_profit_levels")
+            if partial_levels:
+                engine.positions[symbol]["partial_take_profit_levels"] = partial_levels
+                engine.positions[symbol]["partial_tp_levels_triggered"] = []
+                engine.positions[symbol]["partial_tp_depth_wait_start"] = {}
+                engine.positions[symbol]["partial_take_profit_pct"] = None
+                engine.positions[symbol]["partial_take_profit_fraction"] = None
+                engine.positions[symbol]["partial_tp_triggered"] = None
+            else:
+                engine.positions[symbol]["partial_take_profit_pct"] = params.get("partial_take_profit_pct")
+                engine.positions[symbol]["partial_take_profit_fraction"] = params.get("partial_take_profit_fraction")
+                engine.positions[symbol]["partial_tp_triggered"] = False
+            engine.positions[symbol]["cooldown_after_loss_seconds"] = params.get("cooldown_after_loss_seconds", 0)
+            engine.positions[symbol]["news_sentiment_exit_threshold"] = params.get("news_sentiment_exit_threshold")
+            engine.positions[symbol]["max_unrealized_loss_pct"] = params.get("max_unrealized_loss_pct")
+            engine.positions[symbol]["timeframe"] = timeframe
+            engine.positions[symbol]["indicator_config"] = indicator_config
+            engine.positions[symbol]["entry_order_type"] = queued.get('order_type', 'market')
+            engine.positions[symbol]["buy_confidence"] = signal_dict.get('confidence', 0.0)
+            engine.positions[symbol]["buy_reasoning"] = (signal_dict.get('reasoning', '') or '')[:200]
+        else:
+            entry_price = cost_basis / net_base if net_base > 0 else trade_dict["price"]
+            engine.positions[symbol] = {
+                "symbol": symbol,
+                "side": "buy",
+                "amount": net_base,
+                "price": entry_price,
+                "timestamp": trade_dict["timestamp"],
+                "stop_loss": entry_price * (1 - sl_pct) if sl_pct else None,
+                "take_profit": entry_price * (1 + tp_pct) if tp_pct else None,
+                "take_profit_atr_multiple": params.get("take_profit_atr_multiple"),
+                "cost_basis": cost_basis,
+                "net_base": net_base,
+                "buy_confidence": signal_dict.get('confidence', 0.0),
+                "buy_reasoning": (signal_dict.get('reasoning', '') or '')[:200],
+                "trailing_stop": trailing_stop,
+                "trailing_stop_distance_pct": trailing_stop_distance_pct,
+                "max_hold_time_seconds": params.get("max_hold_time_seconds"),
+                "trailing_stop_activation_pct": params.get("trailing_stop_activation_pct"),
+                "trailing_take_profit": params.get("trailing_take_profit", False),
+                "trailing_take_profit_distance_pct": params.get("trailing_take_profit_distance_pct"),
+                "breakeven_activation_pct": params.get("breakeven_activation_pct"),
+                "partial_take_profit_levels": params.get("partial_take_profit_levels"),
+                "partial_tp_levels_triggered": [],
+                "partial_tp_depth_wait_start": {},
+                "original_amount": net_base,
+                "partial_take_profit_pct": params.get("partial_take_profit_pct") if not params.get("partial_take_profit_levels") else None,
+                "partial_take_profit_fraction": params.get("partial_take_profit_fraction") if not params.get("partial_take_profit_levels") else None,
+                "partial_tp_triggered": False if not params.get("partial_take_profit_levels") else None,
+                "cooldown_after_loss_seconds": params.get("cooldown_after_loss_seconds", 0),
+                "news_sentiment_exit_threshold": params.get("news_sentiment_exit_threshold"),
+                "max_unrealized_loss_pct": params.get("max_unrealized_loss_pct"),
+                "timeframe": timeframe,
+                "indicator_config": indicator_config,
+                "entry_order_type": queued.get('order_type', 'market'),
+            }
+
+        custom_interval = params.get("strategy_interval_seconds")
+        if custom_interval is not None:
+            engine._strategy_intervals[symbol] = custom_interval
+
+        trade_dict['strategy_type'] = signal_dict.get('strategy_type')
+        trade_dict['timeframe'] = timeframe
+        trade_dict['buy_confidence'] = signal_dict.get('confidence', 0.0)
+        trade_dict['buy_reasoning'] = (signal_dict.get('reasoning', '') or '')[:200]
+        engine._append_trade(trade_dict)
+        engine._balance_cache = None
+        # Note: _cycle_spent was already updated when the order was queued
+        # in _execute_signal, so we do NOT add to it here to avoid double-counting.
+        await asyncio.to_thread(insert_trade, trade_dict)
+        await engine._save_state(force=True)
+        engine._portfolio_exposure_cache = None
+        if engine.notifier:
+            stock_name = await engine._get_stock_name(symbol)
+            display_symbol = engine._format_symbol_display(symbol, stock_name, timeframe)
+            buy_msg = f"🟢 BUY {display_symbol}: {trade_dict['amount']:.6f} @ {trade_dict['price']:.4f}"
+            buy_summary = {
+                "symbol": symbol,
+                "action": "BUY",
+                "price": trade_dict["price"],
+                "amount": trade_dict["amount"],
+                "confidence": signal_dict.get('confidence', 0.0),
+                "reason": (signal_dict.get('reasoning', '') or '')[:200],
+                "strategy_type": signal_dict.get('strategy_type'),
+                "indicators": {"atr": atr},
+            }
+            if signal_dict.get('model_type'):
+                buy_summary["model_type"] = signal_dict.get('model_type')
+            if signal_dict.get('llm_provider'):
+                buy_summary["llm_provider"] = signal_dict.get('llm_provider')
+            if signal_dict.get('llm_model'):
+                buy_summary["llm_model"] = signal_dict.get('llm_model')
+            await engine.notifier.send_notification(buy_msg, summary=buy_summary)
+
+        # Place native exit orders for the new/updated position
+        signal_dict = queued.get('signal', {}) or {}
+        if signal_dict:
+            try:
+                # Reconstruct a Signal from the stored dict, filtering to only
+                # valid Signal fields and providing fallbacks for required fields.
+                import dataclasses as _dc
+                valid_keys = {f.name for f in _dc.fields(Signal)}
+                filtered = {k: v for k, v in signal_dict.items() if k in valid_keys}
+                # Ensure required fields have fallbacks
+                if "action" not in filtered:
+                    filtered["action"] = "BUY"
+                if "confidence" not in filtered:
+                    filtered["confidence"] = 0.0
+                if "reasoning" not in filtered:
+                    filtered["reasoning"] = ""
+                reconstructed_signal = Signal(**filtered)
+                exit_prices = self.compute_exit_order_prices(
+                    entry_price=engine.positions[symbol]["price"],
+                    signal=reconstructed_signal,
+                    atr=queued.get('atr'),
+                )
+                await self.place_exit_orders(symbol, reconstructed_signal, exit_prices, queued.get('timeframe'))
+            except Exception as e:
+                logger.error(f"Failed to place exit orders after queued buy fill for {symbol}: {e}")
+                if engine.notifier:
+                    stock_name = await engine._get_stock_name(symbol)
+                    display_symbol = engine._format_symbol_display(symbol, stock_name, queued.get('timeframe'))
+                    await engine.notifier.send_notification(
+                        f"⚠️ Exit order placement failed for {display_symbol} after queued fill: {e}",
+                        summary={
+                            "symbol": symbol,
+                            "action": "ERROR",
+                            "reason": f"Exit order placement failed after queued fill: {str(e)[:200]}",
+                        }
+                    )
+
         base, quote = symbol.split("/")
         qty = pos["amount"]  # base quantity to sell
         if qty <= 0:
