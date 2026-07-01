@@ -5876,68 +5876,15 @@ class TradingEngine:
                     ):
                         return
 
-                # --- Entry condition check (only for BUY) ---
-                if validated.action == "BUY" and validated.entry_condition is not None and not trading_paused:
-                    etype = validated.entry_condition.get("type")
-                    if etype == "delay":
-                        # Delay entries are simple time-based waits – schedule directly
-                        delay_sec = validated.entry_condition.get("delay_seconds", 0)
-                        logger.info(f"Scheduling delayed BUY for {symbol} in {delay_sec}s")
-                        task = asyncio.create_task(
-                            self._execute_delayed_entry(symbol, validated, assigned_tf, delay_sec)
-                        )
-                        self._delayed_entry_tasks.add(task)
-                        task.add_done_callback(self._delayed_entry_tasks.discard)
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⏳ Delayed entry for {display_symbol} – executing in {delay_sec}s.",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "WAIT",
-                                    "reason": "Delay entry scheduled",
-                                    "delay_seconds": delay_sec,
-                                }
-                            )
-                        return  # do NOT execute now
-
-                    timeout = validated.entry_condition.get("timeout_seconds", 600)
-                    # Enforce a minimum based on the candle timeframe
-                    min_timeout = max(300, int(settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT * tf_seconds))
-                    # Cap the minimum timeout to avoid absurd values for very long timeframes
-                    # (e.g., 2 × 31,536,000 = ~730 days for 1Y candles).
-                    # 180 days is a reasonable maximum wait for an entry condition in medium/long-term
-                    # trading — it accommodates 1M (60d natural) and 3M (180d natural) candles
-                    # while still capping 6M, 1Y, 3Y, and 5Y candles.
-                    min_timeout = min(min_timeout, 15_552_000)  # 180 days
-                    if timeout < min_timeout:
-                        logger.info(
-                            f"Entry condition timeout for {symbol} too short ({timeout}s), "
-                            f"clamping to minimum {min_timeout}s (timeframe={assigned_tf})"
-                        )
-                        timeout = min_timeout
-                    deadline = time.time() + timeout
-                    # Store for background checking – do NOT block the main loop
-                    self._pending_entries[symbol] = {
-                        "signal": validated,
-                        "deadline": deadline,
-                        "timeframe": assigned_tf,
-                        "condition": validated.entry_condition,
-                    }
-                    logger.info(
-                        f"Queued entry condition for {symbol} (type={etype}, deadline in {timeout}s). "
-                        f"Will monitor in background."
-                    )
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"⏳ Waiting for entry condition on {display_symbol} "
-                            f"(type={etype}, timeout {timeout}s).",
-                            summary={
-                                "symbol": symbol,
-                                "action": "WAIT",
-                                "reason": "Entry condition pending",
-                            }
-                        )
-                    return  # do NOT execute now
+                if await self._signal_processor.handle_entry_condition(
+                    symbol=symbol,
+                    display_symbol=display_symbol,
+                    validated=validated,
+                    assigned_tf=assigned_tf,
+                    tf_seconds=tf_seconds,
+                    trading_paused=trading_paused,
+                ):
+                    return
 
                 await self._execute_signal(symbol, validated, timeframe=assigned_tf, atr=atr)
         except Exception as e:

@@ -565,6 +565,82 @@ class SignalProcessor:
 
         return False
 
+    async def handle_entry_condition(
+        self,
+        symbol: str,
+        display_symbol: str,
+        validated: Signal,
+        assigned_tf: str,
+        tf_seconds: int,
+        trading_paused: bool,
+    ) -> bool:
+        """Handle entry condition for a BUY signal.
+
+        Returns True if the entry was deferred (caller should return),
+        False if no entry condition is present (caller should continue to execute).
+        """
+        engine = self.engine
+
+        if validated.action != "BUY" or validated.entry_condition is None or trading_paused:
+            return False
+
+        etype = validated.entry_condition.get("type")
+        if etype == "delay":
+            # Delay entries are simple time-based waits – schedule directly
+            delay_sec = validated.entry_condition.get("delay_seconds", 0)
+            logger.info(f"Scheduling delayed BUY for {symbol} in {delay_sec}s")
+            task = asyncio.create_task(
+                engine._execute_delayed_entry(symbol, validated, assigned_tf, delay_sec)
+            )
+            engine._delayed_entry_tasks.add(task)
+            task.add_done_callback(engine._delayed_entry_tasks.discard)
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⏳ Delayed entry for {display_symbol} – executing in {delay_sec}s.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "WAIT",
+                        "reason": "Delay entry scheduled",
+                        "delay_seconds": delay_sec,
+                    }
+                )
+            return True
+
+        timeout = validated.entry_condition.get("timeout_seconds", 600)
+        # Enforce a minimum based on the candle timeframe
+        min_timeout = max(300, int(settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT * tf_seconds))
+        # Cap the minimum timeout to avoid absurd values for very long timeframes
+        min_timeout = min(min_timeout, 15_552_000)  # 180 days
+        if timeout < min_timeout:
+            logger.info(
+                f"Entry condition timeout for {symbol} too short ({timeout}s), "
+                f"clamping to minimum {min_timeout}s (timeframe={assigned_tf})"
+            )
+            timeout = min_timeout
+        deadline = time.time() + timeout
+        # Store for background checking – do NOT block the main loop
+        engine._pending_entries[symbol] = {
+            "signal": validated,
+            "deadline": deadline,
+            "timeframe": assigned_tf,
+            "condition": validated.entry_condition,
+        }
+        logger.info(
+            f"Queued entry condition for {symbol} (type={etype}, deadline in {timeout}s). "
+            f"Will monitor in background."
+        )
+        if engine.notifier:
+            await engine.notifier.send_notification(
+                f"⏳ Waiting for entry condition on {display_symbol} "
+                f"(type={etype}, timeout {timeout}s).",
+                summary={
+                    "symbol": symbol,
+                    "action": "WAIT",
+                    "reason": "Entry condition pending",
+                }
+            )
+        return True
+
     async def check_trade_filters(
         self,
         symbol: str,
