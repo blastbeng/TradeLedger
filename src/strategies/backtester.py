@@ -917,6 +917,9 @@ def walk_forward_backtest(
     if not candles or len(candles) < num_windows * 10:
         return {"insufficient_data": True, "per_window": [], "combined_stats": _empty_result()}
 
+    if backtest_kwargs.get("backtest_entry_config") is None:
+        return {"insufficient_data": True, "per_window": [], "combined_stats": _empty_result()}
+
     backtest_kwargs.pop("_return_trades", None)
 
     window_size = len(candles) // num_windows
