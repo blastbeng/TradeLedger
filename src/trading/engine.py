@@ -8207,14 +8207,7 @@ class TradingEngine:
                 await self._risk_manager.update_trailing_stop(symbol, pos, current_price, display_symbol)
 
                 # --- Trailing take-profit ---
-                if pos.get("trailing_take_profit") and pos.get("trailing_take_profit_distance_pct"):
-                    ttp_dist = pos["trailing_take_profit_distance_pct"]
-                    new_tp = current_price * (1 + ttp_dist)
-                    async with self._positions_lock:
-                        if new_tp > pos["take_profit"]:
-                            pos["take_profit"] = new_tp
-                            logger.info(f"Trailing take-profit updated for {symbol}: new TP {new_tp:.4f}")
-                    self._portfolio_exposure_cache = None
+                await self._risk_manager.update_trailing_take_profit(symbol, pos, current_price)
 
                 # --- Breakeven stop ---
                 breakeven_activation = pos.get("breakeven_activation_pct")

@@ -417,3 +417,24 @@ class RiskManager:
                                 pos["stop_loss"] = new_stop
                                 logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
                     engine._portfolio_exposure_cache = None
+
+    async def update_trailing_take_profit(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+        current_price: float,
+    ) -> None:
+        """Update the trailing take-profit for a position if enabled.
+
+        Moves the take-profit price up as the current price rises,
+        maintaining a fixed distance below the current price.
+        """
+        engine = self.engine
+        if pos.get("trailing_take_profit") and pos.get("trailing_take_profit_distance_pct"):
+            ttp_dist = pos["trailing_take_profit_distance_pct"]
+            new_tp = current_price * (1 + ttp_dist)
+            async with engine._positions_lock:
+                if new_tp > pos["take_profit"]:
+                    pos["take_profit"] = new_tp
+                    logger.info(f"Trailing take-profit updated for {symbol}: new TP {new_tp:.4f}")
+        engine._portfolio_exposure_cache = None
