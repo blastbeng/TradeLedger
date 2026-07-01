@@ -6981,116 +6981,20 @@ class TradingEngine:
                 return
             amount, desired_amount, available = _sizing_result
 
-            # --- Minimum absolute profit check (LLM‑defined) ---
-            if settings.ENFORCE_MIN_PROFIT_PER_TRADE:
-                min_profit = params.get("min_profit_per_trade")
-                if min_profit is not None and min_profit > 0:
-                    expected_gross_profit = amount * tp_pct
-                    if expected_gross_profit < min_profit:
-                        logger.info(
-                            f"Skipping BUY {symbol}: expected gross profit {expected_gross_profit:.4f} {quote} "
-                            f"below LLM minimum {min_profit:.4f}"
-                        )
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⚠️ Skipping BUY {display_symbol}: profit too small ({expected_gross_profit:.4f} {quote})",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "SKIP",
-                                    "reason": "Expected profit below minimum",
-                                    "expected_profit": expected_gross_profit,
-                                    "min_profit": min_profit,
-                                }
-                            )
-                        return
-
-            # No hardcoded minimum viable trade amount gate.
-            # The LLM decides the trade amount dynamically.
-            # Only exchange minimums (checked below) are hard limits.
-
-            # Check minimum order size and adjust upward if needed
-            try:
-                price = current_price
-                base_amount = amount / price
-                # Fetch minimum order size from asset info
-                try:
-                    asset = await self._get_asset_info(symbol)
-                    min_amount_limit = float(asset.min_order_size) if asset.min_order_size else None
-                    if not asset.fractionable and (min_amount_limit is None or min_amount_limit < 1.0):
-                        min_amount_limit = 1.0
-                except Exception:
-                    min_amount_limit = None
-                # Compute min cost from min amount and current price
-                if min_amount_limit is not None and price:
-                    min_cost_limit = min_amount_limit * price
-                else:
-                    min_cost_limit = None
-
-                # Determine the required minimum quote amount
-                required_quote = amount
-                if min_amount_limit is not None:
-                    min_base = float(min_amount_limit)
-                    required_quote = max(required_quote, min_base * price)
-                if min_cost_limit is not None:
-                    required_quote = max(required_quote, float(min_cost_limit))
-
-                if required_quote > amount:
-                    # If the required minimum exceeds the risk-limited desired_amount, skip
-                    if required_quote > desired_amount:
-                        logger.info(
-                            f"Skipping BUY {symbol}: exchange minimum {required_quote:.2f} "
-                            f"exceeds risk-limited amount {desired_amount:.2f}"
-                        )
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⚠️ Skipping BUY {display_symbol}: exchange minimum exceeds risk limit",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "SKIP",
-                                    "reason": "Exchange minimum exceeds risk limit",
-                                    "required_quote": required_quote,
-                                    "desired_amount": desired_amount,
-                                }
-                            )
-                        return
-                    # Adjust amount upward to meet the minimum
-                    old_amount = amount
-                    amount = required_quote
-                    # Check if the adjusted amount exceeds remaining cycle budget
-                    if amount > available:
-                        logger.info(
-                            f"BUY amount adjusted from {old_amount:.2f} to {amount:.2f} {quote} "
-                            f"to meet minimum, but exceeds remaining cycle budget ({available:.2f}). Skipping."
-                        )
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⚠️ BUY skipped for {display_symbol}: amount adjusted to {amount:.2f} but insufficient remaining budget",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "SKIP",
-                                    "reason": "Adjusted amount exceeds remaining budget",
-                                    "adjusted_amount": amount,
-                                }
-                            )
-                        return
-                    logger.info(
-                        f"BUY amount adjusted from {old_amount:.2f} to {amount:.2f} {quote} "
-                        f"to meet exchange minimum"
-                    )
-                    if self.notifier:
-                        await self.notifier.send_notification(
-                            f"ℹ️ {display_symbol}: buy amount adjusted to {amount:.2f} {quote} to meet minimum",
-                            summary={
-                                "symbol": symbol,
-                                "action": "INFO",
-                                "reason": "Buy amount adjusted to meet minimum",
-                                "adjusted_amount": amount,
-                            }
-                        )
-                    # Recalculate base_amount for the order
-                    base_amount = amount / price
-            except Exception as e:
-                logger.warning(f"Could not verify/adjust min order size for {symbol}: {e}")
+            # --- Minimum profit check and exchange minimum order size adjustment ---
+            amount = await self._order_executor.check_min_profit_and_order_size(
+                symbol=symbol,
+                display_symbol=display_symbol,
+                quote=quote,
+                params=params,
+                amount=amount,
+                desired_amount=desired_amount,
+                available=available,
+                tp_pct=tp_pct,
+                current_price=current_price,
+            )
+            if amount is None:
+                return
 
             need_limit = not self._is_regular_hours()
             limit_price = None

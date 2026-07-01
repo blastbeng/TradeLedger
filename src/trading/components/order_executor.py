@@ -343,6 +343,131 @@ class OrderExecutor:
 
         return sl_pct, tp_pct, trailing_stop, trailing_stop_distance_pct
 
+    async def check_min_profit_and_order_size(
+        self,
+        symbol: str,
+        display_symbol: str,
+        quote: str,
+        params: Dict[str, Any],
+        amount: float,
+        desired_amount: float,
+        available: float,
+        tp_pct: float,
+        current_price: float,
+    ) -> Optional[float]:
+        """Check minimum profit and adjust order size to meet exchange minimums.
+
+        Returns the final amount (possibly adjusted upward), or None if the
+        order should be skipped.
+        """
+        engine = self.engine
+
+        # --- Minimum absolute profit check (LLM‑defined) ---
+        if settings.ENFORCE_MIN_PROFIT_PER_TRADE:
+            min_profit = params.get("min_profit_per_trade")
+            if min_profit is not None and min_profit > 0:
+                expected_gross_profit = amount * tp_pct
+                if expected_gross_profit < min_profit:
+                    logger.info(
+                        f"Skipping BUY {symbol}: expected gross profit {expected_gross_profit:.4f} {quote} "
+                        f"below LLM minimum {min_profit:.4f}"
+                    )
+                    if engine.notifier:
+                        await engine.notifier.send_notification(
+                            f"⚠️ Skipping BUY {display_symbol}: profit too small ({expected_gross_profit:.4f} {quote})",
+                            summary={
+                                "symbol": symbol,
+                                "action": "SKIP",
+                                "reason": "Expected profit below minimum",
+                                "expected_profit": expected_gross_profit,
+                                "min_profit": min_profit,
+                            }
+                        )
+                    return None
+
+        # Check minimum order size and adjust upward if needed
+        try:
+            price = current_price
+            # Fetch minimum order size from asset info
+            try:
+                asset = await engine._get_asset_info(symbol)
+                min_amount_limit = float(asset.min_order_size) if asset.min_order_size else None
+                if not asset.fractionable and (min_amount_limit is None or min_amount_limit < 1.0):
+                    min_amount_limit = 1.0
+            except Exception:
+                min_amount_limit = None
+            # Compute min cost from min amount and current price
+            if min_amount_limit is not None and price:
+                min_cost_limit = min_amount_limit * price
+            else:
+                min_cost_limit = None
+
+            # Determine the required minimum quote amount
+            required_quote = amount
+            if min_amount_limit is not None:
+                min_base = float(min_amount_limit)
+                required_quote = max(required_quote, min_base * price)
+            if min_cost_limit is not None:
+                required_quote = max(required_quote, float(min_cost_limit))
+
+            if required_quote > amount:
+                # If the required minimum exceeds the risk-limited desired_amount, skip
+                if required_quote > desired_amount:
+                    logger.info(
+                        f"Skipping BUY {symbol}: exchange minimum {required_quote:.2f} "
+                        f"exceeds risk-limited amount {desired_amount:.2f}"
+                    )
+                    if engine.notifier:
+                        await engine.notifier.send_notification(
+                            f"⚠️ Skipping BUY {display_symbol}: exchange minimum exceeds risk limit",
+                            summary={
+                                "symbol": symbol,
+                                "action": "SKIP",
+                                "reason": "Exchange minimum exceeds risk limit",
+                                "required_quote": required_quote,
+                                "desired_amount": desired_amount,
+                            }
+                        )
+                    return None
+                # Adjust amount upward to meet the minimum
+                old_amount = amount
+                amount = required_quote
+                # Check if the adjusted amount exceeds remaining cycle budget
+                if amount > available:
+                    logger.info(
+                        f"BUY amount adjusted from {old_amount:.2f} to {amount:.2f} {quote} "
+                        f"to meet minimum, but exceeds remaining cycle budget ({available:.2f}). Skipping."
+                    )
+                    if engine.notifier:
+                        await engine.notifier.send_notification(
+                            f"⚠️ BUY skipped for {display_symbol}: amount adjusted to {amount:.2f} but insufficient remaining budget",
+                            summary={
+                                "symbol": symbol,
+                                "action": "SKIP",
+                                "reason": "Adjusted amount exceeds remaining budget",
+                                "adjusted_amount": amount,
+                            }
+                        )
+                    return None
+                logger.info(
+                    f"BUY amount adjusted from {old_amount:.2f} to {amount:.2f} {quote} "
+                    f"to meet exchange minimum"
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"ℹ️ {display_symbol}: buy amount adjusted to {amount:.2f} {quote} to meet minimum",
+                        summary={
+                            "symbol": symbol,
+                            "action": "INFO",
+                            "reason": "Buy amount adjusted to meet minimum",
+                            "adjusted_amount": amount,
+                        }
+                    )
+        except Exception as e:
+            logger.warning(f"Could not verify/adjust min order size for {symbol}: {e}")
+
+        return amount
+
         base, quote = symbol.split("/")
         qty = pos["amount"]  # base quantity to sell
         if qty <= 0:
