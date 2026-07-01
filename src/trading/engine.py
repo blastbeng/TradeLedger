@@ -57,6 +57,7 @@ from src.strategies.backtester import backtest_strategy, format_backtest_summary
 from src.utils.redis_client import get_redis_client
 from src.utils.symbol_utils import is_btp_isin
 from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results
+from src.trading.components.state_persistence import StatePersistence
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,8 @@ class TradingEngine:
         self._state_lock = asyncio.Lock()
         self._state_save_pending = False
         self._state_dirty: bool = False
+        # --- Extracted components ---
+        self._state_persistence = StatePersistence(self)
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
@@ -2988,63 +2991,8 @@ class TradingEngine:
         )
 
     async def _save_state(self, force: bool = False):
-        """Persist current symbols, positions, and trade history to SQLite.
-
-        Uses a lock to serialize concurrent calls and a debounce flag to
-        coalesce multiple save requests into fewer DB write batches.
-
-        When *force* is True, the method waits for the lock instead of
-        debouncing, guaranteeing the state is flushed even if another
-        save is in progress.  Use force=True after critical state changes
-        (trade execution, position closure, etc.) to avoid data loss on crash.
-        """
-        # If a save is already in progress:
-        #   - force=True  → wait for the lock, then save (no debounce)
-        #   - force=False → mark pending and return (debounce)
-        if self._state_lock.locked():
-            if not force:
-                self._state_save_pending = True
-                return
-            # Fall through to acquire the lock (wait for the current save to finish)
-
-        async with self._state_lock:
-            await self._save_state_impl()
-            # If another save was requested while we were saving, do one more
-            while self._state_save_pending:
-                self._state_save_pending = False
-                await self._save_state_impl()
-
-    async def _save_state_impl(self):
-        """Actual state persistence (must be called under _state_lock)."""
-        await asyncio.to_thread(save_trading_state, "current_symbols", self.current_symbols)
-        async with self._positions_lock:
-            positions_snapshot = dict(self.positions)
-        await asyncio.to_thread(save_trading_state, "positions", positions_snapshot)
-        await asyncio.to_thread(save_trading_state, "queued_orders", self.queued_orders)
-        await asyncio.to_thread(save_trading_state, "recent_signals", self.recent_signals)
-        # Serialize pending entries (convert Signal objects to dicts for JSON storage)
-        pending_entries_serializable = {}
-        for symbol, entry in self._pending_entries.items():
-            pending_entries_serializable[symbol] = {
-                "signal": asdict(entry["signal"]),
-                "deadline": entry["deadline"],
-                "timeframe": entry["timeframe"],
-                "condition": entry["condition"],
-            }
-        await asyncio.to_thread(save_trading_state, "pending_entries", pending_entries_serializable)
-        await asyncio.to_thread(save_trading_state, "symbol_first_seen", self._symbol_first_seen)
-        await asyncio.to_thread(save_trading_state, "entry_signal_state", self._entry_signal_state)
-        await asyncio.to_thread(save_trading_state, "last_eval_snapshot", self._last_eval_snapshot)
-        await asyncio.to_thread(save_trading_state, "force_eval", self._force_eval)
-        await asyncio.to_thread(save_trading_state, "force_eval_time", self._force_eval_time)
-        await asyncio.to_thread(save_trading_state, "strategy_intervals", self._strategy_intervals)
-        await asyncio.to_thread(save_trading_state, "last_decisions", self._last_decisions)
-        await asyncio.to_thread(save_trading_state, "last_loss_time", self.last_loss_time)
-        await asyncio.to_thread(save_trading_state, "cooldown_durations", self.cooldown_durations)
-        await asyncio.to_thread(save_trading_state, "global_risk_multiplier", self._global_risk_multiplier)
-        logger.debug("Saved trading state: %d symbols, %d positions, %d trades",
-                     len(self.current_symbols), len(self.positions), len(self.trade_history))
-        self._state_dirty = False
+        """Persist current symbols, positions, and trade history to SQLite."""
+        await self._state_persistence.save_state(force=force)
 
     async def run(self):
         """Main event‑driven loop using WebSocket ticker updates."""
