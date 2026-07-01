@@ -519,7 +519,7 @@ class TradingEngine:
             logger.warning(f"Failed to fetch sentiment for {base}: {e}")
             return None
 
-    async def _get_clock(self, ttl: float = 60.0) -> Optional[ClockInfo]:
+    async def _get_clock(self, ttl: float = 30.0) -> Optional[ClockInfo]:
         """Return Euronext Milan market clock info, cached for `ttl` seconds.
 
         Uses pandas_market_calendars only to detect holidays/weekends.
@@ -1146,6 +1146,8 @@ class TradingEngine:
                             f"⏸️ {reason}",
                             summary={"action": "PAUSE", "reason": reason}
                         )
+                    # Invalidate clock cache so the next monitor cycle sees the updated state
+                    self._clock_cache = None
 
                 # --- Periodic countdown updates while market is closed ---
                 # Only send updates if we are currently paused due to market_closed
@@ -1237,6 +1239,8 @@ class TradingEngine:
                             await asyncio.to_thread(self.redis.delete, "reeval:correlation_matrix")
                             # Only trigger re-evaluation when we actually resumed from a pause
                             self._reeval_trigger.set()
+                            # Invalidate clock cache so subsequent calls get fresh data
+                            self._clock_cache = None
                         else:
                             logger.debug("Market open, but trading paused by '%s' – not clearing.", source)
                     else:
@@ -1250,7 +1254,7 @@ class TradingEngine:
                     self._last_market_closed_notify_time = 0.0
             except Exception as e:
                 logger.error(f"Market clock monitor error: {e}", exc_info=True)
-            await asyncio.sleep(60)  # check every 1 minute
+            await asyncio.sleep(30)  # check every 30 seconds
 
     async def _get_sentiment_str(self, symbol: str) -> str:
         """Get a short news sentiment string for notifications, including an LLM summary."""
