@@ -4,15 +4,17 @@ Handles per-symbol LLM orchestration, backtesting, validation, and execution.
 Extracted from TradingEngine to reduce class size and improve maintainability.
 """
 import asyncio
+import json
 import logging
 import time
 from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
 from src.database import get_latest_ohlcv_timestamp
-from src.llm.cache import get_cached_llm_response
-from src.llm.prompts import compact_prompt
+from src.llm.cache import get_cached_llm_response, compute_market_hash
+from src.llm.prompts import compact_prompt, build_backtest_variants_prompt, build_system_prompt
 from src.strategies.base import Signal
+from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -1086,3 +1088,154 @@ class SignalProcessor:
             # Fall through to fallback HOLD below
 
         return analysis_result, llm_provider, llm_model, False
+
+    async def run_step1b_llm_call(
+        self,
+        symbol: str,
+        analysis_result: Dict[str, Any],
+        ticker: Dict[str, Any],
+        current_price: float,
+        atr: Optional[float],
+        assigned_tf: str,
+        base_balance: float,
+        per_symbol_budget: float,
+        min_order_amount: Optional[float],
+        min_order_cost: Optional[float],
+        remaining: float,
+        portfolio_total_value: float,
+        portfolio_exposure_pct: float,
+        portfolio_stop_risk_pct: float,
+        portfolio_available_capital: float,
+        max_port_exp: Optional[float],
+        max_port_risk: Optional[float],
+        global_risk_mult: Optional[float],
+        min_stop_atr_mult: float,
+        min_hold_time_mult: float,
+        trading_paused: bool,
+        has_position: bool,
+        strategy_model_type: str,
+        effective_temp: float,
+        market_snapshot: Dict[str, Any],
+        historical_backtest_results: Optional[list],
+    ) -> Tuple[Signal, Optional[str], Optional[str]]:
+        """Run the Step 1b LLM call for backtest variants and parameters.
+
+        Returns (preliminary_signal, llm_provider, llm_model).
+        """
+        engine = self.engine
+        llm_provider = None
+        llm_model = None
+
+        # --- Build variants prompt ---
+        variants_prompt = await asyncio.to_thread(
+            build_backtest_variants_prompt,
+            symbol=symbol,
+            analysis=analysis_result,
+            ticker=ticker,
+            current_price=current_price,
+            atr=atr,
+            assigned_timeframe=assigned_tf,
+            base_currency=engine.base_currency,
+            base_balance=base_balance,
+            per_symbol_budget=per_symbol_budget,
+            min_order_amount=min_order_amount,
+            min_order_cost=min_order_cost,
+            remaining_balance=remaining,
+            portfolio_total_value=portfolio_total_value,
+            portfolio_exposure_pct=portfolio_exposure_pct,
+            portfolio_stop_risk_pct=portfolio_stop_risk_pct,
+            portfolio_available_capital=portfolio_available_capital,
+            max_portfolio_exposure_pct=max_port_exp,
+            max_portfolio_stop_risk_pct=max_port_risk,
+            global_risk_multiplier=global_risk_mult,
+            min_stop_atr_mult=min_stop_atr_mult,
+            min_hold_time_mult=min_hold_time_mult,
+            trading_paused=trading_paused,
+            has_position=has_position,
+            historical_backtest_results=historical_backtest_results,
+        )
+        logger.info(f"LLM Step 1b variants prompt for {symbol}: {len(variants_prompt)} chars")
+
+        # Use a different market hash for Step 1b (include analysis to differentiate)
+        variants_market_hash = compute_market_hash({
+            **market_snapshot,
+            "step": "1b",
+            "analysis": analysis_result,
+        })
+
+        try:
+            step1b_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response,
+                    compact_prompt(variants_prompt),
+                    compact_prompt(build_system_prompt()),
+                    60,
+                    market_hash=variants_market_hash,
+                    model_type=strategy_model_type,
+                    temperature=effective_temp,
+                ),
+                timeout=settings.LLM_TIMEOUT
+            )
+            step1b_response = step1b_result["response"]
+            llm_provider = step1b_result["provider"]
+            llm_model = step1b_result["model"]
+            logger.info(f"LLM Step 1b (variants) completed for {symbol} (provider={llm_provider}, model={llm_model})")
+        except asyncio.TimeoutError:
+            logger.warning(f"LLM Step 1b (variants) timed out for {symbol}. Using Step 1a analysis as fallback.")
+            step1b_response = json.dumps({
+                "action": analysis_result.get("action", "HOLD"),
+                "confidence": analysis_result.get("confidence", 0.0),
+                "reasoning": analysis_result.get("reasoning", ""),
+                "strategy": {
+                    "type": "fallback",
+                    "parameters": {},
+                },
+            })
+        except Exception as e:
+            logger.error(f"LLM Step 1b failed for {symbol}: {e}. Using Step 1a analysis as fallback.")
+            step1b_response = json.dumps({
+                "action": analysis_result.get("action", "HOLD"),
+                "confidence": analysis_result.get("confidence", 0.0),
+                "reasoning": analysis_result.get("reasoning", ""),
+                "strategy": {
+                    "type": "fallback",
+                    "parameters": {},
+                },
+            })
+
+        # --- Parse Step 1b response ---
+        try:
+            preliminary_strategy = create_strategy_from_llm(step1b_response)
+        except ValueError as e:
+            logger.warning(f"LLM Step 1b response parse failed for {symbol}: {e}. Retrying with correction prompt.")
+            correction_prompt = (
+                "Your previous response was not valid JSON. "
+                "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
+                "Here is the original request:\n\n" + variants_prompt
+            )
+            try:
+                response2 = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_cached_llm_response, compact_prompt(correction_prompt),
+                        compact_prompt(build_system_prompt()),
+                        30,
+                        model_type="actuator",
+                        temperature=effective_temp,
+                    ),
+                    timeout=settings.LLM_TIMEOUT
+                )
+                preliminary_strategy = create_strategy_from_llm(response2["response"])
+                llm_provider = response2["provider"]
+                llm_model = response2["model"]
+            except Exception as e2:
+                logger.error(f"LLM Step 1b response still invalid after retry for {symbol}: {e2}")
+                preliminary_strategy = LLMStrategy(engine._create_fallback_hold_signal(
+                    symbol, "Failed to parse LLM Step 1b response after retry", strategy_model_type
+                ))
+
+        preliminary_signal = preliminary_strategy.generate_signal({})
+        preliminary_signal.model_type = strategy_model_type
+        preliminary_signal.llm_provider = llm_provider
+        preliminary_signal.llm_model = llm_model
+
+        return preliminary_signal, llm_provider, llm_model
