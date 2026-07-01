@@ -666,7 +666,7 @@ class Settings(BaseSettings):
     # Redis
     REDIS_HOST: str = "redis"
     REDIS_PORT: int = 6379
-    REDIS_DB: int = 0
+    REDIS_DB: int = 2
 
     # Data directory for logs, database, etc.
     DATA_DIR: str = "data"
