@@ -8210,17 +8210,7 @@ class TradingEngine:
                 await self._risk_manager.update_trailing_take_profit(symbol, pos, current_price)
 
                 # --- Breakeven stop ---
-                breakeven_activation = pos.get("breakeven_activation_pct")
-                if breakeven_activation is not None and breakeven_activation > 0:
-                    entry_price = pos["price"]
-                    if current_price >= entry_price * (1 + breakeven_activation):
-                        # Compute exact break-even price that covers exit fee
-                        breakeven_price = entry_price
-                        async with self._positions_lock:
-                            if breakeven_price > pos["stop_loss"]:
-                                pos["stop_loss"] = breakeven_price
-                                logger.info(f"Breakeven stop activated for {symbol}: new stop {breakeven_price:.4f}")
-                        self._portfolio_exposure_cache = None
+                self._risk_manager.check_breakeven_stop(symbol, pos, current_price)
 
                 # --- Lock profit feature removed (was scalping-specific) ---
 
