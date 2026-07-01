@@ -8196,37 +8196,8 @@ class TradingEngine:
                 # Checked BEFORE the stop_loss/take_profit skip so positions
                 # awaiting LLM risk parameters (_needs_risk_params) are still
                 # protected against catastrophic loss during the re-evaluation window.
-                entry_price = pos["price"]
-                if entry_price > 0:
-                    unrealized_loss_pct = (entry_price - current_price) / entry_price
-                    # BTPs use a tighter hard max loss threshold (lower volatility)
-                    _base_sym = symbol.split("/")[0]
-                    _is_btp = is_btp_isin(symbol)
-                    _hard_max_loss = settings.BTP_HARD_MAX_LOSS_PCT if _is_btp else settings.HARD_MAX_LOSS_PCT
-                    if unrealized_loss_pct >= _hard_max_loss:
-                        logger.warning(
-                            f"Hard max loss threshold reached for {symbol}: "
-                            f"unrealized loss {unrealized_loss_pct:.2%} >= {_hard_max_loss:.2%}. Forcing SELL."
-                        )
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⛔ Hard stop for {display_symbol}: unrealized loss {unrealized_loss_pct:.2%} "
-                                f"exceeds maximum {_hard_max_loss:.2%} – force selling.",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "SELL",
-                                    "reason": "Hard maximum loss threshold",
-                                    "price": current_price,
-                                    "unrealized_loss_pct": round(unrealized_loss_pct, 4),
-                                    "exit_reason": "hard_max_loss",
-                                }
-                            )
-                        await self._execute_signal(
-                            symbol,
-                            Signal(action="SELL", confidence=1.0, reasoning="Hard maximum loss threshold exceeded"),
-                            exit_reason="hard_max_loss"
-                        )
-                        continue
+                if await self._risk_manager.check_hard_stop(symbol, pos, current_price, display_symbol):
+                    continue
 
                 # Skip positions that don't have LLM-defined risk parameters yet
                 if pos.get("stop_loss") is None or pos.get("take_profit") is None:

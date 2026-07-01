@@ -11,6 +11,8 @@ from typing import Any, Dict
 
 from src.config.settings import settings
 from src.database import insert_position_pnl_snapshot
+from src.strategies.base import Signal
+from src.utils.symbol_utils import is_btp_isin
 
 logger = logging.getLogger(__name__)
 
@@ -87,3 +89,48 @@ class RiskManager:
             "max_partial_tp_reviews": max_partial_tp_reviews,
             "max_dust_sweep_reviews": max_dust_sweep_reviews,
         }
+
+    async def check_hard_stop(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+        current_price: float,
+        display_symbol: str,
+    ) -> bool:
+        """Check if the position has exceeded the hard maximum loss threshold.
+
+        Returns True if the hard stop was triggered (caller should skip to
+        the next position), False otherwise.
+        """
+        engine = self.engine
+        entry_price = pos["price"]
+        if entry_price <= 0:
+            return False
+        unrealized_loss_pct = (entry_price - current_price) / entry_price
+        _is_btp = is_btp_isin(symbol)
+        _hard_max_loss = settings.BTP_HARD_MAX_LOSS_PCT if _is_btp else settings.HARD_MAX_LOSS_PCT
+        if unrealized_loss_pct >= _hard_max_loss:
+            logger.warning(
+                f"Hard max loss threshold reached for {symbol}: "
+                f"unrealized loss {unrealized_loss_pct:.2%} >= {_hard_max_loss:.2%}. Forcing SELL."
+            )
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⛔ Hard stop for {display_symbol}: unrealized loss {unrealized_loss_pct:.2%} "
+                    f"exceeds maximum {_hard_max_loss:.2%} – force selling.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SELL",
+                        "reason": "Hard maximum loss threshold",
+                        "price": current_price,
+                        "unrealized_loss_pct": round(unrealized_loss_pct, 4),
+                        "exit_reason": "hard_max_loss",
+                    }
+                )
+            await engine._execute_signal(
+                symbol,
+                Signal(action="SELL", confidence=1.0, reasoning="Hard maximum loss threshold exceeded"),
+                exit_reason="hard_max_loss"
+            )
+            return True
+        return False
