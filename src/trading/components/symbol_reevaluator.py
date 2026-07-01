@@ -628,5 +628,3 @@ class SymbolReevaluator:
                 'min_amount': min_amount,
             }
         return market_limits
-
-        return balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs
