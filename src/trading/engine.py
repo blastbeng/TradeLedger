@@ -8218,93 +8218,9 @@ class TradingEngine:
                 await self._risk_manager.update_native_stop_order(symbol, pos)
 
                 # --- Partial take-profit ---
-                partial_levels = pos.get("partial_take_profit_levels")
-                if partial_levels:
-                    # Multiple levels
-                    triggered = pos.get("partial_tp_levels_triggered", [])
-                    original_amount = pos.get("original_amount", pos["amount"])
-                    for i, level in enumerate(partial_levels):
-                        if i in triggered:
-                            continue
-                        if i in pos.get("_partial_tp_triggered_levels", []):
-                            continue
-                        lvl_pct = level["take_profit_pct"]
-                        lvl_frac = level["fraction"]
-                        entry_price = pos["price"]
-                        # Time‑based cancellation
-                        max_time = level.get("max_time_seconds")
-                        if max_time is not None:
-                            entry_ts = pos.get("timestamp", 0) / 1000.0
-                            if time.time() - entry_ts > max_time:
-                                logger.info(f"Partial TP level {i} for {symbol} expired (max {max_time}s). Cancelling.")
-                                triggered.append(i)
-                                async with self._positions_lock:
-                                    pos["partial_tp_levels_triggered"] = triggered
-                                continue
-                        if current_price >= entry_price * (1 + lvl_pct):
-                            # --- Instead of executing immediately, set a trigger flag for LLM review ---
-                            # Check if we are already waiting for LLM on this level
-                            async with self._positions_lock:
-                                triggered_levels = pos.setdefault("_partial_tp_triggered_levels", [])
-                                already_pending = i in triggered_levels
-                                review_count = pos.get("_partial_tp_review_count", 0) + 1
-                            if already_pending:
-                                continue  # already pending
-
-                            if review_count > max_partial_tp_reviews:
-                                # Force execute
-                                logger.info(f"Partial TP level {i} for {symbol}: max reviews reached, executing.")
-                                await self._execute_partial_tp_level(symbol, i, current_price, None, ticker)
-                                # After execution, the level is marked triggered; clear the review flags for this level
-                                async with self._positions_lock:
-                                    pos.pop("_partial_tp_triggered", None)
-                                    pos.pop("_partial_tp_review_count", None)
-                                    pos["_partial_tp_triggered_levels"] = [x for x in pos.get("_partial_tp_triggered_levels", []) if x != i]
-                                continue
-
-                            # Set trigger and ask LLM
-                            async with self._positions_lock:
-                                pos["_partial_tp_triggered"] = True
-                                pos["_partial_tp_review_count"] = review_count
-                                triggered_levels.append(i)
-                            self._last_strategy_eval.pop(symbol, None)  # force immediate re‑eval
-                            logger.info(f"Partial TP level {i} triggered for {symbol} – asking LLM (review {review_count})")
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"🔸 Partial TP level {i} triggered for {display_symbol} – consulting LLM...",
-                                    summary={"symbol": symbol, "action": "HOLD", "reason": f"Partial TP level {i} triggered – awaiting LLM"}
-                                )
-                            break  # only handle one new trigger per cycle; others will be picked up after LLM responds
-                else:
-                    # Single partial TP – trigger LLM review instead of immediate execution
-                    partial_tp_pct = pos.get("partial_take_profit_pct")
-                    partial_tp_fraction = pos.get("partial_take_profit_fraction")
-                    if (
-                        partial_tp_pct is not None
-                        and partial_tp_fraction is not None
-                        and not pos.get("partial_tp_triggered", False)
-                        and not pos.get("_partial_tp_triggered_single")
-                    ):
-                        entry_price = pos["price"]
-                        if current_price >= entry_price * (1 + partial_tp_pct):
-                            review_count = pos.get("_partial_tp_single_review_count", 0) + 1
-                            if review_count > max_partial_tp_reviews:
-                                logger.info(f"Single partial TP for {symbol}: max reviews reached, executing.")
-                                await self._execute_partial_tp_single(symbol, current_price, None, ticker)
-                                async with self._positions_lock:
-                                    pos.pop("_partial_tp_triggered_single", None)
-                                    pos.pop("_partial_tp_single_review_count", None)
-                            else:
-                                async with self._positions_lock:
-                                    pos["_partial_tp_triggered_single"] = True
-                                    pos["_partial_tp_single_review_count"] = review_count
-                                self._last_strategy_eval.pop(symbol, None)
-                                logger.info(f"Single partial TP triggered for {symbol} – asking LLM (review {review_count})")
-                                if self.notifier:
-                                    await self.notifier.send_notification(
-                                        f"🔸 Partial TP triggered for {display_symbol} – consulting LLM...",
-                                        summary={"symbol": symbol, "action": "HOLD", "reason": "Partial TP triggered – awaiting LLM"}
-                                    )
+                await self._risk_manager.check_partial_take_profit(
+                    symbol, pos, current_price, display_symbol, max_partial_tp_reviews, ticker
+                )
 
                 # --- Dust sweep check (if not already triggered) ---
                 if not pos.get("_dust_sweep_triggered"):
