@@ -3,6 +3,7 @@
 Handles order creation, fill processing, and exit order management.
 Extracted from TradingEngine to reduce class size and improve maintainability.
 """
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -64,3 +65,25 @@ class OrderExecutor:
             "stop_loss_price": sl_price,
             "take_profit_price": tp_price,
         }
+
+    async def cancel_exit_orders(self, symbol: str):
+        """Cancel any native stop-loss and take-profit orders for a symbol."""
+        engine = self.engine
+        pos = engine.positions.get(symbol)
+        if not pos:
+            return
+        for order_id_key in ("stop_loss_order_id", "take_profit_order_id"):
+            order_id = pos.pop(order_id_key, None)
+            if order_id:
+                try:
+                    await asyncio.to_thread(engine.trader.cancel_order, order_id)
+                    logger.info(f"Cancelled exit order {order_id} for {symbol}")
+                except Exception as e:
+                    logger.warning(f"Failed to cancel exit order {order_id}: {e}")
+                async with engine._queued_orders_lock:
+                    engine.queued_orders = [
+                        q for q in engine.queued_orders
+                        if q.get("order_id") != order_id
+                    ]
+        pos.pop("stop_loss_order_type", None)
+        pos.pop("_native_stop_price", None)

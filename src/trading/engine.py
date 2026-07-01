@@ -11594,24 +11594,7 @@ class TradingEngine:
 
     async def _cancel_exit_orders(self, symbol: str):
         """Cancel any native stop-loss and take-profit orders for a symbol."""
-        pos = self.positions.get(symbol)
-        if not pos:
-            return
-        for order_id_key in ("stop_loss_order_id", "take_profit_order_id"):
-            order_id = pos.pop(order_id_key, None)
-            if order_id:
-                try:
-                    await asyncio.to_thread(self.trader.cancel_order, order_id)
-                    logger.info(f"Cancelled exit order {order_id} for {symbol}")
-                except Exception as e:
-                    logger.warning(f"Failed to cancel exit order {order_id}: {e}")
-                async with self._queued_orders_lock:
-                    self.queued_orders = [
-                        q for q in self.queued_orders
-                        if q.get("order_id") != order_id
-                    ]
-        pos.pop("stop_loss_order_type", None)
-        pos.pop("_native_stop_price", None)
+        await self._order_executor.cancel_exit_orders(symbol)
 
     async def _place_exit_orders(
         self,
