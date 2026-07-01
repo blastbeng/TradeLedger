@@ -128,6 +128,26 @@ class OrderExecutor:
         pos.pop("stop_loss_order_type", None)
         pos.pop("_native_stop_price", None)
 
+    async def cleanup_orphaned_orders(self):
+        """Periodically cancel any open orders that are older than 10 minutes,
+        but never cancel orders that are still being tracked as queued."""
+        engine = self.engine
+        open_orders = await asyncio.to_thread(engine.trader.get_open_orders)
+        now = time.time()
+        # Build a set of order IDs that are currently queued (waiting for fill)
+        queued_ids = {q.get('order_id') for q in engine.queued_orders if q.get('order_id')}
+        for order in open_orders:
+            order_id = order.get('id')
+            if order_id in queued_ids:
+                continue   # this order is being monitored by _process_queued_orders
+            created_at = order.get('timestamp', 0) / 1000.0  # ms to seconds
+            if now - created_at > 600:  # 10 minutes
+                logger.warning(
+                    f"Cancelling orphaned order {order_id} for {order['symbol']} "
+                    f"(open for {now - created_at:.0f}s)."
+                )
+                await asyncio.to_thread(engine.trader.cancel_order, order_id)
+
         base, quote = symbol.split("/")
         qty = pos["amount"]  # base quantity to sell
         if qty <= 0:

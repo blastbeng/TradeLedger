@@ -12014,21 +12014,7 @@ class TradingEngine:
             return
         while self._running:
             try:
-                open_orders = await asyncio.to_thread(self.trader.get_open_orders)
-                now = time.time()
-                # Build a set of order IDs that are currently queued (waiting for fill)
-                queued_ids = {q.get('order_id') for q in self.queued_orders if q.get('order_id')}
-                for order in open_orders:
-                    order_id = order.get('id')
-                    if order_id in queued_ids:
-                        continue   # this order is being monitored by _process_queued_orders
-                    created_at = order.get('timestamp', 0) / 1000.0  # ms to seconds
-                    if now - created_at > 600:  # 10 minutes
-                        logger.warning(
-                            f"Cancelling orphaned order {order_id} for {order['symbol']} "
-                            f"(open for {now - created_at:.0f}s)."
-                        )
-                        await asyncio.to_thread(self.trader.cancel_order, order_id)
+                await self._order_executor.cleanup_orphaned_orders()
             except Exception as e:
                 logger.error(f"Orphaned order cleanup error: {e}", exc_info=True)
             await asyncio.sleep(900)  # every 15 minutes
