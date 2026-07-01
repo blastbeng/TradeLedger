@@ -3166,53 +3166,9 @@ class TradingEngine:
         # Pass ALL discovered stocks, ETFs, and BTPs to the LLM
         sample_pairs = stock_sample_sorted + etf_sample_sorted + [s for s in sample_pairs if s in btp_pairs]
         logger.info("Re-evaluation step 6/12: Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
-        news_sentiment = {}
-        if settings.NEWS_ENABLED:
-            batch_sentiment = await asyncio.to_thread(
-                get_aggregate_sentiment_for_symbols, sample_pairs, settings.NEWS_CACHE_TTL_SECONDS
-            )
-            for sym, agg in batch_sentiment.items():
-                if agg:
-                    base = sym.split("/")[0] if "/" in sym else sym
-                    news_sentiment[base] = agg
-
-
-        # Sentiment trend (delta from previous cycle)
-        sentiment_trend: Dict[str, Optional[float]] = {}
-        for sym in sample_pairs:
-            base_symbol = sym.split("/")[0] if "/" in sym else sym
-            current_compound = None
-            if base_symbol in news_sentiment:
-                current_compound = news_sentiment[base_symbol].get("avg_compound")
-            prev_key = f"sentiment:prev:{base_symbol}"
-            prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
-            prev_compound = float(prev_raw) if prev_raw else None
-            if current_compound is not None:
-                await asyncio.to_thread(self.redis.setex, prev_key, settings.NEWS_CACHE_TTL_SECONDS, str(current_compound))
-            if current_compound is not None and prev_compound is not None:
-                sentiment_trend[base_symbol] = round(current_compound - prev_compound, 4)
-            else:
-                sentiment_trend[base_symbol] = None
-
-        # Overall market trend (use configured benchmark, e.g., FTSEMIB.MI)
-        market_trend = None
-        benchmark_symbol = settings.BENCHMARK_SYMBOL
-        if benchmark_symbol in tickers:
-            benchmark_ticker = tickers[benchmark_symbol]
-            market_trend = {
-                "symbol": benchmark_symbol,
-                "change_24h": benchmark_ticker.get("percentage"),
-                "last": benchmark_ticker.get("last"),
-            }
-        elif sample_pairs:
-            first = sample_pairs[0]
-            if first in tickers:
-                t = tickers[first]
-                market_trend = {
-                    "symbol": first,
-                    "change_24h": t.get("percentage"),
-                    "last": t.get("last"),
-                }
+        news_sentiment, sentiment_trend, market_trend = await self._symbol_reevaluator.fetch_news_sentiment_and_trends(
+            sample_pairs, tickers
+        )
 
 
         # Fetch OHLCV from database only for ALL candidate pairs.

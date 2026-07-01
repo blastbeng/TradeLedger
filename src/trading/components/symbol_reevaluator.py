@@ -10,7 +10,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
-from src.database import get_ohlcv, get_indicators_for_symbols
+from src.database import get_ohlcv, get_indicators_for_symbols, get_aggregate_sentiment_for_symbols
 
 try:
     from src.news.fetcher import discover_trending_stocks, discover_tickers_from_news
@@ -426,3 +426,65 @@ class SymbolReevaluator:
                     t['ask'] = yahoo.get('ask')
 
         await asyncio.gather(*[_fetch_yahoo_quote(sym) for sym in missing_quotes])
+
+    async def fetch_news_sentiment_and_trends(
+        self,
+        sample_pairs: List[str],
+        tickers: Dict[str, Dict[str, Any]],
+    ) -> Tuple[Dict[str, Any], Dict[str, Optional[float]], Optional[Dict[str, Any]]]:
+        """Batch-fetch news sentiment, compute sentiment trends, and market trend.
+
+        Returns (news_sentiment, sentiment_trend, market_trend) where:
+        - news_sentiment: {base_symbol: aggregate_sentiment_dict}
+        - sentiment_trend: {base_symbol: delta_or_None}
+        - market_trend: dict with symbol/change_24h/last, or None
+        """
+        engine = self.engine
+        news_sentiment: Dict[str, Any] = {}
+        if settings.NEWS_ENABLED:
+            batch_sentiment = await asyncio.to_thread(
+                get_aggregate_sentiment_for_symbols, sample_pairs, settings.NEWS_CACHE_TTL_SECONDS
+            )
+            for sym, agg in batch_sentiment.items():
+                if agg:
+                    base = sym.split("/")[0] if "/" in sym else sym
+                    news_sentiment[base] = agg
+
+        # Sentiment trend (delta from previous cycle)
+        sentiment_trend: Dict[str, Optional[float]] = {}
+        for sym in sample_pairs:
+            base_symbol = sym.split("/")[0] if "/" in sym else sym
+            current_compound = None
+            if base_symbol in news_sentiment:
+                current_compound = news_sentiment[base_symbol].get("avg_compound")
+            prev_key = f"sentiment:prev:{base_symbol}"
+            prev_raw = await asyncio.to_thread(engine.redis.get, prev_key)
+            prev_compound = float(prev_raw) if prev_raw else None
+            if current_compound is not None:
+                await asyncio.to_thread(engine.redis.setex, prev_key, settings.NEWS_CACHE_TTL_SECONDS, str(current_compound))
+            if current_compound is not None and prev_compound is not None:
+                sentiment_trend[base_symbol] = round(current_compound - prev_compound, 4)
+            else:
+                sentiment_trend[base_symbol] = None
+
+        # Overall market trend (use configured benchmark, e.g., FTSEMIB.MI)
+        market_trend = None
+        benchmark_symbol = settings.BENCHMARK_SYMBOL
+        if benchmark_symbol in tickers:
+            benchmark_ticker = tickers[benchmark_symbol]
+            market_trend = {
+                "symbol": benchmark_symbol,
+                "change_24h": benchmark_ticker.get("percentage"),
+                "last": benchmark_ticker.get("last"),
+            }
+        elif sample_pairs:
+            first = sample_pairs[0]
+            if first in tickers:
+                t = tickers[first]
+                market_trend = {
+                    "symbol": first,
+                    "change_24h": t.get("percentage"),
+                    "last": t.get("last"),
+                }
+
+        return news_sentiment, sentiment_trend, market_trend
