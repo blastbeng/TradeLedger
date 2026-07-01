@@ -3155,26 +3155,7 @@ class TradingEngine:
         sample_pairs = valid_sample_pairs
 
         logger.info("Re-evaluation step 5/12: Yahoo Finance fallback for missing quotes...")
-        # --- Yahoo Finance fallback for missing quotes (last, bid, ask) ---
-        if settings.YAHOO_FINANCE_ENABLED:
-            missing_quotes = [
-                sym for sym in sample_pairs
-                if tickers.get(sym, {}).get('last') is None or tickers.get(sym, {}).get('bid') is None or tickers.get(sym, {}).get('ask') is None
-            ]
-            # Limit to 20 symbols per cycle to stay under Yahoo's rate limits
-            missing_quotes = missing_quotes[:20]
-            async def _fetch_yahoo_quote(sym):
-                base = sym.split("/")[0]
-                yahoo = await asyncio.to_thread(get_yahoo_quote, base)
-                if yahoo:
-                    t = tickers.setdefault(sym, {})
-                    if t.get('last') is None:
-                        t['last'] = yahoo.get('last')
-                    if t.get('bid') is None:
-                        t['bid'] = yahoo.get('bid')
-                    if t.get('ask') is None:
-                        t['ask'] = yahoo.get('ask')
-            await asyncio.gather(*[_fetch_yahoo_quote(sym) for sym in missing_quotes])
+        await self._symbol_reevaluator.fetch_yahoo_fallback_quotes(sample_pairs, tickers)
 
         # --- Sort candidate pool by 24h volume (preserve BTPs and ETFs) ---
         def _volume(sym):

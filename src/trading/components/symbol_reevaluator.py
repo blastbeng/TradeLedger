@@ -392,3 +392,37 @@ class SymbolReevaluator:
                 symbol_trend_scores[sym] = 0.0
 
         return symbol_indicators, symbol_trend_scores
+
+    async def fetch_yahoo_fallback_quotes(
+        self, sample_pairs: List[str], tickers: Dict[str, Dict[str, Any]]
+    ) -> None:
+        """Fetch missing quotes (last, bid, ask) from Yahoo Finance for up to 20 symbols.
+
+        Updates the tickers dict in-place.
+        """
+        if not settings.YAHOO_FINANCE_ENABLED:
+            return
+
+        from src.exchanges.yahoo_finance import get_yahoo_quote
+
+        missing_quotes = [
+            sym for sym in sample_pairs
+            if tickers.get(sym, {}).get('last') is None
+            or tickers.get(sym, {}).get('bid') is None
+            or tickers.get(sym, {}).get('ask') is None
+        ]
+        missing_quotes = missing_quotes[:20]
+
+        async def _fetch_yahoo_quote(sym: str):
+            base = sym.split("/")[0]
+            yahoo = await asyncio.to_thread(get_yahoo_quote, base)
+            if yahoo:
+                t = tickers.setdefault(sym, {})
+                if t.get('last') is None:
+                    t['last'] = yahoo.get('last')
+                if t.get('bid') is None:
+                    t['bid'] = yahoo.get('bid')
+                if t.get('ask') is None:
+                    t['ask'] = yahoo.get('ask')
+
+        await asyncio.gather(*[_fetch_yahoo_quote(sym) for sym in missing_quotes])
