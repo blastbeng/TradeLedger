@@ -800,7 +800,7 @@ def _compute_stats(
     simulate_position_sizing: bool = False,
 ) -> Dict[str, Any]:
     wins = [t for t in trades if t["pnl_pct"] > 0]
-    losses = [t for t in trades if t["pnl_pct"] <= 0]
+    losses = [t for t in trades if t["pnl_pct"] < 0]
 
     total_pnl = sum(t["pnl_pct"] for t in trades)
     gross_profit = sum(t["pnl_pct"] for t in wins)
@@ -829,7 +829,7 @@ def _compute_stats(
     max_consec_losses = 0
     current_consec = 0
     for t in trades:
-        if t["pnl_pct"] <= 0:
+        if t["pnl_pct"] < 0:
             current_consec += 1
             max_consec_losses = max(max_consec_losses, current_consec)
         else:
