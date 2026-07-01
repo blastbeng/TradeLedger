@@ -564,3 +564,72 @@ class SignalProcessor:
             return True
 
         return False
+
+    async def check_trade_filters(
+        self,
+        symbol: str,
+        display_symbol: str,
+        validated: Signal,
+        params: Dict[str, Any],
+    ) -> bool:
+        """Check trade filters (confidence thresholds, SELL without position).
+
+        Returns True if the trade should be skipped (caller should return),
+        False if processing should continue.
+        """
+        engine = self.engine
+
+        # --- Global confidence rejection threshold (set during stock selection) ---
+        if validated.action == "BUY":
+            conf_rejection_raw = await asyncio.to_thread(engine.redis.get, "trading:confidence_rejection_threshold")
+            if conf_rejection_raw:
+                try:
+                    conf_threshold = float(conf_rejection_raw)
+                    if conf_threshold > 0 and validated.confidence < conf_threshold:
+                        logger.info(f"Skipping {symbol}: confidence {validated.confidence:.2f} below global rejection threshold {conf_threshold:.2f}")
+                        if engine.notifier:
+                            await engine.notifier.send_notification(
+                                f"⚠️ Skipping {display_symbol}: confidence {validated.confidence:.2f} below threshold {conf_threshold:.2f}",
+                                summary={
+                                    "symbol": symbol,
+                                    "action": "SKIP",
+                                    "reason": "Confidence below rejection threshold",
+                                    "confidence": validated.confidence,
+                                    "threshold": conf_threshold,
+                                }
+                            )
+                        return True
+                except (ValueError, TypeError):
+                    pass
+
+        min_conf = params.get("min_confidence")
+        if min_conf is not None and validated.confidence < min_conf:
+            logger.info(f"Skipping {symbol}: confidence {validated.confidence:.2f} below LLM min {min_conf:.2f}")
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⚠️ Skipping {display_symbol}: confidence too low ({validated.confidence:.2f})",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SKIP",
+                        "reason": "Confidence too low",
+                        "confidence": validated.confidence,
+                        "min_confidence": min_conf,
+                    }
+                )
+            return True
+
+        # Prevent SELL without an open position (no shorting)
+        if validated.action == "SELL" and symbol not in engine.positions:
+            logger.info(f"Skipping SELL for {symbol}: no open position.")
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⚠️ Skipping SELL for {display_symbol}: no open position.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SKIP",
+                        "reason": "No open position",
+                    }
+                )
+            return True
+
+        return False
