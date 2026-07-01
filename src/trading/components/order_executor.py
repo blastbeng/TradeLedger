@@ -7,7 +7,7 @@ import asyncio
 import logging
 import time
 from dataclasses import asdict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
 from src.database import insert_trade
@@ -127,6 +127,147 @@ class OrderExecutor:
         pos.pop("take_profit_order_id", None)
         pos.pop("stop_loss_order_type", None)
         pos.pop("_native_stop_price", None)
+
+    async def compute_position_size(
+        self,
+        symbol: str,
+        display_symbol: str,
+        quote_balance: float,
+        desired_amount: float,
+        params: Dict[str, Any],
+        sl_pct: float,
+    ) -> Optional[Tuple[float, float, float]]:
+        """Compute the final position size applying all risk caps.
+
+        Applies global risk multiplier, per-symbol multiplier, and a single
+        hard ceiling from all risk caps (max_risk_per_trade, max_portfolio_risk,
+        max_portfolio_exposure, max_portfolio_stop_risk, and remaining cycle budget).
+
+        Returns (amount, desired_amount, available) or None if the position
+        should be skipped (amount <= 0).
+        """
+        engine = self.engine
+
+        # --- Consolidated position sizing: single hard ceiling from all caps ---
+        pos_tickers = await engine._get_all_position_tickers()
+
+        # Compute current portfolio state once
+        total_value = quote_balance
+        total_open_exposure = 0.0
+        total_open_stop_risk = 0.0
+        for sym, pos in engine.positions.items():
+            try:
+                t = pos_tickers.get(sym)
+                price = t['last'] if t and t.get('last') else 0.0
+                pos_value = pos['amount'] * price
+                total_open_exposure += pos_value
+                total_value += pos_value
+                stop_loss = pos.get('stop_loss')
+                if stop_loss is not None and price > 0:
+                    loss_if_stop = pos_value * (price - stop_loss) / price
+                    total_open_stop_risk += max(0, loss_if_stop)
+            except Exception:
+                pass
+
+        # Apply global risk multiplier to desired amount (scales all positions)
+        global_mult = await engine._get_global_risk_multiplier()
+        if global_mult is not None and 0.0 <= global_mult <= 1.0:
+            desired_amount *= global_mult
+
+        # Apply per-symbol position size multiplier to desired amount
+        per_symbol_mult = params.get("position_size_multiplier")
+        if per_symbol_mult is not None:
+            try:
+                per_symbol_mult = float(per_symbol_mult)
+                if 0.0 <= per_symbol_mult <= 1.0:
+                    desired_amount *= per_symbol_mult
+            except (ValueError, TypeError):
+                pass
+
+        # Compute single hard ceiling from all risk caps
+        hard_max = float('inf')
+
+        # Cap 1: max_risk_per_trade_pct (per-trade risk from LLM strategy params)
+        max_risk_pct = params.get("max_risk_per_trade_pct")
+        if max_risk_pct is not None and sl_pct > 0:
+            hard_max = min(hard_max, (total_value * max_risk_pct) / sl_pct)
+
+        # Cap 2: max_portfolio_risk_pct (portfolio risk from LLM strategy params)
+        max_portfolio_risk_pct = params.get("max_portfolio_risk_pct")
+        if max_portfolio_risk_pct is not None and sl_pct > 0:
+            available_risk_budget = max(0.0, (total_value * max_portfolio_risk_pct) - total_open_stop_risk)
+            hard_max = min(hard_max, available_risk_budget / sl_pct)
+
+        # Cap 3: max_portfolio_exposure_pct (global LLM setting from stock selection)
+        max_port_exp_raw = await asyncio.to_thread(engine.redis.get, "trading:max_portfolio_exposure_pct")
+        max_port_exp = float(max_port_exp_raw) if max_port_exp_raw else None
+        if max_port_exp is not None and total_value > 0:
+            available_exposure = max(0.0, (max_port_exp * total_value) - total_open_exposure)
+            hard_max = min(hard_max, available_exposure)
+
+        # Cap 4: max_portfolio_stop_risk_pct (global LLM setting from stock selection)
+        max_port_risk_raw = await asyncio.to_thread(engine.redis.get, "trading:max_portfolio_stop_risk_pct")
+        max_port_risk = float(max_port_risk_raw) if max_port_risk_raw else None
+        if max_port_risk is not None and sl_pct > 0 and total_value > 0:
+            available_stop_risk_budget = max(0.0, (total_value * max_port_risk) - total_open_stop_risk)
+            hard_max = min(hard_max, available_stop_risk_budget / sl_pct)
+
+        # Cap at remaining cycle budget (use lock for consistent read)
+        async with engine._cycle_spent_lock:
+            available = max(0.0, quote_balance - engine._cycle_spent)
+        hard_max = min(hard_max, available)
+
+        # Final amount: min of LLM's desired amount and the single hard ceiling
+        amount = min(desired_amount, hard_max)
+
+        if amount <= 0:
+            logger.info(f"Skipping BUY {symbol}: position size reduced to 0 by portfolio constraints")
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⚠️ Skipping BUY {display_symbol}: portfolio constraints leave no room for new position",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SKIP",
+                        "reason": "Portfolio constraints exhausted",
+                        "desired_amount": desired_amount,
+                        "hard_max": 0.0,
+                    }
+                )
+            return None
+
+        if amount < desired_amount:
+            # Single consolidated notification about which cap was binding
+            cap_reasons = []
+            if max_risk_pct is not None and sl_pct > 0:
+                cap_reasons.append(f"max_risk_per_trade={max_risk_pct:.2%}")
+            if max_portfolio_risk_pct is not None:
+                cap_reasons.append(f"max_portfolio_risk={max_portfolio_risk_pct:.2%}")
+            if max_port_exp is not None:
+                cap_reasons.append(f"max_exposure={max_port_exp:.2%}")
+            if max_port_risk is not None:
+                cap_reasons.append(f"max_stop_risk={max_port_risk:.2%}")
+            if global_mult is not None and global_mult < 1.0:
+                cap_reasons.append(f"global_risk_mult={global_mult:.2f}")
+            if per_symbol_mult is not None and per_symbol_mult < 1.0:
+                cap_reasons.append(f"position_size_mult={per_symbol_mult:.2f}")
+            reason_str = ", ".join(cap_reasons) if cap_reasons else "portfolio constraints"
+            logger.info(
+                f"Position size capped for {symbol}: {desired_amount:.2f} -> {amount:.2f} "
+                f"({reason_str})"
+            )
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⚠️ {display_symbol}: position capped {desired_amount:.2f} → {amount:.2f} ({reason_str})",
+                    summary={
+                        "symbol": symbol,
+                        "action": "INFO",
+                        "reason": f"Position size capped: {reason_str}",
+                        "desired_amount": desired_amount,
+                        "capped_amount": amount,
+                    }
+                )
+
+        return amount, desired_amount, available
 
         base, quote = symbol.split("/")
         qty = pos["amount"]  # base quantity to sell
