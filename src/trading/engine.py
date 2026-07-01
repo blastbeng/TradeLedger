@@ -8222,73 +8222,9 @@ class TradingEngine:
                     symbol, pos, current_price, display_symbol, max_partial_tp_reviews, ticker
                 )
 
-                # --- Dust sweep check (if not already triggered) ---
-                if not pos.get("_dust_sweep_triggered"):
-                    base = symbol.split("/")[0]
-                    amount = pos["amount"]
-                    is_dust = False
-                    try:
-                        asset = await self._get_asset_info(symbol)
-                        min_amount = float(asset.min_order_size) if asset.min_order_size else None
-                    except Exception:
-                        min_amount = None
-                    if min_amount is not None and amount < min_amount:
-                        is_dust = True
-
-                    if is_dust:
-                        # Check if dust has been kept past the timeout
-                        dust_keep_since = pos.get("_dust_keep_since")
-                        if dust_keep_since is not None and (time.time() - dust_keep_since) > settings.DUST_KEEP_TIMEOUT_SECONDS:
-                            logger.info(
-                                f"Dust keep timeout reached for {symbol} "
-                                f"(kept for {(time.time() - dust_keep_since) / 3600:.1f}h), force-selling."
-                            )
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"🧹 Dust keep timeout for {display_symbol} – auto-selling "
-                                    f"after {settings.DUST_KEEP_TIMEOUT_SECONDS // 3600:.0f}h.",
-                                    summary={
-                                        "symbol": symbol,
-                                        "action": "SELL",
-                                        "reason": "Dust keep timeout",
-                                        "exit_reason": "dust_keep_timeout",
-                                    }
-                                )
-                            await self._sweep_dust(symbol)
-                            continue
-                        review_count = pos.get("_dust_sweep_review_count", 0) + 1
-                        if review_count > max_dust_sweep_reviews:
-                            logger.info(f"Dust sweep max reviews reached for {symbol}, force sweeping.")
-                            await self._sweep_dust(symbol)
-                        else:
-                            async with self._positions_lock:
-                                pos["_dust_sweep_triggered"] = True
-                                pos["_dust_sweep_review_count"] = review_count
-                            self._last_strategy_eval.pop(symbol, None)
-                            logger.info(f"Dust condition triggered for {symbol} – asking LLM (review {review_count})")
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"🧹 Dust sweep triggered for {display_symbol} – consulting LLM...",
-                                    summary={"symbol": symbol, "action": "HOLD", "reason": "Dust sweep triggered – awaiting LLM"}
-                                )
-                else:
-                    # If dust was previously triggered but condition no longer holds, clear it
-                    base = symbol.split("/")[0]
-                    amount = pos["amount"]
-                    is_dust = False
-                    try:
-                        asset = await self._get_asset_info(symbol)
-                        min_amount = float(asset.min_order_size) if asset.min_order_size else None
-                    except Exception:
-                        min_amount = None
-                    if min_amount is not None and amount < min_amount:
-                        is_dust = True
-                    if not is_dust:
-                        async with self._positions_lock:
-                            pos.pop("_dust_sweep_triggered", None)
-                            pos.pop("_dust_sweep_review_count", None)
-                            pos.pop("_dust_keep_since", None)
-                        logger.info(f"Dust condition cleared for {symbol}")
+                # --- Dust sweep check ---
+                if await self._risk_manager.check_dust_sweep(symbol, pos, display_symbol, max_dust_sweep_reviews):
+                    continue
 
                 # --- News sentiment exit ---
                 if await self._risk_manager.check_news_sentiment_exit(symbol, pos, display_symbol):

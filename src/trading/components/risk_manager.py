@@ -554,6 +554,80 @@ class RiskManager:
                                 summary={"symbol": symbol, "action": "HOLD", "reason": "Partial TP triggered – awaiting LLM"}
                             )
 
+    async def check_dust_sweep(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+        display_symbol: str,
+        max_dust_sweep_reviews: int,
+    ) -> bool:
+        """Check if a position has become dust and should be swept.
+
+        Returns True if the dust sweep was triggered or executed (caller
+        should skip to the next position), False otherwise.
+        """
+        engine = self.engine
+        base = symbol.split("/")[0]
+        amount = pos["amount"]
+
+        # Fetch min amount
+        try:
+            asset = await engine._get_asset_info(symbol)
+            min_amount = float(asset.min_order_size) if asset.min_order_size else None
+        except Exception:
+            min_amount = None
+
+        is_dust = min_amount is not None and amount < min_amount
+
+        if not pos.get("_dust_sweep_triggered"):
+            if is_dust:
+                # Check if dust has been kept past the timeout
+                dust_keep_since = pos.get("_dust_keep_since")
+                if dust_keep_since is not None and (time.time() - dust_keep_since) > settings.DUST_KEEP_TIMEOUT_SECONDS:
+                    logger.info(
+                        f"Dust keep timeout reached for {symbol} "
+                        f"(kept for {(time.time() - dust_keep_since) / 3600:.1f}h), force-selling."
+                    )
+                    if engine.notifier:
+                        await engine.notifier.send_notification(
+                            f"🧹 Dust keep timeout for {display_symbol} – auto-selling "
+                            f"after {settings.DUST_KEEP_TIMEOUT_SECONDS // 3600:.0f}h.",
+                            summary={
+                                "symbol": symbol,
+                                "action": "SELL",
+                                "reason": "Dust keep timeout",
+                                "exit_reason": "dust_keep_timeout",
+                            }
+                        )
+                    await engine._sweep_dust(symbol)
+                    return True
+                review_count = pos.get("_dust_sweep_review_count", 0) + 1
+                if review_count > max_dust_sweep_reviews:
+                    logger.info(f"Dust sweep max reviews reached for {symbol}, force sweeping.")
+                    await engine._sweep_dust(symbol)
+                    return True
+                else:
+                    async with engine._positions_lock:
+                        pos["_dust_sweep_triggered"] = True
+                        pos["_dust_sweep_review_count"] = review_count
+                    engine._last_strategy_eval.pop(symbol, None)
+                    logger.info(f"Dust condition triggered for {symbol} – asking LLM (review {review_count})")
+                    if engine.notifier:
+                        await engine.notifier.send_notification(
+                            f"🧹 Dust sweep triggered for {display_symbol} – consulting LLM...",
+                            summary={"symbol": symbol, "action": "HOLD", "reason": "Dust sweep triggered – awaiting LLM"}
+                        )
+        else:
+            # If dust was previously triggered but condition no longer holds, clear it
+            if not is_dust:
+                async with engine._positions_lock:
+                    pos.pop("_dust_sweep_triggered", None)
+                    pos.pop("_dust_sweep_review_count", None)
+                    pos.pop("_dust_keep_since", None)
+                logger.info(f"Dust condition cleared for {symbol}")
+
+        return False
+
     async def check_breakeven_stop(
         self,
         symbol: str,
