@@ -10,7 +10,8 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
-from src.database import get_ohlcv, get_indicators_for_symbols, get_aggregate_sentiment_for_symbols
+from src.database import get_ohlcv, get_indicators_for_symbols, get_aggregate_sentiment_for_symbols, get_aggregate_sentiment_from_db
+from src.exchanges.market_data import get_quotes_cached
 
 try:
     from src.news.fetcher import discover_trending_stocks, discover_tickers_from_news
@@ -488,3 +489,114 @@ class SymbolReevaluator:
                 }
 
         return news_sentiment, sentiment_trend, market_trend
+
+    async def fetch_quotes_and_sort(
+        self,
+        available_pairs: List[str],
+        btp_pairs: List[str],
+        etf_pairs: List[str],
+        now: float,
+        last_key: str,
+    ) -> Optional[Tuple[Dict[str, float], float, float, Dict[str, Dict[str, Any]], List[str], List[str]]]:
+        """Fetch quotes from cache, apply Yahoo fallback, filter, and sort by volume.
+
+        Returns (balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs)
+        or None if no valid price data is found.
+        """
+        engine = self.engine
+
+        # Reconstruct stock_pairs (stocks only, excluding BTPs and ETFs)
+        _btp_set = set(btp_pairs)
+        _etf_set = set(etf_pairs)
+        stock_pairs = [p for p in available_pairs if p not in _btp_set and p not in _etf_set]
+
+        logger.info("Re-evaluation step 4/12: Fetching balance and quotes (from %d available pairs)...", len(available_pairs))
+        balance = await engine._get_cached_balance()
+        base_balance = balance.get(engine.base_currency, 0.0)
+        per_symbol_budget = base_balance / engine.max_symbols if engine.max_symbols > 0 else 0.0
+
+        # Apply sentiment filter if configured
+        if settings.SYMBOL_SELECTION_MIN_SENTIMENT > -1.0 and settings.NEWS_ENABLED:
+            candidate_pairs = available_pairs
+            async def _fetch_sentiment_filter(sym):
+                try:
+                    base_symbol = sym.split("/")[0] if "/" in sym else sym
+                    agg = await asyncio.to_thread(get_aggregate_sentiment_from_db, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
+                    if agg and agg["avg_compound"] >= settings.SYMBOL_SELECTION_MIN_SENTIMENT:
+                        return sym
+                    elif not agg:
+                        return sym
+                    return None
+                except Exception:
+                    return sym
+            sentiment_filter_tasks = [_fetch_sentiment_filter(sym) for sym in candidate_pairs]
+            sentiment_filter_results = await asyncio.gather(*sentiment_filter_tasks)
+            sample_pairs = [sym for sym in sentiment_filter_results if sym is not None]
+        else:
+            sample_pairs = available_pairs
+
+        # Ensure BTPs and ETFs are always included in the candidate pool
+        for btp in btp_pairs:
+            if btp not in sample_pairs:
+                sample_pairs.append(btp)
+        for etf in etf_pairs:
+            if etf not in sample_pairs:
+                sample_pairs.append(etf)
+
+        # Remove fully excluded symbols from the candidate pool
+        sample_pairs = [
+            sym for sym in sample_pairs
+            if not any(
+                entry.split("/")[0] == sym.split("/")[0] and
+                entry.split("/")[1] == sym.split("/")[1] and
+                len(entry.split("/")) == 2
+                for entry in settings.EXCLUDED_SYMBOLS
+            )
+        ]
+
+        logger.info(f"Step 4: Fetching quotes for {len(sample_pairs)} symbols from Redis/DB cache")
+
+        # Fetch quotes from Redis/DB cache only — no network calls.
+        plain_sample = [s.split("/")[0] for s in sample_pairs]
+        raw_quotes = await asyncio.to_thread(get_quotes_cached, plain_sample)
+        tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_pairs}
+
+        # Filter out symbols with no valid last price
+        valid_sample_pairs = [
+            sym for sym in sample_pairs
+            if tickers.get(sym, {}).get('last') is not None and tickers[sym]['last'] > 0
+        ]
+        if not valid_sample_pairs:
+            logger.warning("No symbols with valid price data. Idling until next evaluation.")
+            await asyncio.to_thread(engine.redis.set, last_key, now)
+            no_price_key = "trading:no_price_data_notify"
+            last_notify = await asyncio.to_thread(engine.redis.get, no_price_key)
+            should_notify = True
+            if last_notify:
+                try:
+                    if (time.time() - float(last_notify)) < 3600:
+                        should_notify = False
+                except (ValueError, TypeError):
+                    pass
+            if should_notify and engine.notifier:
+                await engine.notifier.send_notification(
+                    "⚠️ No symbols with valid price data. Bot will idle.",
+                    summary={"action": "HOLD", "reason": "No valid price data"}
+                )
+                await asyncio.to_thread(engine.redis.set, no_price_key, str(time.time()))
+            return None
+        sample_pairs = valid_sample_pairs
+
+        # Yahoo Finance fallback for missing quotes
+        logger.info("Re-evaluation step 5/12: Yahoo Finance fallback for missing quotes...")
+        await self.fetch_yahoo_fallback_quotes(sample_pairs, tickers)
+
+        # Sort candidate pool by 24h volume (preserve BTPs and ETFs)
+        def _volume(sym):
+            t = tickers.get(sym, {})
+            return t.get('quoteVolume', 0) or 0
+        stock_sample_sorted = sorted([s for s in sample_pairs if s in stock_pairs and s not in etf_pairs], key=_volume, reverse=True)
+        etf_sample_sorted = [s for s in sample_pairs if s in etf_pairs]
+        sample_pairs = stock_sample_sorted + etf_sample_sorted + [s for s in sample_pairs if s in btp_pairs]
+
+        return balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs

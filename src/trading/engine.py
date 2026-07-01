@@ -3057,114 +3057,12 @@ class TradingEngine:
         if _assets_result is None:
             return
         available_pairs, btp_pairs, etf_pairs, old_symbols, last_key = _assets_result
-        # Reconstruct stock_pairs (stocks only, excluding BTPs and ETFs)
-        # from the returned available_pairs, which includes stocks + BTPs + RSS-discovered symbols.
-        _btp_set = set(btp_pairs)
-        _etf_set = set(etf_pairs)
-        stock_pairs = [p for p in available_pairs if p not in _btp_set and p not in _etf_set]
-
-        logger.info("Re-evaluation step 4/12: Fetching balance and quotes (from %d available pairs)...", len(available_pairs))
-        # Fetch balance and compute per-symbol budget
-        balance = await self._get_cached_balance()
-        base_balance = balance.get(self.base_currency, 0.0)
-        per_symbol_budget = base_balance / self.max_symbols if self.max_symbols > 0 else 0.0
-
-        # Fetch tickers for a subset to keep prompt size manageable
-        # Apply sentiment filter if configured
-        if settings.SYMBOL_SELECTION_MIN_SENTIMENT > -1.0 and settings.NEWS_ENABLED:
-            candidate_pairs = available_pairs
-            async def _fetch_sentiment_filter(sym):
-                try:
-                    base_symbol = sym.split("/")[0] if "/" in sym else sym
-                    agg = await asyncio.to_thread(get_aggregate_sentiment_from_db, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
-                    if agg and agg["avg_compound"] >= settings.SYMBOL_SELECTION_MIN_SENTIMENT:
-                        return sym
-                    elif not agg:
-                        return sym
-                    return None
-                except Exception:
-                    return sym
-            sentiment_filter_tasks = [_fetch_sentiment_filter(sym) for sym in candidate_pairs]
-            sentiment_filter_results = await asyncio.gather(*sentiment_filter_tasks)
-            sample_pairs = [sym for sym in sentiment_filter_results if sym is not None]
-        else:
-            sample_pairs = available_pairs
-
-        # Ensure BTPs and ETFs are always included in the candidate pool so they flow
-        # through volume sorting, OHLCV fetch, indicator computation, etc.
-        for btp in btp_pairs:
-            if btp not in sample_pairs:
-                sample_pairs.append(btp)
-        for etf in etf_pairs:
-            if etf not in sample_pairs:
-                sample_pairs.append(etf)
-
-        # Remove fully excluded symbols from the candidate pool
-        sample_pairs = [
-            sym for sym in sample_pairs
-            if not any(
-                entry.split("/")[0] == sym.split("/")[0] and
-                entry.split("/")[1] == sym.split("/")[1] and
-                len(entry.split("/")) == 2
-                for entry in settings.EXCLUDED_SYMBOLS
-            )
-        ]
-
-        # --- Do NOT pre-rank or limit candidates by volume ---
-        # We want the LLM to evaluate ALL symbols that have a quote in cache/DB.
-        # The quote fetch uses get_quotes_cached which only reads from Redis/DB
-        # (no network calls), so fetching quotes for hundreds of symbols is fast.
-
-        logger.info(f"Step 4: Fetching quotes for {len(sample_pairs)} symbols from Redis/DB cache")
-
-        # Fetch quotes from Redis/DB cache only — no network calls.
-        # The background _refresh_all_quotes_loop keeps the cache warm.
-        # This prevents the re-evaluation from hanging on slow yfinance
-        # or Borsa Italiana API calls.
-        # BTPs are included so their quotes are fetched from DB close prices
-        # (same as stocks), not from the Borsa Italiana bond list.
-        plain_sample = [s.split("/")[0] for s in sample_pairs]
-        raw_quotes = await asyncio.to_thread(get_quotes_cached, plain_sample)
-        tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_pairs}
-
-        # Filter out symbols with no valid last price
-        valid_sample_pairs = [
-            sym for sym in sample_pairs
-            if tickers.get(sym, {}).get('last') is not None and tickers[sym]['last'] > 0
-        ]
-        if not valid_sample_pairs:
-            logger.warning("No symbols with valid price data. Idling until next evaluation.")
-            await asyncio.to_thread(self.redis.set, last_key, now)
-            # Cooldown: only send the notification once per hour to avoid spam
-            no_price_key = "trading:no_price_data_notify"
-            last_notify = await asyncio.to_thread(self.redis.get, no_price_key)
-            should_notify = True
-            if last_notify:
-                try:
-                    if (time.time() - float(last_notify)) < 3600:  # 1 hour cooldown
-                        should_notify = False
-                except (ValueError, TypeError):
-                    pass
-            if should_notify and self.notifier:
-                await self.notifier.send_notification(
-                    "⚠️ No symbols with valid price data. Bot will idle.",
-                    summary={"action": "HOLD", "reason": "No valid price data"}
-                )
-                await asyncio.to_thread(self.redis.set, no_price_key, str(time.time()))
+        _quotes_result = await self._symbol_reevaluator.fetch_quotes_and_sort(
+            available_pairs, btp_pairs, etf_pairs, now, last_key
+        )
+        if _quotes_result is None:
             return
-        sample_pairs = valid_sample_pairs
-
-        logger.info("Re-evaluation step 5/12: Yahoo Finance fallback for missing quotes...")
-        await self._symbol_reevaluator.fetch_yahoo_fallback_quotes(sample_pairs, tickers)
-
-        # --- Sort candidate pool by 24h volume (preserve BTPs and ETFs) ---
-        def _volume(sym):
-            t = tickers.get(sym, {})
-            return t.get('quoteVolume', 0) or 0
-        stock_sample_sorted = sorted([s for s in sample_pairs if s in stock_pairs and s not in etf_pairs], key=_volume, reverse=True)
-        etf_sample_sorted = [s for s in sample_pairs if s in etf_pairs]
-        # Pass ALL discovered stocks, ETFs, and BTPs to the LLM
-        sample_pairs = stock_sample_sorted + etf_sample_sorted + [s for s in sample_pairs if s in btp_pairs]
+        balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs = _quotes_result
         logger.info("Re-evaluation step 6/12: Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
         news_sentiment, sentiment_trend, market_trend = await self._symbol_reevaluator.fetch_news_sentiment_and_trends(
             sample_pairs, tickers
