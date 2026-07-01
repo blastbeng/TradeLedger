@@ -345,7 +345,7 @@ class SignalProcessor:
                             "llm_model": llm_model,
                         }
                     )
-                await engine._update_position_params(
+                await engine._position_manager.update_position_params(
                     symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
                 )
                 engine._state_dirty = True
@@ -392,7 +392,7 @@ class SignalProcessor:
                         engine.positions[symbol]["stop_loss"] = current_price * (1 - new_stop_pct)
                         engine.positions[symbol].pop("_stop_loss_triggered", None)
                         engine.positions[symbol].pop("_stop_loss_review_count", None)
-                    await engine._update_position_params(
+                    await engine._position_manager.update_position_params(
                         symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
                     )
                     engine._state_dirty = True
@@ -449,7 +449,7 @@ class SignalProcessor:
                         engine.positions[symbol]["take_profit"] = current_price * (1 + new_tp_pct)
                         engine.positions[symbol].pop("_take_profit_triggered", None)
                         engine.positions[symbol].pop("_take_profit_review_count", None)
-                    await engine._update_position_params(
+                    await engine._position_manager.update_position_params(
                         symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
                     )
                     engine._state_dirty = True
@@ -506,7 +506,7 @@ class SignalProcessor:
                     engine.positions[symbol]["partial_tp_levels_triggered"] = []
                     engine.positions[symbol]["partial_tp_depth_wait_start"] = {}
                 logger.info(f"LLM updated partial TP levels for {symbol}")
-                await engine._update_position_params(
+                await engine._position_manager.update_position_params(
                     symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
                 )
                 engine._state_dirty = True
