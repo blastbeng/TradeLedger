@@ -1279,16 +1279,6 @@ Maximum symbols to trade: {max_symbols}
             f"\n**Current ATR%: {atr_pct:.4%}**. "
             f"The validator enforces a minimum fixed stop-loss of {min_stop_atr_mult} × ATR% = {min_sl:.4%}. "
             f"Your fixed stop_loss_pct must be at least this value.\n"
-            f"\n**Position Sizing Guidance (you decide the final value):**\n"
-            f"  Total portfolio value: ~{portfolio_total_value:.2f} {base_currency}\n"
-            f"  Current price: {current_price:.4f}\n"
-            f"  ATR: {atr:.6f}\n"
-            f"  If you use ATR-based stop (multiplier M), risk per share = M × ATR = M × {atr:.6f}.\n"
-            f"  If you want to risk R% of portfolio: max_quantity = (portfolio_value × R%) / (M × ATR).\n"
-            f"  position_size_fraction = (max_quantity × current_price) / portfolio_value.\n"
-            f"  Example: M=2, R=1% → risk/share = {2*atr:.6f}, max_qty = {portfolio_total_value*0.01/(2*atr):.2f}, "
-            f"fraction = {(portfolio_total_value*0.01/(2*atr)*current_price)/portfolio_total_value:.4f}.\n"
-            f"  Adjust R and M based on your confidence, backtest results, fees, and market conditions.\n"
         )
     if atr_percentile is not None:
         prompt += f"ATR percentile (relative to last 100 observations): {atr_percentile:.1f}%\n"
@@ -1603,11 +1593,6 @@ Maximum symbols to trade: {max_symbols}
             pnl_pct = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
             hold_str = f"{hold_time:.0f}s" if hold_time is not None else "N/A"
             prompt += f"- Entry:{entry_price:.4f} Exit:{exit_price:.4f} P&L:{pnl:+.2f} ({pnl_pct:+.1f}%) Reason:{exit_reason} Hold:{hold_str} Strat:{strategy}\n"
-        prompt += (
-            "Use these past outcomes to avoid repeating mistakes and reinforce successful patterns. "
-            "Calibrate your confidence: if high-confidence trades are losing, lower confidence for similar setups; "
-            "if low-confidence trades are winning, consider raising confidence.\n"
-        )
 
     if historical_backtest_results:
         prompt += f"\n**Historical Backtest Results for {symbol} (last {len(historical_backtest_results)} tests):**\n"
@@ -1623,10 +1608,6 @@ Maximum symbols to trade: {max_symbols}
                 f"max_dd={stats.get('max_drawdown_pct', 0)*100:.2f}%, "
                 f"profit_factor={stats.get('profit_factor', 0):.2f}\n"
             )
-        prompt += (
-            "Use these historical results to avoid repeating failed parameter combinations "
-            "and to build on strategies that have historically performed well for this symbol.\n"
-        )
 
     # --- Aggregate sentiment summary ---
     if sentiment_trend is not None:
@@ -1690,11 +1671,6 @@ Maximum symbols to trade: {max_symbols}
             news_section = "Recent news articles for this stock:\n" + _format_news_for_prompt(articles)
     if news_section:
         prompt += f"\n{news_section}\n"
-        prompt += (
-            "**IMPORTANT:** Do not rely on pre-computed sentiment scores. Read the news headlines and summaries above "
-            "and use your own understanding of financial context to assess the sentiment and potential impact. "
-            "Factor this assessment into your confidence, position size, and reasoning.\n"
-        )
 
     # Cap the validator minimum for long timeframes to avoid rejecting reasonable hold times
     if assigned_timeframe in ("3Y", "5Y"):
@@ -1751,7 +1727,6 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
             prompt += f"  Profit Margins: {_safe_fmt(fundamentals['profit_margins'], mult=100, suffix='%')}\n"
         if fundamentals.get("return_on_equity") is not None:
             prompt += f"  Return on Equity: {_safe_fmt(fundamentals['return_on_equity'], mult=100, suffix='%')}\n"
-        prompt += "Use this fundamental data to assess valuation and long-term viability. For medium/long-term trades, prefer stocks with reasonable P/E ratios, strong profit margins, and solid return on equity. Avoid stocks that appear significantly overvalued unless there is a strong growth catalyst.\n"
     prompt += (
         "\n**Entry Condition (REQUIRED for every BUY):**\n"
         "You MUST include an `entry_condition` object in your JSON output for every BUY action. "
@@ -1795,8 +1770,6 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         "- `entry_condition`: REQUIRED for every BUY action. An object specifying the exact moment to enter the trade (see Entry Condition section below for format).\n"
         "- `limit_price`: optional, a specific limit price for the order.\n"
         "- `time_in_force`: optional, \"day\" or \"gtc\". Default \"day\".\n"
-        "You may include `\"portfolio_risk_adjustment_factor\"` (0.1–1.0) in the strategy parameters "
-        "to vote on the overall portfolio risk for this cycle.\n"
     )
     if trading_paused:
         prompt += (
@@ -1818,15 +1791,7 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
             perf_lines.append(f"- Strategy performance summary: {json.dumps(strategy_perf)}")
         
         if len(perf_lines) > 1:
-            perf_text = "\n".join(perf_lines) + "\n\nUse this data to decide whether to BUY, SELL, or HOLD. If the stock has a poor win rate or the overall equity curve is declining, be more conservative. Prefer strategies that have worked well historically.\n"
-        else:
-            perf_text = ""
-        perf_text += (
-            "Calibrate parameters based on this data: low win rate/negative P&L → reduce size, widen stop, shorten hold time; "
-            "high win rate/positive P&L → may increase size and tighten stops; high stop_loss_hits → wider stop or longer timeframe; "
-            "use avg_hold_time_seconds to set realistic max_hold_time_seconds.\n"
-        )
-        prompt += perf_text
+            prompt += "\n".join(perf_lines) + "\n"
         daily_pnl = equity.get("daily_pnl", 0.0)
         total_pnl = equity.get("total_pnl", 0.0)
         consecutive_losses = equity.get("consecutive_losses", 0)
@@ -1835,10 +1800,6 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         if consecutive_losses > 0:
             prompt += f"⚠️ You have {consecutive_losses} consecutive losing trades. Consider reducing risk or skipping this trade.\n"
         prompt += f"\n**Account P&L**: Total realized P&L = {total_pnl:.4f} {base_currency}.\n"
-        if total_pnl < 0:
-            prompt += "Account in loss – be more conservative (prefer HOLD unless exceptional opportunity).\n"
-        else:
-            prompt += "Account in profit – take calculated risks but only trade clear setups.\n"
     # --- Trade pattern analysis ---
     if trade_pattern_analysis:
         prompt += "\n" + _format_trade_pattern_analysis(trade_pattern_analysis) + "\n"
@@ -1908,13 +1869,6 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
             f"\n**⚠️ Upcoming Corporate Event Detected for {symbol}:**\n"
             f"  Event types: {', '.join(symbol_event.get('event_types', []))}\n"
             f"  Detected keywords: {', '.join(symbol_event.get('keywords', [])[:5])}\n"
-            "This stock has upcoming or recent corporate events (e.g., earnings, FDA decision, merger). "
-            "Such events can cause significant price gaps. You should decide whether to:\n"
-            "- Avoid entering a new position before the event.\n"
-            "- Reduce position size to limit gap risk.\n"
-            "- Set wider stop-loss to accommodate event volatility.\n"
-            "- Exit an existing position before the event if the risk is too high.\n"
-            "The decision is entirely yours based on your assessment of the event's impact.\n"
         )
     return prompt
 
@@ -2089,17 +2043,6 @@ Example: {{"backtest_entry_config": {{"ema_period": 21, "ema_direction": "above"
 - Minimum stop-loss: {min_stop_atr_mult} × ATR% (if ATR available)
 - take_profit_pct MUST be strictly greater than stop_loss_pct
 
-**Position Sizing:**
-- position_size_fraction represents a fraction of your total {base_currency} balance (0.01 to 1.0)
-- The sum of position_size_fraction across all stocks must not exceed 1.0
-- Use small fractions (0.01–0.05) for low conviction, larger for high conviction
-- If remaining balance is too small for a profitable trade after fees, set action to HOLD
-
-**Entry Condition (REQUIRED for every BUY):**
-Include an `entry_condition` object. Supported types: limit_price, rsi_threshold, delay, indicator_combo.
-Example: {{"type": "limit_price", "price": 1.23, "timeout_seconds": 3600}}
-Minimum timeout: max(300, {_settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT} × candle timeframe seconds).
-
 **Output ONLY the raw JSON object as specified.**
 
 Return a JSON object with these **required** fields:
@@ -2215,21 +2158,6 @@ If ANY backtest variant confirms a strategy is viable, you may output your final
         "  The `parameters` object MUST include ALL required trading parameters (same as Step 1):\n"
         "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, etc.\n"
         "  You may adjust `position_size_fraction` based on backtest performance (e.g., reduce size if drawdown is high).\n"
-        "\n**CRITICAL — Confidence must reflect ALL available data:**\n"
-        "Your `confidence` value must be your holistic assessment based on EVERYTHING provided to you:\n"
-        "- **Backtest results**: win rate, profit factor, max drawdown, Sharpe ratio, total P&L\n"
-        "- **Technical indicators**: RSI, MACD, Bollinger Bands, EMAs, ADX, Stochastic, MFI, CCI, Williams %R, Ichimoku, Parabolic SAR, VWAP, Donchian Channels, Keltner Channels, ATR percentile\n"
-        "- **News sentiment**: aggregate compound score, sentiment trend, individual article headlines and summaries\n"
-        "- **Market regime**: trend strength, volatility level, Bollinger Band state\n"
-        "- **Market breadth**: percentage of positive stocks, full market breadth\n"
-        "- **Fundamentals**: P/E ratio, market cap, dividend yield, profit margins, return on equity (when available)\n"
-        "- **Historical performance**: your past win rate and P&L for this symbol and strategy type\n"
-        "- **Trade pattern analysis**: which conditions, timeframes, and confidence ranges have historically worked\n"
-        "- **Portfolio context**: current exposure, stop-loss risk, drawdown, consecutive losses\n"
-        "Do NOT set confidence arbitrarily. If the backtest shows poor results, lower your confidence. "
-        "If indicators conflict with your proposed direction, lower your confidence. "
-        "If news sentiment strongly opposes your direction, lower your confidence. "
-        "Only set high confidence (≥0.7) when backtest results, indicators, AND sentiment all align favorably.\n"
     )
     prompt += (
         "\nIf your final action is BUY, you MUST also include an `entry_condition` object (same format as Step 1).\n"
