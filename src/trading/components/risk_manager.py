@@ -418,6 +418,41 @@ class RiskManager:
                                 logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
                     engine._portfolio_exposure_cache = None
 
+    async def update_native_stop_order(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+    ) -> None:
+        """Update the native stop order if the stop-loss price has changed.
+
+        Compares the current stop_loss with the order's original stop price
+        and replaces the native stop order if the price has moved by more
+        than half a tick.
+        """
+        engine = self.engine
+        if (pos.get("stop_loss_order_id")
+                and pos.get("stop_loss_order_type") in ("stop", "stop_limit")):
+            # Compare current stop_loss with the order's original stop price
+            original_stop = pos.get("_native_stop_price")
+            if original_stop is None:
+                # First time – store the current stop_loss as the baseline
+                async with engine._positions_lock:
+                    pos["_native_stop_price"] = pos["stop_loss"]
+            else:
+                # Check if stop_loss has moved by more than a tick
+                tick = 0.01 if pos["stop_loss"] >= 1.0 else 0.0001
+                if abs(pos["stop_loss"] - original_stop) > tick * 0.5:
+                    logger.info(
+                        f"Stop price changed for {symbol}: {original_stop:.4f} -> {pos['stop_loss']:.4f}. "
+                        f"Replacing native stop order."
+                    )
+                    await engine._replace_native_stop_order(
+                        symbol, pos, original_stop, pos["stop_loss"]
+                    )
+                    # Update the stored baseline
+                    async with engine._positions_lock:
+                        pos["_native_stop_price"] = pos["stop_loss"]
+
     async def check_breakeven_stop(
         self,
         symbol: str,
