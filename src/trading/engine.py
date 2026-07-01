@@ -9847,16 +9847,20 @@ class TradingEngine:
                 async with self._cycle_spent_lock:
                     available = max(0.0, quote_balance - self._cycle_spent)
                     if amount > available:
-                        logger.info(
-                            f"Skipping BUY {symbol}: cycle budget exhausted "
-                            f"(needed {amount:.2f}, available {available:.2f}) due to concurrent order"
+                        # The order has already been filled — we cannot un-fill it.
+                        # Log a warning and proceed to record the trade rather than
+                        # returning and leaving the system in an inconsistent state
+                        # (balance debited but no trade/position recorded).
+                        logger.warning(
+                            f"BUY {symbol} filled but cycle budget exhausted by concurrent order "
+                            f"(needed {amount:.2f}, available {available:.2f}). "
+                            f"Recording trade anyway to maintain consistency."
                         )
                         if self.notifier:
                             await self.notifier.send_notification(
-                                f"⚠️ Skipping BUY {display_symbol}: cycle budget exhausted by concurrent order",
-                                summary={"symbol": symbol, "action": "SKIP", "reason": "Cycle budget exhausted (concurrent order)"}
+                                f"⚠️ {display_symbol}: order filled but cycle budget was exhausted by concurrent order. Recording anyway.",
+                                summary={"symbol": symbol, "action": "WARN", "reason": "Cycle budget exhausted after fill (concurrent order)"}
                             )
-                        return
                     # Reserve the full desired amount, not just the filled portion,
                     # so the queued remainder is also accounted for in this cycle.
                     self._cycle_spent += amount
