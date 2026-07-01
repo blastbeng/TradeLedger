@@ -418,7 +418,7 @@ class RiskManager:
                                 logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
                     engine._portfolio_exposure_cache = None
 
-    def check_breakeven_stop(
+    async def check_breakeven_stop(
         self,
         symbol: str,
         pos: Dict[str, Any],

@@ -8210,7 +8210,7 @@ class TradingEngine:
                 await self._risk_manager.update_trailing_take_profit(symbol, pos, current_price)
 
                 # --- Breakeven stop ---
-                self._risk_manager.check_breakeven_stop(symbol, pos, current_price)
+                await self._risk_manager.check_breakeven_stop(symbol, pos, current_price)
 
                 # --- Lock profit feature removed (was scalping-specific) ---
 
