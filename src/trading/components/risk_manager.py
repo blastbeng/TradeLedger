@@ -628,6 +628,50 @@ class RiskManager:
 
         return False
 
+    async def check_max_hold_expired(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+        display_symbol: str,
+    ) -> bool:
+        """Check if the position has exceeded its max hold time.
+
+        Sets a flag so the LLM is asked whether to sell or extend on the
+        next evaluation cycle. Returns True if max hold expired (caller
+        should skip to the next position), False otherwise.
+        """
+        engine = self.engine
+        max_hold = pos.get("max_hold_time_seconds")
+        if max_hold is not None and max_hold > 0:
+            entry_ts = pos.get("timestamp", 0) / 1000.0  # convert ms to seconds
+            if time.time() - entry_ts > max_hold:
+                # Already waiting for LLM – do not re‑trigger
+                if pos.get("_max_hold_expired"):
+                    return True
+                # First expiry – ask LLM
+                expired_count = pos.get("_max_hold_expired_count", 0) + 1
+                async with engine._positions_lock:
+                    pos["_max_hold_expired"] = True
+                    pos["_max_hold_expired_count"] = expired_count
+
+                # Force re‑evaluation on the next main loop tick
+                engine._last_strategy_eval.pop(symbol, None)
+
+                logger.info(
+                    f"Max hold time expired for {symbol} (attempt {expired_count}) – asking LLM to decide."
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"⏰ Max hold time expired for {display_symbol} – asking LLM whether to sell or extend.",
+                        summary={
+                            "symbol": symbol,
+                            "action": "HOLD",
+                            "reason": "Max hold time expired – awaiting LLM decision",
+                        }
+                    )
+                return True
+        return False
+
     async def check_breakeven_stop(
         self,
         symbol: str,

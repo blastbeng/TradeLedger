@@ -8235,35 +8235,8 @@ class TradingEngine:
                     continue
 
                 # --- Max hold time expired → ask LLM instead of auto‑closing ---
-                max_hold = pos.get("max_hold_time_seconds")
-                if max_hold is not None and max_hold > 0:
-                    entry_ts = pos.get("timestamp", 0) / 1000.0  # convert ms to seconds
-                    if time.time() - entry_ts > max_hold:
-                        # Already waiting for LLM – do not re‑trigger
-                        if pos.get("_max_hold_expired"):
-                            continue
-                        # First expiry – ask LLM
-                        expired_count = pos.get("_max_hold_expired_count", 0) + 1
-                        async with self._positions_lock:
-                            pos["_max_hold_expired"] = True
-                            pos["_max_hold_expired_count"] = expired_count
-
-                        # Force re‑evaluation on the next main loop tick
-                        self._last_strategy_eval.pop(symbol, None)
-
-                        logger.info(
-                            f"Max hold time expired for {symbol} (attempt {expired_count}) – asking LLM to decide."
-                        )
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⏰ Max hold time expired for {display_symbol} – asking LLM whether to sell or extend.",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "HOLD",
-                                    "reason": "Max hold time expired – awaiting LLM decision",
-                                }
-                            )
-                        continue   # skip further checks for this symbol in this cycle
+                if await self._risk_manager.check_max_hold_expired(symbol, pos, display_symbol):
+                    continue
 
                 if pos.get("stop_loss_order_id") or pos.get("take_profit_order_id"):
                     # Native exit orders are active – skip manual stop/tp triggers.
