@@ -3099,43 +3099,9 @@ class TradingEngine:
         min_viable_amount = 0.0
 
         logger.info("Re-evaluation step 10/12: Computing correlation matrix and performance metrics...")
-        # Cache correlation matrix in Redis for 30 minutes (it changes slowly)
-        corr_cache_key = "reeval:correlation_matrix"
-        correlation_matrix = None
-        try:
-            cached_corr = await asyncio.to_thread(self.redis.get, corr_cache_key)
-            if cached_corr:
-                correlation_matrix = json.loads(cached_corr)
-        except Exception:
-            pass
-        if correlation_matrix is None:
-            correlation_matrix = await asyncio.to_thread(
-                self._symbol_reevaluator.compute_correlation_matrix, ohlcv_data, sorted_by_vol
-            )
-            # Dynamic TTL: shorter during high-volatility / extreme market conditions
-            corr_ttl = 1800  # default 30 minutes
-            _mb = getattr(self, '_market_breadth', None)
-            if _mb:
-                pos_pct = _mb.get("positive_pct", 50)
-                if pos_pct > 80 or pos_pct < 20:
-                    corr_ttl = 600  # 10 minutes during extreme breadth
-            _fmb = None
-            try:
-                _fmb_raw = await asyncio.to_thread(self.redis.get, "market:breadth:full")
-                if _fmb_raw:
-                    _fmb = json.loads(_fmb_raw)
-            except Exception:
-                pass
-            if _fmb:
-                pos_pct = _fmb.get("positive_pct", 50)
-                if pos_pct > 80 or pos_pct < 20:
-                    corr_ttl = 600
-            try:
-                await asyncio.to_thread(
-                    self.redis.setex, corr_cache_key, corr_ttl, json.dumps(correlation_matrix)
-                )
-            except Exception:
-                pass
+        correlation_matrix = await self._symbol_reevaluator.get_or_compute_correlation_matrix(
+            ohlcv_data, sorted_by_vol
+        )
 
         perf = await asyncio.to_thread(self._compute_performance_metrics)
         trade_pattern_analysis = await asyncio.to_thread(self._compute_trade_pattern_analysis)

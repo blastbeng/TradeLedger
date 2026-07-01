@@ -5,6 +5,7 @@ final selection, pause/resume, and state cleanup.
 Extracted from TradingEngine to reduce class size and improve maintainability.
 """
 import asyncio
+import json
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -699,3 +700,54 @@ class SymbolReevaluator:
         shortlist = [s for s in shortlist if not (s in seen or seen.add(s))]
 
         return composite_scores, shortlist
+
+    async def get_or_compute_correlation_matrix(
+        self,
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+        sorted_by_vol: List[str],
+    ) -> Dict[str, Dict[str, float]]:
+        """Fetch the correlation matrix from Redis cache, or compute and cache it.
+
+        Uses a dynamic TTL: shorter (10 min) during extreme market breadth,
+        longer (30 min) otherwise.
+        """
+        engine = self.engine
+        corr_cache_key = "reeval:correlation_matrix"
+        correlation_matrix = None
+        try:
+            cached_corr = await asyncio.to_thread(engine.redis.get, corr_cache_key)
+            if cached_corr:
+                correlation_matrix = json.loads(cached_corr)
+        except Exception:
+            pass
+
+        if correlation_matrix is None:
+            correlation_matrix = await asyncio.to_thread(
+                self.compute_correlation_matrix, ohlcv_data, sorted_by_vol
+            )
+            # Dynamic TTL: shorter during high-volatility / extreme market conditions
+            corr_ttl = 1800  # default 30 minutes
+            _mb = getattr(engine, '_market_breadth', None)
+            if _mb:
+                pos_pct = _mb.get("positive_pct", 50)
+                if pos_pct > 80 or pos_pct < 20:
+                    corr_ttl = 600  # 10 minutes during extreme breadth
+            _fmb = None
+            try:
+                _fmb_raw = await asyncio.to_thread(engine.redis.get, "market:breadth:full")
+                if _fmb_raw:
+                    _fmb = json.loads(_fmb_raw)
+            except Exception:
+                pass
+            if _fmb:
+                pos_pct = _fmb.get("positive_pct", 50)
+                if pos_pct > 80 or pos_pct < 20:
+                    corr_ttl = 600
+            try:
+                await asyncio.to_thread(
+                    engine.redis.setex, corr_cache_key, corr_ttl, json.dumps(correlation_matrix)
+                )
+            except Exception:
+                pass
+
+        return correlation_matrix
