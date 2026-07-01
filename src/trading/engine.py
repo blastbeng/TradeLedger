@@ -8244,124 +8244,16 @@ class TradingEngine:
                 ):
                     continue
 
-                # --- Manual stop-loss trigger (no native orders) ---
+                # --- Manual stop-loss / take-profit triggers (no native orders) ---
                 if current_price <= pos["stop_loss"]:
-                    # Instead of immediately selling, ask the LLM whether to sell or adjust the stop.
-                    # Scale max reviews based on position timeframe to prevent excessive
-                    # loss accumulation in long-term positions.
-                    effective_max_sl_reviews = max_sl_reviews
-                    pos_tf = pos.get("timeframe")
-                    if pos_tf:
-                        pos_tf_secs = self._timeframe_to_seconds(pos_tf)
-                        if pos_tf_secs >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
-                            effective_max_sl_reviews = min(effective_max_sl_reviews, settings.LONG_TERM_MAX_STOP_LOSS_REVIEWS)
-                        elif pos_tf_secs >= 604_800:  # >= 1 week
-                            effective_max_sl_reviews = min(effective_max_sl_reviews, settings.WEEKLY_MAX_STOP_LOSS_REVIEWS)
-                    review_count = pos.get("_stop_loss_review_count", 0)
-                    if review_count >= effective_max_sl_reviews:
-                        # Fallback: force-sell after too many reviews
-                        logger.warning(
-                            f"Stop-loss triggered for {symbol} at {current_price} – "
-                            f"review count {review_count} >= {effective_max_sl_reviews}, forcing SELL."
-                        )
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⛔ Stop‑loss triggered for {display_symbol} at {current_price:.4f} – "
-                                f"max reviews reached ({effective_max_sl_reviews}), selling.",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "SELL",
-                                    "reason": "Stop-loss (max reviews)",
-                                    "price": current_price,
-                                    "exit_reason": "stop_loss_max_reviews",
-                                }
-                            )
-                        await self._execute_signal(
-                            symbol,
-                            Signal(action="SELL", confidence=1.0, reasoning="Stop-loss (max reviews)"),
-                            exit_reason="stop_loss_max_reviews"
-                        )
-                    else:
-                        # First or repeated trigger: set flag and ask LLM
-                        if not pos.get("_stop_loss_triggered"):
-                            async with self._positions_lock:
-                                pos["_stop_loss_triggered"] = True
-                                pos["_stop_loss_review_count"] = review_count + 1
-                            # Force immediate strategy re-evaluation for this symbol
-                            self._last_strategy_eval.pop(symbol, None)
-                            logger.info(
-                                f"Stop-loss triggered for {symbol} at {current_price} – "
-                                f"asking LLM (review {pos['_stop_loss_review_count']}/{effective_max_sl_reviews})."
-                            )
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"⛔ Stop‑loss hit for {display_symbol} at {current_price:.4f} – consulting LLM...",
-                                    summary={
-                                        "symbol": symbol,
-                                        "action": "HOLD",
-                                        "reason": "Stop-loss triggered – awaiting LLM decision",
-                                        "price": current_price,
-                                    }
-                                )
-                        else:
-                            # Already waiting for LLM; do nothing (avoid re-triggering)
-                            logger.debug(
-                                f"Stop-loss still triggered for {symbol}, waiting for LLM response "
-                                f"(review {review_count}/{effective_max_sl_reviews})."
-                            )
+                    await self._risk_manager.check_manual_stop_loss(
+                        symbol, pos, current_price, display_symbol, max_sl_reviews
+                    )
                 elif current_price >= pos["take_profit"]:
-                    # Always ask the LLM whether to sell or adjust the take-profit, but cap reviews.
-                    review_count = pos.get("_take_profit_review_count", 0)
-                    if review_count >= max_tp_reviews:
-                        logger.warning(
-                            f"Take-profit triggered for {symbol} at {current_price} – "
-                            f"review count {review_count} >= {max_tp_reviews}, forcing SELL."
-                        )
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"🎯 Take‑profit triggered for {display_symbol} at {current_price:.4f} – "
-                                f"max reviews reached, selling.",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "SELL",
-                                    "reason": "Take-profit (max reviews)",
-                                    "price": current_price,
-                                    "exit_reason": "take_profit_max_reviews",
-                                }
-                            )
-                        await self._execute_signal(
-                            symbol,
-                            Signal(action="SELL", confidence=1.0, reasoning="Take-profit (max reviews)"),
-                            exit_reason="take_profit_max_reviews"
-                        )
+                    if await self._risk_manager.check_manual_take_profit(
+                        symbol, pos, current_price, display_symbol, max_tp_reviews
+                    ):
                         continue
-                    # First or repeated trigger: set flag and ask LLM
-                    if not pos.get("_take_profit_triggered"):
-                        async with self._positions_lock:
-                            pos["_take_profit_triggered"] = True
-                            pos["_take_profit_review_count"] = review_count + 1
-                        # Force immediate strategy re-evaluation for this symbol
-                        self._last_strategy_eval.pop(symbol, None)
-                        logger.info(
-                            f"Take-profit triggered for {symbol} at {current_price} – "
-                            f"asking LLM (review {pos['_take_profit_review_count']}/{max_tp_reviews})."
-                        )
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"🎯 Take‑profit hit for {display_symbol} at {current_price:.4f} – consulting LLM...",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "HOLD",
-                                    "reason": "Take-profit triggered – awaiting LLM decision",
-                                    "price": current_price,
-                                }
-                            )
-                    else:
-                        # Already waiting for LLM; do nothing
-                        logger.debug(
-                            f"Take-profit still triggered for {symbol}, waiting for LLM response "
-                            f"(review {review_count}/{max_tp_reviews})."
-                        )
             except Exception as e:
                 logger.error(f"Risk check failed for {symbol}: {e}")
 

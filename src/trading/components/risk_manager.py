@@ -888,6 +888,152 @@ class RiskManager:
         # Skip manual stop/tp checks — native orders handle it.
         return True
 
+    async def check_manual_stop_loss(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+        current_price: float,
+        display_symbol: str,
+        max_sl_reviews: int,
+    ) -> None:
+        """Handle a manual stop-loss trigger (no native orders).
+
+        Instead of immediately selling, asks the LLM whether to sell or
+        adjust the stop. Scales max reviews based on position timeframe.
+        Force-sells after max reviews are reached.
+        """
+        engine = self.engine
+        effective_max_sl_reviews = max_sl_reviews
+        pos_tf = pos.get("timeframe")
+        if pos_tf:
+            pos_tf_secs = engine._timeframe_to_seconds(pos_tf)
+            if pos_tf_secs >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
+                effective_max_sl_reviews = min(effective_max_sl_reviews, settings.LONG_TERM_MAX_STOP_LOSS_REVIEWS)
+            elif pos_tf_secs >= 604_800:  # >= 1 week
+                effective_max_sl_reviews = min(effective_max_sl_reviews, settings.WEEKLY_MAX_STOP_LOSS_REVIEWS)
+        review_count = pos.get("_stop_loss_review_count", 0)
+        if review_count >= effective_max_sl_reviews:
+            # Fallback: force-sell after too many reviews
+            logger.warning(
+                f"Stop-loss triggered for {symbol} at {current_price} – "
+                f"review count {review_count} >= {effective_max_sl_reviews}, forcing SELL."
+            )
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⛔ Stop‑loss triggered for {display_symbol} at {current_price:.4f} – "
+                    f"max reviews reached ({effective_max_sl_reviews}), selling.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SELL",
+                        "reason": "Stop-loss (max reviews)",
+                        "price": current_price,
+                        "exit_reason": "stop_loss_max_reviews",
+                    }
+                )
+            await engine._execute_signal(
+                symbol,
+                Signal(action="SELL", confidence=1.0, reasoning="Stop-loss (max reviews)"),
+                exit_reason="stop_loss_max_reviews"
+            )
+        else:
+            # First or repeated trigger: set flag and ask LLM
+            if not pos.get("_stop_loss_triggered"):
+                async with engine._positions_lock:
+                    pos["_stop_loss_triggered"] = True
+                    pos["_stop_loss_review_count"] = review_count + 1
+                # Force immediate strategy re-evaluation for this symbol
+                engine._last_strategy_eval.pop(symbol, None)
+                logger.info(
+                    f"Stop-loss triggered for {symbol} at {current_price} – "
+                    f"asking LLM (review {pos['_stop_loss_review_count']}/{effective_max_sl_reviews})."
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"⛔ Stop‑loss hit for {display_symbol} at {current_price:.4f} – consulting LLM...",
+                        summary={
+                            "symbol": symbol,
+                            "action": "HOLD",
+                            "reason": "Stop-loss triggered – awaiting LLM decision",
+                            "price": current_price,
+                        }
+                    )
+            else:
+                # Already waiting for LLM; do nothing (avoid re-triggering)
+                logger.debug(
+                    f"Stop-loss still triggered for {symbol}, waiting for LLM response "
+                    f"(review {review_count}/{effective_max_sl_reviews})."
+                )
+
+    async def check_manual_take_profit(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+        current_price: float,
+        display_symbol: str,
+        max_tp_reviews: int,
+    ) -> bool:
+        """Handle a manual take-profit trigger (no native orders).
+
+        Always asks the LLM whether to sell or adjust the take-profit,
+        but caps reviews. Force-sells after max reviews are reached.
+
+        Returns True if the position was force-sold (caller should continue
+        to the next position), False otherwise.
+        """
+        engine = self.engine
+        review_count = pos.get("_take_profit_review_count", 0)
+        if review_count >= max_tp_reviews:
+            logger.warning(
+                f"Take-profit triggered for {symbol} at {current_price} – "
+                f"review count {review_count} >= {max_tp_reviews}, forcing SELL."
+            )
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"🎯 Take‑profit triggered for {display_symbol} at {current_price:.4f} – "
+                    f"max reviews reached, selling.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SELL",
+                        "reason": "Take-profit (max reviews)",
+                        "price": current_price,
+                        "exit_reason": "take_profit_max_reviews",
+                    }
+                )
+            await engine._execute_signal(
+                symbol,
+                Signal(action="SELL", confidence=1.0, reasoning="Take-profit (max reviews)"),
+                exit_reason="take_profit_max_reviews"
+            )
+            return True
+        # First or repeated trigger: set flag and ask LLM
+        if not pos.get("_take_profit_triggered"):
+            async with engine._positions_lock:
+                pos["_take_profit_triggered"] = True
+                pos["_take_profit_review_count"] = review_count + 1
+            # Force immediate strategy re-evaluation for this symbol
+            engine._last_strategy_eval.pop(symbol, None)
+            logger.info(
+                f"Take-profit triggered for {symbol} at {current_price} – "
+                f"asking LLM (review {pos['_take_profit_review_count']}/{max_tp_reviews})."
+            )
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"🎯 Take‑profit hit for {display_symbol} at {current_price:.4f} – consulting LLM...",
+                    summary={
+                        "symbol": symbol,
+                        "action": "HOLD",
+                        "reason": "Take-profit triggered – awaiting LLM decision",
+                        "price": current_price,
+                    }
+                )
+        else:
+            # Already waiting for LLM; do nothing
+            logger.debug(
+                f"Take-profit still triggered for {symbol}, waiting for LLM response "
+                f"(review {review_count}/{max_tp_reviews})."
+            )
+        return False
+
     async def check_breakeven_stop(
         self,
         symbol: str,
