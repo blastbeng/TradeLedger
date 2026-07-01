@@ -418,6 +418,30 @@ class RiskManager:
                                 logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
                     engine._portfolio_exposure_cache = None
 
+    def check_breakeven_stop(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+        current_price: float,
+    ) -> None:
+        """Activate breakeven stop if the position has gained enough profit.
+
+        Moves the stop-loss to the entry price once the current price
+        exceeds the entry price by the configured activation percentage.
+        """
+        engine = self.engine
+        breakeven_activation = pos.get("breakeven_activation_pct")
+        if breakeven_activation is not None and breakeven_activation > 0:
+            entry_price = pos["price"]
+            if current_price >= entry_price * (1 + breakeven_activation):
+                # Compute exact break-even price that covers exit fee
+                breakeven_price = entry_price
+                async with engine._positions_lock:
+                    if breakeven_price > pos["stop_loss"]:
+                        pos["stop_loss"] = breakeven_price
+                        logger.info(f"Breakeven stop activated for {symbol}: new stop {breakeven_price:.4f}")
+                engine._portfolio_exposure_cache = None
+
     async def update_trailing_take_profit(
         self,
         symbol: str,
