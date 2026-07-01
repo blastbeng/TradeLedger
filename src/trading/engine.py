@@ -996,12 +996,18 @@ class TradingEngine:
                                     if abs(current_compound - prev_compound) > 0.3:
                                         logger.info(f"Significant sentiment shift for {symbol}, triggering re-evaluation")
                                         should_trigger = True
+                                        # Update the baseline only when a trigger fires
+                                        if current_compound is not None:
+                                            await asyncio.to_thread(
+                                                self.redis.setex, prev_key, 3600, str(current_compound)
+                                            )
                                         break
-                                # Update the re-evaluation baseline regardless of whether we triggered
-                                if current_compound is not None:
-                                    await asyncio.to_thread(
-                                        self.redis.setex, prev_key, 3600, str(current_compound)
-                                    )
+                                else:
+                                    # No previous baseline — initialize it
+                                    if current_compound is not None:
+                                        await asyncio.to_thread(
+                                            self.redis.setex, prev_key, 3600, str(current_compound)
+                                        )
                         except Exception:
                             continue
 
