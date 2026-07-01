@@ -3053,6 +3053,7 @@ class TradingEngine:
         if _cooldown_result is None:
             return
         is_user_forced, is_market_condition_trigger, now = _cooldown_result
+        last_key = "trading:last_symbol_eval"
 
         logger.info("Re-evaluation step 2/12: Fetching tradable assets, BTPs, and ETFs...")
         old_symbols = list(self.current_symbols)
