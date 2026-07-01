@@ -11948,28 +11948,13 @@ class TradingEngine:
         if not old_order_id:
             return
 
-        # Cancel the old order
-        try:
-            await asyncio.to_thread(self.trader.cancel_order, old_order_id)
-            logger.info(f"Cancelled old stop order {old_order_id} for {symbol}")
-        except Exception as e:
-            logger.warning(f"Failed to cancel old stop order {old_order_id}: {e}")
-            # Continue anyway – the old order may still be open, but we'll place a new one.
-            # The OCO logic will eventually cancel the old one if the new one fills.
-
-        # Capture the old queued entry's limit price BEFORE removing it
+        # Capture the old queued entry's limit price (read-only, do NOT remove yet)
         async with self._queued_orders_lock:
             old_queued = next(
                 (q for q in self.queued_orders if q.get("order_id") == old_order_id),
                 None
             )
             old_limit_price = old_queued.get("limit_price") if old_queued else None
-
-            # Remove the old queued entry
-            self.queued_orders = [
-                q for q in self.queued_orders
-                if q.get("order_id") != old_order_id
-            ]
 
         # Place a new stop order
         qty = pos["amount"]
@@ -12026,6 +12011,20 @@ class TradingEngine:
             pos["stop_loss_order_id"] = new_order_id
             logger.info(f"Placed new stop order {new_order_id} for {symbol} at {new_stop_price:.4f}")
 
+            # New order placed successfully — now safe to cancel the old one
+            try:
+                await asyncio.to_thread(self.trader.cancel_order, old_order_id)
+                logger.info(f"Cancelled old stop order {old_order_id} for {symbol} (replaced by {new_order_id})")
+            except Exception as e:
+                logger.warning(f"Failed to cancel old stop order {old_order_id} (new order {new_order_id} already placed): {e}")
+
+            # Remove the old queued entry now that the new one is active
+            async with self._queued_orders_lock:
+                self.queued_orders = [
+                    q for q in self.queued_orders
+                    if q.get("order_id") != old_order_id
+                ]
+
             # Notify user
             if self.notifier:
                 stock_name = await self._get_stock_name(symbol)
@@ -12042,7 +12041,22 @@ class TradingEngine:
                     }
                 )
         except Exception as e:
-            logger.error(f"Failed to place replacement stop order for {symbol}: {e}")
+            logger.error(
+                f"Failed to place replacement stop order for {symbol}: {e}. "
+                f"Old stop order {old_order_id} remains active at the previous price."
+            )
+            if self.notifier:
+                stock_name = await self._get_stock_name(symbol)
+                display_symbol = self._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+                await self.notifier.send_notification(
+                    f"⚠️ Stop order replacement failed for {display_symbol}: old stop order kept active.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "ERROR",
+                        "reason": f"Stop order replacement failed, old order kept: {str(e)[:200]}",
+                    }
+                )
+            return
 
     async def _execute_partial_sell(
         self,
