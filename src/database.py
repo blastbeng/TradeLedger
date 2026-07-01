@@ -1369,7 +1369,7 @@ def get_indicators_for_symbols(symbols: List[str], timeframes: List[str]) -> Dic
         placeholders = ",".join(["(%s,%s)"] * (len(symbols) * len(timeframes)))
         sql = _adapt_sql(
             f"""
-            SELECT symbol, timeframe, indicators_json
+            SELECT symbol, timeframe, indicators_json, timestamp
             FROM indicators
             WHERE (symbol, timeframe) IN ({placeholders})
             """
@@ -1381,7 +1381,9 @@ def get_indicators_for_symbols(symbols: List[str], timeframes: List[str]) -> Dic
             sym = row["symbol"]
             tf = row["timeframe"]
             if sym in result:
-                result[sym][tf] = json.loads(row["indicators_json"])
+                data = json.loads(row["indicators_json"])
+                data["_indicator_timestamp"] = row["timestamp"]
+                result[sym][tf] = data
         return result
     finally:
         conn.close()

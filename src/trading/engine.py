@@ -5358,6 +5358,7 @@ class TradingEngine:
 
         batch_inds = await asyncio.to_thread(get_indicators_for_symbols, [symbol], settings.OHLCV_TIMEFRAMES)
         symbol_inds = batch_inds.get(symbol, {})
+        stale_indicators_warning = ""
 
         for tf in settings.OHLCV_TIMEFRAMES:
             if tf in ohlcv_data and ohlcv_data[tf]:
@@ -5365,6 +5366,32 @@ class TradingEngine:
                 multi_tf_raw_candles[tf] = candles
                 ind = symbol_inds.get(tf)
                 if ind:
+                    # --- Staleness check: recompute if indicators are older than 2× the candle interval ---
+                    ind_ts = ind.pop("_indicator_timestamp", None)
+                    latest_candle_ts = candles[-1][0] if candles else None
+                    if ind_ts is not None and latest_candle_ts is not None:
+                        tf_ms = self._timeframe_to_ms(tf)
+                        if (latest_candle_ts - ind_ts) > 2 * tf_ms:
+                            logger.info(
+                                f"Indicators for {symbol} {tf} are stale "
+                                f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
+                                f"gap={latest_candle_ts - ind_ts}ms > {2 * tf_ms}ms). Recomputing on-the-fly."
+                            )
+                            try:
+                                fresh_ind = await asyncio.to_thread(compute_all_indicators, candles)
+                                if fresh_ind:
+                                    ind = fresh_ind
+                                else:
+                                    stale_indicators_warning += (
+                                        f"\n⚠️ **STALE INDICATORS:** Indicators for {symbol} on {tf} timeframe "
+                                        f"are stale and could not be recomputed. Use with caution.\n"
+                                    )
+                            except Exception as e:
+                                logger.warning(f"Failed to recompute stale indicators for {symbol} {tf}: {e}")
+                                stale_indicators_warning += (
+                                    f"\n⚠️ **STALE INDICATORS:** Indicators for {symbol} on {tf} timeframe "
+                                    f"are stale (recomputation failed). Use with caution.\n"
+                                )
                     multi_tf_indicators[tf] = ind
                     if tf == assigned_tf:
                         atr = ind.get('atr')
@@ -5410,6 +5437,7 @@ class TradingEngine:
             "ichimoku": ichimoku, "donchian_channels": donchian_channels,
             "parabolic_sar": parabolic_sar, "keltner_channels": keltner_channels,
             "vwap": vwap, "daily_pivot_points": daily_pivot_points,
+            "stale_indicators_warning": stale_indicators_warning,
         }
 
     async def _gather_prompt_context(
@@ -6362,6 +6390,7 @@ class TradingEngine:
             "keltner_channels": _inds["keltner_channels"],
             "vwap": _inds["vwap"],
             "daily_pivot_points": _inds["daily_pivot_points"],
+            "stale_indicators_warning": _inds.get("stale_indicators_warning", ""),
         }
 
     async def _process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False):
@@ -6830,6 +6859,9 @@ class TradingEngine:
             staleness_warning = self._get_quote_staleness_warning(ticker)
             if staleness_warning:
                 analysis_prompt += staleness_warning
+            stale_indicators_warning = symbol_data.get("stale_indicators_warning", "")
+            if stale_indicators_warning:
+                analysis_prompt += stale_indicators_warning
             # Add auto-resume note so the LLM sees this context in per-symbol decisions
             last_auto_resume_raw = await asyncio.to_thread(self.redis.get, "trading:last_auto_resume")
             if last_auto_resume_raw:
@@ -8503,27 +8535,29 @@ class TradingEngine:
                                                 ind_ts = ind.get("_indicator_timestamp")
                                                 atr_is_stale = False
                                                 if ind_ts is not None:
-                                                    tf_secs = self._timeframe_to_seconds(tf)
-                                                    # Cap max age at 1 day so long timeframes
-                                                    # (1Y, etc.) don't use stale ATR values
-                                                    # for trailing stop calculations.
-                                                    max_age_secs = min(tf_secs * 2, 86400)
-                                                    # The indicator timestamp is the candle's
-                                                    # start time.  The candle covers a period
-                                                    # of tf_secs, so the most recent data is
-                                                    # tf_secs more recent than the timestamp.
-                                                    # Subtract the candle duration to get the
-                                                    # effective age of the data.
-                                                    age_secs = (time.time() * 1000 - ind_ts) / 1000
-                                                    effective_age = max(0, age_secs - tf_secs)
-                                                    if effective_age > max_age_secs:
-                                                        logger.info(
-                                                            f"ATR for {symbol} {tf} is stale "
-                                                            f"(indicator data {effective_age/86400:.1f}d old, "
-                                                            f"max {max_age_secs/86400:.1f}d). "
-                                                            f"Falling back to fixed-percentage trailing stop."
-                                                        )
-                                                        atr_is_stale = True
+                                                    # Compare against the latest candle timestamp
+                                                    # from multi_tf_raw_candles instead of wall-clock time
+                                                    latest_candle_ts = None
+                                                    if tf in multi_tf_raw_candles and multi_tf_raw_candles[tf]:
+                                                        latest_candle_ts = multi_tf_raw_candles[tf][-1][0]
+                                                    if latest_candle_ts is not None:
+                                                        tf_ms = self._timeframe_to_ms(tf)
+                                                        if (latest_candle_ts - ind_ts) > 2 * tf_ms:
+                                                            logger.info(
+                                                                f"ATR for {symbol} {tf} is stale "
+                                                                f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
+                                                                f"gap={latest_candle_ts - ind_ts}ms > {2 * tf_ms}ms). "
+                                                                f"Falling back to fixed-percentage trailing stop."
+                                                            )
+                                                            atr_is_stale = True
+                                                    else:
+                                                        # Fallback to wall-clock check if no candles available
+                                                        tf_secs = self._timeframe_to_seconds(tf)
+                                                        max_age_secs = min(tf_secs * 2, 86400)
+                                                        age_secs = (time.time() * 1000 - ind_ts) / 1000
+                                                        effective_age = max(0, age_secs - tf_secs)
+                                                        if effective_age > max_age_secs:
+                                                            atr_is_stale = True
                                                 async with self._positions_lock:
                                                     if not atr_is_stale:
                                                         pos["_current_atr"] = ind["atr"]
@@ -13911,6 +13945,10 @@ class TradingEngine:
         staleness_warning = self._get_quote_staleness_warning(ticker)
         if staleness_warning:
             prompt += staleness_warning
+
+        stale_indicators_warning = symbol_data.get("stale_indicators_warning", "")
+        if stale_indicators_warning:
+            prompt += stale_indicators_warning
 
         # Compute complexity and model tier for perfect emulation
         _conflicting = False
