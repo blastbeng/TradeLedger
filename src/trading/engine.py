@@ -7077,52 +7077,14 @@ class TradingEngine:
                     order_type=order_type,
                     timeframe=timeframe,
                 )
-                # --- Place native exit orders (OCO) if LLM specified them ---
-                current_entry = self.positions[symbol]["price"]
-                exit_prices = self._compute_exit_order_prices(
-                    entry_price=current_entry,
+                await self._order_executor.record_buy_fill_and_notify(
+                    symbol=symbol,
+                    display_symbol=display_symbol,
+                    order=order,
                     signal=signal,
+                    timeframe=timeframe,
                     atr=atr,
                 )
-                await self._place_exit_orders(symbol, signal, exit_prices, timeframe)
-                order["strategy_type"] = signal.strategy_type
-                order["timeframe"] = timeframe
-                order["buy_confidence"] = signal.confidence
-                order["buy_reasoning"] = (signal.reasoning or "")[:200]
-                if hasattr(signal, 'backtest_summary') and signal.backtest_summary:
-                    order["backtest_summary"] = signal.backtest_summary
-                self._append_trade(order)
-                self._balance_cache = None  # force refresh on next fetch
-                await asyncio.to_thread(insert_trade, order)
-                await self._save_state(force=True)
-                self._portfolio_exposure_cache = None
-                if self.notifier:
-                    # --- Format symbol for notification ---
-                    stock_name = await self._get_stock_name(symbol)
-                    display_symbol = self._format_symbol_display(symbol, stock_name, timeframe)
-                    buy_msg = f"🟢 BUY {display_symbol}: {order['amount']:.6f} @ {order['price']:.4f}"
-                    buy_summary = {
-                        "symbol": symbol,
-                        "action": "BUY",
-                        "price": order["price"],
-                        "amount": order["amount"],
-                        "confidence": signal.confidence,
-                        "reason": signal.reasoning[:200],
-                        "strategy_type": signal.strategy_type,
-                        "indicators": {
-                            "atr": atr,
-                        },
-                    }
-                    if signal.model_type:
-                        buy_summary["model_type"] = signal.model_type
-                    if signal.llm_provider:
-                        buy_summary["llm_provider"] = signal.llm_provider
-                    if signal.llm_model:
-                        buy_summary["llm_model"] = signal.llm_model
-                    await self.notifier.send_notification(
-                        buy_msg,
-                        summary=buy_summary,
-                    )
             except Exception as e:
                 logger.error(f"Buy order failed for {symbol}: {e}")
                 if self.notifier:
