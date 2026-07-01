@@ -9790,6 +9790,22 @@ class TradingEngine:
                     # Reserve capital when the order is queued, not just when it fills,
                     # so subsequent symbols in the same cycle see reduced available capital.
                     async with self._cycle_spent_lock:
+                        available = max(0.0, quote_balance - self._cycle_spent)
+                        if amount > available:
+                            logger.info(
+                                f"Skipping queued BUY {symbol}: cycle budget exhausted "
+                                f"(needed {amount:.2f}, available {available:.2f}) due to concurrent order"
+                            )
+                            try:
+                                await asyncio.to_thread(self.trader.cancel_order, order['id'])
+                            except Exception:
+                                pass
+                            if self.notifier:
+                                await self.notifier.send_notification(
+                                    f"⚠️ Skipping BUY {display_symbol}: cycle budget exhausted by concurrent order",
+                                    summary={"symbol": symbol, "action": "SKIP", "reason": "Cycle budget exhausted (concurrent order)"}
+                                )
+                            return
                         self._cycle_spent += amount
                     if self.notifier:
                         await self.notifier.send_notification(
@@ -9829,6 +9845,18 @@ class TradingEngine:
                     async with self._queued_orders_lock:
                         self.queued_orders.append(queued_entry)
                 async with self._cycle_spent_lock:
+                    available = max(0.0, quote_balance - self._cycle_spent)
+                    if amount > available:
+                        logger.info(
+                            f"Skipping BUY {symbol}: cycle budget exhausted "
+                            f"(needed {amount:.2f}, available {available:.2f}) due to concurrent order"
+                        )
+                        if self.notifier:
+                            await self.notifier.send_notification(
+                                f"⚠️ Skipping BUY {display_symbol}: cycle budget exhausted by concurrent order",
+                                summary={"symbol": symbol, "action": "SKIP", "reason": "Cycle budget exhausted (concurrent order)"}
+                            )
+                        return
                     # Reserve the full desired amount, not just the filled portion,
                     # so the queued remainder is also accounted for in this cycle.
                     self._cycle_spent += amount
