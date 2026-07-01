@@ -8387,6 +8387,14 @@ class TradingEngine:
                 if has_queued:
                     continue
 
+                # --- Retry deferred dust sweep if market is now open ---
+                if pos.get("_dust_sweep_pending") and await self._is_market_open():
+                    logger.info(f"Retrying deferred dust sweep for {symbol} (market is now open).")
+                    async with self._positions_lock:
+                        pos.pop("_dust_sweep_pending", None)
+                    await self._sweep_dust(symbol)
+                    continue
+
                 ticker = risk_tickers.get(symbol)
                 if ticker is None:
                     continue  # no real-time data yet, skip this check
@@ -12417,7 +12425,10 @@ class TradingEngine:
             return
 
         if not await self._is_market_open():
-            logger.info(f"Dust sweep for {symbol} skipped: market closed.")
+            logger.info(f"Dust sweep for {symbol} deferred: market closed. Will retry on next market open.")
+            if symbol in self.positions:
+                async with self._positions_lock:
+                    self.positions[symbol]["_dust_sweep_pending"] = True
             return
 
         need_limit = not self._is_regular_hours()
