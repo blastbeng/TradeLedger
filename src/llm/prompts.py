@@ -843,8 +843,6 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
         )
     prompt += f"""Select between {settings.MIN_SYMBOLS if settings.MIN_SYMBOLS > 0 else 0} and {max_symbols} assets from the shortlist above. You may keep current assets if they are still promising, or replace them. Each symbol can only appear once. Choose the single best timeframe for each stock.
 
-**Important:** Unless the market is in a clear crisis, you MUST select at least 1-2 stocks. **HYBRID ALLOCATION:** You may allocate ALL available capital to a single high-conviction trade if you believe it is highly profitable, even if this leaves no capital for other tickers. However, if you can leave some capital for other promising setups, do so. **Do NOT place small trades that are unprofitable after fees** just to fill slots — if a trade cannot be profitable with the available capital after accounting for transaction costs, skip it entirely. Prioritize quality over quantity. You may concentrate capital on your best 1–3 setups.
-
 """
     if settings.MIN_SYMBOLS > 0:
         prompt += (
@@ -1258,20 +1256,6 @@ Maximum symbols to trade: {max_symbols}
         )
     if assigned_timeframe:
         prompt += f"\nAssigned trading timeframe for this stock: {assigned_timeframe}. Base your decision PRIMARILY on the OHLCV data for this timeframe.\n"
-        if assigned_timeframe in ("1w", "1M", "3M", "6M", "1Y", "3Y", "5Y"):
-            prompt += (
-                f"**CRITICAL: {assigned_timeframe} is a PRIMARY timeframe.** "
-                "All long-term timeframes (5Y, 3Y, 1Y, 6M, 3M, 1M, 1w) are equally valid primary timeframes and capture the largest, most reliable trends. "
-                "You MUST focus on this timeframe to identify the primary long-term trend direction and strength. "
-                "The largest profits come from holding positions that are in a strong long-term uptrend. "
-                "Set max_hold_time_seconds appropriate for this timeframe (e.g., several months to years).\n"
-            )
-        elif assigned_timeframe in ("1d", "1h"):
-            prompt += (
-                f"**WARNING: {assigned_timeframe} is a short-term timeframe.** "
-                "You should only be using this timeframe if long-term data (5Y, 3Y, 1Y, 6M, 3M, 1M) was unavailable. "
-                "If long-term data IS available in the multi-timeframe section, you MUST base your primary decision on those longer timeframes instead.\n"
-            )
     if market_regime:
         prompt += f"\nMarket regime: {market_regime}\n"
 
@@ -1433,8 +1417,6 @@ Maximum symbols to trade: {max_symbols}
             prompt += "\n".join(tf_summaries) + "\n"
             prompt += (
                 "Use these summaries to assess momentum and trend across timeframes. "
-                "**CRITICAL: All long-term timeframes (5Y, 3Y, 1Y, 6M, 3M, 1M, 1w) are your PRIMARY timeframes and are equally important** — they show the dominant long-term trends that drive the largest profits. "
-                "The 1d (daily) and 1h timeframes provide additional context for entry and exit timing only. "
                 "You MUST always align your trading decision with the long-term trend direction.\n"
             )
     if multi_tf_indicators:
@@ -1494,7 +1476,6 @@ Maximum symbols to trade: {max_symbols}
                 ind_lines.append(f"[{tf}] {json.dumps(ind_compact)}")
         if ind_lines:
             prompt += "\nComputed technical indicators per timeframe:\n"
-            prompt += "**CRITICAL: Pay closest attention to the PRIMARY timeframes ([5Y], [3Y], [1Y], [6M], [3M], [1M], [1w]) — they are all equally important and define the primary long-term trend that must drive your decision.**\n"
             prompt += "\n".join(ind_lines) + "\n"
     elif raw_candles:
         summary = _summarize_ohlcv(raw_candles)
