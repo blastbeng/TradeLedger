@@ -633,3 +633,67 @@ class SignalProcessor:
             return True
 
         return False
+
+    async def check_sector_concentration(
+        self,
+        symbol: str,
+        display_symbol: str,
+        assigned_tf: str,
+    ) -> bool:
+        """Check if buying this symbol would exceed the sector concentration limit.
+
+        Returns True if the trade should be skipped (caller should return),
+        False if processing should continue.
+        """
+        engine = self.engine
+
+        current_sector = None
+        for entry in engine.current_symbols:
+            if entry["symbol"] == symbol:
+                current_sector = entry.get("sector")
+                break
+
+        if not current_sector:
+            return False
+
+        max_positions_per_sector_raw = await asyncio.to_thread(engine.redis.get, "trading:max_positions_per_sector")
+        if max_positions_per_sector_raw:
+            try:
+                max_positions_per_sector = int(max_positions_per_sector_raw)
+            except ValueError:
+                max_positions_per_sector = None
+        else:
+            max_positions_per_sector = None
+
+        if max_positions_per_sector is None or max_positions_per_sector <= 0:
+            return False
+
+        sector_count = 0
+        for pos_sym in engine.positions.keys():
+            for entry in engine.current_symbols:
+                if entry["symbol"] == pos_sym and entry.get("sector") == current_sector:
+                    sector_count += 1
+                    break
+
+        if sector_count >= max_positions_per_sector:
+            logger.info(
+                f"Skipping BUY {symbol}: sector '{current_sector}' already has "
+                f"{sector_count} open positions (max {max_positions_per_sector})"
+            )
+            if engine.notifier:
+                stock_name = await engine._get_stock_name(symbol)
+                display = engine._format_symbol_display(symbol, stock_name, assigned_tf)
+                await engine.notifier.send_notification(
+                    f"⚠️ Skipping BUY {display}: sector '{current_sector}' concentration limit reached ({sector_count}/{max_positions_per_sector})",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SKIP",
+                        "reason": "Sector concentration limit",
+                        "sector": current_sector,
+                        "sector_count": sector_count,
+                        "max_positions_per_sector": max_positions_per_sector,
+                    }
+                )
+            return True
+
+        return False
