@@ -39,7 +39,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      trade-ledger-redis-dummy:
+        condition: service_healthy
     volumes:
       - ./src:/app/src   # for development hot-reload (optional)
       - ./data:/app/data
+
+  trade-ledger-redis-dummy:
+    image: alpine
+    container_name: trade-ledger-redis-dummy
+    command: sh -c "until nc -z 192.168.1.13 6379; do echo 'Waiting for redis...'; sleep 2; done; echo 'Redis found!'; sleep infinity"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 192.168.1.13 6379"]
+      interval: 30s
+      timeout: 5s
+      retries: 12
 
