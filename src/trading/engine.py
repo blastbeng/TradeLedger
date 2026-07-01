@@ -60,6 +60,7 @@ from src.database import load_trading_state, save_trading_state, insert_trade, g
 from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.risk_manager import RiskManager
 from src.trading.components.state_persistence import StatePersistence
+from src.trading.components.signal_processor import SignalProcessor
 from src.trading.components.symbol_reevaluator import SymbolReevaluator
 
 logger = logging.getLogger(__name__)
@@ -149,6 +150,7 @@ class TradingEngine:
         self._order_executor = OrderExecutor(self)
         self._risk_manager = RiskManager(self)
         self._symbol_reevaluator = SymbolReevaluator(self)
+        self._signal_processor = SignalProcessor(self)
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
