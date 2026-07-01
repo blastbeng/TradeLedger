@@ -1157,6 +1157,125 @@ class OrderExecutor:
 
         return limit_price, time_in_force, need_limit
 
+    async def update_or_create_buy_position(
+        self,
+        symbol: str,
+        order: Dict[str, Any],
+        signal: Signal,
+        params: Dict[str, Any],
+        quote: str,
+        base: str,
+        sl_pct: float,
+        tp_pct: float,
+        trailing_stop: bool,
+        trailing_stop_distance_pct: Optional[float],
+        order_type: str,
+        timeframe: Optional[str],
+    ) -> None:
+        """Update an existing position or create a new one after a filled BUY order."""
+        engine = self.engine
+        # Extract fee info for cost basis tracking
+        fee = order.get('fee', {})
+        fee_cost = float(fee.get('cost', 0.0) or 0.0)
+        fee_currency = fee.get('currency', '')
+
+        cost_basis = order['cost'] + (fee_cost if fee_currency == quote else 0.0)
+        net_base = order['amount'] - (fee_cost if fee_currency == base else 0.0)
+
+        # Risk parameters are guaranteed by the validator
+        # sl_pct, tp_pct, trailing_stop, trailing_stop_distance_pct are set above
+
+        if symbol in engine.positions:
+            # Accumulate: weighted average price with cost basis
+            old_cost_basis = engine.positions[symbol].get("cost_basis", engine.positions[symbol]["amount"] * engine.positions[symbol]["price"])
+            old_net_base = engine.positions[symbol].get("net_base", engine.positions[symbol]["amount"])
+            new_cost_basis = old_cost_basis + cost_basis
+            new_net_base = old_net_base + net_base
+            new_price = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
+            engine.positions[symbol]["amount"] = new_net_base
+            engine.positions[symbol]["price"] = new_price
+            engine.positions[symbol]["cost_basis"] = new_cost_basis
+            engine.positions[symbol]["net_base"] = new_net_base
+            # Preserve existing absolute SL/TP prices when scaling in.
+            # Recalculating based on the new weighted average would shift
+            # them from where the LLM originally intended. The LLM can
+            # still update SL/TP via _update_position_params (which uses
+            # current_price, not the new average).
+            engine.positions[symbol]["take_profit_atr_multiple"] = params.get("take_profit_atr_multiple")
+            engine.positions[symbol]["trailing_stop"] = trailing_stop
+            engine.positions[symbol]["trailing_stop_distance_pct"] = trailing_stop_distance_pct
+            engine.positions[symbol]["trailing_stop_atr_multiple"] = params.get("trailing_stop_atr_multiple")
+            engine.positions[symbol]["max_hold_time_seconds"] = params.get("max_hold_time_seconds")
+            engine.positions[symbol]["trailing_stop_activation_pct"] = params.get("trailing_stop_activation_pct")
+            engine.positions[symbol]["trailing_take_profit"] = params.get("trailing_take_profit", False)
+            engine.positions[symbol]["trailing_take_profit_distance_pct"] = params.get("trailing_take_profit_distance_pct")
+            engine.positions[symbol]["breakeven_activation_pct"] = params.get("breakeven_activation_pct")
+            # Multiple partial take-profit levels
+            partial_levels = params.get("partial_take_profit_levels")
+            if partial_levels:
+                engine.positions[symbol]["partial_take_profit_levels"] = partial_levels
+                engine.positions[symbol]["partial_tp_levels_triggered"] = []
+                engine.positions[symbol]["partial_tp_depth_wait_start"] = {}
+                # Clear single-level fields to avoid confusion
+                engine.positions[symbol]["partial_take_profit_pct"] = None
+                engine.positions[symbol]["partial_take_profit_fraction"] = None
+                engine.positions[symbol]["partial_tp_triggered"] = None
+            else:
+                engine.positions[symbol]["partial_take_profit_pct"] = params.get("partial_take_profit_pct")
+                engine.positions[symbol]["partial_take_profit_fraction"] = params.get("partial_take_profit_fraction")
+                engine.positions[symbol]["partial_tp_triggered"] = False
+            engine.positions[symbol]["cooldown_after_loss_seconds"] = params["cooldown_after_loss_seconds"]
+            engine.positions[symbol]["news_sentiment_exit_threshold"] = params.get("news_sentiment_exit_threshold")
+            engine.positions[symbol]["max_unrealized_loss_pct"] = params.get("max_unrealized_loss_pct")
+            custom_interval = params.get("strategy_interval_seconds")
+            if custom_interval is not None:
+                engine._strategy_intervals[symbol] = custom_interval
+            engine.positions[symbol]["timeframe"] = timeframe
+            engine.positions[symbol]["indicator_config"] = signal.indicator_config
+            engine.positions[symbol]["entry_order_type"] = order_type
+            engine.positions[symbol]["buy_confidence"] = signal.confidence
+            engine.positions[symbol]["buy_reasoning"] = (signal.reasoning or "")[:200]
+        else:
+            entry_price = cost_basis / net_base if net_base > 0 else order["price"]
+            engine.positions[symbol] = {
+                "symbol": symbol,
+                "side": "buy",
+                "amount": net_base,
+                "price": entry_price,
+                "timestamp": order["timestamp"],
+                "stop_loss": entry_price * (1 - sl_pct),
+                "take_profit": entry_price * (1 + tp_pct),
+                "take_profit_atr_multiple": params.get("take_profit_atr_multiple"),
+                "cost_basis": cost_basis,
+                "net_base": net_base,
+                "buy_confidence": signal.confidence,
+                "buy_reasoning": (signal.reasoning or "")[:200],
+                "trailing_stop": trailing_stop,
+                "trailing_stop_distance_pct": trailing_stop_distance_pct,
+                "trailing_stop_atr_multiple": params.get("trailing_stop_atr_multiple"),
+                "max_hold_time_seconds": params.get("max_hold_time_seconds"),
+                "trailing_stop_activation_pct": params.get("trailing_stop_activation_pct"),
+                "trailing_take_profit": params.get("trailing_take_profit", False),
+                "trailing_take_profit_distance_pct": params.get("trailing_take_profit_distance_pct"),
+                "breakeven_activation_pct": params.get("breakeven_activation_pct"),
+                "partial_take_profit_levels": params.get("partial_take_profit_levels"),
+                "partial_tp_levels_triggered": [],
+                "partial_tp_depth_wait_start": {},
+                "original_amount": net_base,
+                "partial_take_profit_pct": params.get("partial_take_profit_pct") if not params.get("partial_take_profit_levels") else None,
+                "partial_take_profit_fraction": params.get("partial_take_profit_fraction") if not params.get("partial_take_profit_levels") else None,
+                "partial_tp_triggered": False if not params.get("partial_take_profit_levels") else None,
+                "cooldown_after_loss_seconds": params["cooldown_after_loss_seconds"],
+                "news_sentiment_exit_threshold": params.get("news_sentiment_exit_threshold"),
+                "max_unrealized_loss_pct": params.get("max_unrealized_loss_pct"),
+                "timeframe": timeframe,
+                "indicator_config": signal.indicator_config,
+                "entry_order_type": order_type,
+            }
+            custom_interval = params.get("strategy_interval_seconds")
+            if custom_interval is not None:
+                engine._strategy_intervals[symbol] = custom_interval
+
     async def cleanup_orphaned_orders(self):
         """Periodically cancel any open orders that are older than 10 minutes,
         but never cancel orders that are still being tracked as queued."""
