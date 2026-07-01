@@ -5777,180 +5777,45 @@ class TradingEngine:
                         _pos.pop("_needs_risk_params_attempts", None)
                         logger.info(f"Risk parameters obtained for {symbol}; cleared _needs_risk_params flag.")
 
-            # Log and notify the decision
-            logger.info(f"Decision for {symbol}: {validated.action} (confidence: {validated.confidence:.2f})")
-            # Store the last decision for the next prompt cycle
-            params = signal.strategy_params
-            self._last_decisions[symbol] = {
-                "action": validated.action,
-                "confidence": validated.confidence,
-                "reasoning": validated.reasoning[:300],
-                "strategy_type": signal.strategy_type,
-                "timestamp": time.time(),
-                "stop_loss_pct": params.get("stop_loss_pct") if params else None,
-                "take_profit_pct": params.get("take_profit_pct") if params else None,
-                "position_size_fraction": params.get("position_size_fraction") if params else None,
-                "stop_loss_method": params.get("stop_loss_method") if params else None,
-            }
-            self._state_dirty = True
-            # Compute trade amount for display in the signals card
-            _params = signal.strategy_params or {}
-            _psf = _params.get("position_size_fraction")
-            if validated.action == "BUY" and _psf is not None:
-                _trade_amount = base_balance * float(_psf)
-            elif validated.action == "SELL" and symbol in self.positions:
-                _pos = self.positions[symbol]
-                _trade_amount = _pos.get("amount", 0) * current_price
-            else:
-                _trade_amount = 0.0
-
-            # Extract strategy parameters for the signal detail modal
-            _sig_params = signal.strategy_params or {}
-            _entry_cond_str = None
-            if validated.entry_condition:
-                _ec = validated.entry_condition
-                _etype = _ec.get("type", "")
-                if _etype == "limit_price":
-                    _entry_cond_str = f"Wait for price to drop to {_ec.get('price', '?')} (timeout: {_ec.get('timeout_seconds', '?')}s)"
-                elif _etype == "rsi_threshold":
-                    _entry_cond_str = f"Wait for RSI(14) to fall below {_ec.get('rsi_below', '?')} (timeout: {_ec.get('timeout_seconds', '?')}s)"
-                elif _etype == "delay":
-                    _entry_cond_str = f"Wait {_ec.get('delay_seconds', '?')}s before executing"
-                elif _etype == "indicator_combo":
-                    _conds = _ec.get("conditions", [])
-                    _cond_strs = []
-                    for c in _conds:
-                        _cond_strs.append(f"{c.get('indicator','?')} {c.get('direction','?')} {c.get('threshold','?')}")
-                    _entry_cond_str = f"Wait for ALL: {', '.join(_cond_strs)} (timeout: {_ec.get('timeout_seconds', '?')}s)"
-            _sl_method = _sig_params.get("stop_loss_method", "fixed")
-            _sl_str = ""
-            if _sl_method == "atr_multiple":
-                _sl_str = f"ATR × {_sig_params.get('stop_loss_atr_multiple', '?')} (fallback: {_sig_params.get('stop_loss_pct', '?')})"
-            else:
-                _sl_str = f"{_sig_params.get('stop_loss_pct', '?')}"
-            _tp_str = ""
-            if _sig_params.get("take_profit_atr_multiple"):
-                _tp_str = f"ATR × {_sig_params.get('take_profit_atr_multiple', '?')} (fallback: {_sig_params.get('take_profit_pct', '?')})"
-            else:
-                _tp_str = f"{_sig_params.get('take_profit_pct', '?')}"
-
-            # Record signal for the web dashboard
-            self.recent_signals.append({
-                "symbol": symbol,
-                "display_symbol": display_symbol,
-                "stock_name": stock_name,
-                "timeframe": assigned_tf,
-                "action": validated.action,
-                "confidence": validated.confidence,
-                "reasoning": validated.reasoning or "",
-                "strategy_type": signal.strategy_type,
-                "model_type": getattr(validated, 'model_type', None),
-                "llm_provider": llm_provider,
-                "llm_model": llm_model,
-                "trade_amount": round(_trade_amount, 2),
-                "base_currency": self.base_currency,
-                "timestamp": time.time(),
-                "entry_condition": _entry_cond_str,
-                "stop_loss": _sl_str,
-                "take_profit": _tp_str,
-                "position_size_fraction": _sig_params.get("position_size_fraction"),
-                "trailing_stop": _sig_params.get("trailing_stop"),
-                "trailing_stop_distance_pct": _sig_params.get("trailing_stop_distance_pct"),
-                "max_hold_time_seconds": _sig_params.get("max_hold_time_seconds"),
-                "cooldown_after_loss_seconds": _sig_params.get("cooldown_after_loss_seconds"),
-                "order_type": signal.order_type,
-                "limit_price": _sig_params.get("limit_price"),
-            })
-            # Keep only the last 50 signals
-            if len(self.recent_signals) > 50:
-                self.recent_signals = self.recent_signals[-50:]
-            params = signal.strategy_params or {}
-            # --- Format symbol for notification ---
-            stock_name = await self._get_stock_name(symbol)
-            display_symbol = self._format_symbol_display(symbol, stock_name, assigned_tf)
-            if self.notifier:
-                emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⏸️"}.get(validated.action, "❓")
-                paused_tag = " (PAUSED)" if trading_paused and validated.action == "BUY" else ""
-                # Build a short indicator summary
-                ind_parts = []
-                if rsi is not None:
-                    ind_parts.append(f"RSI={rsi:.1f}")
-                if macd is not None and macd_signal is not None:
-                    ind_parts.append(f"MACD={macd:.4f}/{macd_signal:.4f}")
-                    if macd_hist is not None:
-                        ind_parts.append(f"Hist={macd_hist:.4f}")
-                if bb_upper is not None:
-                    ind_parts.append(f"BB={bb_lower:.2f}/{bb_middle:.2f}/{bb_upper:.2f}")
-                if ema_9 is not None and ema_21 is not None:
-                    ind_parts.append(f"EMA9/21={ema_9:.2f}/{ema_21:.2f}")
-                if stochastic_k is not None:
-                    ind_parts.append(f"StochK={stochastic_k:.1f}")
-                    if stochastic_d is not None:
-                        ind_parts.append(f"StochD={stochastic_d:.1f}")
-                if adx is not None:
-                    ind_parts.append(f"ADX={adx:.1f}")
-                    if plus_di is not None and minus_di is not None:
-                        ind_parts.append(f"+DI={plus_di:.1f}/-DI={minus_di:.1f}")
-                if atr is not None:
-                    ind_parts.append(f"ATR={atr:.4f}")
-                if obv is not None:
-                    ind_parts.append(f"OBV={obv:.2f}")
-                if mfi is not None:
-                    ind_parts.append(f"MFI={mfi:.2f}")
-                if cci is not None:
-                    ind_parts.append(f"CCI={cci:.2f}")
-                if williams_r is not None:
-                    ind_parts.append(f"WR={williams_r:.2f}")
-                if ichimoku is not None:
-                    ind_parts.append(f"Ichi T={ichimoku['tenkan_sen']:.2f}/K={ichimoku['kijun_sen']:.2f}")
-                    ind_parts.append(f"Cloud={ichimoku['cloud_bottom']:.2f}-{ichimoku['cloud_top']:.2f}")
-                if donchian_channels is not None:
-                    ind_parts.append(f"Donch={donchian_channels['lower']:.2f}/{donchian_channels['middle']:.2f}/{donchian_channels['upper']:.2f}")
-                if parabolic_sar is not None:
-                    ind_parts.append(f"SAR={parabolic_sar:.4f}")
-                if keltner_channels is not None:
-                    ind_parts.append(f"Kelt={keltner_channels['lower']:.4f}/{keltner_channels['middle']:.4f}/{keltner_channels['upper']:.4f}")
-                indicator_str = " | ".join(ind_parts) if ind_parts else "No indicators (insufficient OHLCV data)"
-                sentiment_str = await self._get_sentiment_str(symbol)
-                reasoning_str = f" – {validated.reasoning}" if validated.reasoning else ""
-                msg = f"{emoji} {display_symbol}: {validated.action} (confidence: {validated.confidence:.2f}){reasoning_str}{paused_tag}"
-                if sentiment_str:
-                    msg += f"\n{sentiment_str}"
-                if getattr(validated, 'backtest_summary', None):
-                    msg += f"\n📈 Backtest: {validated.backtest_summary}"
-                msg += f"\n📊 {indicator_str}"
-                # Build summary dict for logging
-                decision_summary = {
-                    "symbol": symbol,
-                    "action": validated.action,
-                    "confidence": validated.confidence,
-                    "reason": validated.reasoning[:200],
-                    "sentiment": aggregate_sentiment,
-                    "indicators": {
-                        "rsi": rsi,
-                        "macd": macd,
-                        "macd_signal": macd_signal,
-                        "atr": atr,
-                        "adx": adx,
-                        "bb_upper": bb_upper,
-                        "bb_lower": bb_lower,
-                        "ema_9": ema_9,
-                        "ema_21": ema_21,
-                        "stochastic_k": stochastic_k,
-                        "mfi": mfi,
-                        "cci": cci,
-                        "williams_r": williams_r,
-                        "ichimoku": ichimoku,
-                        "donchian_channels": donchian_channels,
-                    },
-                    "backtest": getattr(validated, 'backtest_stats', None),
-                    "strategy_type": signal.strategy_type,
-                    "market_regime": market_regime,
-                    "model_type": getattr(validated, 'model_type', None),
-                    "llm_provider": llm_provider,
-                    "llm_model": llm_model,
-                }
-                await self.notifier.send_notification(msg, summary=decision_summary)
+            await self._signal_processor.log_and_notify_decision(
+                symbol=symbol,
+                display_symbol=display_symbol,
+                stock_name=stock_name,
+                assigned_tf=assigned_tf,
+                validated=validated,
+                signal=signal,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+                trading_paused=trading_paused,
+                base_balance=base_balance,
+                current_price=current_price,
+                rsi=rsi,
+                macd=macd,
+                macd_signal=macd_signal,
+                macd_hist=macd_hist,
+                bb_upper=bb_upper,
+                bb_middle=bb_middle,
+                bb_lower=bb_lower,
+                ema_9=ema_9,
+                ema_21=ema_21,
+                stochastic_k=stochastic_k,
+                stochastic_d=stochastic_d,
+                adx=adx,
+                plus_di=plus_di,
+                minus_di=minus_di,
+                atr=atr,
+                obv=obv,
+                mfi=mfi,
+                cci=cci,
+                williams_r=williams_r,
+                ichimoku=ichimoku,
+                donchian_channels=donchian_channels,
+                parabolic_sar=parabolic_sar,
+                keltner_channels=keltner_channels,
+                aggregate_sentiment=aggregate_sentiment,
+                market_regime=market_regime,
+                backtest_stats=getattr(validated, 'backtest_stats', None),
+            )
 
             params = signal.strategy_params or {}
 
