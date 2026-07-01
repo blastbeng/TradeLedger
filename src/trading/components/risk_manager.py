@@ -9,6 +9,7 @@ import logging
 import time
 from typing import Any, Dict
 
+from src.config.settings import settings
 from src.database import insert_position_pnl_snapshot
 
 logger = logging.getLogger(__name__)
@@ -57,3 +58,32 @@ class RiskManager:
                 )
             except Exception as e:
                 logger.debug(f"Failed to record P&L snapshot for {symbol}: {e}")
+
+    async def read_review_limits(self) -> Dict[str, int]:
+        """Read LLM-decided review limits from Redis, falling back to settings defaults."""
+        engine = self.engine
+        max_sl_reviews = settings.MAX_STOP_LOSS_REVIEWS
+        max_tp_reviews = settings.MAX_TAKE_PROFIT_REVIEWS
+        max_partial_tp_reviews = settings.MAX_PARTIAL_TP_REVIEWS
+        max_dust_sweep_reviews = settings.MAX_DUST_SWEEP_REVIEWS
+        try:
+            raw = await asyncio.to_thread(engine.redis.get, "trading:max_stop_loss_reviews")
+            if raw:
+                max_sl_reviews = int(raw)
+            raw = await asyncio.to_thread(engine.redis.get, "trading:max_take_profit_reviews")
+            if raw:
+                max_tp_reviews = int(raw)
+            raw = await asyncio.to_thread(engine.redis.get, "trading:max_partial_tp_reviews")
+            if raw:
+                max_partial_tp_reviews = int(raw)
+            raw = await asyncio.to_thread(engine.redis.get, "trading:max_dust_sweep_reviews")
+            if raw:
+                max_dust_sweep_reviews = int(raw)
+        except Exception:
+            pass
+        return {
+            "max_sl_reviews": max_sl_reviews,
+            "max_tp_reviews": max_tp_reviews,
+            "max_partial_tp_reviews": max_partial_tp_reviews,
+            "max_dust_sweep_reviews": max_dust_sweep_reviews,
+        }

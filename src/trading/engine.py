@@ -8131,25 +8131,11 @@ class TradingEngine:
             return
 
         # Read LLM-decided review limits from Redis once (before the per-position loop)
-        max_sl_reviews = settings.MAX_STOP_LOSS_REVIEWS
-        max_tp_reviews = settings.MAX_TAKE_PROFIT_REVIEWS
-        max_partial_tp_reviews = settings.MAX_PARTIAL_TP_REVIEWS
-        max_dust_sweep_reviews = settings.MAX_DUST_SWEEP_REVIEWS
-        try:
-            raw = await asyncio.to_thread(self.redis.get, "trading:max_stop_loss_reviews")
-            if raw:
-                max_sl_reviews = int(raw)
-            raw = await asyncio.to_thread(self.redis.get, "trading:max_take_profit_reviews")
-            if raw:
-                max_tp_reviews = int(raw)
-            raw = await asyncio.to_thread(self.redis.get, "trading:max_partial_tp_reviews")
-            if raw:
-                max_partial_tp_reviews = int(raw)
-            raw = await asyncio.to_thread(self.redis.get, "trading:max_dust_sweep_reviews")
-            if raw:
-                max_dust_sweep_reviews = int(raw)
-        except Exception:
-            pass
+        _review_limits = await self._risk_manager.read_review_limits()
+        max_sl_reviews = _review_limits["max_sl_reviews"]
+        max_tp_reviews = _review_limits["max_tp_reviews"]
+        max_partial_tp_reviews = _review_limits["max_partial_tp_reviews"]
+        max_dust_sweep_reviews = _review_limits["max_dust_sweep_reviews"]
 
         # Batch-fetch missing tickers once before the per-position loop
         risk_tickers: Dict[str, Dict[str, Any]] = {}
