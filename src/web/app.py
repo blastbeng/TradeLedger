@@ -330,11 +330,13 @@ async def force_download():
     return {"status": "Force download of all asset OHLCV data triggered"}
 
 @http_router.post("/api/restart")
-def restart():
+async def restart():
     """
     Restart the entire application by exiting the process.
     Docker (or the process manager) will bring it back up.
     """
+    engine = get_engine()
+    await engine.stop()
     sys.exit(0)
 
 @http_router.get("/api/config")
