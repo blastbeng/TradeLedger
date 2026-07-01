@@ -49,8 +49,6 @@ services:
     image: alpine
     container_name: trade-ledger-redis-dummy
     command: sh -c "until nc -z 192.168.1.13 6379; do echo 'Waiting for redis...'; sleep 2; done; echo 'Redis found!'; sleep infinity"
-    networks:
-      - app-network
     healthcheck:
       test: ["CMD-SHELL", "nc -z 192.168.1.13 6379"]
       interval: 30s
