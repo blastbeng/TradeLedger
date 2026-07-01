@@ -8225,12 +8225,24 @@ class TradingEngine:
                 self.trader._balances_dirty = True
                 await asyncio.to_thread(self.trader._save_balances)
             else:
+                # Check if the user actually holds enough of the base asset
+                current_base_balance = self.trader._balances.get(base, 0.0)
+                if current_base_balance < quantity:
+                    logger.warning(
+                        f"Manual sell rejected for {symbol}: insufficient {base} balance "
+                        f"(have {current_base_balance}, need {quantity})"
+                    )
+                    return {
+                        "status": "error",
+                        "error": f"Insufficient {base} balance: have {current_base_balance}, need {quantity}",
+                    }
+
                 trade["realized_pnl"] = 0.0
                 trade["cost_basis"] = 0.0
                 trade["exit_reason"] = "manual_sell"
 
                 # Update virtual cash balance even if position wasn't tracked
-                self.trader._balances[base] = self.trader._balances.get(base, 0.0) - quantity
+                self.trader._balances[base] = current_base_balance - quantity
                 self.trader._balances[quote] = self.trader._balances.get(quote, 0.0) + (cost - fee)
                 self.trader._balances_dirty = True
                 await asyncio.to_thread(self.trader._save_balances)
