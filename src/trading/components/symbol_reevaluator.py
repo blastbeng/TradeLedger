@@ -15,10 +15,11 @@ from src.database import get_ohlcv, get_indicators_for_symbols, get_aggregate_se
 from src.exchanges.market_data import get_quotes_cached
 
 try:
-    from src.news.fetcher import discover_trending_stocks, discover_tickers_from_news
+    from src.news.fetcher import discover_trending_stocks, discover_tickers_from_news, detect_upcoming_events
 except ImportError:
     discover_trending_stocks = None
     discover_tickers_from_news = None
+    detect_upcoming_events = None
 
 logger = logging.getLogger(__name__)
 
@@ -751,3 +752,81 @@ class SymbolReevaluator:
                 pass
 
         return correlation_matrix
+
+    async def fetch_shortlist_context(
+        self,
+        sample_pairs: List[str],
+        tickers: Dict[str, Dict[str, Any]],
+        market_trend: Optional[Dict[str, Any]],
+    ) -> Tuple[Dict[str, Dict[str, Any]], dict, Dict[str, Any], Optional[Dict[str, Any]], Optional[float]]:
+        """Fetch missing tickers, detect events, compute market breadth, and store market status.
+
+        Returns (symbol_events, session_info, market_breadth, full_market_breadth, vix).
+        """
+        engine = self.engine
+
+        # --- Ensure tickers dict covers all symbols in the final shortlist ---
+        missing_tickers = [s for s in sample_pairs if s not in tickers or not tickers.get(s, {}).get('last')]
+        if missing_tickers:
+            missing_plain = [s.split("/")[0] for s in missing_tickers]
+            try:
+                extra_raw = await asyncio.to_thread(get_quotes_cached, missing_plain)
+                for pair in missing_tickers:
+                    base = pair.split("/")[0]
+                    if base in extra_raw and extra_raw[base].get('last'):
+                        tickers[pair] = extra_raw[base]
+            except Exception as e:
+                logger.warning(f"Failed to fetch missing tickers for shortlist: {e}")
+
+        # --- Detect upcoming corporate events from news (parallelized) ---
+        symbol_events: Dict[str, Dict[str, Any]] = {}
+        if settings.NEWS_ENABLED and detect_upcoming_events is not None:
+            async def _detect_event(sym: str):
+                try:
+                    event = await asyncio.to_thread(detect_upcoming_events, sym)
+                    if event:
+                        return sym, event
+                except Exception:
+                    pass
+                return sym, None
+
+            event_tasks = [_detect_event(sym) for sym in sample_pairs]
+            event_results = await asyncio.gather(*event_tasks)
+            for sym, event in event_results:
+                if event:
+                    symbol_events[sym] = event
+
+        session_info = engine._get_session_info()
+
+        # Market breadth: percentage of candidate stocks with positive 24h change
+        positive_count = sum(1 for sym in sample_pairs if (tickers.get(sym, {}).get('percentage') or 0) > 0)
+        total_count = len(sample_pairs)
+        market_breadth = {
+            "positive_pct": round(positive_count / total_count * 100, 1) if total_count > 0 else 0.0,
+            "positive_count": positive_count,
+            "total_count": total_count,
+        }
+        engine._market_breadth = market_breadth
+
+        # Read full market breadth from Redis (computed by background task)
+        full_market_breadth = None
+        try:
+            full_breadth_raw = await asyncio.to_thread(engine.redis.get, "market:breadth:full")
+            if full_breadth_raw:
+                full_market_breadth = json.loads(full_breadth_raw)
+        except Exception:
+            pass
+
+        vix = await engine._fetch_vix()
+
+        # Store market status in Redis for the web dashboard
+        market_status = {
+            "vix": vix,
+            "market_breadth": market_breadth,
+            "full_market_breadth": full_market_breadth,
+            "spy_price": market_trend["last"] if market_trend else None,
+            "timestamp": time.time(),
+        }
+        await asyncio.to_thread(engine.redis.setex, "market:status", 3600, json.dumps(market_status))
+
+        return symbol_events, session_info, market_breadth, full_market_breadth, vix

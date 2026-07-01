@@ -3114,71 +3114,9 @@ class TradingEngine:
         sample_pairs = shortlist
         logger.info(f"LLM candidate list: {len(sample_pairs)} symbols (will be evaluated in chunks)")
 
-        # --- Ensure tickers dict covers all symbols in the final shortlist ---
-        # The tickers dict was built from the original sample_pairs before
-        # shortlist added ETFs, BTPs, and historical best symbols.  Re-fetch
-        # quotes for any shortlist entries missing from tickers so the LLM
-        # prompt includes them in the ticker_summary section.
-        missing_tickers = [s for s in sample_pairs if s not in tickers or not tickers.get(s, {}).get('last')]
-        if missing_tickers:
-            missing_plain = [s.split("/")[0] for s in missing_tickers]
-            try:
-                extra_raw = await asyncio.to_thread(get_quotes_cached, missing_plain)
-                for pair in missing_tickers:
-                    base = pair.split("/")[0]
-                    if base in extra_raw and extra_raw[base].get('last'):
-                        tickers[pair] = extra_raw[base]
-            except Exception as e:
-                logger.warning(f"Failed to fetch missing tickers for shortlist: {e}")
-
-        # --- Detect upcoming corporate events from news (parallelized) ---
-        symbol_events: Dict[str, Dict[str, Any]] = {}
-        if settings.NEWS_ENABLED and detect_upcoming_events is not None:
-            async def _detect_event(sym: str):
-                try:
-                    event = await asyncio.to_thread(detect_upcoming_events, sym)
-                    if event:
-                        return sym, event
-                except Exception:
-                    pass
-                return sym, None
-
-            event_tasks = [_detect_event(sym) for sym in sample_pairs]
-            event_results = await asyncio.gather(*event_tasks)
-            for sym, event in event_results:
-                if event:
-                    symbol_events[sym] = event
-        session_info = self._get_session_info()
-
-        # Market breadth: percentage of candidate stocks with positive 24h change
-        positive_count = sum(1 for sym in sample_pairs if (tickers.get(sym, {}).get('percentage') or 0) > 0)
-        total_count = len(sample_pairs)
-        market_breadth = {
-            "positive_pct": round(positive_count / total_count * 100, 1) if total_count > 0 else 0.0,
-            "positive_count": positive_count,
-            "total_count": total_count,
-        }
-        self._market_breadth = market_breadth
-
-        # Read full market breadth from Redis (computed by background task)
-        full_market_breadth = None
-        try:
-            full_breadth_raw = await asyncio.to_thread(self.redis.get, "market:breadth:full")
-            if full_breadth_raw:
-                full_market_breadth = json.loads(full_breadth_raw)
-        except Exception:
-            pass
-
-        vix = await self._fetch_vix()
-        # Store market status in Redis for the web dashboard
-        market_status = {
-            "vix": vix,
-            "market_breadth": market_breadth,
-            "full_market_breadth": full_market_breadth,
-            "spy_price": market_trend["last"] if market_trend else None,
-            "timestamp": time.time(),
-        }
-        await asyncio.to_thread(self.redis.setex, "market:status", 3600, json.dumps(market_status))
+        symbol_events, session_info, market_breadth, full_market_breadth, vix = await self._symbol_reevaluator.fetch_shortlist_context(
+            sample_pairs, tickers, market_trend
+        )
 
         # Check if trading is currently paused
         trading_paused_raw = await asyncio.to_thread(self.redis.get, "trading:paused")
