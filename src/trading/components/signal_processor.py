@@ -9,6 +9,7 @@ import time
 from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
+from src.database import get_latest_ohlcv_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -145,3 +146,144 @@ class SignalProcessor:
             "max_partial_tp_reviews_prompt": max_partial_tp_reviews_prompt,
             "max_dust_sweep_reviews_prompt": max_dust_sweep_reviews_prompt,
         }
+
+    async def check_skip_conditions(
+        self,
+        symbol: str,
+        display_symbol: str,
+        ticker: Dict[str, Any],
+        assigned_tf: str,
+        has_position: bool,
+        base_balance: float,
+    ) -> bool:
+        """Check whether a symbol should be skipped before LLM evaluation.
+
+        Returns True if the symbol should be skipped (caller should return),
+        False if processing should continue.
+        """
+        engine = self.engine
+
+        # --- Staleness guard: skip symbols with stale quotes (unless we have an open position) ---
+        if not has_position and await engine._is_quote_too_stale(ticker, assigned_tf):
+            logger.info(
+                f"Skipping {symbol}: quote data is too stale for timeframe {assigned_tf}."
+            )
+            stale_notify_key = f"trading:stale_quote_notify:{symbol}"
+            should_notify = True
+            try:
+                last_notify_raw = await asyncio.to_thread(engine.redis.get, stale_notify_key)
+                if last_notify_raw:
+                    if (time.time() - float(last_notify_raw)) < 3600:
+                        should_notify = False
+            except Exception:
+                pass
+            if should_notify and engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⏸️ Skipping {display_symbol}: quote data is too stale for timeframe {assigned_tf}.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SKIP",
+                        "reason": "Quote data too stale",
+                    }
+                )
+                try:
+                    await asyncio.to_thread(engine.redis.setex, stale_notify_key, 3600, str(time.time()))
+                except Exception:
+                    pass
+            engine._force_eval.pop(symbol, None)
+            return True
+
+        # If we have an open position, we must continue evaluating it for SELL signals
+        # even when base_balance is 0 (all capital deployed) or effective_max_symbols is 0.
+        if not has_position and (base_balance <= 0 or engine.effective_max_symbols == 0):
+            logger.warning(
+                f"Skipping {symbol}: {engine.base_currency} balance={base_balance:.2f}, "
+                f"effective_max_symbols={engine.effective_max_symbols}"
+            )
+            return True
+
+        return False
+
+    async def check_no_ohlcv(
+        self,
+        symbol: str,
+        display_symbol: str,
+        assigned_tf: str,
+        ohlcv_data: Dict[str, Any],
+    ) -> bool:
+        """Check if no OHLCV data is available for the symbol.
+
+        Returns True if the symbol should be skipped (caller should return),
+        False if processing should continue.
+        """
+        engine = self.engine
+        no_ohlcv = (
+            not ohlcv_data
+            or all(len(candles) == 0 for candles in ohlcv_data.values())
+        )
+        if not no_ohlcv:
+            return False
+
+        logger.info(
+            f"Skipping {symbol}: no OHLCV data – market data unavailable."
+        )
+        # Find the most recent OHLCV timestamp across all timeframes
+        last_data_ts = None
+        last_data_tf = None
+        for tf in settings.OHLCV_TIMEFRAMES:
+            try:
+                ts = await asyncio.to_thread(get_latest_ohlcv_timestamp, symbol, tf)
+                if ts is not None and (last_data_ts is None or ts > last_data_ts):
+                    last_data_ts = ts
+                    last_data_tf = tf
+            except Exception:
+                pass
+
+        if last_data_ts is not None:
+            age_seconds = time.time() - (last_data_ts / 1000.0)
+            if age_seconds < 3600:
+                age_str = f"{age_seconds/60:.0f} minutes ago"
+            elif age_seconds < 86400:
+                age_str = f"{age_seconds/3600:.1f} hours ago"
+            else:
+                age_str = f"{age_seconds/86400:.1f} days ago"
+            msg = (
+                f"⚠️ Skipping {display_symbol}: no OHLCV data available. "
+                f"Last data: {last_data_tf} candle from {age_str}. "
+                f"Try a manual force-download via the dashboard or Telegram."
+            )
+        else:
+            msg = (
+                f"⚠️ Skipping {display_symbol}: no OHLCV data available. "
+                f"No historical data found in database. "
+                f"Run a force-download via the dashboard or Telegram to populate market data."
+            )
+
+        no_ohlcv_notify_key = f"trading:no_ohlcv_notify:{symbol}"
+        should_notify = True
+        try:
+            last_notify_raw = await asyncio.to_thread(engine.redis.get, no_ohlcv_notify_key)
+            if last_notify_raw:
+                if (time.time() - float(last_notify_raw)) < 3600:
+                    should_notify = False
+        except Exception:
+            pass
+
+        if should_notify and engine.notifier:
+            await engine.notifier.send_notification(
+                msg,
+                summary={
+                    "symbol": symbol,
+                    "action": "SKIP",
+                    "reason": "No OHLCV data",
+                    "last_data_timestamp": last_data_ts,
+                    "last_data_timeframe": last_data_tf,
+                }
+            )
+            try:
+                await asyncio.to_thread(engine.redis.setex, no_ohlcv_notify_key, 3600, str(time.time()))
+            except Exception:
+                pass
+
+        engine._force_eval.pop(symbol, None)
+        return True

@@ -5449,43 +5449,10 @@ class TradingEngine:
             daily_pivot_points = symbol_data["daily_pivot_points"]
             has_position = symbol in self.positions
 
-            # --- Staleness guard: skip symbols with stale quotes (unless we have an open position) ---
-            if not has_position and await self._is_quote_too_stale(ticker, assigned_tf):
-                logger.info(
-                    f"Skipping {symbol}: quote data is too stale for timeframe {assigned_tf}."
-                )
-                stale_notify_key = f"trading:stale_quote_notify:{symbol}"
-                should_notify = True
-                try:
-                    last_notify_raw = await asyncio.to_thread(self.redis.get, stale_notify_key)
-                    if last_notify_raw:
-                        if (time.time() - float(last_notify_raw)) < 3600:
-                            should_notify = False
-                except Exception:
-                    pass
-                if should_notify and self.notifier:
-                    await self.notifier.send_notification(
-                        f"⏸️ Skipping {display_symbol}: quote data is too stale for timeframe {assigned_tf}.",
-                        summary={
-                            "symbol": symbol,
-                            "action": "SKIP",
-                            "reason": "Quote data too stale",
-                        }
-                    )
-                    try:
-                        await asyncio.to_thread(self.redis.setex, stale_notify_key, 3600, str(time.time()))
-                    except Exception:
-                        pass
-                self._force_eval.pop(symbol, None)
-                return
-
-            # If we have an open position, we must continue evaluating it for SELL signals
-            # even when base_balance is 0 (all capital deployed) or effective_max_symbols is 0.
-            if not has_position and (base_balance <= 0 or self.effective_max_symbols == 0):
-                logger.warning(
-                    f"Skipping {symbol}: {self.base_currency} balance={base_balance:.2f}, "
-                    f"effective_max_symbols={self.effective_max_symbols}"
-                )
+            # --- Skip conditions: stale quotes, no balance, no OHLCV ---
+            if await self._signal_processor.check_skip_conditions(
+                symbol, display_symbol, ticker, assigned_tf, has_position, base_balance
+            ):
                 return
             # For positions we still need to manage, use a per_symbol_budget of 0
             # so the LLM knows no new capital is available for scaling in.
@@ -5494,77 +5461,9 @@ class TradingEngine:
                     f"Evaluating {symbol} for position management only "
                     f"(base_balance={base_balance:.2f}, no new capital available)."
                 )
-
-            # --- Skip if no meaningful market data is available ---
-            # If we have no OHLCV candles at all, there is nothing for the LLM to analyse.
-            # Skip to save costs and noise.
-            no_ohlcv = (
-                not ohlcv_data
-                or all(len(candles) == 0 for candles in ohlcv_data.values())
-            )
-            if no_ohlcv:
-                logger.info(
-                    f"Skipping {symbol}: no OHLCV data – market data unavailable."
-                )
-                # Find the most recent OHLCV timestamp across all timeframes
-                last_data_ts = None
-                last_data_tf = None
-                for tf in settings.OHLCV_TIMEFRAMES:
-                    try:
-                        ts = await asyncio.to_thread(get_latest_ohlcv_timestamp, symbol, tf)
-                        if ts is not None and (last_data_ts is None or ts > last_data_ts):
-                            last_data_ts = ts
-                            last_data_tf = tf
-                    except Exception:
-                        pass
-
-                if last_data_ts is not None:
-                    age_seconds = time.time() - (last_data_ts / 1000.0)
-                    if age_seconds < 3600:
-                        age_str = f"{age_seconds/60:.0f} minutes ago"
-                    elif age_seconds < 86400:
-                        age_str = f"{age_seconds/3600:.1f} hours ago"
-                    else:
-                        age_str = f"{age_seconds/86400:.1f} days ago"
-                    msg = (
-                        f"⚠️ Skipping {display_symbol}: no OHLCV data available. "
-                        f"Last data: {last_data_tf} candle from {age_str}. "
-                        f"Try a manual force-download via the dashboard or Telegram."
-                    )
-                else:
-                    msg = (
-                        f"⚠️ Skipping {display_symbol}: no OHLCV data available. "
-                        f"No historical data found in database. "
-                        f"Run a force-download via the dashboard or Telegram to populate market data."
-                    )
-
-                no_ohlcv_notify_key = f"trading:no_ohlcv_notify:{symbol}"
-                should_notify = True
-                try:
-                    last_notify_raw = await asyncio.to_thread(self.redis.get, no_ohlcv_notify_key)
-                    if last_notify_raw:
-                        if (time.time() - float(last_notify_raw)) < 3600:
-                            should_notify = False
-                except Exception:
-                    pass
-
-                if should_notify and self.notifier:
-                    await self.notifier.send_notification(
-                        msg,
-                        summary={
-                            "symbol": symbol,
-                            "action": "SKIP",
-                            "reason": "No OHLCV data",
-                            "last_data_timestamp": last_data_ts,
-                            "last_data_timeframe": last_data_tf,
-                        }
-                    )
-                    try:
-                        await asyncio.to_thread(self.redis.setex, no_ohlcv_notify_key, 3600, str(time.time()))
-                    except Exception:
-                        pass
-
-                self._force_eval.pop(symbol, None)
+            if await self._signal_processor.check_no_ohlcv(
+                symbol, display_symbol, assigned_tf, ohlcv_data
+            ):
                 return
 
             open_positions = [
