@@ -3057,6 +3057,11 @@ class TradingEngine:
         if _assets_result is None:
             return
         available_pairs, btp_pairs, etf_pairs, old_symbols, last_key = _assets_result
+        # Reconstruct stock_pairs (stocks only, excluding BTPs and ETFs)
+        # from the returned available_pairs, which includes stocks + BTPs + RSS-discovered symbols.
+        _btp_set = set(btp_pairs)
+        _etf_set = set(etf_pairs)
+        stock_pairs = [p for p in available_pairs if p not in _btp_set and p not in _etf_set]
 
         logger.info("Re-evaluation step 4/12: Fetching balance and quotes (from %d available pairs)...", len(available_pairs))
         # Fetch balance and compute per-symbol budget
