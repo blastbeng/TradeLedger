@@ -58,6 +58,7 @@ from src.utils.redis_client import get_redis_client
 from src.utils.symbol_utils import is_btp_isin
 from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results
 from src.trading.components.order_executor import OrderExecutor
+from src.trading.components.risk_manager import RiskManager
 from src.trading.components.state_persistence import StatePersistence
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,7 @@ class TradingEngine:
         # --- Extracted components ---
         self._state_persistence = StatePersistence(self)
         self._order_executor = OrderExecutor(self)
+        self._risk_manager = RiskManager(self)
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
@@ -8109,40 +8111,7 @@ class TradingEngine:
 
     async def _record_position_pnl_snapshots(self):
         """Record P&L snapshots for all open positions to the database."""
-        if not self.positions:
-            return
-        pos_tickers = await self._get_all_position_tickers_sync()
-        now_ms = int(time.time() * 1000)
-        for symbol, pos in self.positions.items():
-            try:
-                t = pos_tickers.get(symbol)
-                current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
-                amount = pos.get('amount', 0.0)
-                entry_price = pos.get('price', 0.0)
-                cost_basis = pos.get('cost_basis', amount * entry_price)
-                position_value = amount * current_price
-                unrealized_pnl = (current_price - entry_price) * amount
-                pnl_pct = (unrealized_pnl / cost_basis) if cost_basis > 0 else 0.0
-                # Realized P&L: sum of all closed sell trades for this symbol
-                realized_pnl = sum(
-                    t.get("realized_pnl", 0.0)
-                    for t in self.trade_history
-                    if t.get("symbol") == symbol and t.get("side") == "sell"
-                )
-                await asyncio.to_thread(
-                    insert_position_pnl_snapshot,
-                    symbol=symbol,
-                    timestamp=now_ms,
-                    unrealized_pnl=round(unrealized_pnl, 6),
-                    realized_pnl=round(realized_pnl, 6),
-                    position_value=round(position_value, 6),
-                    cost_basis=round(cost_basis, 6),
-                    amount=amount,
-                    current_price=current_price,
-                    pnl_pct=round(pnl_pct, 6),
-                )
-            except Exception as e:
-                logger.debug(f"Failed to record P&L snapshot for {symbol}: {e}")
+        await self._risk_manager.record_position_pnl_snapshots()
 
     async def _process_native_exit_fill(
         self,
