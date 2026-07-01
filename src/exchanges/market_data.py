@@ -230,20 +230,21 @@ class DynamicProxyRotator:
         try:
             response = await client.get(self.test_url, proxy=proxy, timeout=3.0)
             if response.status_code == 200:
-                self.valid_proxies.append(proxy)
+                return proxy
         except Exception:
             pass
+        return None
 
     async def refresh_proxy_pool(self):
         """Fetches and tests all proxies, rebuilding the valid pool."""
         raw_proxies = self.fetch_raw_proxies()
         logger.info(f"Fetched {len(raw_proxies)} raw proxies. Validating speed and uptime...")
         
-        self.valid_proxies = []
         async with httpx.AsyncClient() as client:
             tasks = [self._validate_single_proxy(client, proxy) for proxy in raw_proxies]
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks)
             
+        self.valid_proxies = [p for p in results if p is not None]
         self._last_refresh = time.time()
         logger.info(f"Pool updated! {len(self.valid_proxies)} proxies are ready to use.")
 
