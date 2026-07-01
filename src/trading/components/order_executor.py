@@ -1276,6 +1276,61 @@ class OrderExecutor:
             if custom_interval is not None:
                 engine._strategy_intervals[symbol] = custom_interval
 
+    async def record_buy_fill_and_notify(
+        self,
+        symbol: str,
+        display_symbol: str,
+        order: Dict[str, Any],
+        signal: Signal,
+        timeframe: Optional[str],
+        atr: Optional[float],
+    ) -> None:
+        """Place exit orders, record the trade, and send BUY notification after a fill."""
+        engine = self.engine
+        # --- Place native exit orders (OCO) if LLM specified them ---
+        current_entry = engine.positions[symbol]["price"]
+        exit_prices = self.compute_exit_order_prices(
+            entry_price=current_entry,
+            signal=signal,
+            atr=atr,
+        )
+        await self.place_exit_orders(symbol, signal, exit_prices, timeframe)
+        order["strategy_type"] = signal.strategy_type
+        order["timeframe"] = timeframe
+        order["buy_confidence"] = signal.confidence
+        order["buy_reasoning"] = (signal.reasoning or "")[:200]
+        if hasattr(signal, 'backtest_summary') and signal.backtest_summary:
+            order["backtest_summary"] = signal.backtest_summary
+        engine._append_trade(order)
+        engine._balance_cache = None  # force refresh on next fetch
+        await asyncio.to_thread(insert_trade, order)
+        await engine._save_state(force=True)
+        engine._portfolio_exposure_cache = None
+        if engine.notifier:
+            buy_msg = f"🟢 BUY {display_symbol}: {order['amount']:.6f} @ {order['price']:.4f}"
+            buy_summary = {
+                "symbol": symbol,
+                "action": "BUY",
+                "price": order["price"],
+                "amount": order["amount"],
+                "confidence": signal.confidence,
+                "reason": signal.reasoning[:200],
+                "strategy_type": signal.strategy_type,
+                "indicators": {
+                    "atr": atr,
+                },
+            }
+            if signal.model_type:
+                buy_summary["model_type"] = signal.model_type
+            if signal.llm_provider:
+                buy_summary["llm_provider"] = signal.llm_provider
+            if signal.llm_model:
+                buy_summary["llm_model"] = signal.llm_model
+            await engine.notifier.send_notification(
+                buy_msg,
+                summary=buy_summary,
+            )
+
     async def cleanup_orphaned_orders(self):
         """Periodically cancel any open orders that are older than 10 minutes,
         but never cancel orders that are still being tracked as queued."""
