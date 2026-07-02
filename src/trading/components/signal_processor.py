@@ -2473,3 +2473,122 @@ class SignalProcessor:
                         )
             else:
                 logger.warning(f"Invalid resume_trading value in LLM response: {resume_trading}")
+
+    async def should_skip_llm_eval(
+        self,
+        symbol: str,
+        current_price: float,
+        atr: Optional[float],
+        rsi: Optional[float],
+        macd_hist: Optional[float],
+        atr_percentile: Optional[float],
+        market_regime: str,
+        sentiment_trend_val: Optional[float],
+        timeframe_seconds: float,
+        has_position: bool,
+        is_critical: bool,
+    ) -> bool:
+        """Return True if it's safe to skip the LLM call and just HOLD."""
+        engine = self.engine
+        # If a force evaluation was requested (entry signal detected), never skip
+        if engine._force_eval.get(symbol, False):
+            return False
+        # Never skip critical situations (max hold, stop-loss, take-profit triggered)
+        if is_critical:
+            return False
+
+        # ATR is used for price-change comparison but is not strictly required.
+        # When ATR is None (common for long timeframes like 1Y/3Y/5Y), we fall
+        # back to a fixed percentage threshold so the skip logic still works
+        # and we don't waste LLM calls every cycle.
+
+        snapshot = engine._last_eval_snapshot.get(symbol)
+        if snapshot is None:
+            # First evaluation – must call
+            return False
+
+        now = time.time()
+        last_time = snapshot.get("timestamp", 0)
+        last_price = snapshot.get("price", 0)
+
+        # Always call if enough time has passed (3× the effective interval)
+        # For medium/long-term, be more patient before forcing an evaluation
+        effective_interval = timeframe_seconds * settings.STRATEGY_INTERVAL_MULTIPLIER
+        # Cap the safety net at the configured max skip interval so the bot
+        # never skips LLM evaluations indefinitely, even for very long
+        # timeframes (e.g., 1Y where 3× the interval would be ~3 years).
+        # Cap the safety net at a value proportional to the timeframe,
+        # but never less than the configured MAX_SKIP_INTERVAL_SECONDS.
+        # This prevents excessively frequent forced evaluations for long
+        # timeframes (e.g., 1Y candles should not be forced every 7 days).
+        max_skip = max(settings.MAX_SKIP_INTERVAL_SECONDS, int(timeframe_seconds))
+        if now - last_time > min(3 * effective_interval, max_skip):
+            return False
+
+        # Fetch LLM-driven skip thresholds from Redis.
+        # Fall back to sensible hardcoded defaults when the LLM has not
+        # configured them, so the skip logic is functional even before the
+        # LLM provides values. The LLM can override these at any time via
+        # its stock selection response.
+        skip_price_mult_raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_price_change_atr_mult")
+        skip_price_mult = float(skip_price_mult_raw) if skip_price_mult_raw else 1.0
+
+        skip_rsi_raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_change")
+        skip_rsi = float(skip_rsi_raw) if skip_rsi_raw else 5.0
+
+        skip_macd_raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_macd_hist_change")
+        skip_macd = float(skip_macd_raw) if skip_macd_raw else 0.0005
+
+        # Price change since last evaluation
+        if last_price > 0:
+            price_change_pct = abs(current_price - last_price) / last_price
+            # If price moved less than skip_price_mult × ATR (in %), it's boring
+            atr_pct = (atr / current_price) if (atr and atr > 0) else 0.005
+            if price_change_pct > atr_pct * skip_price_mult:
+                return False   # enough movement to warrant a new look
+
+        # Indicator changes
+        last_rsi = snapshot.get("rsi")
+        last_macd_hist = snapshot.get("macd_hist")
+        if rsi is not None and last_rsi is not None:
+            if abs(rsi - last_rsi) > skip_rsi:
+                return False
+        if macd_hist is not None and last_macd_hist is not None:
+            if abs(macd_hist - last_macd_hist) > skip_macd:
+                return False
+
+        # MACD histogram sign change (crossover) — momentum shift
+        if macd_hist is not None and last_macd_hist is not None:
+            if (macd_hist > 0) != (last_macd_hist > 0):
+                return False
+
+        # If we have no open position and nothing is screaming, skip
+        if not has_position:
+            # Only call if there is a potential entry signal (extreme RSI, MACD crossover, etc.)
+            # RSI extreme? (thresholds are LLM-decided)
+            # RSI extremes are optional – only use them if the LLM has set them.
+            rsi_oversold = None
+            rsi_overbought = None
+            try:
+                raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_oversold")
+                if raw:
+                    rsi_oversold = float(raw)
+                raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_overbought")
+                if raw:
+                    rsi_overbought = float(raw)
+            except Exception:
+                pass
+            if (
+                rsi is not None
+                and rsi_oversold is not None
+                and rsi_overbought is not None
+                and (rsi < rsi_oversold or rsi > rsi_overbought)
+            ):
+                return False
+            # MACD histogram direction change? (harder to detect without previous sign – skip for simplicity)
+            # Otherwise, no strong signal → skip
+            return True
+
+        # Have an open position – skip if price far from stop/tp and indicators calm
+        # (the risk management loop will handle stop/tp)
+        return True
