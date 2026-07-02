@@ -3259,7 +3259,7 @@ class TradingEngine:
                 correction_prompt = (
                     "Your previous response was not valid JSON. "
                     "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
-                    "Here is the original request:\n\n" + final_prompt
+                    f"Here is your previous response:\n\n{response}"
                 )
                 try:
                     correction_result = await asyncio.wait_for(
