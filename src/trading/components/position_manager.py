@@ -7,6 +7,7 @@ Extracted from TradingEngine to reduce class size and improve maintainability.
 import asyncio
 import logging
 import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -120,6 +121,130 @@ class PositionManager:
             "peak": peak,
             "drawdown_pct": drawdown_pct,
         }
+
+    def compute_trade_pattern_analysis(self) -> Dict[str, Any]:
+        """Analyze closed trades to identify which conditions, timeframes, and parameters
+        have historically led to wins vs losses. Cached and only recomputed when new trades arrive."""
+        engine = self.engine
+        if engine._trade_history_version == engine._trade_pattern_cache_trade_count and engine._trade_pattern_cache is not None:
+            return engine._trade_pattern_cache
+
+        # Snapshot trade_history to avoid concurrent modification during iteration
+        trades_snapshot = list(engine.trade_history)
+
+        sells = [t for t in trades_snapshot if t.get("side") == "sell" and "realized_pnl" in t]
+        if not sells:
+            result: Dict[str, Any] = {}
+            engine._trade_pattern_cache = result
+            engine._trade_pattern_cache_trade_count = engine._trade_history_version
+            return result
+
+        def _win_rate_stats(trades: list) -> Optional[Dict[str, Any]]:
+            if not trades:
+                return None
+            wins = [t for t in trades if t["realized_pnl"] > 0]
+            total_pnl = sum(t["realized_pnl"] for t in trades)
+            return {
+                "win_rate": round(len(wins) / len(trades), 3),
+                "trades": len(trades),
+                "avg_pnl": round(total_pnl / len(trades), 6),
+            }
+
+        # --- Entry conditions (strategy type + confidence range as proxies) ---
+        condition_groups: Dict[str, list] = defaultdict(list)
+        for t in sells:
+            strategy = t.get("strategy_type", "unknown")
+            condition_groups[f"strategy={strategy}"].append(t)
+
+        best_entry_conditions = []
+        for cond, trades in condition_groups.items():
+            stats = _win_rate_stats(trades)
+            if stats and stats["trades"] >= 3:
+                best_entry_conditions.append({"condition": cond, **stats})
+        best_entry_conditions.sort(key=lambda x: x["win_rate"], reverse=True)
+        best_entry_conditions = best_entry_conditions[:5]
+
+        # --- Timeframes ---
+        tf_groups: Dict[str, list] = defaultdict(list)
+        for t in sells:
+            tf = t.get("timeframe", "unknown")
+            tf_groups[tf].append(t)
+        best_timeframes = []
+        for tf, trades in tf_groups.items():
+            stats = _win_rate_stats(trades)
+            if stats and stats["trades"] >= 3:
+                best_timeframes.append({"timeframe": tf, **stats})
+        best_timeframes.sort(key=lambda x: x["win_rate"], reverse=True)
+
+        # --- Exit reasons ---
+        exit_groups: Dict[str, list] = defaultdict(list)
+        for t in sells:
+            reason = t.get("exit_reason", "unknown")
+            exit_groups[reason].append(t)
+        best_exit_reasons = []
+        for reason, trades in exit_groups.items():
+            stats = _win_rate_stats(trades)
+            if stats and stats["trades"] >= 2:
+                best_exit_reasons.append({"exit_reason": reason, **stats})
+        best_exit_reasons.sort(key=lambda x: x["win_rate"], reverse=True)
+
+        # --- Confidence ranges ---
+        conf_groups: Dict[str, list] = defaultdict(list)
+        for t in sells:
+            conf = t.get("buy_confidence", 0.5)
+            if conf >= 0.8:
+                conf_groups["0.8-1.0"].append(t)
+            elif conf >= 0.5:
+                conf_groups["0.5-0.8"].append(t)
+            elif conf >= 0.3:
+                conf_groups["0.3-0.5"].append(t)
+            else:
+                conf_groups["0.0-0.3"].append(t)
+        best_confidence_ranges = []
+        for rng, trades in conf_groups.items():
+            stats = _win_rate_stats(trades)
+            if stats and stats["trades"] >= 3:
+                best_confidence_ranges.append({"range": rng, **stats})
+        best_confidence_ranges.sort(key=lambda x: x["win_rate"], reverse=True)
+
+        # --- Per-symbol performance ---
+        symbol_groups: Dict[str, list] = defaultdict(list)
+        for t in sells:
+            symbol_groups[t["symbol"]].append(t)
+        best_symbols = []
+        worst_symbols = []
+        for sym, trades in symbol_groups.items():
+            stats = _win_rate_stats(trades)
+            if stats and stats["trades"] >= 3:
+                if stats["win_rate"] >= 0.5:
+                    best_symbols.append({"symbol": sym, **stats})
+                else:
+                    worst_symbols.append({"symbol": sym, **stats})
+        best_symbols.sort(key=lambda x: x["avg_pnl"], reverse=True)
+        best_symbols = best_symbols[:5]
+        worst_symbols.sort(key=lambda x: x["avg_pnl"])
+        worst_symbols = worst_symbols[:5]
+
+        # --- Hold time analysis ---
+        winning_holds = [t.get("hold_time_seconds") for t in sells if t["realized_pnl"] > 0 and t.get("hold_time_seconds")]
+        losing_holds = [t.get("hold_time_seconds") for t in sells if t["realized_pnl"] < 0 and t.get("hold_time_seconds")]
+        avg_hold_winning = round(sum(winning_holds) / len(winning_holds)) if winning_holds else None
+        avg_hold_losing = round(sum(losing_holds) / len(losing_holds)) if losing_holds else None
+
+        result = {
+            "best_entry_conditions": best_entry_conditions,
+            "best_timeframes": best_timeframes,
+            "best_exit_reasons": best_exit_reasons,
+            "best_confidence_ranges": best_confidence_ranges,
+            "best_symbols": best_symbols,
+            "worst_symbols": worst_symbols,
+            "avg_hold_time_winning": avg_hold_winning,
+            "avg_hold_time_losing": avg_hold_losing,
+        }
+
+        engine._trade_pattern_cache = result
+        engine._trade_pattern_cache_trade_count = engine._trade_history_version
+        return result
 
     @staticmethod
     def _validate_param_range(
