@@ -3417,24 +3417,7 @@ class TradingEngine:
                 atr_multi_tf[tf] = tf_atr
 
         # ATR Percentile (volatility context)
-        atr_percentile = None
-        if atr is not None and atr > 0:
-            atr_percentile_key = f"atr_percentile:{symbol}"
-            try:
-                stored_atr = await asyncio.to_thread(self.redis.get, atr_percentile_key)
-                if stored_atr:
-                    atr_history = json.loads(stored_atr)
-                else:
-                    atr_history = []
-                atr_history.append(atr)
-                atr_history = atr_history[-100:]
-                await asyncio.to_thread(self.redis.setex, atr_percentile_key, 7 * 24 * 3600, json.dumps(atr_history))
-                if len(atr_history) >= 5:
-                    sorted_atr = sorted(atr_history)
-                    rank = sum(1 for v in sorted_atr if v <= atr)
-                    atr_percentile = round(rank / len(sorted_atr) * 100, 1)
-            except Exception as e:
-                logger.info(f"ATR percentile computation failed for {symbol}: {e}")
+        atr_percentile = await self._signal_processor.compute_atr_percentile(symbol, atr)
 
         # Market regime classification
         market_regime = await self._classify_market_regime(
@@ -6531,21 +6514,7 @@ class TradingEngine:
             if tf_atr is not None and tf_atr > 0:
                 atr_multi_tf[tf] = tf_atr
 
-        atr_percentile = None
-        if atr is not None and atr > 0:
-            atr_percentile_key = f"atr_percentile:{symbol}"
-            try:
-                stored_atr = await asyncio.to_thread(self.redis.get, atr_percentile_key)
-                if stored_atr:
-                    atr_history = json.loads(stored_atr)
-                else:
-                    atr_history = []
-                if len(atr_history) >= 5:
-                    sorted_atr = sorted(atr_history)
-                    rank = sum(1 for v in sorted_atr if v <= atr)
-                    atr_percentile = round(rank / len(sorted_atr) * 100, 1)
-            except Exception:
-                pass
+        atr_percentile = await self._signal_processor.compute_atr_percentile(symbol, atr)
 
         market_regime = await self._classify_market_regime(
             adx=adx, plus_di=plus_di, minus_di=minus_di, ema_9=ema_9, ema_21=ema_21,
