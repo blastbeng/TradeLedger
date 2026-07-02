@@ -3909,54 +3909,7 @@ class TradingEngine:
             try:
                 now = time.time()
                 for symbol in list(self._pending_entries.keys()):
-                    entry = self._pending_entries.get(symbol)
-                    if entry is None:
-                        continue
-                    entry_tf = entry.get("timeframe")
-                    stock_name = await self._get_stock_name(symbol)
-                    display_symbol = self._format_symbol_display(symbol, stock_name, entry_tf)
-                    if now >= entry["deadline"]:
-                        # Timeout – clear and notify
-                        logger.info(f"Entry condition timeout for {symbol}")
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"⏭️ Entry condition timeout for {display_symbol} – skipping BUY.",
-                                summary={
-                                    "symbol": symbol,
-                                    "action": "SKIP",
-                                    "reason": "Entry condition timeout",
-                                }
-                            )
-                        del self._pending_entries[symbol]
-                        self._state_dirty = True
-                        continue
-
-                    # Check the condition (non‑blocking)
-                    condition_met = await self._check_entry_condition_once(
-                        symbol, entry["condition"], entry["timeframe"]
-                    )
-                    if condition_met:
-                        logger.info(f"Entry condition met for {symbol}, executing BUY")
-                        # Remove from pending before executing to avoid re‑trigger
-                        signal = entry["signal"]
-                        del self._pending_entries[symbol]
-                        self._state_dirty = True
-                        # Check trading pause again (may have changed)
-                        paused = await asyncio.to_thread(self.redis.get, "trading:paused")
-                        if paused:
-                            logger.info(f"Ignoring queued BUY {symbol}: trading is now paused.")
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"⏸️ Queued BUY for {display_symbol} skipped – trading paused.",
-                                    summary={"symbol": symbol, "action": "SKIP", "reason": "Trading paused"}
-                                )
-                        else:
-                            await self._execute_signal(
-                                symbol,
-                                signal,
-                                timeframe=entry["timeframe"],
-                                atr=None,
-                            )
+                    await self._signal_processor.process_pending_entry(symbol, now)
             except Exception as e:
                 logger.error(f"Error checking pending entries: {e}", exc_info=True)
             await asyncio.sleep(60)  # check every 60 seconds (medium/long-term)
