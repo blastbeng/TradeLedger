@@ -2358,39 +2358,11 @@ class TradingEngine:
 
     async def sell_all_positions(self):
         """Sell all open positions at market price."""
-        if not await self._is_market_open():
-            logger.warning("Sell all positions skipped: market is closed.")
-            if self.notifier:
-                await self.notifier.send_notification(
-                    "⏸️ Sell all skipped: market is currently closed.",
-                    summary={"action": "SKIP", "reason": "Market closed"}
-                )
-            return
-        for symbol in list(self.positions.keys()):
-            await self._execute_signal(
-                symbol,
-                Signal(action="SELL", confidence=1.0, reasoning="Manual sell all"),
-                exit_reason="manual_sell_all"
-            )
+        await self._order_executor.sell_all_positions()
 
     async def sell_position(self, symbol: str):
         """Sell a specific open position at market price."""
-        if not await self._is_market_open():
-            logger.warning(f"Sell position {symbol} skipped: market is closed.")
-            if self.notifier:
-                await self.notifier.send_notification(
-                    f"⏸️ Sell {symbol} skipped: market is currently closed.",
-                    summary={"symbol": symbol, "action": "SKIP", "reason": "Market closed"}
-                )
-            return
-        if symbol in self.positions:
-            await self._execute_signal(
-                symbol,
-                Signal(action="SELL", confidence=1.0, reasoning="Manual sell"),
-                exit_reason="manual_sell"
-            )
-        else:
-            logger.warning(f"No open position for {symbol}")
+        await self._order_executor.sell_position(symbol)
 
     async def log_manual_trade(self, ticker: str, side: str, quantity: float, money_spent: float, fee: float) -> dict:
         """Log a manually executed trade in notify mode. Persists to DB and updates positions."""

@@ -109,6 +109,44 @@ class OrderExecutor:
                 balance=balance,
             )
 
+    async def sell_all_positions(self):
+        """Sell all open positions at market price."""
+        engine = self.engine
+        if not await engine._is_market_open():
+            logger.warning("Sell all positions skipped: market is closed.")
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    "⏸️ Sell all skipped: market is currently closed.",
+                    summary={"action": "SKIP", "reason": "Market closed"}
+                )
+            return
+        for symbol in list(engine.positions.keys()):
+            await engine._execute_signal(
+                symbol,
+                Signal(action="SELL", confidence=1.0, reasoning="Manual sell all"),
+                exit_reason="manual_sell_all"
+            )
+
+    async def sell_position(self, symbol: str):
+        """Sell a specific open position at market price."""
+        engine = self.engine
+        if not await engine._is_market_open():
+            logger.warning(f"Sell position {symbol} skipped: market is closed.")
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⏸️ Sell {symbol} skipped: market is currently closed.",
+                    summary={"symbol": symbol, "action": "SKIP", "reason": "Market closed"}
+                )
+            return
+        if symbol in engine.positions:
+            await engine._execute_signal(
+                symbol,
+                Signal(action="SELL", confidence=1.0, reasoning="Manual sell"),
+                exit_reason="manual_sell"
+            )
+        else:
+            logger.warning(f"No open position for {symbol}")
+
     def compute_exit_order_prices(
         self,
         entry_price: float,
