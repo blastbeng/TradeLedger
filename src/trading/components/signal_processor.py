@@ -2176,6 +2176,180 @@ class SignalProcessor:
 
         return preliminary_signal, llm_provider, llm_model
 
+    def choose_model_tier(
+        self,
+        atr: Optional[float] = None,
+        atr_percentile: Optional[float] = None,
+        rsi: Optional[float] = None,
+        macd: Optional[float] = None,
+        macd_signal: Optional[float] = None,
+        macd_hist: Optional[float] = None,
+        bb_upper: Optional[float] = None,
+        bb_middle: Optional[float] = None,
+        bb_lower: Optional[float] = None,
+        ema_9: Optional[float] = None,
+        ema_21: Optional[float] = None,
+        stochastic_k: Optional[float] = None,
+        adx: Optional[float] = None,
+        plus_di: Optional[float] = None,
+        minus_di: Optional[float] = None,
+        mfi: Optional[float] = None,
+        cci: Optional[float] = None,
+        williams_r: Optional[float] = None,
+        ichimoku: Optional[Dict[str, Any]] = None,
+        market_regime: str = "",
+        market_breadth: Optional[Dict[str, Any]] = None,
+        full_market_breadth: Optional[Dict[str, Any]] = None,
+        sentiment_trend_val: Optional[float] = None,
+        volume_trend: Optional[float] = None,
+        unrealized_pnl: Optional[float] = None,
+        drawdown_pct: Optional[float] = None,
+        portfolio_exposure_pct: Optional[float] = None,
+        portfolio_stop_risk_pct: Optional[float] = None,
+        is_critical: bool = False,
+        trading_paused: bool = False,
+        symbol_event: Optional[Dict[str, Any]] = None,
+        fundamentals: Optional[Dict[str, Any]] = None,
+        consecutive_losses: int = 0,
+        current_price: Optional[float] = None,
+    ) -> str:
+        """Return "mind" or "actuator" based on market complexity."""
+        if is_critical:
+            return "mind"
+
+        score = 0.0
+        max_score = 0.0
+
+        # === Critical factors (weight 2.0) ===
+        if rsi is not None and macd_hist is not None:
+            max_score += 2.0
+            if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
+                score += 2.0
+
+        if all(v is not None for v in (ema_9, ema_21, adx, plus_di, minus_di)):
+            max_score += 2.0
+            if (ema_9 > ema_21) != (plus_di > minus_di) and adx > 25:
+                score += 2.0
+
+        if drawdown_pct is not None:
+            max_score += 2.0
+            if drawdown_pct > 10:
+                score += 2.0
+
+        if symbol_event is not None:
+            max_score += 2.0
+            if symbol_event.get("has_event"):
+                score += 2.0
+
+        max_score += 2.0
+        if consecutive_losses >= 3:
+            score += 2.0
+
+        # === Significant factors (weight 1.5) ===
+        if atr_percentile is not None:
+            max_score += 1.5
+            if atr_percentile > 80 or atr_percentile < 20:
+                score += 1.5
+
+        if market_regime:
+            max_score += 1.5
+            if any(kw in market_regime for kw in ("high volatility", "squeeze", "expansion", "ranging")):
+                score += 1.5
+
+        if sentiment_trend_val is not None:
+            max_score += 1.5
+            if abs(sentiment_trend_val) > 0.2:
+                score += 1.5
+
+        if all(v is not None for v in (bb_upper, bb_lower, bb_middle)) and bb_middle > 0:
+            max_score += 1.5
+            bb_width = (bb_upper - bb_lower) / bb_middle
+            if bb_width < 0.02 or bb_width > 0.08:
+                score += 1.5
+
+        if portfolio_exposure_pct is not None:
+            max_score += 1.5
+            if portfolio_exposure_pct > 70:
+                score += 1.5
+
+        if portfolio_stop_risk_pct is not None:
+            max_score += 1.5
+            if portfolio_stop_risk_pct > 8:
+                score += 1.5
+
+        if unrealized_pnl is not None:
+            max_score += 1.5
+            if unrealized_pnl < 0:
+                score += 1.5
+
+        if market_breadth is not None:
+            max_score += 1.5
+            pos_pct = market_breadth.get("positive_pct", 50)
+            if pos_pct > 80 or pos_pct < 20:
+                score += 1.5
+
+        if full_market_breadth is not None:
+            max_score += 1.5
+            pos_pct = full_market_breadth.get("positive_pct", 50)
+            if pos_pct > 80 or pos_pct < 20:
+                score += 1.5
+
+        # === Standard factors (weight 1.0) ===
+        if macd is not None and macd_signal is not None and macd != 0:
+            max_score += 1.0
+            if abs(macd - macd_signal) < 0.0001 * abs(macd):
+                score += 1.0
+
+        if stochastic_k is not None:
+            max_score += 1.0
+            if stochastic_k < 20 or stochastic_k > 80:
+                score += 1.0
+
+        if mfi is not None:
+            max_score += 1.0
+            if mfi < 20 or mfi > 80:
+                score += 1.0
+
+        if cci is not None:
+            max_score += 1.0
+            if cci < -100 or cci > 100:
+                score += 1.0
+
+        if williams_r is not None:
+            max_score += 1.0
+            if williams_r < -80 or williams_r > -20:
+                score += 1.0
+
+        if ichimoku is not None and current_price is not None:
+            cloud_top = ichimoku.get("cloud_top")
+            cloud_bottom = ichimoku.get("cloud_bottom")
+            if cloud_top is not None and cloud_bottom is not None:
+                max_score += 1.0
+                if cloud_bottom <= current_price <= cloud_top:
+                    score += 1.0
+
+        if volume_trend is not None:
+            max_score += 1.0
+            if volume_trend > 3.0:
+                score += 1.0
+
+        if fundamentals is not None:
+            pe = fundamentals.get("pe_ratio")
+            if pe is not None:
+                max_score += 1.0
+                if pe > 50 or pe < 0:
+                    score += 1.0
+            margins = fundamentals.get("profit_margins")
+            if margins is not None:
+                max_score += 1.0
+                if margins < 0:
+                    score += 1.0
+
+        if max_score == 0:
+            return "actuator"
+        normalized_score = score / max_score
+        return "mind" if normalized_score >= settings.LLM_MIND_MODEL_THRESHOLD else "actuator"
+
     def compute_model_tier_and_temperature(
         self,
         atr: Optional[float],
@@ -2220,7 +2394,7 @@ class SignalProcessor:
         """
         engine = self.engine
 
-        strategy_model_type = engine._choose_model_tier(
+        strategy_model_type = self.choose_model_tier(
             atr=atr,
             atr_percentile=atr_percentile,
             rsi=rsi,
