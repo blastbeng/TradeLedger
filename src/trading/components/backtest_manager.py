@@ -356,4 +356,47 @@ class BacktestManager:
             except Exception as e:
                 logger.warning(f"Failed to persist backtest result to DB for {symbol}: {e}")
 
+    async def _run_backtest_variants_parallel(
+        self,
+        symbol: str,
+        variants_to_test: List[Dict[str, Any]],
+        preliminary_signal: Signal,
+        atr: Optional[float],
+        current_price: float,
+        tf_seconds: int,
+        assigned_tf: str,
+        historical_ohlcv: Optional[List[List]],
+        raw_candles: Optional[List[List]],
+        base_balance: float,
+        is_btp: bool,
+    ) -> List[Dict[str, Any]]:
+        """Run all backtest variants in parallel (concurrency-limited by semaphore).
+
+        Returns a list of result dicts, each with keys: variant_params, summary, stats.
+        """
+        async def _run_single_variant(vp: Dict[str, Any]) -> Dict[str, Any]:
+            try:
+                bt_stats, bt_summary = await self._run_backtest_variant(
+                    symbol=symbol,
+                    variant_params=vp,
+                    preliminary_signal=preliminary_signal,
+                    atr=atr,
+                    current_price=current_price,
+                    tf_secs=tf_seconds,
+                    assigned_tf=assigned_tf,
+                    historical_ohlcv=historical_ohlcv,
+                    raw_candles=raw_candles,
+                    base_balance=base_balance,
+                    is_btp=is_btp,
+                )
+                if bt_stats is not None:
+                    return {"variant_params": vp, "summary": bt_summary, "stats": bt_stats}
+                else:
+                    return {"variant_params": vp, "summary": bt_summary or "Insufficient data for backtest.", "stats": {}}
+            except Exception as e:
+                logger.warning(f"Backtest variant failed for {symbol}: {e}")
+                return {"variant_params": vp, "summary": f"Backtest error: {e}", "stats": {}}
+
+        return list(await asyncio.gather(*[_run_single_variant(vp) for vp in variants_to_test]))
+
         return bt_stats, bt_summary

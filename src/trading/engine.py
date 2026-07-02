@@ -4598,31 +4598,19 @@ class TradingEngine:
                 raw_candles=raw_candles,
             )
 
-            # Run backtest variants in parallel (concurrency-limited by semaphore)
-            async def _run_single_variant(vp: Dict[str, Any]) -> Dict[str, Any]:
-                try:
-                    bt_stats, bt_summary = await self._run_backtest_variant(
-                        symbol=symbol,
-                        variant_params=vp,
-                        preliminary_signal=preliminary_signal,
-                        atr=atr,
-                        current_price=current_price,
-                        tf_secs=tf_seconds,
-                        assigned_tf=assigned_tf,
-                        historical_ohlcv=historical_ohlcv,
-                        raw_candles=raw_candles,
-                        base_balance=base_balance,
-                        is_btp=is_btp,
-                    )
-                    if bt_stats is not None:
-                        return {"variant_params": vp, "summary": bt_summary, "stats": bt_stats}
-                    else:
-                        return {"variant_params": vp, "summary": bt_summary or "Insufficient data for backtest.", "stats": {}}
-                except Exception as e:
-                    logger.warning(f"Backtest variant failed for {symbol}: {e}")
-                    return {"variant_params": vp, "summary": f"Backtest error: {e}", "stats": {}}
-
-            backtest_results = list(await asyncio.gather(*[_run_single_variant(vp) for vp in variants_to_test]))
+            backtest_results = await self._backtest_manager._run_backtest_variants_parallel(
+                symbol=symbol,
+                variants_to_test=variants_to_test,
+                preliminary_signal=preliminary_signal,
+                atr=atr,
+                current_price=current_price,
+                tf_seconds=tf_seconds,
+                assigned_tf=assigned_tf,
+                historical_ohlcv=historical_ohlcv,
+                raw_candles=raw_candles,
+                base_balance=base_balance,
+                is_btp=is_btp,
+            )
 
             # Log results after all variants complete
             for i, r in enumerate(backtest_results):
