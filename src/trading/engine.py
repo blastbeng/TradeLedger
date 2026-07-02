@@ -2227,31 +2227,12 @@ class TradingEngine:
         total_recent_pnl = sum(recent_pnl)
         trend = "up" if total_recent_pnl > 0 else "down" if total_recent_pnl < 0 else "flat"
 
-        # Compute drawdown based on total equity (initial balance + cumulative realized P&L)
-        equity_series = []
-        running_equity = self.initial_balance + self._realized_pnl_offset
-        for trade in trades_snapshot:
-            if trade.get("side") == "sell":
-                running_equity += trade.get("realized_pnl", 0.0)
-            equity_series.append(running_equity)
-        peak = max(equity_series) if equity_series else self.initial_balance
-
-        # Current equity includes unrealized P&L from open positions
-        current_realized_equity = equity_series[-1] if equity_series else self.initial_balance
-        unrealized_pnl = 0.0
-        try:
-            pos_tickers = self._get_all_position_tickers_sync()
-            for sym, pos in self.positions.items():
-                t = pos_tickers.get(sym)
-                if t and t.get('last'):
-                    unrealized_pnl += (t['last'] - pos['price']) * pos['amount']
-        except Exception:
-            pass
-        current_equity = current_realized_equity + unrealized_pnl
-        # If current equity exceeds peak, update peak (new all-time high including unrealized)
-        if current_equity > peak:
-            peak = current_equity
-        drawdown_pct = ((peak - current_equity) / peak * 100) if peak > 0 else 0.0
+        _equity = self._position_manager.compute_equity_and_drawdown(trades_snapshot)
+        current_realized_equity = _equity["current_realized_equity"]
+        unrealized_pnl = _equity["unrealized_pnl"]
+        current_equity = _equity["current_equity"]
+        peak = _equity["peak"]
+        drawdown_pct = _equity["drawdown_pct"]
 
         daily_pnl = self._daily_realized_pnl()
 

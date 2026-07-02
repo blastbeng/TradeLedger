@@ -8,7 +8,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from src.config.settings import settings
 from src.database import insert_trade
@@ -82,6 +82,44 @@ class PositionManager:
         engine._portfolio_exposure_cache = result
         engine._portfolio_exposure_cache_time = now
         return result
+
+    def compute_equity_and_drawdown(self, trades_snapshot: List[Dict[str, Any]]) -> Dict[str, float]:
+        """Compute current equity, peak, and drawdown percentage.
+        
+        Returns a dict with keys: current_realized_equity, unrealized_pnl,
+        current_equity, peak, drawdown_pct.
+        """
+        engine = self.engine
+        equity_series = []
+        running_equity = engine.initial_balance + engine._realized_pnl_offset
+        for trade in trades_snapshot:
+            if trade.get("side") == "sell":
+                running_equity += trade.get("realized_pnl", 0.0)
+            equity_series.append(running_equity)
+        peak = max(equity_series) if equity_series else engine.initial_balance
+
+        current_realized_equity = equity_series[-1] if equity_series else engine.initial_balance
+        unrealized_pnl = 0.0
+        try:
+            pos_tickers = engine._get_all_position_tickers_sync()
+            for sym, pos in engine.positions.items():
+                t = pos_tickers.get(sym)
+                if t and t.get('last'):
+                    unrealized_pnl += (t['last'] - pos['price']) * pos['amount']
+        except Exception:
+            pass
+        current_equity = current_realized_equity + unrealized_pnl
+        if current_equity > peak:
+            peak = current_equity
+        drawdown_pct = ((peak - current_equity) / peak * 100) if peak > 0 else 0.0
+
+        return {
+            "current_realized_equity": current_realized_equity,
+            "unrealized_pnl": unrealized_pnl,
+            "current_equity": current_equity,
+            "peak": peak,
+            "drawdown_pct": drawdown_pct,
+        }
 
     @staticmethod
     def _validate_param_range(
