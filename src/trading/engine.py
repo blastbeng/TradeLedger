@@ -305,6 +305,33 @@ class TradingEngine:
         finally:
             self._full_download_running = False
 
+    async def force_download_tracked_symbols(self):
+        """Immediately download OHLCV data for currently tracked symbols only."""
+        logger.info("Force download: starting immediate OHLCV download for tracked symbols...")
+        try:
+            tracked_pairs = [entry["symbol"] for entry in self.current_symbols]
+            if not tracked_pairs:
+                logger.warning("Force download: no tracked symbols found.")
+                return
+
+            now_ms = int(time.time() * 1000)
+            start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+
+            async def _force_download_symbol(pair: str):
+                for tf in settings.OHLCV_TIMEFRAMES:
+                    await self._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True, force=True)
+
+            download_concurrency = asyncio.Semaphore(10)
+            async def _limited_force_download(pair: str):
+                async with download_concurrency:
+                    await _force_download_symbol(pair)
+            download_tasks = [_limited_force_download(pair) for pair in tracked_pairs]
+            await asyncio.gather(*download_tasks)
+
+            logger.info("Force download: complete for tracked symbols.")
+        except Exception as e:
+            logger.error(f"Force download error: {e}", exc_info=True)
+
     async def _get_tradable_assets(self) -> List[str]:
         """Return tradable assets, cached for 5 minutes to reduce API calls."""
         return await self._market_data_manager.get_tradable_assets()

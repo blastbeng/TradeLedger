@@ -326,8 +326,8 @@ async def force_reeval():
 @http_router.post("/api/force-download")
 async def force_download():
     engine = get_engine()
-    asyncio.create_task(engine.force_download_all_assets())
-    return {"status": "Force download of all asset OHLCV data triggered"}
+    asyncio.create_task(engine.force_download_tracked_symbols())
+    return {"status": "Force download of tracked symbols OHLCV data triggered"}
 
 @http_router.post("/api/force-backfill")
 async def force_backfill():
