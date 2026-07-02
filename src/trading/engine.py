@@ -5400,87 +5400,16 @@ class TradingEngine:
             f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
         ) if backtest_results else "No backtest performed"
 
-        total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
-        step2_prompt = build_final_decision_prompt(
+        data["step1b_response"] = step1b_response
+        step2_response, _error, final_signal, error_dict = await self._backtest_manager.run_simulation_step2(
             symbol=symbol,
-            ticker=data["ticker"],
-            preliminary_decision={
-                "action": preliminary_signal.action,
-                "confidence": preliminary_signal.confidence,
-                "reasoning": preliminary_signal.reasoning,
-                "strategy_params": preliminary_signal.strategy_params,
-                "timeframe": data["assigned_tf"],
-            },
+            data=data,
+            preliminary_signal=preliminary_signal,
             backtest_results=backtest_results,
-            base_currency=self.base_currency,
-            trading_paused=False,
-            total_variants_proposed=total_variants_proposed,
-            historical_backtest_results=data.get("historical_backtest_results"),
+            combined_bt_summary=combined_bt_summary,
         )
-        
-        # Append position info if exists
-        if symbol in self.positions:
-            pos = self.positions[symbol]
-            step2_prompt += (
-                f"\n**Existing Position:** You already hold {pos['amount']:.6f} "
-                f"at entry {pos['price']:.4f}. A BUY will ADD to this position (scale in).\n"
-            )
-
-        try:
-            step2_result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    get_cached_llm_response,
-                    compact_prompt(step2_prompt),
-                    _get_compacted_system_prompt(),
-                    60,
-                    model_type=model_type,
-                    temperature=temperature,
-                ),
-                timeout=settings.LLM_TIMEOUT
-            )
-            step2_response = step2_result["response"]
-        except Exception as e:
-            return {
-                "step1_response": step1b_response,
-                "error": f"LLM Step 2 call failed: {e}",
-                "action": preliminary_signal.action,
-                "backtest_summary": combined_bt_summary,
-            }
-
-        # Parse Step 2 response to get the final action
-        try:
-            final_strategy = create_strategy_from_llm(step2_response)
-        except ValueError:
-            # Retry with correction prompt
-            logger.warning(f"Simulation Step 2 parse failed for {symbol}. Retrying.")
-            correction = (
-                "Your previous response was not valid JSON. "
-                "Output ONLY a single JSON object. "
-                "Here is the request:\n\n" + step2_prompt
-            )
-            try:
-                retry_result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        get_cached_llm_response,
-                        compact_prompt(correction),
-                        _get_compacted_system_prompt(), 30,
-                        model_type="actuator",
-                        temperature=temperature,
-                    ),
-                    timeout=settings.LLM_TIMEOUT
-                )
-                step2_response = retry_result["response"]
-                final_strategy = create_strategy_from_llm(step2_response)
-            except Exception as e2:
-                return {
-                    "step1_response": step1b_response,
-                    "step2_response": step2_response,
-                    "error": f"Failed to parse LLM Step 2 response after retry: {e2}",
-                    "action": preliminary_signal.action,
-                    "backtest_summary": combined_bt_summary,
-                }
-
-        final_signal = final_strategy.generate_signal({})
+        if error_dict is not None:
+            return error_dict
 
         return {
             "step1_response": step1b_response,

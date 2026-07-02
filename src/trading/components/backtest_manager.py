@@ -671,3 +671,103 @@ class BacktestManager:
             signal.backtest_stats = None
 
         return signal, combined_bt_summary, llm_provider, llm_model
+
+    async def run_simulation_step2(
+        self,
+        symbol: str,
+        data: Dict[str, Any],
+        preliminary_signal: Signal,
+        backtest_results: List[Dict[str, Any]],
+        combined_bt_summary: str,
+    ) -> Tuple[Optional[str], Optional[str], Optional[Signal], Optional[Dict[str, Any]]]:
+        """Run the Step 2 LLM call for simulation.
+
+        Returns (step2_response, error, final_signal, error_dict).
+        If error_dict is not None, the caller should return it immediately.
+        """
+        engine = self.engine
+        model_type = data.get("model_type", "mind")
+        temperature = data.get("temperature", 0.2)
+
+        total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
+        step2_prompt = build_final_decision_prompt(
+            symbol=symbol,
+            ticker=data["ticker"],
+            preliminary_decision={
+                "action": preliminary_signal.action,
+                "confidence": preliminary_signal.confidence,
+                "reasoning": preliminary_signal.reasoning,
+                "strategy_params": preliminary_signal.strategy_params,
+                "timeframe": data["assigned_tf"],
+            },
+            backtest_results=backtest_results,
+            base_currency=engine.base_currency,
+            trading_paused=False,
+            total_variants_proposed=total_variants_proposed,
+            historical_backtest_results=data.get("historical_backtest_results"),
+        )
+        
+        # Append position info if exists
+        if symbol in engine.positions:
+            pos = engine.positions[symbol]
+            step2_prompt += (
+                f"\n**Existing Position:** You already hold {pos['amount']:.6f} "
+                f"at entry {pos['price']:.4f}. A BUY will ADD to this position (scale in).\n"
+            )
+
+        try:
+            step2_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response,
+                    compact_prompt(step2_prompt),
+                    compact_prompt(build_system_prompt()),
+                    60,
+                    model_type=model_type,
+                    temperature=temperature,
+                ),
+                timeout=settings.LLM_TIMEOUT
+            )
+            step2_response = step2_result["response"]
+        except Exception as e:
+            return None, f"LLM Step 2 call failed: {e}", None, {
+                "step1_response": data.get("step1b_response"),
+                "error": f"LLM Step 2 call failed: {e}",
+                "action": preliminary_signal.action,
+                "backtest_summary": combined_bt_summary,
+            }
+
+        # Parse Step 2 response to get the final action
+        try:
+            final_strategy = create_strategy_from_llm(step2_response)
+        except ValueError:
+            # Retry with correction prompt
+            logger.warning(f"Simulation Step 2 parse failed for {symbol}. Retrying.")
+            correction = (
+                "Your previous response was not valid JSON. "
+                "Output ONLY a single JSON object. "
+                "Here is the request:\n\n" + step2_prompt
+            )
+            try:
+                retry_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_cached_llm_response,
+                        compact_prompt(correction),
+                        compact_prompt(build_system_prompt()), 30,
+                        model_type="actuator",
+                        temperature=temperature,
+                    ),
+                    timeout=settings.LLM_TIMEOUT
+                )
+                step2_response = retry_result["response"]
+                final_strategy = create_strategy_from_llm(step2_response)
+            except Exception as e2:
+                return step2_response, f"Failed to parse LLM Step 2 response after retry: {e2}", None, {
+                    "step1_response": data.get("step1b_response"),
+                    "step2_response": step2_response,
+                    "error": f"Failed to parse LLM Step 2 response after retry: {e2}",
+                    "action": preliminary_signal.action,
+                    "backtest_summary": combined_bt_summary,
+                }
+
+        final_signal = final_strategy.generate_signal({})
+        return step2_response, None, final_signal, None
