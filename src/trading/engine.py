@@ -6685,86 +6685,8 @@ class TradingEngine:
                         status = status.lower()
 
                     # --- For stop/stop_limit exit orders, cancel OCO pair as soon as stop price is reached ---
-                    if (queued.get("is_exit_order")
-                            and queued.get("order_type") in ("stop", "stop_limit")
-                            and queued.get("side") == "sell"
-                            and queued.get("oco_pair") is not None):
-                        stop_price = queued.get("stop_price")
-                        if stop_price is not None:
-                            # Fetch current price
-                            try:
-                                base = queued["symbol"].split("/")[0]
-                                quotes = await self._get_quotes_async([base], timeout=45.0)
-                                ticker = quotes.get(base)
-                            except Exception:
-                                pass
-                            if ticker and ticker.get("last") is not None:
-                                current_price = ticker["last"]
-                                if current_price <= stop_price:
-                                    # Stop triggered – cancel OCO pair immediately
-                                    oco_pair_id = queued["oco_pair"]
-
-                                    # --- Race condition guard: check if the OCO pair
-                                    # (take-profit) has already filled before cancelling.
-                                    # If it has, we must NOT cancel it; the fill-detection
-                                    # code below will process the fill. Cancelling an
-                                    # already-filled order can cause a double-sell. ---
-                                    oco_already_filled = False
-                                    try:
-                                        oco_order_obj = await asyncio.to_thread(
-                                            self.trader.get_order, oco_pair_id
-                                        )
-                                        if oco_order_obj is not None and oco_order_obj.status == "filled":
-                                            oco_already_filled = True
-                                    except Exception:
-                                        pass
-
-                                    if oco_already_filled:
-                                        logger.info(
-                                            f"OCO pair {oco_pair_id} already filled for "
-                                            f"{queued['symbol']}; skipping cancel to avoid double-sell."
-                                        )
-                                        queued["oco_pair"] = None
-                                        pos = self.positions.get(queued["symbol"])
-                                        if pos:
-                                            pos.pop("take_profit_order_id", None)
-                                    else:
-                                        try:
-                                            await asyncio.to_thread(self.trader.cancel_order, oco_pair_id)
-                                            logger.info(
-                                                f"Stop triggered for {queued['symbol']} at {current_price:.4f}, "
-                                                f"cancelled OCO pair {oco_pair_id}"
-                                            )
-                                        except Exception as e:
-                                            logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
-                                        # Remove the cancelled take-profit from queued_orders (with lock)
-                                        async with self._queued_orders_lock:
-                                            self.queued_orders = [
-                                                q for q in self.queued_orders
-                                                if q.get("order_id") != oco_pair_id
-                                            ]
-                                        # Clear OCO reference so we don't try again
-                                        queued["oco_pair"] = None
-                                        # Clear take-profit order ID from position
-                                        pos = self.positions.get(queued["symbol"])
-                                        if pos:
-                                            pos.pop("take_profit_order_id", None)
-                                        # Notify user
-                                        if self.notifier:
-                                            stock_name = await self._get_stock_name(queued["symbol"])
-                                            display_symbol = self._format_symbol_display(
-                                                queued["symbol"], stock_name, queued.get("timeframe")
-                                            )
-                                            await self.notifier.send_notification(
-                                                f"🛑 Stop triggered for {display_symbol} at {current_price:.4f}, "
-                                                f"take‑profit order cancelled.",
-                                                summary={
-                                                    "symbol": queued["symbol"],
-                                                    "action": "CANCEL",
-                                                    "reason": "Stop triggered, OCO pair cancelled",
-                                                }
-                                            )
-                                    self._state_dirty = True
+                    if await self._order_executor.check_and_cancel_oco_on_stop_trigger(queued):
+                        pass  # OCO handled, continue processing this order for fill detection
 
                     # Determine how much has been filled since the last check
                     filled_qty = float(paper_order.filled_qty) if paper_order.filled_qty else 0.0

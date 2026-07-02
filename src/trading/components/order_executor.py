@@ -1650,6 +1650,109 @@ class OrderExecutor:
                 summary=buy_summary,
             )
 
+    async def check_and_cancel_oco_on_stop_trigger(
+        self,
+        queued: Dict[str, Any],
+    ) -> bool:
+        """Check if a native stop/stop_limit exit order's stop price has been reached.
+
+        If so, cancels the OCO take-profit pair immediately (instead of waiting
+        for the queued-order polling loop). Includes a race-condition guard to
+        prevent double-sells when the OCO pair has already filled.
+
+        Returns True if the OCO pair was cancelled or already filled (caller
+        should continue to the next order), False if no action was taken.
+        """
+        engine = self.engine
+
+        if not (queued.get("is_exit_order")
+                and queued.get("order_type") in ("stop", "stop_limit")
+                and queued.get("side") == "sell"
+                and queued.get("oco_pair") is not None):
+            return False
+
+        stop_price = queued.get("stop_price")
+        if stop_price is None:
+            return False
+
+        # Fetch current price
+        try:
+            base = queued["symbol"].split("/")[0]
+            quotes = await engine._get_quotes_async([base], timeout=45.0)
+            ticker = quotes.get(base)
+        except Exception:
+            return False
+        if not ticker or ticker.get("last") is None:
+            return False
+
+        current_price = ticker["last"]
+        if current_price > stop_price:
+            return False  # stop price not yet reached
+
+        # Stop triggered – cancel OCO pair immediately
+        oco_pair_id = queued["oco_pair"]
+
+        # --- Race condition guard: check if the OCO pair (take-profit) has
+        # already filled before cancelling. If it has, we must NOT cancel it;
+        # the fill-detection code below will process the fill. ---
+        oco_already_filled = False
+        try:
+            oco_order_obj = await asyncio.to_thread(
+                engine.trader.get_order, oco_pair_id
+            )
+            if oco_order_obj is not None and oco_order_obj.status == "filled":
+                oco_already_filled = True
+        except Exception:
+            pass
+
+        if oco_already_filled:
+            logger.info(
+                f"OCO pair {oco_pair_id} already filled for "
+                f"{queued['symbol']}; skipping cancel to avoid double-sell."
+            )
+            queued["oco_pair"] = None
+            pos = engine.positions.get(queued["symbol"])
+            if pos:
+                pos.pop("take_profit_order_id", None)
+        else:
+            try:
+                await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
+                logger.info(
+                    f"Stop triggered for {queued['symbol']} at {current_price:.4f}, "
+                    f"cancelled OCO pair {oco_pair_id}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
+            # Remove the cancelled take-profit from queued_orders (with lock)
+            async with engine._queued_orders_lock:
+                engine.queued_orders = [
+                    q for q in engine.queued_orders
+                    if q.get("order_id") != oco_pair_id
+                ]
+            # Clear OCO reference so we don't try again
+            queued["oco_pair"] = None
+            # Clear take-profit order ID from position
+            pos = engine.positions.get(queued["symbol"])
+            if pos:
+                pos.pop("take_profit_order_id", None)
+            # Notify user
+            if engine.notifier:
+                stock_name = await engine._get_stock_name(queued["symbol"])
+                display_symbol = engine._format_symbol_display(
+                    queued["symbol"], stock_name, queued.get("timeframe")
+                )
+                await engine.notifier.send_notification(
+                    f"🛑 Stop triggered for {display_symbol} at {current_price:.4f}, "
+                    f"take‑profit order cancelled.",
+                    summary={
+                        "symbol": queued["symbol"],
+                        "action": "CANCEL",
+                        "reason": "Stop triggered, OCO pair cancelled",
+                    }
+                )
+        engine._state_dirty = True
+        return True
+
     async def cleanup_orphaned_orders(self):
         """Periodically cancel any open orders that are older than 10 minutes,
         but never cancel orders that are still being tracked as queued."""
