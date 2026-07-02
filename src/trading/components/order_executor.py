@@ -1670,6 +1670,67 @@ class OrderExecutor:
                 )
                 await asyncio.to_thread(engine.trader.cancel_order, order_id)
 
+    async def check_and_cancel_timed_out_order(
+        self,
+        queued: Dict[str, Any],
+    ) -> bool:
+        """Check if a queued order has timed out and cancel it if so.
+
+        Returns True if the order was timed out and cancelled (caller should
+        continue to the next order), False if the order is still within its
+        timeout window or is an exit order (exempt from timeout).
+        """
+        engine = self.engine
+        if queued.get("is_exit_order"):
+            return False
+
+        queued_at = queued.get('queued_at', 0)
+        queued_tf = queued.get('timeframe')
+        base_timeout = settings.QUEUED_ORDER_TIMEOUT_SECONDS
+        if queued_tf:
+            tf_secs = engine._timeframe_to_seconds(queued_tf)
+            scaled_timeout = min(max(base_timeout, int(tf_secs * 0.5)), 604_800)
+        else:
+            scaled_timeout = base_timeout
+
+        if time.time() - queued_at <= scaled_timeout:
+            return False
+
+        order_id = queued.get('order_id')
+        logger.warning(
+            f"Queued order {order_id} for {queued['symbol']} timed out "
+            f"after {scaled_timeout}s. Cancelling."
+        )
+        try:
+            await asyncio.to_thread(engine.trader.cancel_order, order_id)
+        except Exception as e:
+            logger.error(f"Failed to cancel timed-out order {order_id}: {e}")
+
+        # Refund remaining reserved capital for buy orders
+        if queued['side'] == 'buy':
+            async with engine._cycle_spent_lock:
+                engine._cycle_spent = max(0.0, engine._cycle_spent - queued.get('amount', 0.0))
+
+        # Remove from queue regardless of cancel success
+        async with engine._queued_orders_lock:
+            if queued in engine.queued_orders:
+                engine.queued_orders.remove(queued)
+        engine._state_dirty = True
+
+        if engine.notifier:
+            stock_name = await engine._get_stock_name(queued['symbol'])
+            tf = queued.get('timeframe')
+            display = engine._format_symbol_display(queued['symbol'], stock_name, tf)
+            await engine.notifier.send_notification(
+                f"⏰ Queued {queued['side']} order for {display} timed out and was cancelled.",
+                summary={
+                    "symbol": queued['symbol'],
+                    "action": "CANCEL",
+                    "reason": "Queued order timeout",
+                }
+            )
+        return True
+
     async def handle_queued_buy_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any]):
         """Process a queued BUY limit order that has filled in the simulator."""
         engine = self.engine
