@@ -5113,18 +5113,15 @@ class TradingEngine:
                 remaining = max(0.0, base_balance - self._cycle_spent)
 
             # --- Step 1a: Analysis call (focused on market analysis only) ---
-            analysis_prompt = await asyncio.to_thread(
-                build_analysis_prompt,
+            stale_indicators_warning = symbol_data.get("stale_indicators_warning", "")
+            analysis_prompt, market_snapshot, market_hash = await self._signal_processor.build_analysis_prompt_and_snapshot(
                 symbol=symbol,
                 ticker=ticker,
                 balance=balance,
                 open_positions=open_positions,
                 per_symbol_budget=per_symbol_budget,
-                max_symbols=self.effective_max_symbols,
-                base_currency=self.base_currency,
-                performance=perf,
                 ohlcv_data=ohlcv_data,
-                assigned_timeframe=assigned_tf,
+                assigned_tf=assigned_tf,
                 atr=atr,
                 atr_multi_tf=atr_multi_tf,
                 rsi=rsi,
@@ -5145,32 +5142,37 @@ class TradingEngine:
                 mfi=mfi,
                 cci=cci,
                 williams_r=williams_r,
+                ichimoku=ichimoku,
+                donchian_channels=donchian_channels,
+                parabolic_sar=parabolic_sar,
+                keltner_channels=keltner_channels,
+                vwap=vwap,
+                daily_pivot_points=daily_pivot_points,
                 unrealized_pnl=unrealized_pnl,
                 position_info=position_info,
-                drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
                 raw_candles=raw_candles,
-                recent_trades=recent_trades_summary,
+                recent_trades_summary=recent_trades_summary,
                 historical_ohlcv=historical_ohlcv,
                 min_order_amount=min_order_amount,
                 min_order_cost=min_order_cost,
-                all_symbols=self.current_symbols,
                 past_trades=past_trades,
-                cycle_spent=self._cycle_spent,
-                remaining_balance=remaining,
-                market_regime=market_regime,
-                multi_tf_raw_candles=multi_tf_raw_candles,
-                multi_tf_indicators=multi_tf_indicators,
-                session_info=session_info,
-                sentiment_trend=sentiment_trend_val,
-                volume_trend=volume_trend_val,
-                ichimoku=ichimoku,
-                market_breadth=getattr(self, '_market_breadth', None),
+                perf=perf,
+                trade_pattern_analysis=trade_pattern_analysis,
+                symbol_event=symbol_event,
+                fundamentals=fundamentals,
+                aggregate_sentiment=aggregate_sentiment,
+                sentiment_trend_val=sentiment_trend_val,
+                volume_trend_val=volume_trend_val,
                 full_market_breadth=full_market_breadth,
-                parabolic_sar=parabolic_sar,
-                keltner_channels=keltner_channels,
-                donchian_channels=donchian_channels,
-                atr_percentile=atr_percentile,
-                global_risk_multiplier=global_risk_mult,
+                session_info=session_info,
+                minutes_to_market_close=minutes_to_market_close,
+                global_risk_mult=global_risk_mult,
+                max_port_exp=max_port_exp,
+                max_port_risk=max_port_risk,
+                min_stop_atr_mult=min_stop_atr_mult,
+                min_hold_time_mult=min_hold_time_mult,
+                min_viable_amount=min_viable_amount,
+                historical_backtest_results=historical_backtest_results,
                 trading_paused=trading_paused,
                 max_hold_expired=max_hold_expired,
                 max_hold_expired_count=max_hold_expired_count,
@@ -5180,121 +5182,25 @@ class TradingEngine:
                 take_profit_review_count=take_profit_review_count,
                 partial_tp_triggered=partial_tp_triggered,
                 partial_tp_review_count=partial_tp_review_count,
-                partial_tp_triggered_levels=partial_tp_triggered_levels if partial_tp_triggered_levels else None,
+                partial_tp_triggered_levels=partial_tp_triggered_levels,
                 partial_tp_executed_levels=partial_tp_executed_levels,
                 dust_sweep_triggered=dust_sweep_triggered,
                 dust_sweep_review_count=dust_sweep_review_count,
-                max_stop_loss_reviews=max_sl_reviews_prompt,
-                max_take_profit_reviews=max_tp_reviews_prompt,
-                max_partial_tp_reviews=max_partial_tp_reviews_prompt,
-                max_dust_sweep_reviews=max_dust_sweep_reviews_prompt,
+                max_sl_reviews_prompt=max_sl_reviews_prompt,
+                max_tp_reviews_prompt=max_tp_reviews_prompt,
+                max_partial_tp_reviews_prompt=max_partial_tp_reviews_prompt,
+                max_dust_sweep_reviews_prompt=max_dust_sweep_reviews_prompt,
                 portfolio_exposure_pct=portfolio_exposure_pct,
                 portfolio_stop_risk_pct=portfolio_stop_risk_pct,
                 portfolio_total_value=portfolio_total_value,
-                portfolio_open_count=len(self.positions),
                 portfolio_available_capital=portfolio_available_capital,
-                last_decision=self._last_decisions.get(symbol),
-                minutes_to_market_close=minutes_to_market_close,
-                current_strategy_interval_seconds=self._strategy_intervals.get(symbol, tf_seconds),
-                max_portfolio_exposure_pct=max_port_exp,
-                max_portfolio_stop_risk_pct=max_port_risk,
-                trade_pattern_analysis=trade_pattern_analysis,
-                symbol_event=symbol_event,
-                queued_orders=self.queued_orders,
-                fundamentals=fundamentals,
-                vwap=vwap,
-                daily_pivot_points=daily_pivot_points,
-                min_hold_time_mult=min_hold_time_mult,
-                min_stop_atr_mult=min_stop_atr_mult,
-                min_viable_trade_amount=min_viable_amount,
-                historical_backtest_results=historical_backtest_results,
+                remaining=remaining,
+                stale_indicators_warning=stale_indicators_warning,
+                market_regime=market_regime,
+                multi_tf_raw_candles=multi_tf_raw_candles,
+                multi_tf_indicators=multi_tf_indicators,
+                atr_percentile=atr_percentile,
             )
-            # Add quote staleness warning if the price data is outdated
-            staleness_warning = self._get_quote_staleness_warning(ticker)
-            if staleness_warning:
-                analysis_prompt += staleness_warning
-            stale_indicators_warning = symbol_data.get("stale_indicators_warning", "")
-            if stale_indicators_warning:
-                analysis_prompt += stale_indicators_warning
-            # Add auto-resume note so the LLM sees this context in per-symbol decisions
-            last_auto_resume_raw = await asyncio.to_thread(self.redis.get, "trading:last_auto_resume")
-            if last_auto_resume_raw:
-                try:
-                    last_auto_resume_ts = float(last_auto_resume_raw)
-                    seconds_since = time.time() - last_auto_resume_ts
-                    if seconds_since < self._symbol_reevaluation_interval * 2:
-                        minutes_since = seconds_since / 60
-                        analysis_prompt += (
-                            f"\n**NOTE:** Trading was auto‑resumed {minutes_since:.1f} minutes ago after a pause. "
-                            "Market conditions may not have changed significantly. "
-                            "Consider whether conditions have actually improved enough to justify trading. "
-                            "If you decide to pause again, set a longer `pause_duration_seconds` (e.g., 1800–7200) "
-                            "to allow conditions to evolve; a very short pause will likely lead to the same outcome.\n"
-                        )
-                except (ValueError, TypeError):
-                    pass
-            logger.info(f"LLM Step 1a analysis prompt for {symbol}: {len(analysis_prompt)} chars")
-            # Build a market snapshot dict for caching (per-symbol)
-            market_snapshot = {
-                "symbol": symbol,
-                "ticker": ticker,
-                "staleness_warning": staleness_warning,
-                "balance": balance,
-                "open_positions": open_positions,
-                "per_symbol_budget": per_symbol_budget,
-                "max_symbols": self.effective_max_symbols,
-                "performance": perf,
-                "ohlcv_data": ohlcv_data,
-                "assigned_timeframe": assigned_tf,
-                "atr": atr,
-                "atr_multi_tf": atr_multi_tf,
-                "rsi": rsi,
-                "macd": macd,
-                "macd_signal": macd_signal,
-                "macd_hist": macd_hist,
-                "bb_upper": bb_upper,
-                "bb_middle": bb_middle,
-                "bb_lower": bb_lower,
-                "ema_9": ema_9,
-                "ema_21": ema_21,
-                "stochastic_k": stochastic_k,
-                "stochastic_d": stochastic_d,
-                "adx": adx,
-                "plus_di": plus_di,
-                "minus_di": minus_di,
-                "obv": obv,
-                "mfi": mfi,
-                "cci": cci,
-                "williams_r": williams_r,
-                "ichimoku": ichimoku,
-                "donchian_channels": donchian_channels,
-                "drawdown_pct": perf.get("equity_curve", {}).get("drawdown_pct"),
-                "raw_candles": raw_candles,
-                "recent_trades": recent_trades_summary,
-                "historical_ohlcv": historical_ohlcv,
-                "min_order_amount": min_order_amount,
-                "min_order_cost": min_order_cost,
-                "all_symbols": self.current_symbols,
-                "past_trades": past_trades,
-                "aggregate_sentiment": aggregate_sentiment,
-                "cycle_spent": self._cycle_spent,
-                "remaining_balance": remaining,
-                "market_regime": market_regime,
-                "multi_tf_raw_candles": multi_tf_raw_candles,
-                "multi_tf_indicators": multi_tf_indicators,
-                "session_info": session_info,
-                "sentiment_trend": sentiment_trend_val,
-                "volume_trend": volume_trend_val,
-                "market_breadth": getattr(self, '_market_breadth', None),
-                "full_market_breadth": full_market_breadth,
-                "parabolic_sar": parabolic_sar,
-                "keltner_channels": keltner_channels,
-                "atr_percentile": atr_percentile,
-                "global_risk_multiplier": global_risk_mult,
-                "trading_paused": trading_paused,
-                "last_decision": self._last_decisions.get(symbol),
-            }
-            market_hash = compute_market_hash(market_snapshot)
             # Determine whether we even need to call the LLM, and if so which model to use
             is_critical = max_hold_expired or stop_loss_triggered or take_profit_triggered or partial_tp_triggered or dust_sweep_triggered
             has_position = symbol in self.positions
