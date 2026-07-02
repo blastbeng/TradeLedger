@@ -122,6 +122,117 @@ class PositionManager:
             "drawdown_pct": drawdown_pct,
         }
 
+    def compute_performance_metrics(self) -> Dict[str, Any]:
+        """Analyze trade history to produce per-symbol and per-strategy performance summaries."""
+        engine = self.engine
+        now = time.time()
+        if (
+            engine._trade_history_version == engine._perf_cache_trade_count
+            and engine._perf_cache is not None
+            and (now - engine._perf_cache_time) < 60
+        ):
+            return engine._perf_cache
+
+        trades_snapshot = list(engine.trade_history)
+
+        from collections import defaultdict
+
+        symbol_stats = defaultdict(lambda: {"trades": 0, "wins": 0, "total_pnl": 0.0, "last_trade_ts": 0})
+        strategy_stats = defaultdict(lambda: {"trades": 0, "wins": 0, "total_pnl": 0.0})
+        symbol_stop_losses = defaultdict(int)
+        symbol_hold_times = defaultdict(list)
+
+        for trade in trades_snapshot:
+            if trade.get("side") != "sell":
+                continue
+            symbol = trade["symbol"]
+            pnl = trade.get("realized_pnl", 0.0)
+            strategy = trade.get("strategy_type", "unknown")
+            exit_reason = trade.get("exit_reason", "")
+            if exit_reason == "stop_loss":
+                symbol_stop_losses[symbol] += 1
+            hold_time = trade.get("hold_time_seconds")
+            if hold_time is not None:
+                symbol_hold_times[symbol].append(hold_time)
+
+            symbol_stats[symbol]["trades"] += 1
+            symbol_stats[symbol]["total_pnl"] += pnl
+            if pnl > 0:
+                symbol_stats[symbol]["wins"] += 1
+            symbol_stats[symbol]["last_trade_ts"] = max(symbol_stats[symbol]["last_trade_ts"], trade.get("timestamp", 0) / 1000.0)
+
+            strategy_stats[strategy]["trades"] += 1
+            strategy_stats[strategy]["total_pnl"] += pnl
+            if pnl > 0:
+                strategy_stats[strategy]["wins"] += 1
+
+        symbol_perf = {}
+        for sym, s in symbol_stats.items():
+            win_rate = s["wins"] / s["trades"] if s["trades"] > 0 else 0.0
+            avg_pnl = s["total_pnl"] / s["trades"] if s["trades"] > 0 else 0.0
+            symbol_perf[sym] = {
+                "trades": s["trades"],
+                "win_rate": round(win_rate, 3),
+                "avg_pnl": round(avg_pnl, 4),
+                "total_pnl": round(s["total_pnl"], 4),
+                "last_trade_seconds_ago": round(now - s["last_trade_ts"]) if s["last_trade_ts"] else None,
+                "stop_loss_hits": symbol_stop_losses.get(sym, 0),
+                "avg_hold_time_seconds": round(sum(symbol_hold_times[sym]) / len(symbol_hold_times[sym]), 1) if symbol_hold_times.get(sym) else None,
+            }
+
+        strategy_perf = {}
+        for st, s in strategy_stats.items():
+            win_rate = s["wins"] / s["trades"] if s["trades"] > 0 else 0.0
+            avg_pnl = s["total_pnl"] / s["trades"] if s["trades"] > 0 else 0.0
+            strategy_perf[st] = {
+                "trades": s["trades"],
+                "win_rate": round(win_rate, 3),
+                "avg_pnl": round(avg_pnl, 4),
+                "total_pnl": round(s["total_pnl"], 4),
+            }
+
+        recent_sells = [t for t in trades_snapshot if t.get("side") == "sell"][-10:]
+        recent_pnl = [t.get("realized_pnl", 0.0) for t in recent_sells]
+        total_recent_pnl = sum(recent_pnl)
+        trend = "up" if total_recent_pnl > 0 else "down" if total_recent_pnl < 0 else "flat"
+
+        _equity = self.compute_equity_and_drawdown(trades_snapshot)
+        current_realized_equity = _equity["current_realized_equity"]
+        unrealized_pnl = _equity["unrealized_pnl"]
+        current_equity = _equity["current_equity"]
+        peak = _equity["peak"]
+        drawdown_pct = _equity["drawdown_pct"]
+
+        daily_pnl = engine._daily_realized_pnl()
+
+        consecutive_losses = 0
+        for trade in reversed(trades_snapshot):
+            if trade.get("side") == "sell":
+                pnl = trade.get("realized_pnl", 0.0)
+                if pnl < 0:
+                    consecutive_losses += 1
+                else:
+                    break
+
+        result = {
+            "stock_performance": symbol_perf,
+            "strategy_performance": strategy_perf,
+            "equity_curve": {
+                "total_pnl": round(engine._realized_pnl_offset + sum(t.get("realized_pnl", 0.0) for t in trades_snapshot if t.get("side") == "sell"), 4),
+                "recent_10_trades_pnl": round(total_recent_pnl, 4),
+                "trend": trend,
+                "drawdown_pct": round(drawdown_pct, 2),
+                "daily_pnl": round(daily_pnl, 4),
+                "consecutive_losses": consecutive_losses,
+            },
+        }
+
+        engine._perf_cache = result
+        engine._perf_cache_trade_count = engine._trade_history_version
+        engine._perf_cache_time = now
+
+        return result
+
     def compute_trade_pattern_analysis(self) -> Dict[str, Any]:
         """Analyze closed trades to identify which conditions, timeframes, and parameters
         have historically led to wins vs losses. Cached and only recomputed when new trades arrive."""
