@@ -311,36 +311,7 @@ class TradingEngine:
 
     async def _get_btp_bonds(self) -> List[Dict[str, Any]]:
         """Return BTP bonds, cached for 30 minutes to reduce scraping calls."""
-        now = time.time()
-        if self._btp_bonds_cache and (now - self._btp_bonds_cache_time) < 1800:
-            return self._btp_bonds_cache
-        async with self._tradable_assets_lock:
-            # Double-check after lock
-            now = time.time()
-            if self._btp_bonds_cache and (now - self._btp_bonds_cache_time) < 1800:
-                return self._btp_bonds_cache
-            bonds = await asyncio.to_thread(discover_btp_bonds)
-            # Merge with DB-saved BTPs so nothing is lost between runs
-            try:
-                from src.database import get_all_discovered_symbols
-                db_symbols = get_all_discovered_symbols()
-                existing_isins = {b["isin"] for b in bonds}
-                for db_entry in db_symbols:
-                    if db_entry.get("asset_type") == "btp" and db_entry["symbol"] not in existing_isins:
-                        bonds.append({
-                            "isin": db_entry["symbol"],
-                            "name": db_entry.get("name") or db_entry["symbol"],
-                            "last_price": None,
-                            "change_pct": 0.0,
-                            "coupon": db_entry.get("coupon"),
-                            "maturity": db_entry.get("maturity"),
-                        })
-                        existing_isins.add(db_entry["symbol"])
-            except Exception as e:
-                logger.warning(f"Failed to merge BTPs from DB: {e}")
-            self._btp_bonds_cache = bonds
-            self._btp_bonds_cache_time = now
-            return bonds
+        return await self._market_data_manager.get_btp_bonds()
 
     async def _get_etf_symbols(self) -> List[str]:
         """Return Italian UCITS ETF symbols, cached for 1 hour."""
