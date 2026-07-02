@@ -1843,6 +1843,56 @@ class SignalProcessor:
 
         return analysis_result, llm_provider, llm_model, False
 
+    def handle_step1a_fallback(
+        self,
+        symbol: str,
+        analysis_result: Optional[Dict[str, Any]],
+        has_position: bool,
+        strategy_model_type: str,
+        llm_provider: Optional[str],
+        llm_model: Optional[str],
+    ) -> Tuple[Signal, str, Optional[str], Optional[str], bool]:
+        """Handle fallback HOLD signal when Step 1a fails or returns HOLD with no position.
+
+        Returns (signal, combined_bt_summary, llm_provider, llm_model, skip_backtest).
+        If signal is None, the caller should proceed with Step 1b and Step 2.
+        """
+        engine = self.engine
+        if analysis_result is None:
+            logger.warning(f"Step 1a analysis failed for {symbol} after all retries. Using fallback HOLD.")
+            engine._force_eval.pop(symbol, None)
+            # Create a fallback HOLD signal so the bot continues functioning
+            preliminary_signal = engine._create_fallback_hold_signal(
+                symbol, "LLM Step 1a analysis failed after retries", strategy_model_type
+            )
+            signal = preliminary_signal
+            llm_provider = "fallback"
+            llm_model = "default_hold"
+            combined_bt_summary = ""
+            _skip_backtest = True
+        # If analysis says HOLD with no position, skip parameter selection entirely
+        elif analysis_result.get("action") == "HOLD" and not has_position:
+            logger.info(f"Step 1a analysis returned HOLD with no position for {symbol}. Skipping Step 1b.")
+            # Create a minimal preliminary signal for the notification flow
+            preliminary_signal = Signal(
+                action="HOLD",
+                confidence=analysis_result.get("confidence", 0.0),
+                reasoning=analysis_result.get("reasoning", ""),
+            )
+            preliminary_signal.model_type = strategy_model_type
+            preliminary_signal.llm_provider = llm_provider or "fallback"
+            preliminary_signal.llm_model = llm_model or "default_hold"
+            # Skip backtests and Step 2 — go directly to notification
+            signal = preliminary_signal
+            combined_bt_summary = ""
+            _skip_backtest = True
+        else:
+            signal = None
+            combined_bt_summary = ""
+            _skip_backtest = False
+
+        return signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest
+
     async def run_step1b_llm_call(
         self,
         symbol: str,

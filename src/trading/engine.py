@@ -3629,36 +3629,14 @@ class TradingEngine:
             if _should_return:
                 return
 
-            if analysis_result is None:
-                logger.warning(f"Step 1a analysis failed for {symbol} after all retries. Using fallback HOLD.")
-                self._force_eval.pop(symbol, None)
-                # Create a fallback HOLD signal so the bot continues functioning
-                preliminary_signal = self._create_fallback_hold_signal(
-                    symbol, "LLM Step 1a analysis failed after retries", strategy_model_type
-                )
-                signal = preliminary_signal
-                llm_provider = "fallback"
-                llm_model = "default_hold"
-                combined_bt_summary = ""
-                _skip_backtest = True
-            # If analysis says HOLD with no position, skip parameter selection entirely
-            elif analysis_result.get("action") == "HOLD" and not has_position:
-                logger.info(f"Step 1a analysis returned HOLD with no position for {symbol}. Skipping Step 1b.")
-                # Create a minimal preliminary signal for the notification flow
-                preliminary_signal = Signal(
-                    action="HOLD",
-                    confidence=analysis_result.get("confidence", 0.0),
-                    reasoning=analysis_result.get("reasoning", ""),
-                )
-                preliminary_signal.model_type = strategy_model_type
-                preliminary_signal.llm_provider = llm_provider or "fallback"
-                preliminary_signal.llm_model = llm_model or "default_hold"
-                # Skip backtests and Step 2 — go directly to notification
-                signal = preliminary_signal
-                combined_bt_summary = ""
-                _skip_backtest = True
-            else:
-                _skip_backtest = False
+            signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest = self._signal_processor.handle_step1a_fallback(
+                symbol=symbol,
+                analysis_result=analysis_result,
+                has_position=has_position,
+                strategy_model_type=strategy_model_type,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+            )
 
             if not _skip_backtest:
                 # --- Step 1b: Call LLM for backtest variants and parameters ---
