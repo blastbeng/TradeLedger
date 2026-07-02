@@ -128,6 +128,132 @@ class OrderExecutor:
         pos.pop("stop_loss_order_type", None)
         pos.pop("_native_stop_price", None)
 
+    async def process_queued_order_fill(
+        self,
+        queued: Dict[str, Any],
+        paper_order: Any,
+        order_id: str,
+        filled_qty: float,
+        filled_avg_price: float,
+    ) -> None:
+        """Process a new fill (partial or final) for a queued order."""
+        engine = self.engine
+        delta_qty = filled_qty - queued.get('filled_qty', 0.0)
+        if delta_qty <= 0:
+            return
+
+        delta_cost = delta_qty * filled_avg_price
+        from src.exchanges.fees import calculate_transaction_costs
+        _quote_ccy = queued['symbol'].split("/")[1] if "/" in queued['symbol'] else engine.base_currency
+        _fee_costs = calculate_transaction_costs(
+            queued['side'].upper(), filled_avg_price, delta_qty, symbol=queued['symbol']
+        )
+        trade_dict = {
+            'id': str(paper_order.id),
+            'symbol': queued['symbol'],
+            'side': queued['side'],
+            'amount': delta_qty,
+            'price': filled_avg_price,
+            'cost': delta_cost,
+            'fee': {'cost': _fee_costs["total_costs"], 'currency': _quote_ccy},
+            'status': 'closed',
+            'timestamp': int(time.time() * 1000),
+        }
+        # Update tracking fields
+        queued['filled_qty'] = filled_qty
+        queued['filled_cost'] = queued.get('filled_cost', 0.0) + delta_cost
+
+        if queued['side'] == 'buy':
+            # Update remaining quote amount
+            original_amount = queued.get('original_amount', queued['amount'])
+            queued['amount'] = original_amount - queued['filled_cost']
+            await engine._handle_queued_buy_fill(trade_dict, queued)
+        else:
+            # Update remaining base amount
+            original_amount = queued.get('original_amount', queued['amount'])
+            queued['amount'] = original_amount - filled_qty
+            await engine._handle_queued_sell_fill(trade_dict, queued, partial=True)
+
+        # --- OCO handling for exit orders ---
+        if queued.get("is_exit_order"):
+            oco_pair_id = queued.get("oco_pair")
+            if oco_pair_id:
+                try:
+                    await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
+                    logger.info(f"Cancelled OCO pair {oco_pair_id} for {queued['symbol']}")
+                except Exception as e:
+                    logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
+                async with engine._queued_orders_lock:
+                    engine.queued_orders = [
+                        q for q in engine.queued_orders
+                        if q.get("order_id") != oco_pair_id
+                    ]
+
+            # If the fill was partial, cancel the remaining part of this exit order
+            # to avoid leaving a dangling order that is no longer linked to the position.
+            # The risk management loop will handle the remaining position.
+            if filled_qty < queued.get('original_amount', queued['amount']):
+                try:
+                    await asyncio.to_thread(engine.trader.cancel_order, order_id)
+                    logger.info(f"Cancelled remaining part of partially filled exit order {order_id} for {queued['symbol']}")
+                except Exception as e:
+                    logger.warning(f"Failed to cancel remaining part of exit order {order_id}: {e}")
+                async with engine._queued_orders_lock:
+                    engine.queued_orders = [
+                        q for q in engine.queued_orders
+                        if q.get("order_id") != order_id
+                    ]
+
+            pos = engine.positions.get(queued["symbol"])
+            if pos:
+                pos.pop("stop_loss_order_id", None)
+                pos.pop("take_profit_order_id", None)
+                # Place replacement exit orders for the remaining position to avoid
+                # a protection gap until the next risk-management loop tick.
+                if pos.get("amount", 0) > 0 and pos.get("stop_loss") is not None:
+                    from src.strategies.base import Signal as _Signal
+                    _dummy_params = {
+                        "trailing_take_profit": pos.get("trailing_take_profit", False),
+                        "partial_take_profit_levels": pos.get("partial_take_profit_levels"),
+                        "partial_take_profit_pct": pos.get("partial_take_profit_pct"),
+                    }
+                    _dummy_signal = _Signal(
+                        action="BUY",
+                        confidence=1.0,
+                        reasoning="Replacing exit orders after partial exit-order fill",
+                        stop_loss_order_type=pos.get("stop_loss_order_type"),
+                        stop_loss_stop_price=pos.get("stop_loss"),
+                        stop_loss_limit_price=None,
+                        take_profit_order_type=pos.get("take_profit_order_type"),
+                        take_profit_limit_price=pos.get("take_profit"),
+                        strategy_params=_dummy_params,
+                    )
+                    _exit_prices = {
+                        "stop_loss_price": pos.get("stop_loss"),
+                        "take_profit_price": pos.get("take_profit"),
+                    }
+                    try:
+                        await engine._place_exit_orders(
+                            queued["symbol"], _dummy_signal, _exit_prices, pos.get("timeframe")
+                        )
+                    except Exception as _e:
+                        logger.warning(
+                            f"Failed to place replacement exit orders after partial "
+                            f"fill for {queued['symbol']}: {_e}"
+                        )
+            # Notify user
+            if engine.notifier:
+                stock_name = await engine._get_stock_name(queued["symbol"])
+                display_symbol = engine._format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
+                await engine.notifier.send_notification(
+                    f"🔗 OCO pair {oco_pair_id} cancelled for {display_symbol} (other order filled).",
+                    summary={
+                        "symbol": queued["symbol"],
+                        "action": "CANCEL",
+                        "reason": "OCO pair cancelled",
+                    }
+                )
+
         base, quote = symbol.split("/")
         qty = pos["amount"]  # base quantity to sell
         if qty <= 0:
