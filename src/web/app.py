@@ -329,6 +329,12 @@ async def force_download():
     asyncio.create_task(engine.force_download_all_assets())
     return {"status": "Force download of all asset OHLCV data triggered"}
 
+@http_router.post("/api/force-backfill")
+async def force_backfill():
+    engine = get_engine()
+    asyncio.create_task(engine.force_download_all_assets())
+    return {"status": "Force backfill of all discovered symbols triggered"}
+
 @http_router.post("/api/restart")
 async def restart():
     """
