@@ -11,11 +11,14 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
-from src.database import get_ohlcv, get_recent_backtest_result, save_backtest_result
+from src.database import get_ohlcv, get_recent_backtest_result, save_backtest_result, get_backtest_results_for_symbol
 from src.exchanges.fees import calculate_transaction_costs
 from src.indicators import compute_atr_series, compute_adx_series, compute_rsi_series, compute_macd_series
+from src.llm.cache import get_cached_llm_response
+from src.llm.prompts import build_final_decision_prompt, compact_prompt, build_system_prompt
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary
 from src.strategies.base import Signal
+from src.strategies.llm_parser import create_strategy_from_llm
 
 logger = logging.getLogger(__name__)
 
@@ -398,3 +401,184 @@ class BacktestManager:
                 return {"variant_params": vp, "summary": f"Backtest error: {e}", "stats": {}}
 
         return list(await asyncio.gather(*[_run_single_variant(vp) for vp in variants_to_test]))
+
+    async def run_step2_llm_call(
+        self,
+        symbol: str,
+        assigned_tf: str,
+        preliminary_signal: Signal,
+        backtest_results: List[Dict[str, Any]],
+        combined_bt_summary: str,
+        ticker: Dict[str, Any],
+        trading_paused: bool,
+        strategy_model_type: str,
+        effective_temp: float,
+        llm_provider: Optional[str],
+        llm_model: Optional[str],
+    ) -> Tuple[Signal, Optional[str], Optional[str]]:
+        """Run the Step 2 LLM call and carry over execution-critical fields.
+
+        Returns (final_signal, llm_provider, llm_model).
+        """
+        engine = self.engine
+
+        if not backtest_results:
+            logger.info(f"Insufficient data for any backtest for {symbol}. Using preliminary decision.")
+            return preliminary_signal, llm_provider, llm_model
+
+        # Build Step 2 prompt with ALL backtest results
+        total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
+        historical_bt_results = await asyncio.to_thread(
+            get_backtest_results_for_symbol, symbol, assigned_tf, 10
+        )
+        step2_prompt = build_final_decision_prompt(
+            symbol=symbol,
+            ticker=ticker,
+            preliminary_decision={
+                "action": preliminary_signal.action,
+                "confidence": preliminary_signal.confidence,
+                "reasoning": preliminary_signal.reasoning,
+                "strategy_params": preliminary_signal.strategy_params,
+                "timeframe": assigned_tf,
+            },
+            backtest_results=backtest_results,
+            base_currency=engine.base_currency,
+            trading_paused=trading_paused,
+            total_variants_proposed=total_variants_proposed,
+            historical_backtest_results=historical_bt_results,
+        )
+        # Append position info if exists
+        if symbol in engine.positions:
+            pos = engine.positions[symbol]
+            step2_prompt += (
+                f"\n**Existing Position:** You already hold {pos['amount']:.6f} "
+                f"at entry {pos['price']:.4f}. A BUY will ADD to this position (scale in).\n"
+            )
+
+        # Call LLM for Step 2
+        try:
+            step2_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response,
+                    compact_prompt(step2_prompt),
+                    compact_prompt(build_system_prompt()),
+                    60,
+                    model_type=strategy_model_type,
+                    temperature=effective_temp,
+                ),
+                timeout=settings.LLM_TIMEOUT
+            )
+            step2_response = step2_result["response"]
+            llm_provider = step2_result["provider"]
+            llm_model = step2_result["model"]
+            logger.info(f"LLM Step 2 call completed for {symbol} (provider={llm_provider}, model={llm_model})")
+
+            # Parse Step 2 response
+            try:
+                final_strategy = create_strategy_from_llm(step2_response)
+            except ValueError:
+                # Retry with correction prompt
+                correction = (
+                    "Your previous response was not valid JSON. "
+                    "Output ONLY a single JSON object. "
+                    "Here is the request:\n\n" + step2_prompt
+                )
+                try:
+                    retry_result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            get_cached_llm_response,
+                            compact_prompt(correction),
+                            compact_prompt(build_system_prompt()), 30,
+                            model_type="actuator",
+                            temperature=effective_temp,
+                        ),
+                        timeout=settings.LLM_TIMEOUT
+                    )
+                    final_strategy = create_strategy_from_llm(retry_result["response"])
+                    step2_response = retry_result["response"]
+                    llm_provider = retry_result["provider"]
+                    llm_model = retry_result["model"]
+                except Exception:
+                    logger.error(f"Step 2 JSON parse retry failed for {symbol}. Using preliminary decision.")
+                    final_strategy = None
+
+            if final_strategy is not None:
+                signal = final_strategy.generate_signal({})
+                signal.model_type = strategy_model_type
+                signal.llm_provider = llm_provider
+                signal.llm_model = llm_model
+                signal.backtest_summary = combined_bt_summary
+            else:
+                signal = preliminary_signal
+                signal.backtest_summary = combined_bt_summary
+            # Carry over execution-critical fields from Step 1 if not provided in Step 2
+            if signal.action == "BUY":
+                # Execution parameters
+                if signal.entry_condition is None and preliminary_signal.entry_condition is not None:
+                    signal.entry_condition = preliminary_signal.entry_condition
+                if signal.order_type is None and preliminary_signal.order_type is not None:
+                    signal.order_type = preliminary_signal.order_type
+                if signal.limit_price is None and preliminary_signal.limit_price is not None:
+                    signal.limit_price = preliminary_signal.limit_price
+                if signal.stop_price is None and preliminary_signal.stop_price is not None:
+                    signal.stop_price = preliminary_signal.stop_price
+                if signal.stop_loss_order_type is None and preliminary_signal.stop_loss_order_type is not None:
+                    signal.stop_loss_order_type = preliminary_signal.stop_loss_order_type
+                if signal.stop_loss_stop_price is None and preliminary_signal.stop_loss_stop_price is not None:
+                    signal.stop_loss_stop_price = preliminary_signal.stop_loss_stop_price
+                if signal.stop_loss_limit_price is None and preliminary_signal.stop_loss_limit_price is not None:
+                    signal.stop_loss_limit_price = preliminary_signal.stop_loss_limit_price
+                if signal.stop_loss_trail_offset is None and preliminary_signal.stop_loss_trail_offset is not None:
+                    signal.stop_loss_trail_offset = preliminary_signal.stop_loss_trail_offset
+                if signal.take_profit_order_type is None and preliminary_signal.take_profit_order_type is not None:
+                    signal.take_profit_order_type = preliminary_signal.take_profit_order_type
+                if signal.take_profit_limit_price is None and preliminary_signal.take_profit_limit_price is not None:
+                    signal.take_profit_limit_price = preliminary_signal.take_profit_limit_price
+                if signal.trail_offset is None and preliminary_signal.trail_offset is not None:
+                    signal.trail_offset = preliminary_signal.trail_offset
+                # Risk parameters — carry over from Step 1 if missing in Step 2
+                if signal.strategy_params:
+                    prelim_params = preliminary_signal.strategy_params or {}
+                    for risk_key in (
+                        "cooldown_after_loss_seconds",
+                        "max_hold_time_seconds",
+                        "stop_loss_method",
+                        "stop_loss_atr_multiple",
+                        "trailing_stop_distance_pct",
+                        "trailing_stop_atr_multiple",
+                        "trailing_stop_activation_pct",
+                        "partial_take_profit_levels",
+                        "partial_take_profit_pct",
+                        "partial_take_profit_fraction",
+                        "breakeven_activation_pct",
+                        "trailing_take_profit",
+                        "trailing_take_profit_distance_pct",
+                        "max_unrealized_loss_pct",
+                        "news_sentiment_exit_threshold",
+                        "max_risk_per_trade_pct",
+                        "max_portfolio_risk_pct",
+                        "min_profit_per_trade",
+                        "min_risk_reward_ratio",
+                        "min_confidence",
+                        "position_size_multiplier",
+                        "strategy_interval_seconds",
+                        "backtest_period_days",
+                        "order_fill_timeout_seconds",
+                        "time_in_force",
+                    ):
+                        if risk_key not in signal.strategy_params and risk_key in prelim_params:
+                            signal.strategy_params[risk_key] = prelim_params[risk_key]
+                else:
+                    # Step 2 returned no params at all — use Step 1's params
+                    signal.strategy_params = preliminary_signal.strategy_params
+        except Exception as e:
+            logger.error(f"LLM Step 2 call failed for {symbol}: {e}. Using preliminary decision.")
+            signal = preliminary_signal
+            signal.backtest_summary = combined_bt_summary
+            # Preserve provider/model from Step 1b as fallback
+            if llm_provider is None:
+                llm_provider = preliminary_signal.llm_provider
+            if llm_model is None:
+                llm_model = preliminary_signal.llm_model
+
+        return signal, llm_provider, llm_model
