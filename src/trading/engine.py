@@ -6301,117 +6301,57 @@ class TradingEngine:
         daily_pivot_points = symbol_data["daily_pivot_points"]
         per_symbol_budget = base_balance / self.effective_max_symbols if self.effective_max_symbols > 0 else 0.0
 
-        # Fetch indicator config from position if exists
-        ind_cfg = self.positions.get(symbol, {}).get('indicator_config') if symbol in self.positions else None
-
-        atr_multi_tf = {}
-        for tf in settings.OHLCV_TIMEFRAMES:
-            ind = multi_tf_indicators.get(tf, {})
-            tf_atr = ind.get('atr')
-            if tf_atr is not None and tf_atr > 0:
-                atr_multi_tf[tf] = tf_atr
-
-        atr_percentile = await self._signal_processor.compute_atr_percentile(symbol, atr)
-
-        market_regime = await self._classify_market_regime(
-            adx=adx, plus_di=plus_di, minus_di=minus_di, ema_9=ema_9, ema_21=ema_21,
-            bb_upper=bb_upper, bb_lower=bb_lower, bb_middle=bb_middle,
-            atr=atr, atr_percentile=atr_percentile, current_price=current_price
-        )
-
-        raw_candles = multi_tf_raw_candles.get(assigned_tf)
-        historical_ohlcv = None
-        try:
-            since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
-            hist_limit = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds) + 100
-            db_candles = await asyncio.to_thread(get_ohlcv, symbol, assigned_tf, since_ms=since_ms, limit=hist_limit)
-            if db_candles:
-                historical_ohlcv = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
-        except Exception:
-            pass
-
-        perf = await asyncio.to_thread(self._compute_performance_metrics)
-        trade_pattern_analysis = await asyncio.to_thread(self._compute_trade_pattern_analysis)
-        symbol_event = None
-        if settings.NEWS_ENABLED and detect_upcoming_events is not None:
-            try:
-                symbol_event = await asyncio.to_thread(detect_upcoming_events, symbol)
-            except Exception:
-                pass
-
-        aggregate_sentiment = None
-        if settings.NEWS_ENABLED:
-            try:
-                aggregate_sentiment = await self._get_cached_sentiment(symbol)
-            except Exception:
-                pass
-
-        sentiment_trend_val = None
-        if aggregate_sentiment:
-            base_symbol = symbol.split("/")[0]
-            current_compound = aggregate_sentiment.get("avg_compound")
-            prev_key = f"sentiment:prev:{base_symbol}"
-            prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
-            prev_compound = float(prev_raw) if prev_raw else None
-            if current_compound is not None and prev_compound is not None:
-                sentiment_trend_val = round(current_compound - prev_compound, 4)
-
-        volume_trend_val = None
-        current_volume = ticker.get('quoteVolume', 0) or 0
-        if current_volume > 0:
-            volume_trend_val = await self._compute_volume_trend(symbol, current_volume, timeframe=assigned_tf)
-
-        full_market_breadth = None
-        try:
-            full_breadth_raw = await asyncio.to_thread(self.redis.get, "market:breadth:full")
-            if full_breadth_raw:
-                full_market_breadth = json.loads(full_breadth_raw)
-        except Exception:
-            pass
-        session_info = self._get_session_info()
-
-        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
-        weekday = now_rome.weekday()
-        if weekday < 5:
-            rome_minutes = now_rome.hour * 60 + now_rome.minute
-            close_minutes = settings.MARKET_CLOSE_HOUR * 60 + settings.MARKET_CLOSE_MINUTE
-            minutes_to_market_close = close_minutes - rome_minutes
-            if minutes_to_market_close < 0: minutes_to_market_close = 0
-        else:
-            minutes_to_market_close = None
-
-        global_risk_mult = await self._get_global_risk_multiplier()
-
-        max_port_exp = max_port_risk = None
-        try:
-            raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_exposure_pct")
-            if raw: max_port_exp = float(raw)
-            raw = await asyncio.to_thread(self.redis.get, "trading:max_portfolio_stop_risk_pct")
-            if raw: max_port_risk = float(raw)
-        except: pass
-
-        min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
-        try:
-            raw = await asyncio.to_thread(self.redis.get, "trading:min_viable_trade_amount")
-            if raw: min_viable_amount = float(raw)
-        except: pass
-
-        sim_min_hold_time_mult = 1.0
-        sim_min_stop_atr_mult = 1.0
-        try:
-            raw = await asyncio.to_thread(self.redis.get, "trading:min_max_hold_time_mult")
-            if raw: sim_min_hold_time_mult = float(raw)
-            raw = await asyncio.to_thread(self.redis.get, "trading:min_stop_loss_atr_mult")
-            if raw: sim_min_stop_atr_mult = float(raw)
-        except: pass
-
-        # --- Emulate _process_symbol context ---
         open_positions = [pos for pos in self.positions.values() if pos.get("symbol") == symbol]
-        position_info = self.positions.get(symbol)
-        unrealized_pnl = None
-        if position_info:
-            unrealized_pnl = (current_price - position_info['price']) * position_info['amount']
 
+        _ctx = await self._gather_prompt_context(
+            symbol=symbol,
+            assigned_tf=assigned_tf,
+            tf_seconds=tf_seconds,
+            ticker=ticker,
+            base_balance=base_balance,
+            ohlcv_data=ohlcv_data,
+            multi_tf_indicators=multi_tf_indicators,
+            multi_tf_raw_candles=multi_tf_raw_candles,
+            atr=atr,
+            rsi=rsi,
+            macd=macd,
+            macd_signal=macd_signal,
+            macd_hist=macd_hist,
+            bb_upper=bb_upper,
+            bb_middle=bb_middle,
+            bb_lower=bb_lower,
+            ema_9=ema_9,
+            ema_21=ema_21,
+            adx=adx,
+            plus_di=plus_di,
+            minus_di=minus_di,
+        )
+        atr_multi_tf = _ctx["atr_multi_tf"]
+        atr_percentile = _ctx["atr_percentile"]
+        market_regime = _ctx["market_regime"]
+        raw_candles = _ctx["raw_candles"]
+        historical_ohlcv = _ctx["historical_ohlcv"]
+        unrealized_pnl = _ctx["unrealized_pnl"]
+        position_info = _ctx["position_info"]
+        recent_trades_summary = _ctx["recent_trades_summary"]
+        min_order_amount = _ctx["min_order_amount"]
+        min_order_cost = _ctx["min_order_cost"]
+        past_trades = _ctx["past_trades"]
+        aggregate_sentiment = _ctx["aggregate_sentiment"]
+        sentiment_trend_val = _ctx["sentiment_trend_val"]
+        volume_trend_val = _ctx["volume_trend_val"]
+        full_market_breadth = _ctx["full_market_breadth"]
+        session_info = _ctx["session_info"]
+        minutes_to_market_close = _ctx["minutes_to_market_close"]
+        global_risk_mult = _ctx["global_risk_mult"]
+        max_port_exp = _ctx["max_port_exp"]
+        max_port_risk = _ctx["max_port_risk"]
+        partial_tp_executed_levels = _ctx["partial_tp_executed_levels"]
+        sim_min_stop_atr_mult = _ctx["min_stop_atr_mult"]
+        sim_min_hold_time_mult = _ctx["min_hold_time_mult"]
+        historical_backtest_results = _ctx["historical_backtest_results"]
+
+        # --- Emulate _process_symbol context for portfolio exposure ---
         _portfolio = await self._position_manager.compute_portfolio_exposure_summary(base_balance)
         portfolio_total_value = _portfolio["portfolio_total_value"]
         portfolio_exposure = _portfolio["portfolio_exposure"]
@@ -6420,32 +6360,7 @@ class TradingEngine:
         portfolio_stop_risk_pct = _portfolio["portfolio_stop_risk_pct"]
         portfolio_available_capital = _portfolio["portfolio_available_capital"]
 
-        recent_trades = [t for t in self.trade_history if t.get("side") == "sell"][-5:]
-        recent_trades_summary = [
-            {
-                "symbol": t["symbol"],
-                "realized_pnl": t.get("realized_pnl", 0.0),
-                "strategy": t.get("strategy_type", "unknown"),
-            }
-            for t in recent_trades
-        ]
-
-        past_trades = [t for t in self.trade_history if t.get("symbol") == symbol and t.get("side") == "sell"][-10:]
-
-        historical_backtest_results = await asyncio.to_thread(
-            get_backtest_results_for_symbol, symbol, assigned_tf, 10
-        )
-
-        try:
-            asset = await self._get_asset_info(symbol)
-            min_order_amount = float(asset.min_order_size) if asset.min_order_size else None
-        except Exception:
-            min_order_amount = None
-        if min_order_amount is not None and current_price:
-            min_order_cost = min_order_amount * current_price
-        else:
-            min_order_cost = None
-
+        # --- Read review limits and position flags (no side effects for simulation) ---
         max_sl_reviews = settings.MAX_STOP_LOSS_REVIEWS
         max_tp_reviews = settings.MAX_TAKE_PROFIT_REVIEWS
         max_partial_tp_reviews = settings.MAX_PARTIAL_TP_REVIEWS
@@ -6462,10 +6377,9 @@ class TradingEngine:
         except Exception:
             pass
 
-        # Scale stop-loss review limit for long-term timeframes (same as _process_symbol)
-        if tf_seconds >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
+        if tf_seconds >= settings.LONG_TERM_TF_SECONDS:
             max_sl_reviews = min(max_sl_reviews, settings.LONG_TERM_MAX_STOP_LOSS_REVIEWS)
-        elif tf_seconds >= 604_800:  # >= 1 week
+        elif tf_seconds >= 604_800:
             max_sl_reviews = min(max_sl_reviews, settings.WEEKLY_MAX_STOP_LOSS_REVIEWS)
 
         trading_paused = False  # Force False for simulation
@@ -6495,7 +6409,11 @@ class TradingEngine:
             dust_sweep_triggered = pos.get("_dust_sweep_triggered", False)
             dust_sweep_review_count = pos.get("_dust_sweep_review_count", 0)
 
-        partial_tp_executed_levels = self.positions[symbol].get("partial_tp_levels_triggered", []) if symbol in self.positions else []
+        min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
+        try:
+            raw = await asyncio.to_thread(self.redis.get, "trading:min_viable_trade_amount")
+            if raw: min_viable_amount = float(raw)
+        except: pass
 
         remaining = max(0.0, base_balance - self._cycle_spent)
 
