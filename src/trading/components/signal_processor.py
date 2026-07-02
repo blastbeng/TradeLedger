@@ -2508,6 +2508,184 @@ class SignalProcessor:
 
         return signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest
 
+    async def process_post_llm_decision(
+        self,
+        symbol: str,
+        display_symbol: str,
+        stock_name: str,
+        assigned_tf: str,
+        tf_seconds: int,
+        ticker: Dict[str, Any],
+        signal: Signal,
+        llm_provider: str,
+        llm_model: str,
+        trading_paused: bool,
+        base_balance: float,
+        current_price: float,
+        atr: Optional[float],
+        rsi: Optional[float],
+        macd: Optional[float],
+        macd_signal: Optional[float],
+        macd_hist: Optional[float],
+        bb_upper: Optional[float],
+        bb_middle: Optional[float],
+        bb_lower: Optional[float],
+        ema_9: Optional[float],
+        ema_21: Optional[float],
+        stochastic_k: Optional[float],
+        stochastic_d: Optional[float],
+        adx: Optional[float],
+        plus_di: Optional[float],
+        minus_di: Optional[float],
+        obv: Optional[float],
+        mfi: Optional[float],
+        cci: Optional[float],
+        williams_r: Optional[float],
+        ichimoku: Optional[Dict[str, Any]],
+        donchian_channels: Optional[Dict[str, Any]],
+        parabolic_sar: Optional[float],
+        keltner_channels: Optional[Dict[str, Any]],
+        aggregate_sentiment: Optional[Dict[str, Any]],
+        market_regime: str,
+        min_stop_atr_mult: float,
+        min_hold_time_mult: float,
+        global_min_rr: Optional[float],
+        max_hold_expired: bool,
+        stop_loss_triggered: bool,
+        take_profit_triggered: bool,
+        partial_tp_triggered: bool,
+        dust_sweep_triggered: bool,
+        strategy_model_type: str,
+    ) -> None:
+        """Validate the LLM signal, log/notify, and execute if all checks pass."""
+        engine = self.engine
+
+        # Ensure llm_provider and llm_model are never None for notifications/signals
+        llm_provider = llm_provider or "fallback"
+        llm_model = llm_model or "default_hold"
+
+        validated = validate_signal(
+            signal,
+            atr=atr,
+            price=current_price,
+            timeframe_seconds=tf_seconds,
+            min_stop_atr_mult=min_stop_atr_mult,
+            min_hold_time_mult=min_hold_time_mult,
+            global_min_risk_reward_ratio=global_min_rr,
+        )
+        validated.model_type = getattr(signal, 'model_type', None)
+        validated.backtest_summary = getattr(signal, 'backtest_summary', None)
+        validated.backtest_stats = getattr(signal, 'backtest_stats', None)
+
+        # Clear _needs_risk_params flag if the LLM has now provided risk parameters
+        if symbol in engine.positions:
+            _pos = engine.positions[symbol]
+            if _pos.get("_needs_risk_params"):
+                if _pos.get("stop_loss") is not None and _pos.get("take_profit") is not None:
+                    _pos.pop("_needs_risk_params", None)
+                    _pos.pop("_needs_risk_params_attempts", None)
+                    logger.info(f"Risk parameters obtained for {symbol}; cleared _needs_risk_params flag.")
+
+        await self.log_and_notify_decision(
+            symbol=symbol,
+            display_symbol=display_symbol,
+            stock_name=stock_name,
+            assigned_tf=assigned_tf,
+            validated=validated,
+            signal=signal,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            trading_paused=trading_paused,
+            base_balance=base_balance,
+            current_price=current_price,
+            rsi=rsi,
+            macd=macd,
+            macd_signal=macd_signal,
+            macd_hist=macd_hist,
+            bb_upper=bb_upper,
+            bb_middle=bb_middle,
+            bb_lower=bb_lower,
+            ema_9=ema_9,
+            ema_21=ema_21,
+            stochastic_k=stochastic_k,
+            stochastic_d=stochastic_d,
+            adx=adx,
+            plus_di=plus_di,
+            minus_di=minus_di,
+            atr=atr,
+            obv=obv,
+            mfi=mfi,
+            cci=cci,
+            williams_r=williams_r,
+            ichimoku=ichimoku,
+            donchian_channels=donchian_channels,
+            parabolic_sar=parabolic_sar,
+            keltner_channels=keltner_channels,
+            aggregate_sentiment=aggregate_sentiment,
+            market_regime=market_regime,
+            backtest_stats=getattr(validated, 'backtest_stats', None),
+        )
+
+        params = signal.strategy_params or {}
+
+        # --- Handle triggered position flags (max hold, stop loss, take profit, partial TP, dust sweep) ---
+        if await self.handle_triggered_flags(
+            symbol=symbol,
+            display_symbol=display_symbol,
+            signal=signal,
+            validated=validated,
+            assigned_tf=assigned_tf,
+            current_price=current_price,
+            atr=atr,
+            ticker=ticker,
+            max_hold_expired=max_hold_expired,
+            stop_loss_triggered=stop_loss_triggered,
+            take_profit_triggered=take_profit_triggered,
+            partial_tp_triggered=partial_tp_triggered,
+            dust_sweep_triggered=dust_sweep_triggered,
+            strategy_model_type=strategy_model_type,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+        ):
+            return
+
+        # --- LLM‑controlled trade filters ---
+        if await self.check_trade_filters(
+            symbol, display_symbol, validated, params
+        ):
+            return
+
+        # Apply any updated risk parameters from the LLM to the open position
+        if symbol in engine.positions and signal.strategy_params:
+            await engine._position_manager.update_position_params(
+                symbol,
+                signal.strategy_params,
+                signal.indicator_config,
+                assigned_tf,
+                current_price,
+                atr,
+            )
+
+        if validated.action != "HOLD":
+            # --- Sector concentration limit check (only for BUY) ---
+            if validated.action == "BUY":
+                if await self.check_sector_concentration(
+                    symbol, display_symbol, assigned_tf
+                ):
+                    return
+
+            if await self.handle_entry_condition(
+                symbol=symbol,
+                display_symbol=display_symbol,
+                validated=validated,
+                assigned_tf=assigned_tf,
+                tf_seconds=tf_seconds,
+                trading_paused=trading_paused,
+            ):
+                return
+
+            await engine._execute_signal(symbol, validated, timeframe=assigned_tf, atr=atr)
+
     async def run_step1b_llm_call(
         self,
         symbol: str,
