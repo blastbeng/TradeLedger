@@ -36,6 +36,132 @@ class SignalProcessor:
     def __init__(self, engine):
         self.engine = engine
 
+    async def classify_market_regime(
+        self,
+        adx: Optional[float],
+        plus_di: Optional[float],
+        minus_di: Optional[float],
+        ema_9: Optional[float],
+        ema_21: Optional[float],
+        bb_upper: Optional[float],
+        bb_lower: Optional[float],
+        bb_middle: Optional[float],
+        atr: Optional[float],
+        atr_percentile: Optional[float],
+        current_price: float,
+    ) -> str:
+        """Classify market regime using multiple indicators."""
+        engine = self.engine
+        if current_price is None or current_price <= 0:
+            return "unknown"
+
+        # Read LLM-decided regime thresholds from Redis (set during stock selection).
+        adx_strong = None
+        adx_moderate = None
+        vol_high_pct = None
+        vol_low_pct = None
+        bb_squeeze_width = None
+        bb_expansion_width = None
+        try:
+            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_adx_strong")
+            if raw:
+                adx_strong = float(raw)
+            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_adx_moderate")
+            if raw:
+                adx_moderate = float(raw)
+            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_volatility_high_pct")
+            if raw:
+                vol_high_pct = float(raw)
+            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_volatility_low_pct")
+            if raw:
+                vol_low_pct = float(raw)
+            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_bb_squeeze_width")
+            if raw:
+                bb_squeeze_width = float(raw)
+            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_bb_expansion_width")
+            if raw:
+                bb_expansion_width = float(raw)
+        except Exception:
+            pass
+
+        if (
+            adx_strong is None
+            or adx_moderate is None
+            or vol_high_pct is None
+            or vol_low_pct is None
+            or bb_squeeze_width is None
+            or bb_expansion_width is None
+        ):
+            return "unknown"
+
+        # --- Trend direction and strength ---
+        trend_dir = "neutral"
+        trend_strength = "weak"
+        if adx is not None and plus_di is not None and minus_di is not None:
+            if adx > adx_strong:
+                trend_strength = "strong"
+            elif adx > adx_moderate:
+                trend_strength = "moderate"
+            else:
+                trend_strength = "weak"
+
+            if plus_di > minus_di:
+                trend_dir = "uptrend"
+            elif minus_di > plus_di:
+                trend_dir = "downtrend"
+            else:
+                trend_dir = "neutral"
+
+        # --- Moving average alignment ---
+        ma_alignment = "neutral"
+        if ema_9 is not None and ema_21 is not None:
+            if ema_9 > ema_21:
+                ma_alignment = "bullish"
+            else:
+                ma_alignment = "bearish"
+
+        # --- Volatility state ---
+        volatility = "normal"
+        if atr is not None and current_price > 0:
+            atr_pct = (atr / current_price) * 100
+            if atr_percentile is not None:
+                if atr_percentile > vol_high_pct:
+                    volatility = "high"
+                elif atr_percentile < vol_low_pct:
+                    volatility = "low"
+                else:
+                    volatility = "normal"
+            else:
+                if atr_pct > (bb_expansion_width * 100):
+                    volatility = "high"
+                elif atr_pct < (bb_squeeze_width * 100):
+                    volatility = "low"
+
+        # --- Bollinger Band squeeze/expansion ---
+        bb_state = ""
+        if bb_upper is not None and bb_lower is not None and bb_middle is not None and bb_middle > 0:
+            bb_width = (bb_upper - bb_lower) / bb_middle
+            if bb_width < bb_squeeze_width:
+                bb_state = " squeeze"
+            elif bb_width > bb_expansion_width:
+                bb_state = " expansion"
+
+        # --- Compose final regime string ---
+        if trend_strength in ("strong", "moderate") and trend_dir != "neutral":
+            regime = f"{trend_strength} {trend_dir}"
+        else:
+            regime = "ranging"
+
+        regime += f", {volatility} volatility"
+
+        if bb_state:
+            regime += bb_state
+
+        if trend_strength == "weak" and ma_alignment != "neutral":
+            regime += f" ({ma_alignment} MA bias)"
+
+        return regime
+
     async def compute_atr_percentile(
         self,
         symbol: str,
@@ -310,7 +436,7 @@ class SignalProcessor:
         atr_percentile = await self.compute_atr_percentile(symbol, atr)
 
         # Market regime classification
-        market_regime = await engine._classify_market_regime(
+        market_regime = await self.classify_market_regime(
             adx=adx, plus_di=plus_di, minus_di=minus_di,
             ema_9=ema_9, ema_21=ema_21,
             bb_upper=bb_upper, bb_lower=bb_lower, bb_middle=bb_middle,
