@@ -359,6 +359,8 @@ class BacktestManager:
             except Exception as e:
                 logger.warning(f"Failed to persist backtest result to DB for {symbol}: {e}")
 
+        return bt_stats, bt_summary
+
     async def _run_backtest_variants_parallel(
         self,
         symbol: str,
