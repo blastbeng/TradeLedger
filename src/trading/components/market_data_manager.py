@@ -6,14 +6,24 @@ Extracted from TradingEngine to reduce class size and improve maintainability.
 import asyncio
 import logging
 import re
-from typing import List
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 from src.config.settings import settings
 from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol
-from src.exchanges.market_data import _check_yf_circuit, _get_yf_session
+from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session
 from src.indicators import compute_all_indicators
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AssetInfo:
+    """Asset info for yfinance-based trading (min order size, fractionability, etc.)."""
+    name: str = ""
+    min_order_size: Optional[float] = 0.0
+    fractionable: bool = True
 
 
 class MarketDataManager:
@@ -116,6 +126,129 @@ class MarketDataManager:
         except Exception:
             pass
         return name
+
+    async def get_tradable_assets(self) -> List[str]:
+        """Return tradable assets, cached for 5 minutes to reduce API calls."""
+        engine = self.engine
+        now = time.time()
+        if engine._tradable_assets_cache and (now - engine._tradable_assets_cache_time) < 300:
+            return engine._tradable_assets_cache
+        async with engine._tradable_assets_lock:
+            # Double-check cache after acquiring lock (another task may have populated it)
+            now = time.time()
+            if engine._tradable_assets_cache and (now - engine._tradable_assets_cache_time) < 300:
+                return engine._tradable_assets_cache
+            assets = await asyncio.to_thread(get_tradable_assets)
+            engine._tradable_assets_cache = assets
+            engine._tradable_assets_cache_time = now
+            return assets
+
+    async def get_btp_bonds(self) -> List[Dict[str, Any]]:
+        """Return BTP bonds, cached for 30 minutes to reduce scraping calls."""
+        engine = self.engine
+        now = time.time()
+        if engine._btp_bonds_cache and (now - engine._btp_bonds_cache_time) < 1800:
+            return engine._btp_bonds_cache
+        async with engine._tradable_assets_lock:
+            # Double-check after lock
+            now = time.time()
+            if engine._btp_bonds_cache and (now - engine._btp_bonds_cache_time) < 1800:
+                return engine._btp_bonds_cache
+            bonds = await asyncio.to_thread(discover_btp_bonds)
+            # Merge with DB-saved BTPs so nothing is lost between runs
+            try:
+                from src.database import get_all_discovered_symbols
+                db_symbols = await asyncio.to_thread(get_all_discovered_symbols)
+                existing_isins = {b["isin"] for b in bonds}
+                for db_entry in db_symbols:
+                    if db_entry.get("asset_type") == "btp" and db_entry["symbol"] not in existing_isins:
+                        bonds.append({
+                            "isin": db_entry["symbol"],
+                            "name": db_entry.get("name") or db_entry["symbol"],
+                            "last_price": None,
+                            "change_pct": 0.0,
+                            "coupon": db_entry.get("coupon"),
+                            "maturity": db_entry.get("maturity"),
+                        })
+                        existing_isins.add(db_entry["symbol"])
+            except Exception as e:
+                logger.warning(f"Failed to merge BTPs from DB: {e}")
+            engine._btp_bonds_cache = bonds
+            engine._btp_bonds_cache_time = now
+            return bonds
+
+    async def get_etf_symbols(self) -> List[str]:
+        """Return Italian UCITS ETF symbols, cached for 1 hour."""
+        engine = self.engine
+        now = time.time()
+        if engine._etf_symbols_cache and (now - engine._etf_symbols_cache_time) < 3600:
+            return engine._etf_symbols_cache
+        async with engine._tradable_assets_lock:
+            # Double-check after lock
+            now = time.time()
+            if engine._etf_symbols_cache and (now - engine._etf_symbols_cache_time) < 3600:
+                return engine._etf_symbols_cache
+            symbols = await asyncio.to_thread(discover_italian_ucits_etfs)
+            engine._etf_symbols_cache = symbols
+            engine._etf_symbols_cache_time = now
+            return symbols
+
+    async def get_asset_info(self, symbol: str) -> Any:
+        """Return asset info (min order size, name, etc.), cached for 1 hour.
+
+        Fetches from yfinance (subject to circuit breaker) with database
+        fallback for the name. Returns permissive defaults only when no
+        data is available.
+        """
+        engine = self.engine
+        base = symbol.split("/")[0] if "/" in symbol else symbol
+        now = time.time()
+        if base in engine._asset_cache and (now - engine._asset_cache_time.get(base, 0)) < 3600:
+            return engine._asset_cache[base]
+
+        name = base
+        min_order_size: Optional[float] = None
+        fractionable = True
+
+        # Try yfinance first (subject to circuit breaker)
+        if not _check_yf_circuit():
+            try:
+                def _fetch_yf_info():
+                    import yfinance as yf
+                    ticker = yf.Ticker(base, session=_get_yf_session())
+                    return ticker.info
+                info = await asyncio.to_thread(_fetch_yf_info)
+                if info:
+                    name = info.get("longName") or info.get("shortName") or base
+                    raw_min = info.get("minimumOrderSize")
+                    if raw_min is not None:
+                        try:
+                            min_order_size = float(raw_min)
+                        except (TypeError, ValueError):
+                            pass
+                    raw_frac = info.get("fractionalTrading")
+                    if raw_frac is not None:
+                        fractionable = bool(raw_frac)
+            except Exception as e:
+                logger.debug(f"yfinance asset info fetch failed for {base}: {e}")
+
+        # Database fallback for name
+        if name == base:
+            try:
+                db_name = await asyncio.to_thread(get_symbol_name_from_db, base)
+                if db_name:
+                    name = db_name
+            except Exception:
+                pass
+
+        # Default to permissive 0.0 when no minimum was found
+        if min_order_size is None:
+            min_order_size = 0.0
+
+        asset = AssetInfo(name=name, min_order_size=min_order_size, fractionable=fractionable)
+        engine._asset_cache[base] = asset
+        engine._asset_cache_time[base] = now
+        return asset
 
     async def compute_and_store_indicators(self, symbol: str, timeframe: str, candles: List[List]):
         """Compute indicators for a symbol/timeframe using TA-Lib and store in DB."""

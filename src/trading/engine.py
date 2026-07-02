@@ -76,14 +76,6 @@ class ClockInfo:
     next_open: datetime
 
 
-@dataclass
-class AssetInfo:
-    """Asset info for yfinance-based trading (min order size, fractionability, etc.)."""
-    name: str = ""
-    min_order_size: Optional[float] = 0.0
-    fractionable: bool = True
-
-
 class TradingEngine:
     def __init__(self):
         self.trader = None
@@ -315,18 +307,7 @@ class TradingEngine:
 
     async def _get_tradable_assets(self) -> List[str]:
         """Return tradable assets, cached for 5 minutes to reduce API calls."""
-        now = time.time()
-        if self._tradable_assets_cache and (now - self._tradable_assets_cache_time) < 300:
-            return self._tradable_assets_cache
-        async with self._tradable_assets_lock:
-            # Double-check cache after acquiring lock (another task may have populated it)
-            now = time.time()
-            if self._tradable_assets_cache and (now - self._tradable_assets_cache_time) < 300:
-                return self._tradable_assets_cache
-            assets = await asyncio.to_thread(get_tradable_assets)
-            self._tradable_assets_cache = assets
-            self._tradable_assets_cache_time = now
-            return assets
+        return await self._market_data_manager.get_tradable_assets()
 
     async def _get_btp_bonds(self) -> List[Dict[str, Any]]:
         """Return BTP bonds, cached for 30 minutes to reduce scraping calls."""
@@ -363,75 +344,11 @@ class TradingEngine:
 
     async def _get_etf_symbols(self) -> List[str]:
         """Return Italian UCITS ETF symbols, cached for 1 hour."""
-        now = time.time()
-        if self._etf_symbols_cache and (now - self._etf_symbols_cache_time) < 3600:
-            return self._etf_symbols_cache
-        async with self._tradable_assets_lock:
-            # Double-check after lock
-            now = time.time()
-            if self._etf_symbols_cache and (now - self._etf_symbols_cache_time) < 3600:
-                return self._etf_symbols_cache
-            symbols = await asyncio.to_thread(discover_italian_ucits_etfs)
-            self._etf_symbols_cache = symbols
-            self._etf_symbols_cache_time = now
-            return symbols
+        return await self._market_data_manager.get_etf_symbols()
 
     async def _get_asset_info(self, symbol: str) -> Any:
-        """Return asset info (min order size, name, etc.), cached for 1 hour.
-
-        Fetches from yfinance (subject to circuit breaker) with database
-        fallback for the name. Returns permissive defaults only when no
-        data is available.
-        """
-        base = symbol.split("/")[0] if "/" in symbol else symbol
-        now = time.time()
-        if base in self._asset_cache and (now - self._asset_cache_time.get(base, 0)) < 3600:
-            return self._asset_cache[base]
-
-        name = base
-        min_order_size: Optional[float] = None
-        fractionable = True
-
-        # Try yfinance first (subject to circuit breaker)
-        if not _check_yf_circuit():
-            try:
-                def _fetch_yf_info():
-                    import yfinance as yf
-                    ticker = yf.Ticker(base, session=_get_yf_session())
-                    return ticker.info
-                info = await asyncio.to_thread(_fetch_yf_info)
-                if info:
-                    name = info.get("longName") or info.get("shortName") or base
-                    raw_min = info.get("minimumOrderSize")
-                    if raw_min is not None:
-                        try:
-                            min_order_size = float(raw_min)
-                        except (TypeError, ValueError):
-                            pass
-                    raw_frac = info.get("fractionalTrading")
-                    if raw_frac is not None:
-                        fractionable = bool(raw_frac)
-            except Exception as e:
-                logger.debug(f"yfinance asset info fetch failed for {base}: {e}")
-
-        # Database fallback for name
-        if name == base:
-            try:
-                from src.database import get_symbol_name_from_db
-                db_name = await asyncio.to_thread(get_symbol_name_from_db, base)
-                if db_name:
-                    name = db_name
-            except Exception:
-                pass
-
-        # Default to permissive 0.0 when no minimum was found
-        if min_order_size is None:
-            min_order_size = 0.0
-
-        asset = AssetInfo(name=name, min_order_size=min_order_size, fractionable=fractionable)
-        self._asset_cache[base] = asset
-        self._asset_cache_time[base] = now
-        return asset
+        """Return asset info (min order size, name, etc.), cached for 1 hour."""
+        return await self._market_data_manager.get_asset_info(symbol)
 
     async def _get_all_position_tickers(self) -> Dict[str, Dict[str, Any]]:
         """Fetch tickers for all open positions, batching missing ones into a single API call."""
