@@ -2309,6 +2309,7 @@ class TradingEngine:
         pause_reason = ""
         pause_duration = None
         new_symbols: List[Dict[str, str]] = []
+        deduped: List[Dict[str, str]] = []
 
         # Retry JSON parsing if the first attempt fails
         if response is not None:
