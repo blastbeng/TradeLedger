@@ -2659,81 +2659,13 @@ class TradingEngine:
 
     async def _execute_signal(self, symbol: str, signal, timeframe: str = None, exit_reason: str = None, atr: Optional[float] = None):
         """Execute a BUY or SELL signal."""
-        # --- Format symbol for notifications ---
-        stock_name = await self._get_stock_name(symbol)
-        tf = timeframe or (self.positions.get(symbol, {}).get("timeframe") if symbol in self.positions else None)
-        display_symbol = self._format_symbol_display(symbol, stock_name, tf)
-
-        # --- Notify mode: do not execute any orders, only send notifications ---
-        if settings.TRADING_MODE == "notify":
-            logger.info(f"Notify mode: skipping order execution for {signal.action} {symbol}.")
-            return
-
-        # --- Paper mode + Paused: do not execute automated BUY orders, only send notifications ---
-        # Manual overrides (exit_reason starts with "manual") are still allowed.
-        # Automated SELL orders are allowed if the market is open (to manage open positions).
-        paused = await asyncio.to_thread(self.redis.get, "trading:paused")
-        if settings.TRADING_MODE == "paper" and paused and not (exit_reason and exit_reason.startswith("manual")):
-            is_market_open = await self._is_market_open()
-            if signal.action == "SELL" and is_market_open:
-                logger.info(f"Paper mode + Paused: allowing automated SELL for risk management {symbol}.")
-                # Fall through to execute the SELL order
-            else:
-                logger.info(f"Paper mode + Paused: skipping automated order execution for {signal.action} {symbol}.")
-                return
-
-        # Prevent executing new signals if an order is already queued for this symbol
-        # (unless it's a manual override)
-        async with self._queued_orders_lock:
-            has_queued = any(q['symbol'] == symbol for q in self.queued_orders)
-        if has_queued and not (exit_reason and exit_reason.startswith("manual")):
-            logger.info(f"Skipping {signal.action} for {symbol}: order already queued.")
-            return
-
-        # If this is a manual sell, cancel any queued SELL order for this symbol to avoid duplicate sells
-        if exit_reason and exit_reason.startswith("manual") and signal.action == "SELL":
-            async with self._queued_orders_lock:
-                self.queued_orders = [q for q in self.queued_orders if not (q['symbol'] == symbol and q['side'] == 'sell')]
-
-        # In live mode, only execute during regular market hours (manual overrides are allowed anytime)
-        if not await self._is_market_open() and not (exit_reason and exit_reason.startswith("manual")):
-            logger.info(f"Skipping {signal.action} for {symbol}: market closed (live mode).")
-            if self.notifier:
-                await self.notifier.send_notification(
-                    f"⏸️ Skipping {signal.action} for {display_symbol}: market closed.",
-                    summary={"symbol": symbol, "action": "SKIP", "reason": "Market closed"}
-                )
-            return
-
-        parts = symbol.split("/")
-        if len(parts) != 2:
-            logger.error(f"Invalid symbol format: {symbol}")
-            return
-        base, quote = parts
-        _exec_base = symbol.split("/")[0]
-        _exec_is_btp = is_btp_isin(symbol)
-        balance = await self._get_cached_balance()
-
-        if signal.action == "BUY":
-            await self._order_executor.execute_buy(
-                symbol=symbol,
-                display_symbol=display_symbol,
-                signal=signal,
-                timeframe=timeframe,
-                exit_reason=exit_reason,
-                atr=atr,
-                balance=balance,
-            )
-        elif signal.action == "SELL":
-            await self._order_executor.execute_sell(
-                symbol=symbol,
-                display_symbol=display_symbol,
-                signal=signal,
-                timeframe=timeframe,
-                exit_reason=exit_reason,
-                atr=atr,
-                balance=balance,
-            )
+        await self._order_executor.execute_signal(
+            symbol=symbol,
+            signal=signal,
+            timeframe=timeframe,
+            exit_reason=exit_reason,
+            atr=atr,
+        )
 
     async def _should_skip_llm_eval(
         self,
