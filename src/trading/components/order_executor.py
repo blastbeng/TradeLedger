@@ -439,6 +439,55 @@ class OrderExecutor:
                     }
                 )
 
+    async def process_single_queued_order(self, queued: Dict[str, Any]) -> None:
+        """Process a single queued order: check timeouts, fetch status, handle fills/cancellations."""
+        engine = self.engine
+        order_id = queued.get('order_id')
+        if not order_id:
+            logger.warning(f"Queued order for {queued['symbol']} missing order_id, removing.")
+            async with engine._queued_orders_lock:
+                if queued in engine.queued_orders:
+                    engine.queued_orders.remove(queued)
+            return
+
+        if await self.check_and_cancel_timed_out_order(queued):
+            return
+
+        paper_order = await asyncio.to_thread(engine.trader.get_order, order_id)
+        if paper_order is None:
+            await self.handle_missing_order(queued)
+            return
+
+        status = paper_order.status
+        if isinstance(status, str):
+            status = status.lower()
+
+        if await self.check_and_cancel_oco_on_stop_trigger(queued):
+            pass  # OCO handled, continue processing this order for fill detection
+
+        filled_qty = float(paper_order.filled_qty) if paper_order.filled_qty else 0.0
+        filled_avg_price = float(paper_order.filled_avg_price) if paper_order.filled_avg_price else 0.0
+        last_filled_qty = queued.get('filled_qty', 0.0)
+        delta_qty = filled_qty - last_filled_qty
+
+        if delta_qty > 0:
+            await self.process_queued_order_fill(
+                queued=queued,
+                paper_order=paper_order,
+                order_id=order_id,
+                filled_qty=filled_qty,
+                filled_avg_price=filled_avg_price,
+            )
+
+        if status == 'filled':
+            logger.info(f"Queued limit order {order_id} for {queued['symbol']} completely filled.")
+            async with engine._queued_orders_lock:
+                if queued in engine.queued_orders:
+                    engine.queued_orders.remove(queued)
+            engine._state_dirty = True
+        elif status in ('rejected', 'canceled', 'cancelled', 'expired'):
+            await self.handle_canceled_or_rejected_order(queued, status)
+
     async def compute_position_size(
         self,
         symbol: str,
