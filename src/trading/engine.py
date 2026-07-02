@@ -6207,15 +6207,7 @@ class TradingEngine:
 
                     paper_order = await asyncio.to_thread(self.trader.get_order, order_id)
                     if paper_order is None:
-                        logger.warning(f"Order {order_id} not found for {queued['symbol']}, removing from queue.")
-                        # Refund remaining reserved capital for buy orders
-                        if queued['side'] == 'buy':
-                            async with self._cycle_spent_lock:
-                                self._cycle_spent = max(0.0, self._cycle_spent - queued.get('amount', 0.0))
-                        async with self._queued_orders_lock:
-                            if queued in self.queued_orders:
-                                self.queued_orders.remove(queued)
-                        self._state_dirty = True
+                        await self._order_executor.handle_missing_order(queued)
                         continue
 
                     status = paper_order.status

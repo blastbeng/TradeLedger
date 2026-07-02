@@ -1960,6 +1960,20 @@ class OrderExecutor:
             )
         return True
 
+    async def handle_missing_order(self, queued: Dict[str, Any]) -> None:
+        """Handle a queued order that is no longer found in the simulator."""
+        engine = self.engine
+        order_id = queued.get('order_id')
+        logger.warning(f"Order {order_id} not found for {queued['symbol']}, removing from queue.")
+        # Refund remaining reserved capital for buy orders
+        if queued['side'] == 'buy':
+            async with engine._cycle_spent_lock:
+                engine._cycle_spent = max(0.0, engine._cycle_spent - queued.get('amount', 0.0))
+        async with engine._queued_orders_lock:
+            if queued in engine.queued_orders:
+                engine.queued_orders.remove(queued)
+        engine._state_dirty = True
+
     async def handle_canceled_or_rejected_order(
         self,
         queued: Dict[str, Any],
