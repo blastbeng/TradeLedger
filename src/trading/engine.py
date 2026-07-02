@@ -5365,77 +5365,9 @@ class TradingEngine:
         temperature = data.get("temperature", 0.2)
         market_hash = data.get("market_hash")
 
-        # Step 1a: Analysis
-        try:
-            step1a_result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    get_cached_llm_response,
-                    compact_prompt(data["analysis_prompt"]),
-                    _get_compacted_system_prompt(), 60,
-                    market_hash=market_hash,
-                    model_type=model_type,
-                    temperature=temperature,
-                ),
-                timeout=settings.LLM_TIMEOUT
-            )
-            step1a_response = step1a_result["response"]
-        except Exception as e:
-            return {"error": f"LLM Step 1a call failed: {e}"}
-
-        analysis = self._parse_analysis_response(step1a_response)
-        if analysis is None:
-            return {"error": "Failed to parse Step 1a analysis response", "raw_response": step1a_response}
-
-        # Step 1b: Backtest variants
-        variants_prompt = await asyncio.to_thread(
-            build_backtest_variants_prompt,
-            symbol=symbol,
-            analysis=analysis,
-            ticker=data["ticker"],
-            current_price=data["current_price"],
-            atr=data["atr"],
-            assigned_timeframe=data["assigned_tf"],
-            base_currency=self.base_currency,
-            base_balance=data["base_balance"],
-            per_symbol_budget=data["per_symbol_budget"],
-            min_order_amount=data.get("min_order_amount"),
-            min_order_cost=data.get("min_order_cost"),
-            remaining_balance=data.get("remaining_balance"),
-            portfolio_total_value=data.get("portfolio_total_value"),
-            portfolio_exposure_pct=data.get("portfolio_exposure_pct"),
-            portfolio_stop_risk_pct=data.get("portfolio_stop_risk_pct"),
-            portfolio_available_capital=data.get("portfolio_available_capital"),
-            max_portfolio_exposure_pct=data.get("max_portfolio_exposure_pct"),
-            max_portfolio_stop_risk_pct=data.get("max_portfolio_stop_risk_pct"),
-            global_risk_multiplier=data.get("global_risk_multiplier"),
-            min_stop_atr_mult=data.get("min_stop_atr_mult", 1.0),
-            min_hold_time_mult=data.get("min_hold_time_mult", 1.0),
-            trading_paused=False,
-            has_position=data.get("has_position", False),
-            historical_backtest_results=data.get("historical_backtest_results"),
-        )
-
-        try:
-            step1b_result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    get_cached_llm_response,
-                    compact_prompt(variants_prompt),
-                    _get_compacted_system_prompt(), 60,
-                    market_hash=compute_market_hash({"step": "1b", "analysis": analysis}),
-                    model_type=model_type,
-                    temperature=temperature,
-                ),
-                timeout=settings.LLM_TIMEOUT
-            )
-            step1b_response = step1b_result["response"]
-        except Exception as e:
-            return {"error": f"LLM Step 1b call failed: {e}"}
-
-        try:
-            preliminary_strategy = create_strategy_from_llm(step1b_response)
-            preliminary_signal = preliminary_strategy.generate_signal({})
-        except ValueError as e:
-            return {"error": f"Failed to parse Step 1b response: {e}", "raw_response": step1b_response}
+        _analysis, step1b_response, preliminary_signal, error = await self._signal_processor.run_simulation_step1(symbol, data)
+        if error is not None:
+            return error
 
         if preliminary_signal.action in ("BUY", "HOLD"):
             variants_to_test = self._backtest_manager._prepare_backtest_variants(
@@ -5486,77 +5418,9 @@ class TradingEngine:
         temperature = data.get("temperature", 0.2)
         market_hash = data.get("market_hash")
 
-        # Step 1a: Analysis
-        try:
-            step1a_result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    get_cached_llm_response,
-                    compact_prompt(data["analysis_prompt"]),
-                    _get_compacted_system_prompt(), 60,
-                    market_hash=market_hash,
-                    model_type=model_type,
-                    temperature=temperature,
-                ),
-                timeout=settings.LLM_TIMEOUT
-            )
-            step1a_response = step1a_result["response"]
-        except Exception as e:
-            return {"error": f"LLM Step 1a call failed: {e}"}
-
-        analysis = self._parse_analysis_response(step1a_response)
-        if analysis is None:
-            return {"error": "Failed to parse Step 1a analysis response", "raw_response": step1a_response}
-
-        # Step 1b: Backtest variants
-        variants_prompt = await asyncio.to_thread(
-            build_backtest_variants_prompt,
-            symbol=symbol,
-            analysis=analysis,
-            ticker=data["ticker"],
-            current_price=data["current_price"],
-            atr=data["atr"],
-            assigned_timeframe=data["assigned_tf"],
-            base_currency=self.base_currency,
-            base_balance=data["base_balance"],
-            per_symbol_budget=data["per_symbol_budget"],
-            min_order_amount=data.get("min_order_amount"),
-            min_order_cost=data.get("min_order_cost"),
-            remaining_balance=data.get("remaining_balance"),
-            portfolio_total_value=data.get("portfolio_total_value"),
-            portfolio_exposure_pct=data.get("portfolio_exposure_pct"),
-            portfolio_stop_risk_pct=data.get("portfolio_stop_risk_pct"),
-            portfolio_available_capital=data.get("portfolio_available_capital"),
-            max_portfolio_exposure_pct=data.get("max_portfolio_exposure_pct"),
-            max_portfolio_stop_risk_pct=data.get("max_portfolio_stop_risk_pct"),
-            global_risk_multiplier=data.get("global_risk_multiplier"),
-            min_stop_atr_mult=data.get("min_stop_atr_mult", 1.0),
-            min_hold_time_mult=data.get("min_hold_time_mult", 1.0),
-            trading_paused=False,
-            has_position=data.get("has_position", False),
-            historical_backtest_results=data.get("historical_backtest_results"),
-        )
-
-        try:
-            step1b_result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    get_cached_llm_response,
-                    compact_prompt(variants_prompt),
-                    _get_compacted_system_prompt(), 60,
-                    market_hash=compute_market_hash({"step": "1b", "analysis": analysis}),
-                    model_type=model_type,
-                    temperature=temperature,
-                ),
-                timeout=settings.LLM_TIMEOUT
-            )
-            step1b_response = step1b_result["response"]
-        except Exception as e:
-            return {"error": f"LLM Step 1b call failed: {e}"}
-
-        try:
-            preliminary_strategy = create_strategy_from_llm(step1b_response)
-            preliminary_signal = preliminary_strategy.generate_signal({})
-        except ValueError as e:
-            return {"error": f"Failed to parse Step 1b response: {e}", "raw_response": step1b_response}
+        _analysis, step1b_response, preliminary_signal, error = await self._signal_processor.run_simulation_step1(symbol, data)
+        if error is not None:
+            return error
 
         if preliminary_signal.action == "SELL":
             return {
