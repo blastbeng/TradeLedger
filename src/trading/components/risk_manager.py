@@ -7,7 +7,7 @@ Extracted from TradingEngine to reduce class size and improve maintainability.
 import asyncio
 import logging
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from src.config.settings import settings
 from src.database import insert_position_pnl_snapshot, get_indicators, get_latest_ohlcv_timestamp, get_ohlcv
@@ -60,6 +60,138 @@ class RiskManager:
                 )
             except Exception as e:
                 logger.debug(f"Failed to record P&L snapshot for {symbol}: {e}")
+
+    async def check_risk_management(self):
+        """Check open positions and close if stop-loss, take-profit, or trailing stop is hit."""
+        engine = self.engine
+        # --- Notify mode: no automated risk management ---
+        if settings.TRADING_MODE == "notify":
+            return
+
+        # Read LLM-decided review limits from Redis once (before the per-position loop)
+        _review_limits = await self.read_review_limits()
+        max_sl_reviews = _review_limits["max_sl_reviews"]
+        max_tp_reviews = _review_limits["max_tp_reviews"]
+        max_partial_tp_reviews = _review_limits["max_partial_tp_reviews"]
+        max_dust_sweep_reviews = _review_limits["max_dust_sweep_reviews"]
+
+        # Batch-fetch missing tickers once before the per-position loop
+        risk_tickers: Dict[str, Dict[str, Any]] = {}
+        missing_risk: List[str] = []
+        for sym in engine.positions:
+            missing_risk.append(sym.split("/")[0])
+        if missing_risk:
+            try:
+                raw = await engine._get_quotes_batched(missing_risk, timeout_per_chunk=45.0)
+                engine._portfolio_exposure_cache = None
+                for sym in engine.positions:
+                    base = sym.split("/")[0]
+                    if base in raw:
+                        risk_tickers[sym] = raw[base]
+            except Exception as e:
+                logger.warning(f"Batch quote fetch failed in risk management: {e}")
+
+        for symbol, pos in list(engine.positions.items()):
+            try:
+                # Skip if there is already a queued order for this symbol
+                async with engine._queued_orders_lock:
+                    has_queued = any(q['symbol'] == symbol for q in engine.queued_orders)
+                if has_queued:
+                    continue
+
+                # --- Retry deferred dust sweep if market is now open ---
+                if pos.get("_dust_sweep_pending") and await engine._is_market_open():
+                    logger.info(f"Retrying deferred dust sweep for {symbol} (market is now open).")
+                    async with engine._positions_lock:
+                        pos.pop("_dust_sweep_pending", None)
+                    await engine._sweep_dust(symbol)
+                    continue
+
+                ticker = risk_tickers.get(symbol)
+                if ticker is None:
+                    continue  # no real-time data yet, skip this check
+                current_price = ticker['last']
+
+                # --- Staleness guard: skip risk checks if the quote is too stale ---
+                pos_tf = pos.get("timeframe")
+                if not pos_tf:
+                    for entry in engine.current_symbols:
+                        if entry["symbol"] == symbol:
+                            pos_tf = entry.get("timeframe")
+                            break
+                if pos_tf and await engine._is_quote_too_stale(ticker, pos_tf):
+                    logger.warning(
+                        f"Skipping risk management for {symbol}: quote data is too stale "
+                        f"for timeframe {pos_tf}."
+                    )
+                    continue
+
+                # --- Format symbol for notifications ---
+                stock_name = await engine._get_stock_name(symbol)
+                display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+
+                # --- Hard stop: maximum total loss regardless of LLM decisions ---
+                if await self.check_hard_stop(symbol, pos, current_price, display_symbol):
+                    continue
+
+                # Skip positions that don't have LLM-defined risk parameters yet
+                if pos.get("stop_loss") is None or pos.get("take_profit") is None:
+                    continue
+
+                # --- Trailing stop update ---
+                await self.update_trailing_stop(symbol, pos, current_price, display_symbol)
+
+                # --- Trailing take-profit ---
+                await self.update_trailing_take_profit(symbol, pos, current_price)
+
+                # --- Breakeven stop ---
+                await self.check_breakeven_stop(symbol, pos, current_price)
+
+                # --- Update native stop order if stop price changed ---
+                await self.update_native_stop_order(symbol, pos)
+
+                # --- Partial take-profit ---
+                await self.check_partial_take_profit(
+                    symbol, pos, current_price, display_symbol, max_partial_tp_reviews, ticker
+                )
+
+                # --- Dust sweep check ---
+                if await self.check_dust_sweep(symbol, pos, display_symbol, max_dust_sweep_reviews):
+                    continue
+
+                # --- News sentiment exit ---
+                if await self.check_news_sentiment_exit(symbol, pos, display_symbol):
+                    continue
+
+                # --- Soft stop: max unrealized loss ---
+                if await self.check_soft_stop(symbol, pos, current_price, display_symbol):
+                    continue
+
+                # --- Max hold time expired → ask LLM instead of auto‑closing ---
+                if await self.check_max_hold_expired(symbol, pos, display_symbol):
+                    continue
+
+                # --- Native exit order triggers (OCO handling) ---
+                if await self.check_native_exit_triggers(
+                    symbol, pos, current_price, display_symbol
+                ):
+                    continue
+
+                # --- Manual stop-loss / take-profit triggers (no native orders) ---
+                if current_price <= pos["stop_loss"]:
+                    await self.check_manual_stop_loss(
+                        symbol, pos, current_price, display_symbol, max_sl_reviews
+                    )
+                elif current_price >= pos["take_profit"]:
+                    if await self.check_manual_take_profit(
+                        symbol, pos, current_price, display_symbol, max_tp_reviews
+                    ):
+                        continue
+            except Exception as e:
+                logger.error(f"Risk check failed for {symbol}: {e}")
+
+        # Record position-level P&L snapshots for all open positions
+        await self.record_position_pnl_snapshots()
 
     async def read_review_limits(self) -> Dict[str, int]:
         """Read LLM-decided review limits from Redis, falling back to settings defaults."""
