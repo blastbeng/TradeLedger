@@ -19,6 +19,7 @@ from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import build_analysis_prompt, compact_prompt, build_backtest_variants_prompt, build_system_prompt
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
+from src.strategies.validator import validate_signal
 from src.utils.symbol_utils import is_btp_isin
 
 try:
