@@ -2350,6 +2350,164 @@ class SignalProcessor:
         normalized_score = score / max_score
         return "mind" if normalized_score >= settings.LLM_MIND_MODEL_THRESHOLD else "actuator"
 
+    def compute_prompt_complexity(
+        self,
+        # Candidate/portfolio context
+        num_candidates: int = 0,
+        # Volatility
+        volatility_percentile: Optional[float] = None,
+        # Core indicators
+        rsi: Optional[float] = None,
+        macd: Optional[float] = None,
+        macd_signal: Optional[float] = None,
+        macd_hist: Optional[float] = None,
+        bb_upper: Optional[float] = None,
+        bb_middle: Optional[float] = None,
+        bb_lower: Optional[float] = None,
+        ema_9: Optional[float] = None,
+        ema_21: Optional[float] = None,
+        stochastic_k: Optional[float] = None,
+        adx: Optional[float] = None,
+        plus_di: Optional[float] = None,
+        minus_di: Optional[float] = None,
+        mfi: Optional[float] = None,
+        cci: Optional[float] = None,
+        williams_r: Optional[float] = None,
+        ichimoku: Optional[Dict[str, Any]] = None,
+        # Market context
+        market_breadth: Optional[Dict[str, Any]] = None,
+        full_market_breadth: Optional[Dict[str, Any]] = None,
+        sentiment_trend_magnitude: Optional[float] = None,
+        volume_trend: Optional[float] = None,
+        market_regime: str = "",
+        # Portfolio context
+        unrealized_pnl: Optional[float] = None,
+        drawdown_pct: Optional[float] = None,
+        portfolio_exposure_pct: Optional[float] = None,
+        portfolio_stop_risk_pct: Optional[float] = None,
+        # Position state
+        is_critical: bool = False,
+        trading_paused: bool = False,
+        # Events & fundamentals
+        symbol_event: Optional[Dict[str, Any]] = None,
+        fundamentals: Optional[Dict[str, Any]] = None,
+        # Past performance
+        consecutive_losses: int = 0,
+        # Current price
+        current_price: Optional[float] = None,
+        # Legacy params (kept for backward compat with other call sites)
+        fear_greed: Optional[Dict[str, Any]] = None,
+        conflicting_signals: bool = False,
+    ) -> float:
+        """Return a complexity score between 0.0 (simple) and 1.0 (very complex)."""
+        # Category-based scoring: within each category, take the MAX contribution
+        # (not the sum) so that multiple factors in the same category don't
+        # dominate the score.  Category maxima sum to 1.0 exactly.
+
+        # === Category 1: Technical indicator extremes (max 0.25) ===
+        tech_score = 0.0
+        if rsi is not None and (rsi < 30 or rsi > 70):
+            tech_score = max(tech_score, 0.15)
+        if stochastic_k is not None and (stochastic_k < 20 or stochastic_k > 80):
+            tech_score = max(tech_score, 0.12)
+        if mfi is not None and (mfi < 20 or mfi > 80):
+            tech_score = max(tech_score, 0.12)
+        if cci is not None and (cci < -100 or cci > 100):
+            tech_score = max(tech_score, 0.12)
+        if williams_r is not None and (williams_r < -80 or williams_r > -20):
+            tech_score = max(tech_score, 0.12)
+        if macd is not None and macd_signal is not None and macd != 0:
+            if abs(macd - macd_signal) < 0.0001 * abs(macd):
+                tech_score = max(tech_score, 0.10)
+        if bb_upper is not None and bb_lower is not None and bb_middle is not None and bb_middle > 0:
+            bb_width = (bb_upper - bb_lower) / bb_middle
+            if bb_width < 0.02 or bb_width > 0.08:
+                tech_score = max(tech_score, 0.15)
+        if ichimoku is not None and current_price is not None:
+            cloud_top = ichimoku.get("cloud_top")
+            cloud_bottom = ichimoku.get("cloud_bottom")
+            if cloud_top is not None and cloud_bottom is not None:
+                if cloud_bottom <= current_price <= cloud_top:
+                    tech_score = max(tech_score, 0.12)
+
+        # === Category 2: Conflicting signals (max 0.20) ===
+        conflict_score = 0.0
+        if rsi is not None and macd_hist is not None:
+            if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
+                conflict_score = max(conflict_score, 0.20)
+        if ema_9 is not None and ema_21 is not None and adx is not None and plus_di is not None and minus_di is not None:
+            ema_bullish = ema_9 > ema_21
+            di_bullish = plus_di > minus_di
+            if ema_bullish != di_bullish and adx > 25:
+                conflict_score = max(conflict_score, 0.15)
+        if conflicting_signals:
+            conflict_score = max(conflict_score, 0.10)
+
+        # === Category 3: Market context (max 0.20) ===
+        market_score = 0.0
+        if volatility_percentile is not None and (volatility_percentile > 80 or volatility_percentile < 20):
+            market_score = max(market_score, 0.15)
+        if market_regime and any(kw in market_regime for kw in ("high volatility", "squeeze", "expansion", "ranging")):
+            market_score = max(market_score, 0.12)
+        if market_breadth:
+            pos_pct = market_breadth.get("positive_pct", 50)
+            if pos_pct > 80 or pos_pct < 20:
+                market_score = max(market_score, 0.12)
+        if full_market_breadth:
+            pos_pct = full_market_breadth.get("positive_pct", 50)
+            if pos_pct > 80 or pos_pct < 20:
+                market_score = max(market_score, 0.10)
+        if sentiment_trend_magnitude is not None and sentiment_trend_magnitude > 0.2:
+            market_score = max(market_score, 0.12)
+        if volume_trend is not None and volume_trend > 3.0:
+            market_score = max(market_score, 0.10)
+
+        # === Category 4: Portfolio stress (max 0.15) ===
+        portfolio_score = 0.0
+        if portfolio_exposure_pct is not None and portfolio_exposure_pct > 70:
+            portfolio_score = max(portfolio_score, 0.15)
+        if portfolio_stop_risk_pct is not None and portfolio_stop_risk_pct > 8:
+            portfolio_score = max(portfolio_score, 0.15)
+        if drawdown_pct is not None and drawdown_pct > 10:
+            portfolio_score = max(portfolio_score, 0.15)
+        if unrealized_pnl is not None and unrealized_pnl < 0:
+            portfolio_score = max(portfolio_score, 0.10)
+        if consecutive_losses >= 3:
+            portfolio_score = max(portfolio_score, 0.12)
+
+        # === Category 5: Critical & events (max 0.15) ===
+        critical_score = 0.0
+        if is_critical:
+            critical_score = max(critical_score, 0.15)
+        if symbol_event is not None and symbol_event.get("has_event"):
+            critical_score = max(critical_score, 0.10)
+        if fundamentals is not None:
+            pe = fundamentals.get("pe_ratio")
+            if pe is not None and (pe > 50 or pe < 0):
+                critical_score = max(critical_score, 0.08)
+            margins = fundamentals.get("profit_margins")
+            if margins is not None and margins < 0:
+                critical_score = max(critical_score, 0.08)
+        if trading_paused:
+            critical_score = max(critical_score, 0.05)
+
+        # === Category 6: Candidate count (max 0.03) ===
+        candidate_score = 0.0
+        if num_candidates > 20:
+            candidate_score = 0.03
+        elif num_candidates > 10:
+            candidate_score = 0.02
+
+        # === Category 7: Legacy fear_greed (max 0.02) ===
+        legacy_score = 0.0
+        if fear_greed:
+            fg = fear_greed.get("value", 50)
+            if fg <= 25 or fg >= 75:
+                legacy_score = 0.02
+
+        total = tech_score + conflict_score + market_score + portfolio_score + critical_score + candidate_score + legacy_score
+        return min(1.0, total)
+
     def compute_model_tier_and_temperature(
         self,
         atr: Optional[float],
@@ -2436,7 +2594,7 @@ class SignalProcessor:
         if rsi is not None and macd_hist is not None:
             if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
                 _conflicting = True
-        strategy_complexity = engine._compute_prompt_complexity(
+        strategy_complexity = self.compute_prompt_complexity(
             num_candidates=num_candidates,
             volatility_percentile=atr_percentile,
             rsi=rsi,
@@ -2607,7 +2765,7 @@ class SignalProcessor:
                 "multiplier is often better than doing nothing."
             )
 
-            pause_resume_complexity = engine._compute_prompt_complexity(
+            pause_resume_complexity = self.compute_prompt_complexity(
                 num_candidates=0,
                 market_breadth=market_breadth,
                 fear_greed=None,

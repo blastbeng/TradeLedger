@@ -980,7 +980,7 @@ class SymbolReevaluator:
         # Compute prompt complexity for temperature selection
         _st_values = [abs(v) for v in sentiment_trend.values() if v is not None]
         _st_mag = max(_st_values) if _st_values else None
-        symbol_selection_complexity = engine._compute_prompt_complexity(
+        symbol_selection_complexity = self.engine._signal_processor.compute_prompt_complexity(
             num_candidates=len(sample_pairs),
             market_breadth=market_breadth,
             fear_greed=None,
