@@ -404,6 +404,48 @@ class BacktestManager:
 
         return list(await asyncio.gather(*[_run_single_variant(vp) for vp in variants_to_test]))
 
+    async def _run_random_backtest_variant(
+        self,
+        symbol: str,
+        variants_to_test: List[Dict[str, Any]],
+        preliminary_signal: Signal,
+        atr: Optional[float],
+        current_price: float,
+        tf_seconds: int,
+        assigned_tf: str,
+        historical_ohlcv: Optional[List[List]],
+        raw_candles: Optional[List[List]],
+        base_balance: float,
+        is_btp: bool,
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        """Run a single randomly selected backtest variant."""
+        import random
+        if not variants_to_test:
+            return [], "No variants to test"
+        
+        # Select one random variant
+        random_variant = random.choice(variants_to_test)
+        logger.info(f"Running random backtest variant for {symbol}: {random_variant}")
+        
+        bt_stats, bt_summary = await self._run_backtest_variant(
+            symbol=symbol,
+            variant_params=random_variant,
+            preliminary_signal=preliminary_signal,
+            atr=atr,
+            current_price=current_price,
+            tf_secs=tf_seconds,
+            assigned_tf=assigned_tf,
+            historical_ohlcv=historical_ohlcv,
+            raw_candles=raw_candles,
+            base_balance=base_balance,
+            is_btp=is_btp,
+        )
+        
+        if bt_stats is not None:
+            return [{"variant_params": random_variant, "summary": bt_summary, "stats": bt_stats}], bt_summary
+        else:
+            return [{"variant_params": random_variant, "summary": bt_summary or "Insufficient data for backtest.", "stats": {}}], bt_summary or "Insufficient data for backtest."
+
     async def run_step2_llm_call(
         self,
         symbol: str,
@@ -791,7 +833,7 @@ class BacktestManager:
             raw_candles=data.get("raw_candles"),
         )
 
-        backtest_results = await self._run_backtest_variants_parallel(
+        backtest_results, combined_bt_summary = await self._run_random_backtest_variant(
             symbol=symbol,
             variants_to_test=variants_to_test,
             preliminary_signal=preliminary_signal,
@@ -804,9 +846,5 @@ class BacktestManager:
             base_balance=data["base_balance"],
             is_btp=data["is_btp"],
         )
-
-        combined_bt_summary = " | ".join(
-            f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
-        ) if backtest_results else "No backtest performed"
 
         return backtest_results, combined_bt_summary
