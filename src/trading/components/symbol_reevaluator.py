@@ -1040,6 +1040,131 @@ class SymbolReevaluator:
 
         return chunk_results
 
+    async def run_final_selection_llm_call(
+        self,
+        chunk_results: List[Dict[str, Any]],
+        sample_pairs: List[str],
+        base_balance: float,
+        per_symbol_budget: float,
+        perf: Dict[str, Any],
+        market_trend: Optional[Dict[str, Any]],
+        session_info: dict,
+        market_breadth: Dict[str, Any],
+        full_market_breadth: Optional[Dict[str, Any]],
+        trading_paused_bool: bool,
+        symbol_tenure: Dict[str, float],
+        symbol_max_tenure: Dict[str, Any],
+        trade_pattern_analysis: Dict[str, Any],
+        vix: Optional[float],
+        min_viable_amount: float,
+        market_limits: Dict[str, Dict[str, float]],
+        available_timeframes_by_symbol: Dict[str, List[str]],
+        auto_resume_note: str,
+        effective_temp: float,
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Run the final selection LLM call with retries and fallback merge.
+
+        Returns (response, llm_provider, llm_model).
+        If all retries fail and chunk_results exist, merges all chunk
+        selections as a fallback.
+        """
+        from src.llm.prompts import build_final_selection_prompt
+        engine = self.engine
+
+        num_chunks = (len(sample_pairs) + settings.LLM_CHUNK_SIZE - 1) // settings.LLM_CHUNK_SIZE
+        total_steps = 10 + num_chunks + 2
+        logger.info("Re-evaluation step %d/%d: Calling LLM for final selection from %d chunk results...", total_steps - 1, total_steps, len(chunk_results))
+
+        response = None
+        llm_provider = None
+        llm_model = None
+
+        if not chunk_results:
+            logger.warning("All chunk LLM calls failed. Will use fallback selection.")
+        else:
+            final_prompt = await asyncio.to_thread(
+                build_final_selection_prompt,
+                chunk_results=chunk_results,
+                current_symbols=engine.current_symbols,
+                max_symbols=engine.effective_max_symbols,
+                base_currency=engine.base_currency,
+                base_balance=base_balance,
+                per_symbol_budget=per_symbol_budget,
+                performance=perf,
+                open_positions=engine.positions,
+                market_breadth=market_breadth,
+                full_market_breadth=full_market_breadth,
+                market_trend=market_trend,
+                session_info=session_info,
+                trading_paused=trading_paused_bool,
+                symbol_tenure=symbol_tenure,
+                symbol_max_tenure=symbol_max_tenure,
+                trade_pattern_analysis=trade_pattern_analysis,
+                daily_pnl=perf["equity_curve"].get("daily_pnl"),
+                vix=vix,
+                min_viable_trade_amount=min_viable_amount,
+                available_timeframes=settings.OHLCV_TIMEFRAMES,
+                market_limits=market_limits,
+                available_timeframes_by_symbol=available_timeframes_by_symbol,
+            )
+            if auto_resume_note:
+                final_prompt += "\n" + auto_resume_note
+
+            max_retries = 2
+            for attempt in range(max_retries + 1):
+                try:
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            get_cached_llm_response,
+                            compact_prompt(final_prompt),
+                            compact_prompt(build_system_prompt()),
+                            300,
+                            model_type="mind",
+                            temperature=effective_temp,
+                        ),
+                        timeout=settings.LLM_TIMEOUT
+                    )
+                    response = result["response"]
+                    llm_provider = result["provider"]
+                    llm_model = result["model"]
+                    break
+                except asyncio.TimeoutError:
+                    if attempt < max_retries:
+                        logger.warning(f"Final selection LLM timed out (attempt {attempt + 1}). Retrying...")
+                        await asyncio.sleep(5 * (attempt + 1))
+                    else:
+                        logger.warning("Final selection LLM timed out after all retries.")
+                except Exception as e:
+                    if attempt < max_retries:
+                        logger.warning(f"Final selection LLM failed: {e}. Retrying...")
+                        await asyncio.sleep(5 * (attempt + 1))
+                    else:
+                        logger.error(f"Final selection LLM failed after all retries: {e}")
+
+            # Fallback: merge all chunk selections if final call failed
+            if response is None and chunk_results:
+                logger.warning("Final selection LLM call failed. Merging all chunk selections as fallback.")
+                merged_stocks = []
+                for chunk in chunk_results:
+                    for stock in chunk.get("stocks", []):
+                        if isinstance(stock, dict) and "symbol" in stock:
+                            merged_stocks.append(stock)
+                seen = set()
+                deduped = []
+                for s in merged_stocks:
+                    if s["symbol"] not in seen:
+                        seen.add(s["symbol"])
+                        deduped.append(s)
+                response = json.dumps({
+                    "stocks": deduped[:engine.effective_max_symbols],
+                    "max_stocks": min(len(deduped), engine.effective_max_symbols),
+                    "reasoning": "Fallback: merged all chunk selections (final LLM call failed)",
+                })
+                llm_provider = "fallback"
+                llm_model = "merged_chunks"
+
+        return response, llm_provider, llm_model
+
     async def store_llm_decided_parameters(self, parsed: Dict[str, Any]) -> None:
         """Store LLM-decided parameters from the stock selection response to Redis.
 

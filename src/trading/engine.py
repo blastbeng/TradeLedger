@@ -3151,7 +3151,6 @@ class TradingEngine:
         # Compute OHLCV summary for the prompt (do not pass raw candles to the LLM)
         ohlcv_summary = self._symbol_reevaluator.compute_ohlcv_summary(ohlcv_data, sample_pairs)
 
-        max_retries = 2
         # Compute prompt complexity for temperature selection
         _st_values = [abs(v) for v in sentiment_trend.values() if v is not None]
         _st_mag = max(_st_values) if _st_values else None
@@ -3195,96 +3194,27 @@ class TradingEngine:
         )
 
         # --- Final selection call ---
-        num_chunks = (len(sample_pairs) + settings.LLM_CHUNK_SIZE - 1) // settings.LLM_CHUNK_SIZE
-        total_steps = 10 + num_chunks + 2
-        logger.info("Re-evaluation step %d/%d: Calling LLM for final selection from %d chunk results...", total_steps - 1, total_steps, len(chunk_results))
-
-        response = None
-        llm_provider = None
-        llm_model = None
-
-        if not chunk_results:
-            logger.warning("All chunk LLM calls failed. Will use fallback selection.")
-        else:
-            final_prompt = await asyncio.to_thread(
-                build_final_selection_prompt,
-                chunk_results=chunk_results,
-                current_symbols=self.current_symbols,
-                max_symbols=self.effective_max_symbols,
-                base_currency=self.base_currency,
-                base_balance=base_balance,
-                per_symbol_budget=per_symbol_budget,
-                performance=perf,
-                open_positions=self.positions,
-                market_breadth=market_breadth,
-                full_market_breadth=full_market_breadth,
-                market_trend=market_trend,
-                session_info=session_info,
-                trading_paused=trading_paused_bool,
-                symbol_tenure=symbol_tenure,
-                symbol_max_tenure=symbol_max_tenure,
-                trade_pattern_analysis=trade_pattern_analysis,
-                daily_pnl=perf["equity_curve"].get("daily_pnl"),
-                vix=vix,
-                min_viable_trade_amount=min_viable_amount,
-                available_timeframes=settings.OHLCV_TIMEFRAMES,
-                market_limits=market_limits,
-                available_timeframes_by_symbol=available_timeframes_by_symbol,
-            )
-            if auto_resume_note:
-                final_prompt += "\n" + auto_resume_note
-
-            for attempt in range(max_retries + 1):
-                try:
-                    result = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            get_cached_llm_response,
-                            compact_prompt(final_prompt),
-                            _get_compacted_system_prompt(),
-                            300,
-                            model_type="mind",
-                            temperature=effective_temp,
-                        ),
-                        timeout=settings.LLM_TIMEOUT
-                    )
-                    response = result["response"]
-                    llm_provider = result["provider"]
-                    llm_model = result["model"]
-                    break
-                except asyncio.TimeoutError:
-                    if attempt < max_retries:
-                        logger.warning(f"Final selection LLM timed out (attempt {attempt + 1}). Retrying...")
-                        await asyncio.sleep(5 * (attempt + 1))
-                    else:
-                        logger.warning("Final selection LLM timed out after all retries.")
-                except Exception as e:
-                    if attempt < max_retries:
-                        logger.warning(f"Final selection LLM failed: {e}. Retrying...")
-                        await asyncio.sleep(5 * (attempt + 1))
-                    else:
-                        logger.error(f"Final selection LLM failed after all retries: {e}")
-
-            # Fallback: merge all chunk selections if final call failed
-            if response is None and chunk_results:
-                logger.warning("Final selection LLM call failed. Merging all chunk selections as fallback.")
-                merged_stocks = []
-                for chunk in chunk_results:
-                    for stock in chunk.get("stocks", []):
-                        if isinstance(stock, dict) and "symbol" in stock:
-                            merged_stocks.append(stock)
-                seen = set()
-                deduped = []
-                for s in merged_stocks:
-                    if s["symbol"] not in seen:
-                        seen.add(s["symbol"])
-                        deduped.append(s)
-                response = json.dumps({
-                    "stocks": deduped[:self.effective_max_symbols],
-                    "max_stocks": min(len(deduped), self.effective_max_symbols),
-                    "reasoning": "Fallback: merged all chunk selections (final LLM call failed)",
-                })
-                llm_provider = "fallback"
-                llm_model = "merged_chunks"
+        response, llm_provider, llm_model = await self._symbol_reevaluator.run_final_selection_llm_call(
+            chunk_results=chunk_results,
+            sample_pairs=sample_pairs,
+            base_balance=base_balance,
+            per_symbol_budget=per_symbol_budget,
+            perf=perf,
+            market_trend=market_trend,
+            session_info=session_info,
+            market_breadth=market_breadth,
+            full_market_breadth=full_market_breadth,
+            trading_paused_bool=trading_paused_bool,
+            symbol_tenure=symbol_tenure,
+            symbol_max_tenure=symbol_max_tenure,
+            trade_pattern_analysis=trade_pattern_analysis,
+            vix=vix,
+            min_viable_amount=min_viable_amount,
+            market_limits=market_limits,
+            available_timeframes_by_symbol=available_timeframes_by_symbol,
+            auto_resume_note=auto_resume_note,
+            effective_temp=effective_temp,
+        )
 
         logger.info("Re-evaluation: LLM response received (%d chars), parsing...", len(response) if response else 0)
         if response:
