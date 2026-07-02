@@ -6711,53 +6711,7 @@ class TradingEngine:
                         self._state_dirty = True
 
                     elif status in ('rejected', 'canceled', 'cancelled', 'expired'):
-                        logger.warning(
-                            f"Queued order {order_id} for {queued['symbol']} ended as {status}, removing."
-                        )
-                        # Refund remaining reserved capital for buy orders
-                        if queued['side'] == 'buy':
-                            async with self._cycle_spent_lock:
-                                self._cycle_spent = max(0.0, self._cycle_spent - queued.get('amount', 0.0))
-                        if self.notifier:
-                            stock_name = await self._get_stock_name(queued['symbol'])
-                            tf = queued.get('timeframe')
-                            display = self._format_symbol_display(queued['symbol'], stock_name, tf)
-                            await self.notifier.send_notification(
-                                f"❌ Queued {queued['side']} order for {display} {status}.",
-                                summary={
-                                    "symbol": queued['symbol'],
-                                    "action": "INFO",
-                                    "reason": f"Order {status}",
-                                }
-                            )
-                        async with self._queued_orders_lock:
-                            if queued in self.queued_orders:
-                                self.queued_orders.remove(queued)
-                        self._state_dirty = True
-                        if queued.get("is_exit_order"):
-                            oco_pair_id = queued.get("oco_pair")
-                            if oco_pair_id:
-                                try:
-                                    await asyncio.to_thread(self.trader.cancel_order, oco_pair_id)
-                                    logger.info(f"Cancelled OCO pair {oco_pair_id} for {status} exit order {order_id}")
-                                except Exception as e:
-                                    logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
-                                async with self._queued_orders_lock:
-                                    self.queued_orders = [
-                                        q for q in self.queued_orders
-                                        if q.get("order_id") != oco_pair_id
-                                    ]
-                            pos = self.positions.get(queued["symbol"])
-                            if pos:
-                                pos.pop("stop_loss_order_id", None)
-                                pos.pop("take_profit_order_id", None)
-                            if self.notifier:
-                                stock_name = await self._get_stock_name(queued["symbol"])
-                                display_symbol = self._format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
-                                await self.notifier.send_notification(
-                                    f"🔗 OCO pair {oco_pair_id} cancelled for {display_symbol} (main order {status}).",
-                                    summary={"symbol": queued["symbol"], "action": "CANCEL", "reason": f"OCO pair cancelled due to main order {status}"}
-                                )
+                        await self._order_executor.handle_canceled_or_rejected_order(queued, status)
 
                     # else: still open / partially_filled / accepted – keep waiting
             except Exception as e:

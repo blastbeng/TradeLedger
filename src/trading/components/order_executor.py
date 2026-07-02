@@ -1960,6 +1960,62 @@ class OrderExecutor:
             )
         return True
 
+    async def handle_canceled_or_rejected_order(
+        self,
+        queued: Dict[str, Any],
+        status: str,
+    ) -> None:
+        """Handle cleanup for a queued order that ended as rejected, canceled, or expired."""
+        engine = self.engine
+        order_id = queued.get('order_id')
+        logger.warning(
+            f"Queued order {order_id} for {queued['symbol']} ended as {status}, removing."
+        )
+        # Refund remaining reserved capital for buy orders
+        if queued['side'] == 'buy':
+            async with engine._cycle_spent_lock:
+                engine._cycle_spent = max(0.0, engine._cycle_spent - queued.get('amount', 0.0))
+        if engine.notifier:
+            stock_name = await engine._get_stock_name(queued['symbol'])
+            tf = queued.get('timeframe')
+            display = engine._format_symbol_display(queued['symbol'], stock_name, tf)
+            await engine.notifier.send_notification(
+                f"❌ Queued {queued['side']} order for {display} {status}.",
+                summary={
+                    "symbol": queued['symbol'],
+                    "action": "INFO",
+                    "reason": f"Order {status}",
+                }
+            )
+        async with engine._queued_orders_lock:
+            if queued in engine.queued_orders:
+                engine.queued_orders.remove(queued)
+        engine._state_dirty = True
+        if queued.get("is_exit_order"):
+            oco_pair_id = queued.get("oco_pair")
+            if oco_pair_id:
+                try:
+                    await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
+                    logger.info(f"Cancelled OCO pair {oco_pair_id} for {status} exit order {order_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
+                async with engine._queued_orders_lock:
+                    engine.queued_orders = [
+                        q for q in engine.queued_orders
+                        if q.get("order_id") != oco_pair_id
+                    ]
+            pos = engine.positions.get(queued["symbol"])
+            if pos:
+                pos.pop("stop_loss_order_id", None)
+                pos.pop("take_profit_order_id", None)
+            if engine.notifier:
+                stock_name = await engine._get_stock_name(queued["symbol"])
+                display_symbol = engine._format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
+                await engine.notifier.send_notification(
+                    f"🔗 OCO pair {oco_pair_id} cancelled for {display_symbol} (main order {status}).",
+                    summary={"symbol": queued["symbol"], "action": "CANCEL", "reason": f"OCO pair cancelled due to main order {status}"}
+                )
+
     async def handle_queued_buy_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any]):
         """Process a queued BUY limit order that has filled in the simulator."""
         engine = self.engine
