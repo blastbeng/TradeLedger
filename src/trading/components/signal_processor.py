@@ -25,6 +25,40 @@ class SignalProcessor:
     def __init__(self, engine):
         self.engine = engine
 
+    async def compute_atr_percentile(
+        self,
+        symbol: str,
+        atr: Optional[float],
+    ) -> Optional[float]:
+        """Compute ATR percentile from Redis-stored history.
+
+        Maintains a rolling window of the last 100 ATR values in Redis
+        and returns the percentile rank of the current ATR.
+        Returns None if ATR is invalid or insufficient history exists.
+        """
+        engine = self.engine
+        if atr is None or atr <= 0:
+            return None
+
+        atr_percentile_key = f"atr_percentile:{symbol}"
+        try:
+            stored_atr = await asyncio.to_thread(engine.redis.get, atr_percentile_key)
+            if stored_atr:
+                atr_history = json.loads(stored_atr)
+            else:
+                atr_history = []
+            atr_history.append(atr)
+            atr_history = atr_history[-100:]
+            await asyncio.to_thread(engine.redis.setex, atr_percentile_key, 7 * 24 * 3600, json.dumps(atr_history))
+            if len(atr_history) >= 5:
+                sorted_atr = sorted(atr_history)
+                rank = sum(1 for v in sorted_atr if v <= atr)
+                return round(rank / len(sorted_atr) * 100, 1)
+        except Exception as e:
+            logger.info(f"ATR percentile computation failed for {symbol}: {e}")
+
+        return None
+
     async def build_analysis_prompt_and_snapshot(
         self,
         symbol: str,
