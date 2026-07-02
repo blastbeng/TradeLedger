@@ -84,6 +84,126 @@ class PositionManager:
         engine._portfolio_exposure_cache_time = now
         return result
 
+    async def get_profit_summary(self) -> Dict[str, Any]:
+        """Return profit/loss summary including queued orders."""
+        engine = self.engine
+        balance = await asyncio.to_thread(engine.trader.fetch_balance)
+        current_balance = balance.get(engine.base_currency, 0.0)
+
+        # --- Early exit: no positions and no queued orders → nothing to compute ---
+        if not engine.positions and not engine.queued_orders:
+            return {
+                "initial_balance": engine.initial_balance,
+                "current_balance": current_balance,
+                "effective_balance": current_balance,
+                "open_value": 0.0,
+                "total_pnl": current_balance - engine.initial_balance,
+                "pnl_percent": ((current_balance - engine.initial_balance) / engine.initial_balance * 100) if engine.initial_balance else 0.0,
+                "total_fees": 0.0,
+                "total_fees_display": "0.000000",
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+                "base_currency": engine.base_currency,
+                "queued_buy_count": 0,
+                "queued_sell_count": 0,
+                "queued_buy_quote_total": 0.0,
+                "queued_sell_base_total": 0.0,
+                "queued_sell_value": 0.0,
+            }
+
+        open_value = 0.0
+        pos_tickers = await asyncio.to_thread(engine._get_all_position_tickers_sync)
+        for sym, pos in engine.positions.items():
+            try:
+                t = pos_tickers.get(sym)
+                price = t['last'] if t and t.get('last') else 0.0
+                open_value += pos['amount'] * price
+            except Exception:
+                pass
+
+        # --- Queued orders ---
+        queued_buy_count = 0
+        queued_sell_count = 0
+        queued_buy_quote_total = 0.0
+        queued_sell_base_total = 0.0
+        queued_sell_value = 0.0
+
+        # Collect symbols for queued sells to fetch prices
+        queued_sell_symbols = []
+        for q in engine.queued_orders:
+            if q['side'] == 'buy':
+                queued_buy_count += 1
+                # 'amount' is the remaining quote to spend
+                queued_buy_quote_total += q.get('amount', 0.0)
+            elif q['side'] == 'sell':
+                queued_sell_count += 1
+                queued_sell_base_total += q.get('amount', 0.0)
+                queued_sell_symbols.append(q['symbol'])
+
+        if queued_sell_symbols:
+            sell_tickers = await asyncio.to_thread(engine._get_tickers_for_symbols_sync, queued_sell_symbols)
+        else:
+            sell_tickers = {}
+        for q in engine.queued_orders:
+            if q['side'] == 'sell':
+                sym = q['symbol']
+                t = sell_tickers.get(sym) if sell_tickers else None
+                price = t['last'] if t and t.get('last') else 0.0
+                queued_sell_value += q.get('amount', 0.0) * price
+
+        effective_balance = current_balance - queued_buy_quote_total
+
+        total_fees = 0.0
+        for t in engine.trade_history:
+            fee = t.get('fee', {})
+            fee_cost = float(fee.get('cost', 0) or 0)
+            fee_currency = fee.get('currency', '')
+            if fee_cost == 0.0:
+                continue
+            if fee_currency == engine.base_currency:
+                total_fees += fee_cost
+            else:
+                # fee is in the base symbol (e.g., BTC) → convert using trade price
+                price = t.get('price', 0.0)
+                total_fees += fee_cost * price
+        total_value = current_balance + open_value
+        pnl = total_value - engine.initial_balance
+        pnl_percent = (pnl / engine.initial_balance * 100) if engine.initial_balance else 0.0
+
+        # Win/Loss stats
+        wins = 0
+        losses = 0
+        for t in engine.trade_history:
+            if t.get('side') == 'sell' and 'realized_pnl' in t:
+                pnl_val = t['realized_pnl']
+                if pnl_val > 0:
+                    wins += 1
+                elif pnl_val < 0:
+                    losses += 1
+        total_closed = wins + losses
+        win_rate = (wins / total_closed) if total_closed > 0 else 0.0
+
+        return {
+            "initial_balance": engine.initial_balance,
+            "current_balance": current_balance,
+            "effective_balance": effective_balance,
+            "open_value": open_value,
+            "total_pnl": pnl,
+            "pnl_percent": pnl_percent,
+            "total_fees": round(total_fees, 6),
+            "total_fees_display": f"{total_fees:.6f}",
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(win_rate, 4),
+            "base_currency": engine.base_currency,
+            "queued_buy_count": queued_buy_count,
+            "queued_sell_count": queued_sell_count,
+            "queued_buy_quote_total": queued_buy_quote_total,
+            "queued_sell_base_total": queued_sell_base_total,
+            "queued_sell_value": queued_sell_value,
+        }
+
     def compute_equity_and_drawdown(self, trades_snapshot: List[Dict[str, Any]]) -> Dict[str, float]:
         """Compute current equity, peak, and drawdown percentage.
         
