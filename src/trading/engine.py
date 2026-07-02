@@ -2800,56 +2800,13 @@ class TradingEngine:
             sample_pairs, tickers, market_trend
         )
 
-        # Check if trading is currently paused
-        trading_paused_raw = await asyncio.to_thread(self.redis.get, "trading:paused")
-        trading_paused_bool = trading_paused_raw is not None and trading_paused_raw == "1"
-
-        # Compute symbol tenure for the prompt
-        symbol_tenure = {}
-        for sym, first_seen in self._symbol_first_seen.items():
-            symbol_tenure[sym] = round(now - first_seen)
-
-        # Compute current max tenure per symbol for the prompt
-        symbol_max_tenure = {}
-        for entry in self.current_symbols:
-            if 'max_tenure_hours' in entry:
-                symbol_max_tenure[entry['symbol']] = entry['max_tenure_hours']
-
-        # --- Warn if trading was recently auto-resumed ---
-        auto_resume_note = ""
-        last_auto_resume_raw = await asyncio.to_thread(self.redis.get, "trading:last_auto_resume")
-        if last_auto_resume_raw:
-            try:
-                last_auto_resume_ts = float(last_auto_resume_raw)
-                seconds_since = now - last_auto_resume_ts
-                if seconds_since < self._symbol_reevaluation_interval * 2:
-                    minutes_since = seconds_since / 60
-                    auto_resume_note = (
-                        f"\n**NOTE:** Trading was auto‑resumed {minutes_since:.1f} minutes ago after a pause. "
-                        "Market conditions may not have changed significantly. "
-                        "Consider whether conditions have actually improved enough to justify trading. "
-                        "If you decide to pause again, set a longer `pause_duration_seconds` (e.g., 1800–7200) "
-                        "to allow conditions to evolve; a very short pause will likely lead to the same outcome.\n"
-                    )
-            except (ValueError, TypeError):
-                pass
-
-        # Compute OHLCV summary for the prompt (do not pass raw candles to the LLM)
-        ohlcv_summary = self._symbol_reevaluator.compute_ohlcv_summary(ohlcv_data, sample_pairs)
-
-        # Compute prompt complexity for temperature selection
-        _st_values = [abs(v) for v in sentiment_trend.values() if v is not None]
-        _st_mag = max(_st_values) if _st_values else None
-        symbol_selection_complexity = self._compute_prompt_complexity(
-            num_candidates=len(sample_pairs),
+        trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp = await self._symbol_reevaluator.prepare_reeval_prompt_context(
+            now=now,
+            sample_pairs=sample_pairs,
+            ohlcv_data=ohlcv_data,
+            sentiment_trend=sentiment_trend,
             market_breadth=market_breadth,
-            fear_greed=None,
-            volatility_percentile=None,
-            sentiment_trend_magnitude=_st_mag,
-            conflicting_signals=False,
-            is_critical=False,
         )
-        effective_temp = self._get_effective_temperature("mind", symbol_selection_complexity)
 
         # --- Chunked LLM evaluation ---
         chunk_results = await self._symbol_reevaluator.evaluate_llm_chunks(
