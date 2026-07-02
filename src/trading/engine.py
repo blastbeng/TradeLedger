@@ -6417,6 +6417,16 @@ class TradingEngine:
 
         remaining = max(0.0, base_balance - self._cycle_spent)
 
+        perf = await asyncio.to_thread(self._compute_performance_metrics)
+        trade_pattern_analysis = await asyncio.to_thread(self._compute_trade_pattern_analysis)
+
+        symbol_event = None
+        if settings.NEWS_ENABLED and detect_upcoming_events is not None:
+            try:
+                symbol_event = await asyncio.to_thread(detect_upcoming_events, symbol)
+            except Exception:
+                pass
+
         stale_indicators_warning = symbol_data.get("stale_indicators_warning", "")
         analysis_prompt, market_snapshot, market_hash = await self._signal_processor.build_analysis_prompt_and_snapshot(
             symbol=symbol,
