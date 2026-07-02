@@ -4903,30 +4903,11 @@ class TradingEngine:
             return error
 
         if preliminary_signal.action in ("BUY", "HOLD"):
-            variants_to_test = self._backtest_manager._prepare_backtest_variants(
+            backtest_results, combined_bt_summary = await self._backtest_manager.run_simulation_backtests(
                 symbol=symbol,
+                data=data,
                 preliminary_signal=preliminary_signal,
-                historical_ohlcv=data.get("historical_ohlcv"),
-                raw_candles=data.get("raw_candles"),
             )
-
-            backtest_results = await self._backtest_manager._run_backtest_variants_parallel(
-                symbol=symbol,
-                variants_to_test=variants_to_test,
-                preliminary_signal=preliminary_signal,
-                atr=data["atr"],
-                current_price=data["current_price"],
-                tf_seconds=data["tf_seconds"],
-                assigned_tf=data["assigned_tf"],
-                historical_ohlcv=data["historical_ohlcv"],
-                raw_candles=data["raw_candles"],
-                base_balance=data["base_balance"],
-                is_btp=data["is_btp"],
-            )
-
-            combined_bt_summary = " | ".join(
-                f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
-            ) if backtest_results else "No backtest performed"
 
             return {
                 "step1_response": step1b_response,
@@ -4963,30 +4944,11 @@ class TradingEngine:
                 "backtest_summary": "No backtest performed (action is SELL)",
             }
 
-        variants_to_test = self._backtest_manager._prepare_backtest_variants(
+        backtest_results, combined_bt_summary = await self._backtest_manager.run_simulation_backtests(
             symbol=symbol,
+            data=data,
             preliminary_signal=preliminary_signal,
-            historical_ohlcv=data.get("historical_ohlcv"),
-            raw_candles=data.get("raw_candles"),
         )
-
-        backtest_results = await self._backtest_manager._run_backtest_variants_parallel(
-            symbol=symbol,
-            variants_to_test=variants_to_test,
-            preliminary_signal=preliminary_signal,
-            atr=data["atr"],
-            current_price=data["current_price"],
-            tf_seconds=data["tf_seconds"],
-            assigned_tf=data["assigned_tf"],
-            historical_ohlcv=data["historical_ohlcv"],
-            raw_candles=data["raw_candles"],
-            base_balance=data["base_balance"],
-            is_btp=data["is_btp"],
-        )
-
-        combined_bt_summary = " | ".join(
-            f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
-        ) if backtest_results else "No backtest performed"
 
         data["step1b_response"] = step1b_response
         step2_response, _error, final_signal, error_dict = await self._backtest_manager.run_simulation_step2(

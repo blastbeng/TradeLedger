@@ -771,3 +771,40 @@ class BacktestManager:
 
         final_signal = final_strategy.generate_signal({})
         return step2_response, None, final_signal, None
+
+    async def run_simulation_backtests(
+        self,
+        symbol: str,
+        data: Dict[str, Any],
+        preliminary_signal: Signal,
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        """Run backtest variants for simulation and build combined summary.
+
+        Returns (backtest_results, combined_bt_summary).
+        """
+        variants_to_test = self._prepare_backtest_variants(
+            symbol=symbol,
+            preliminary_signal=preliminary_signal,
+            historical_ohlcv=data.get("historical_ohlcv"),
+            raw_candles=data.get("raw_candles"),
+        )
+
+        backtest_results = await self._run_backtest_variants_parallel(
+            symbol=symbol,
+            variants_to_test=variants_to_test,
+            preliminary_signal=preliminary_signal,
+            atr=data["atr"],
+            current_price=data["current_price"],
+            tf_seconds=data["tf_seconds"],
+            assigned_tf=data["assigned_tf"],
+            historical_ohlcv=data["historical_ohlcv"],
+            raw_candles=data["raw_candles"],
+            base_balance=data["base_balance"],
+            is_btp=data["is_btp"],
+        )
+
+        combined_bt_summary = " | ".join(
+            f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
+        ) if backtest_results else "No backtest performed"
+
+        return backtest_results, combined_bt_summary
