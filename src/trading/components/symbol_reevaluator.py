@@ -704,6 +704,65 @@ class SymbolReevaluator:
 
         return composite_scores, shortlist
 
+    def enforce_min_symbols(
+        self,
+        deduped: List[Dict[str, str]],
+        pause_trading: Optional[bool],
+        sorted_by_composite: List[str],
+        market_limits: Dict[str, Dict[str, float]],
+        base_balance: float,
+    ) -> None:
+        """Enforce MIN_SYMBOLS setting, filling remaining slots from composite scores.
+
+        Modifies engine.effective_max_symbols and appends to deduped in-place
+        if additional symbols are needed to reach MIN_SYMBOLS.
+        """
+        engine = self.engine
+
+        # --- Enforce minimum symbols (unless LLM explicitly paused) ---
+        if (
+            settings.MIN_SYMBOLS > 0
+            and pause_trading is not True
+            and engine.effective_max_symbols < settings.MIN_SYMBOLS
+            and len(deduped) >= settings.MIN_SYMBOLS
+        ):
+            logger.info(
+                f"LLM selected {engine.effective_max_symbols} symbols; "
+                f"enforcing MIN_SYMBOLS={settings.MIN_SYMBOLS}"
+            )
+            engine.effective_max_symbols = settings.MIN_SYMBOLS
+
+        # --- Fallback: fill remaining slots if LLM returned fewer than MIN_SYMBOLS ---
+        if (
+            settings.MIN_SYMBOLS > 0
+            and pause_trading is not True
+            and len(deduped) < settings.MIN_SYMBOLS
+        ):
+            # Try to fill remaining slots from composite-score-sorted sample_pairs
+            existing_syms = {e["symbol"] for e in deduped}
+            default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+            needed = settings.MIN_SYMBOLS - len(deduped)
+            filled = 0
+            for sym in sorted_by_composite:
+                if filled >= needed:
+                    break
+                if sym in existing_syms:
+                    continue
+                if engine._is_excluded(sym, default_tf):
+                    continue
+                # Check if we can afford the minimum trade cost
+                min_cost = market_limits.get(sym, {}).get("min_cost", 0)
+                if base_balance >= min_cost:
+                    deduped.append({"symbol": sym, "timeframe": default_tf})
+                    existing_syms.add(sym)
+                    filled += 1
+            if filled > 0:
+                logger.info(
+                    f"LLM returned only {len(deduped) - filled} symbols; "
+                    f"filled {filled} additional slots from composite scores to reach MIN_SYMBOLS={settings.MIN_SYMBOLS}"
+                )
+                engine.effective_max_symbols = max(engine.effective_max_symbols, len(deduped))
+
     async def get_or_compute_correlation_matrix(
         self,
         ohlcv_data: Dict[str, Dict[str, List[List]]],
