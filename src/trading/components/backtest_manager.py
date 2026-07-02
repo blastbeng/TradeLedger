@@ -26,6 +26,48 @@ class BacktestManager:
     def __init__(self, engine):
         self.engine = engine
 
+    def _prepare_backtest_variants(
+        self,
+        symbol: str,
+        preliminary_signal: Signal,
+        historical_ohlcv: Optional[List[List]],
+        raw_candles: Optional[List[List]],
+    ) -> List[Dict[str, Any]]:
+        """Determine which variant param sets to backtest, applying dedup and caps."""
+        engine = self.engine
+        variants_to_test = []
+        if preliminary_signal.backtest_variants:
+            variants_to_test = list(preliminary_signal.backtest_variants)
+        else:
+            # Fallback: use the preliminary signal's own params as a single variant
+            fallback_params = dict(preliminary_signal.strategy_params or {})
+            if "backtest_entry_config" not in fallback_params:
+                fallback_params["backtest_entry_config"] = {
+                    "ema_period": 21,
+                    "ema_direction": "above",
+                    "min_adx": 20,
+                    "logic": "and",
+                }
+            variants_to_test.append(fallback_params)
+        # --- Deduplicate variants with identical key risk parameters ---
+        variants_to_test = engine._deduplicate_variants(variants_to_test)
+        # Safety cap: limit to configured max variants to prevent excessive backtest time
+        if len(variants_to_test) > settings.MAX_BACKTEST_VARIANTS:
+            logger.warning(
+                f"LLM returned {len(variants_to_test)} backtest variants for {symbol}, "
+                f"capping to {settings.MAX_BACKTEST_VARIANTS}"
+            )
+            variants_to_test = variants_to_test[:settings.MAX_BACKTEST_VARIANTS]
+
+        # Limit number of variants based on available data length
+        source_candles = historical_ohlcv or raw_candles or []
+        if source_candles and len(source_candles) < 50:
+            variants_to_test = variants_to_test[:2]
+        elif source_candles and len(source_candles) < 100:
+            variants_to_test = variants_to_test[:3]
+
+        return variants_to_test
+
     async def _run_backtest_from_signal(
         self,
         symbol: str,

@@ -4591,37 +4591,12 @@ class TradingEngine:
         backtest_results = []
 
         if preliminary_signal.action in ("BUY", "HOLD"):
-            # Determine which variant param sets to backtest
-            variants_to_test = []
-            if preliminary_signal.backtest_variants:
-                variants_to_test = list(preliminary_signal.backtest_variants)
-            else:
-                # Fallback: use the preliminary signal's own params as a single variant
-                fallback_params = dict(preliminary_signal.strategy_params or {})
-                if "backtest_entry_config" not in fallback_params:
-                    fallback_params["backtest_entry_config"] = {
-                        "ema_period": 21,
-                        "ema_direction": "above",
-                        "min_adx": 20,
-                        "logic": "and",
-                    }
-                variants_to_test.append(fallback_params)
-            # --- Deduplicate variants with identical key risk parameters ---
-            variants_to_test = self._deduplicate_variants(variants_to_test)
-            # Safety cap: limit to configured max variants to prevent excessive backtest time
-            if len(variants_to_test) > settings.MAX_BACKTEST_VARIANTS:
-                logger.warning(
-                    f"LLM returned {len(variants_to_test)} backtest variants for {symbol}, "
-                    f"capping to {settings.MAX_BACKTEST_VARIANTS}"
-                )
-                variants_to_test = variants_to_test[:settings.MAX_BACKTEST_VARIANTS]
-
-            # Limit number of variants based on available data length
-            source_candles = historical_ohlcv or raw_candles or []
-            if source_candles and len(source_candles) < 50:
-                variants_to_test = variants_to_test[:2]
-            elif source_candles and len(source_candles) < 100:
-                variants_to_test = variants_to_test[:3]
+            variants_to_test = self._backtest_manager._prepare_backtest_variants(
+                symbol=symbol,
+                preliminary_signal=preliminary_signal,
+                historical_ohlcv=historical_ohlcv,
+                raw_candles=raw_candles,
+            )
 
             # Run backtest variants in parallel (concurrency-limited by semaphore)
             async def _run_single_variant(vp: Dict[str, Any]) -> Dict[str, Any]:
