@@ -3673,51 +3673,15 @@ class TradingEngine:
             except json.JSONDecodeError:
                 logger.error("Failed to parse symbol selection response.")
 
-        # Fallback: if LLM returned no symbols AND did NOT explicitly pause, pick top affordable symbols by composite score
-        if not self.current_symbols and pause_trading is not True:
-            logger.warning("LLM returned no symbols without pausing – using composite-score-based fallback.")
-            if self.notifier:
-                await self.notifier.send_notification(
-                    "⚠️ LLM returned no symbols. Using composite-score-based fallback selection.",
-                    summary={
-                        "action": "FALLBACK",
-                        "reason": "LLM returned no symbols, using fallback",
-                        "model_type": "mind",
-                    }
-                )
-            # Sort sample_pairs by composite score (already computed above)
-            sorted_pairs = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
-            fallback_symbols: List[Dict[str, str]] = []
-            default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
-            for sym in sorted_pairs:
-                if composite_scores.get(sym, 0) < settings.FALLBACK_MIN_COMPOSITE_SCORE:
-                    continue
-                # Apply minimum 24h volume filter if configured
-                if settings.FALLBACK_MIN_24H_VOLUME > 0:
-                    vol = tickers.get(sym, {}).get('quoteVolume', 0) or 0
-                    if vol < settings.FALLBACK_MIN_24H_VOLUME:
-                        continue
-                min_cost = market_limits.get(sym, {}).get('min_cost', 0)
-                # Use total base_balance, not per_symbol_budget, since the LLM
-                # allocates capital dynamically (not equal split)
-                if base_balance >= min_cost:
-                    if self._is_excluded(sym, default_tf):
-                        continue
-                    fallback_symbols.append({"symbol": sym, "timeframe": default_tf})
-                if len(fallback_symbols) >= self.effective_max_symbols:
-                    break
-            if fallback_symbols:
-                existing_symbols = {c['symbol']: c for c in self.current_symbols}
-                for entry in fallback_symbols:
-                    if entry['symbol'] in existing_symbols and 'entry_time' in existing_symbols[entry['symbol']]:
-                        entry['entry_time'] = existing_symbols[entry['symbol']]['entry_time']
-                    else:
-                        entry['entry_time'] = time.time()
-                self.current_symbols = fallback_symbols
-            elif old_symbols:
-                logger.warning("Fallback found no symbols. Keeping previously tracked symbols.")
-                self.current_symbols = old_symbols
-                self.effective_max_symbols = max(len(old_symbols), 1)
+        await self._symbol_reevaluator.apply_fallback_selection(
+            sample_pairs=sample_pairs,
+            composite_scores=composite_scores,
+            tickers=tickers,
+            market_limits=market_limits,
+            base_balance=base_balance,
+            old_symbols=old_symbols,
+            pause_trading=pause_trading,
+        )
 
         # Ensure all open positions remain in current_symbols so they continue to be managed by the LLM strategy
         for symbol, pos in self.positions.items():

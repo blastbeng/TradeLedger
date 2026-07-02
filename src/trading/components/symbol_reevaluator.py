@@ -1230,3 +1230,66 @@ class SymbolReevaluator:
                 logger.info(f"LLM set symbol re-evaluation interval to {clamped}s (requested {new_interval}s)")
             else:
                 logger.warning(f"Invalid stock_revaluation_interval_seconds: {new_interval} (must be >= 3600)")
+
+    async def apply_fallback_selection(
+        self,
+        sample_pairs: List[str],
+        composite_scores: Dict[str, float],
+        tickers: Dict[str, Dict[str, Any]],
+        market_limits: Dict[str, Dict[str, float]],
+        base_balance: float,
+        old_symbols: List[Dict[str, str]],
+        pause_trading: Optional[bool],
+    ) -> None:
+        """Apply composite-score-based fallback selection when LLM returns no symbols.
+
+        Picks top affordable symbols by composite score, falling back to
+        previously tracked symbols if no suitable candidates are found.
+        """
+        engine = self.engine
+        if engine.current_symbols or pause_trading is True:
+            return
+
+        logger.warning("LLM returned no symbols without pausing – using composite-score-based fallback.")
+        if engine.notifier:
+            await engine.notifier.send_notification(
+                "⚠️ LLM returned no symbols. Using composite-score-based fallback selection.",
+                summary={
+                    "action": "FALLBACK",
+                    "reason": "LLM returned no symbols, using fallback",
+                    "model_type": "mind",
+                }
+            )
+        # Sort sample_pairs by composite score (already computed above)
+        sorted_pairs = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
+        fallback_symbols: List[Dict[str, str]] = []
+        default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+        for sym in sorted_pairs:
+            if composite_scores.get(sym, 0) < settings.FALLBACK_MIN_COMPOSITE_SCORE:
+                continue
+            # Apply minimum 24h volume filter if configured
+            if settings.FALLBACK_MIN_24H_VOLUME > 0:
+                vol = tickers.get(sym, {}).get('quoteVolume', 0) or 0
+                if vol < settings.FALLBACK_MIN_24H_VOLUME:
+                    continue
+            min_cost = market_limits.get(sym, {}).get('min_cost', 0)
+            # Use total base_balance, not per_symbol_budget, since the LLM
+            # allocates capital dynamically (not equal split)
+            if base_balance >= min_cost:
+                if engine._is_excluded(sym, default_tf):
+                    continue
+                fallback_symbols.append({"symbol": sym, "timeframe": default_tf})
+            if len(fallback_symbols) >= engine.effective_max_symbols:
+                break
+        if fallback_symbols:
+            existing_symbols = {c['symbol']: c for c in engine.current_symbols}
+            for entry in fallback_symbols:
+                if entry['symbol'] in existing_symbols and 'entry_time' in existing_symbols[entry['symbol']]:
+                    entry['entry_time'] = existing_symbols[entry['symbol']]['entry_time']
+                else:
+                    entry['entry_time'] = time.time()
+            engine.current_symbols = fallback_symbols
+        elif old_symbols:
+            logger.warning("Fallback found no symbols. Keeping previously tracked symbols.")
+            engine.current_symbols = old_symbols
+            engine.effective_max_symbols = max(len(old_symbols), 1)
