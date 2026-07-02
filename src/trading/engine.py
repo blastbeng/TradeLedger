@@ -7970,57 +7970,19 @@ class TradingEngine:
         is_btp: bool,
     ) -> Tuple[Optional[Dict[str, Any]], str]:
         """Run a single backtest variant with database persistence and concurrency limiting."""
-        # Build params hash for dedup lookup
-        source_candles = historical_ohlcv or raw_candles or []
-        last_ts = source_candles[-1][0] if source_candles else 0
-        candle_count = len(source_candles)
-        params_hash = hashlib.md5(
-            json.dumps(variant_params, sort_keys=True, default=str).encode()
-        ).hexdigest()[:16]
-
-        # Check database for a recent identical backtest (dedup within 6 hours)
-        try:
-            recent = await asyncio.to_thread(
-                get_recent_backtest_result, symbol, assigned_tf, params_hash, 21600
-            )
-            if recent:
-                logger.debug(f"Backtest DB cache hit for {symbol} {assigned_tf} (params_hash={params_hash})")
-                return recent["stats"], recent["summary"]
-        except Exception:
-            pass
-
-        # Run backtest with concurrency limiting
-        async with self._backtest_semaphore:
-            variant_signal = Signal(
-                action="BUY",
-                confidence=preliminary_signal.confidence,
-                reasoning=preliminary_signal.reasoning,
-                strategy_params=variant_params,
-            )
-            bt_stats, bt_summary = await self._run_backtest_from_signal(
-                symbol=symbol,
-                signal=variant_signal,
-                atr=atr,
-                current_price=current_price,
-                tf_secs=tf_secs,
-                assigned_tf=assigned_tf,
-                historical_ohlcv=historical_ohlcv,
-                raw_candles=raw_candles,
-                base_balance=base_balance,
-                is_btp=is_btp,
-            )
-
-        # Persist the result to the database
-        if bt_stats is not None:
-            try:
-                await asyncio.to_thread(
-                    save_backtest_result, symbol, assigned_tf, params_hash,
-                    variant_params, bt_stats, bt_summary
-                )
-            except Exception as e:
-                logger.warning(f"Failed to persist backtest result to DB for {symbol}: {e}")
-
-        return bt_stats, bt_summary
+        return await self._backtest_manager._run_backtest_variant(
+            symbol=symbol,
+            variant_params=variant_params,
+            preliminary_signal=preliminary_signal,
+            atr=atr,
+            current_price=current_price,
+            tf_secs=tf_secs,
+            assigned_tf=assigned_tf,
+            historical_ohlcv=historical_ohlcv,
+            raw_candles=raw_candles,
+            base_balance=base_balance,
+            is_btp=is_btp,
+        )
 
     async def _run_backtest_from_signal(
         self,

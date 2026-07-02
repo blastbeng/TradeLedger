@@ -4,12 +4,14 @@ Handles running backtests and the Step 2 LLM call to produce the final signal.
 Extracted from TradingEngine to reduce class size and improve maintainability.
 """
 import asyncio
+import hashlib
+import json
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
-from src.database import get_ohlcv
+from src.database import get_ohlcv, get_recent_backtest_result, save_backtest_result
 from src.exchanges.fees import calculate_transaction_costs
 from src.indicators import compute_atr_series, compute_adx_series, compute_rsi_series, compute_macd_series
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary
@@ -245,3 +247,71 @@ class BacktestManager:
         if backtest_fallback_note:
             return None, f"Insufficient data for backtest (need ≥{MIN_BACKTEST_CANDLES} candles).{backtest_fallback_note}"
         return None, f"Insufficient data for backtest for {assigned_tf} (need ≥{MIN_BACKTEST_CANDLES} candles with {settings.OHLCV_RETENTION_DAYS} days retention)."
+
+    async def _run_backtest_variant(
+        self,
+        symbol: str,
+        variant_params: Dict[str, Any],
+        preliminary_signal: Signal,
+        atr: Optional[float],
+        current_price: float,
+        tf_secs: int,
+        assigned_tf: str,
+        historical_ohlcv: Optional[List[List]],
+        raw_candles: Optional[List[List]],
+        base_balance: float,
+        is_btp: bool,
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        """Run a single backtest variant with database persistence and concurrency limiting."""
+        engine = self.engine
+        # Build params hash for dedup lookup
+        source_candles = historical_ohlcv or raw_candles or []
+        last_ts = source_candles[-1][0] if source_candles else 0
+        candle_count = len(source_candles)
+        params_hash = hashlib.md5(
+            json.dumps(variant_params, sort_keys=True, default=str).encode()
+        ).hexdigest()[:16]
+
+        # Check database for a recent identical backtest (dedup within 6 hours)
+        try:
+            recent = await asyncio.to_thread(
+                get_recent_backtest_result, symbol, assigned_tf, params_hash, 21600
+            )
+            if recent:
+                logger.debug(f"Backtest DB cache hit for {symbol} {assigned_tf} (params_hash={params_hash})")
+                return recent["stats"], recent["summary"]
+        except Exception:
+            pass
+
+        # Run backtest with concurrency limiting
+        async with engine._backtest_semaphore:
+            variant_signal = Signal(
+                action="BUY",
+                confidence=preliminary_signal.confidence,
+                reasoning=preliminary_signal.reasoning,
+                strategy_params=variant_params,
+            )
+            bt_stats, bt_summary = await self._run_backtest_from_signal(
+                symbol=symbol,
+                signal=variant_signal,
+                atr=atr,
+                current_price=current_price,
+                tf_secs=tf_secs,
+                assigned_tf=assigned_tf,
+                historical_ohlcv=historical_ohlcv,
+                raw_candles=raw_candles,
+                base_balance=base_balance,
+                is_btp=is_btp,
+            )
+
+        # Persist the result to the database
+        if bt_stats is not None:
+            try:
+                await asyncio.to_thread(
+                    save_backtest_result, symbol, assigned_tf, params_hash,
+                    variant_params, bt_stats, bt_summary
+                )
+            except Exception as e:
+                logger.warning(f"Failed to persist backtest result to DB for {symbol}: {e}")
+
+        return bt_stats, bt_summary
