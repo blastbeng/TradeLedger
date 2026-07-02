@@ -3238,75 +3238,24 @@ class TradingEngine:
         display_symbol: str,
         ticker: Dict[str, Any],
     ) -> Tuple[Signal, str, Optional[str], Optional[str]]:
-        """Run backtests and the Step 2 LLM call to produce the final signal.
-
-        Returns (final_signal, combined_backtest_summary, llm_provider, llm_model).
-        """
-        combined_bt_summary = ""
-        llm_provider = None
-        llm_model = None
-        backtest_results = []
-
-        if preliminary_signal.action in ("BUY", "HOLD"):
-            variants_to_test = self._backtest_manager._prepare_backtest_variants(
-                symbol=symbol,
-                preliminary_signal=preliminary_signal,
-                historical_ohlcv=historical_ohlcv,
-                raw_candles=raw_candles,
-            )
-
-            backtest_results = await self._backtest_manager._run_backtest_variants_parallel(
-                symbol=symbol,
-                variants_to_test=variants_to_test,
-                preliminary_signal=preliminary_signal,
-                atr=atr,
-                current_price=current_price,
-                tf_seconds=tf_seconds,
-                assigned_tf=assigned_tf,
-                historical_ohlcv=historical_ohlcv,
-                raw_candles=raw_candles,
-                base_balance=base_balance,
-                is_btp=is_btp,
-            )
-
-            # Log results after all variants complete
-            for i, r in enumerate(backtest_results):
-                if r["stats"]:
-                    logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: {r['summary']}")
-                else:
-                    logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: insufficient data")
-
-            # Build combined backtest summary for notifications
-            combined_bt_summary = " | ".join(
-                f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
-            ) if backtest_results else "No backtest performed"
-
-            signal, llm_provider, llm_model = await self._backtest_manager.run_step2_llm_call(
-                symbol=symbol,
-                assigned_tf=assigned_tf,
-                preliminary_signal=preliminary_signal,
-                backtest_results=backtest_results,
-                combined_bt_summary=combined_bt_summary,
-                ticker=ticker,
-                trading_paused=trading_paused,
-                strategy_model_type=strategy_model_type,
-                effective_temp=effective_temp,
-                llm_provider=llm_provider,
-                llm_model=llm_model,
-            )
-        else:
-            # For SELL or HOLD, no backtest needed, use preliminary decision
-            signal = preliminary_signal
-
-        # Store raw backtest stats dict on the signal for notification compaction
-        if backtest_results and backtest_results[0].get("stats"):
-            bt_stats = dict(backtest_results[0]["stats"])
-            bt_stats["timeframe"] = assigned_tf
-            signal.backtest_stats = bt_stats
-        else:
-            signal.backtest_stats = None
-
-        return signal, combined_bt_summary, llm_provider, llm_model
+        """Run backtests and the Step 2 LLM call to produce the final signal."""
+        return await self._backtest_manager.run_backtest_and_final_decision(
+            symbol=symbol,
+            assigned_tf=assigned_tf,
+            tf_seconds=tf_seconds,
+            current_price=current_price,
+            atr=atr,
+            historical_ohlcv=historical_ohlcv,
+            raw_candles=raw_candles,
+            base_balance=base_balance,
+            is_btp=is_btp,
+            trading_paused=trading_paused,
+            strategy_model_type=strategy_model_type,
+            effective_temp=effective_temp,
+            preliminary_signal=preliminary_signal,
+            display_symbol=display_symbol,
+            ticker=ticker,
+        )
 
     async def _fetch_symbol_market_data(self, symbol: str, assigned_tf: str) -> Optional[Dict[str, Any]]:
         """Fetch all raw market data for a symbol: ticker, fundamentals, balance, OHLCV, and multi-TF indicators."""
