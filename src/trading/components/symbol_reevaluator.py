@@ -1526,3 +1526,38 @@ class SymbolReevaluator:
                     logger.warning(f"Skipping {sym}: no OHLCV data available for any timeframe")
 
         return validated_deduped
+
+    async def retry_json_parsing(
+        self,
+        response: str,
+        effective_temp: float,
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Retry JSON parsing if the first attempt fails.
+
+        Returns (response, llm_provider, llm_model).
+        If the retry also fails, returns (None, None, None).
+        """
+        engine = self.engine
+        logger.warning("LLM symbol selection response was not valid JSON. Retrying with correction prompt.")
+        correction_prompt = (
+            "Your previous response was not valid JSON. "
+            "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
+            f"Here is your previous response:\n\n{response}"
+        )
+        try:
+            correction_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response, compact_prompt(correction_prompt), compact_prompt(build_system_prompt()), 120,
+                    model_type="actuator",
+                    temperature=effective_temp,
+                ),
+                timeout=settings.LLM_TIMEOUT
+            )
+            response = correction_result["response"]
+            llm_provider = correction_result["provider"]
+            llm_model = correction_result["model"]
+            json.loads(response)  # validate the retry response
+            return response, llm_provider, llm_model
+        except Exception as e:
+            logger.error(f"LLM symbol selection still invalid after retry: {e}")
+            return None, None, None

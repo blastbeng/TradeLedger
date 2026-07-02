@@ -2941,28 +2941,10 @@ class TradingEngine:
             try:
                 json.loads(response)  # validate
             except json.JSONDecodeError:
-                logger.warning("LLM symbol selection response was not valid JSON. Retrying with correction prompt.")
-                correction_prompt = (
-                    "Your previous response was not valid JSON. "
-                    "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
-                    f"Here is your previous response:\n\n{response}"
+                response, llm_provider, llm_model = await self._symbol_reevaluator.retry_json_parsing(
+                    response=response,
+                    effective_temp=effective_temp,
                 )
-                try:
-                    correction_result = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            get_cached_llm_response, compact_prompt(correction_prompt), _get_compacted_system_prompt(), 120,
-                            model_type="actuator",
-                            temperature=effective_temp,
-                        ),
-                        timeout=settings.LLM_TIMEOUT
-                    )
-                    response = correction_result["response"]
-                    llm_provider = correction_result["provider"]
-                    llm_model = correction_result["model"]
-                    json.loads(response)  # validate the retry response
-                except Exception as e:
-                    logger.error(f"LLM symbol selection still invalid after retry: {e}")
-                    response = None
 
         if response is not None:
             try:
