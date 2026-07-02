@@ -4731,7 +4731,7 @@ class TradingEngine:
                 self._force_eval.pop(symbol, None)
                 return
 
-            strategy_model_type = self._choose_model_tier(
+            strategy_model_type, effective_temp = self._signal_processor.compute_model_tier_and_temperature(
                 atr=atr,
                 atr_percentile=atr_percentile,
                 rsi=rsi,
@@ -4755,7 +4755,7 @@ class TradingEngine:
                 market_breadth=getattr(self, '_market_breadth', None),
                 full_market_breadth=full_market_breadth,
                 sentiment_trend_val=sentiment_trend_val,
-                volume_trend=volume_trend_val,
+                volume_trend_val=volume_trend_val,
                 unrealized_pnl=unrealized_pnl,
                 drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
                 portfolio_exposure_pct=portfolio_exposure_pct,
@@ -4766,51 +4766,8 @@ class TradingEngine:
                 fundamentals=fundamentals,
                 consecutive_losses=perf.get("equity_curve", {}).get("consecutive_losses", 0),
                 current_price=ticker['last'],
-            )
-
-            # Compute prompt complexity for temperature selection
-            _conflicting = False
-            if rsi is not None and macd_hist is not None:
-                if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
-                    _conflicting = True
-            strategy_complexity = self._compute_prompt_complexity(
                 num_candidates=len(self.current_symbols),
-                volatility_percentile=atr_percentile,
-                rsi=rsi,
-                macd=macd,
-                macd_signal=macd_signal,
-                macd_hist=macd_hist,
-                bb_upper=bb_upper,
-                bb_middle=bb_middle,
-                bb_lower=bb_lower,
-                ema_9=ema_9,
-                ema_21=ema_21,
-                stochastic_k=stochastic_k,
-                adx=adx,
-                plus_di=plus_di,
-                minus_di=minus_di,
-                mfi=mfi,
-                cci=cci,
-                williams_r=williams_r,
-                ichimoku=ichimoku,
-                market_breadth=getattr(self, '_market_breadth', None),
-                full_market_breadth=full_market_breadth,
-                sentiment_trend_magnitude=abs(sentiment_trend_val) if sentiment_trend_val is not None else None,
-                volume_trend=volume_trend_val,
-                market_regime=market_regime,
-                unrealized_pnl=unrealized_pnl,
-                drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
-                portfolio_exposure_pct=portfolio_exposure_pct,
-                portfolio_stop_risk_pct=portfolio_stop_risk_pct,
-                is_critical=is_critical,
-                trading_paused=trading_paused,
-                symbol_event=symbol_event,
-                fundamentals=fundamentals,
-                consecutive_losses=perf.get("equity_curve", {}).get("consecutive_losses", 0),
-                current_price=ticker['last'],
-                conflicting_signals=_conflicting,
             )
-            effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity)
 
             # --- Step 1a: Call LLM for analysis ---
             critical_reason = None

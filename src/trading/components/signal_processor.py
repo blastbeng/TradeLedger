@@ -1517,3 +1517,130 @@ class SignalProcessor:
         preliminary_signal.llm_model = llm_model
 
         return preliminary_signal, llm_provider, llm_model
+
+    def compute_model_tier_and_temperature(
+        self,
+        atr: Optional[float],
+        atr_percentile: Optional[float],
+        rsi: Optional[float],
+        macd: Optional[float],
+        macd_signal: Optional[float],
+        macd_hist: Optional[float],
+        bb_upper: Optional[float],
+        bb_middle: Optional[float],
+        bb_lower: Optional[float],
+        ema_9: Optional[float],
+        ema_21: Optional[float],
+        stochastic_k: Optional[float],
+        adx: Optional[float],
+        plus_di: Optional[float],
+        minus_di: Optional[float],
+        mfi: Optional[float],
+        cci: Optional[float],
+        williams_r: Optional[float],
+        ichimoku: Optional[Dict[str, Any]],
+        market_regime: str,
+        market_breadth: Optional[Dict[str, Any]],
+        full_market_breadth: Optional[Dict[str, Any]],
+        sentiment_trend_val: Optional[float],
+        volume_trend_val: Optional[float],
+        unrealized_pnl: Optional[float],
+        drawdown_pct: Optional[float],
+        portfolio_exposure_pct: float,
+        portfolio_stop_risk_pct: float,
+        is_critical: bool,
+        trading_paused: bool,
+        symbol_event: Optional[Dict[str, Any]],
+        fundamentals: Optional[Dict[str, Any]],
+        consecutive_losses: int,
+        current_price: float,
+        num_candidates: int,
+    ) -> Tuple[str, float]:
+        """Compute the strategy model type and effective temperature.
+
+        Returns (strategy_model_type, effective_temp).
+        """
+        engine = self.engine
+
+        strategy_model_type = engine._choose_model_tier(
+            atr=atr,
+            atr_percentile=atr_percentile,
+            rsi=rsi,
+            macd=macd,
+            macd_signal=macd_signal,
+            macd_hist=macd_hist,
+            bb_upper=bb_upper,
+            bb_middle=bb_middle,
+            bb_lower=bb_lower,
+            ema_9=ema_9,
+            ema_21=ema_21,
+            stochastic_k=stochastic_k,
+            adx=adx,
+            plus_di=plus_di,
+            minus_di=minus_di,
+            mfi=mfi,
+            cci=cci,
+            williams_r=williams_r,
+            ichimoku=ichimoku,
+            market_regime=market_regime,
+            market_breadth=market_breadth,
+            full_market_breadth=full_market_breadth,
+            sentiment_trend_val=sentiment_trend_val,
+            volume_trend=volume_trend_val,
+            unrealized_pnl=unrealized_pnl,
+            drawdown_pct=drawdown_pct,
+            portfolio_exposure_pct=portfolio_exposure_pct,
+            portfolio_stop_risk_pct=portfolio_stop_risk_pct,
+            is_critical=is_critical,
+            trading_paused=trading_paused,
+            symbol_event=symbol_event,
+            fundamentals=fundamentals,
+            consecutive_losses=consecutive_losses,
+            current_price=current_price,
+        )
+
+        # Compute prompt complexity for temperature selection
+        _conflicting = False
+        if rsi is not None and macd_hist is not None:
+            if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
+                _conflicting = True
+        strategy_complexity = engine._compute_prompt_complexity(
+            num_candidates=num_candidates,
+            volatility_percentile=atr_percentile,
+            rsi=rsi,
+            macd=macd,
+            macd_signal=macd_signal,
+            macd_hist=macd_hist,
+            bb_upper=bb_upper,
+            bb_middle=bb_middle,
+            bb_lower=bb_lower,
+            ema_9=ema_9,
+            ema_21=ema_21,
+            stochastic_k=stochastic_k,
+            adx=adx,
+            plus_di=plus_di,
+            minus_di=minus_di,
+            mfi=mfi,
+            cci=cci,
+            williams_r=williams_r,
+            ichimoku=ichimoku,
+            market_breadth=market_breadth,
+            full_market_breadth=full_market_breadth,
+            sentiment_trend_magnitude=abs(sentiment_trend_val) if sentiment_trend_val is not None else None,
+            volume_trend=volume_trend_val,
+            market_regime=market_regime,
+            unrealized_pnl=unrealized_pnl,
+            drawdown_pct=drawdown_pct,
+            portfolio_exposure_pct=portfolio_exposure_pct,
+            portfolio_stop_risk_pct=portfolio_stop_risk_pct,
+            is_critical=is_critical,
+            trading_paused=trading_paused,
+            symbol_event=symbol_event,
+            fundamentals=fundamentals,
+            consecutive_losses=consecutive_losses,
+            current_price=current_price,
+            conflicting_signals=_conflicting,
+        )
+        effective_temp = engine._get_effective_temperature(strategy_model_type, strategy_complexity)
+
+        return strategy_model_type, effective_temp
