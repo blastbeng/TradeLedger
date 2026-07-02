@@ -398,5 +398,3 @@ class BacktestManager:
                 return {"variant_params": vp, "summary": f"Backtest error: {e}", "stats": {}}
 
         return list(await asyncio.gather(*[_run_single_variant(vp) for vp in variants_to_test]))
-
-        return bt_stats, bt_summary
