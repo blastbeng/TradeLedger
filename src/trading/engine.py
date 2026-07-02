@@ -63,6 +63,7 @@ from src.trading.components.state_persistence import StatePersistence
 from src.trading.components.position_manager import PositionManager
 from src.trading.components.signal_processor import SignalProcessor
 from src.trading.components.backtest_manager import BacktestManager
+from src.trading.components.market_data_manager import MarketDataManager
 from src.trading.components.symbol_reevaluator import SymbolReevaluator
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,7 @@ class TradingEngine:
         self._signal_processor = SignalProcessor(self)
         self._position_manager = PositionManager(self)
         self._backtest_manager = BacktestManager(self)
+        self._market_data_manager = MarketDataManager(self)
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
@@ -1438,19 +1440,7 @@ class TradingEngine:
 
     async def _compute_and_store_indicators(self, symbol: str, timeframe: str, candles: List[List]):
         """Compute indicators for a symbol/timeframe using TA-Lib and store in DB."""
-        if not candles or len(candles) < 2:
-            return
-        try:
-            async with self._indicator_semaphore:
-                loop = asyncio.get_running_loop()
-                ind = await loop.run_in_executor(self._download_executor, compute_all_indicators, candles)
-            if ind:
-                latest_ts = candles[-1][0]
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(self._db_executor, save_indicators, symbol, timeframe, latest_ts, ind)
-                logger.debug(f"Indicators computed and stored for {symbol} {timeframe}")
-        except Exception as e:
-            logger.warning(f"Failed to compute/store indicators for {symbol} {timeframe}: {e}")
+        await self._market_data_manager.compute_and_store_indicators(symbol, timeframe, candles)
 
     async def _fetch_and_store_news_for_symbol(self, symbol: str):
         """Fetch news for a single symbol and store it in the database."""
