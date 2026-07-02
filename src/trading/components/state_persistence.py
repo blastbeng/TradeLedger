@@ -8,7 +8,9 @@ import dataclasses as _dc
 import logging
 import time
 from dataclasses import asdict
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Dict
+from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
 from src.database import save_trading_state, load_trading_state, get_all_trades
@@ -194,3 +196,101 @@ class StatePersistence:
             len(engine.positions),
             len(engine.trade_history),
         )
+
+    async def get_pause_status(self) -> Dict[str, Any]:
+        """Return the current trading pause status, reason, remaining duration, and a formatted countdown."""
+        engine = self.engine
+        paused_raw = await asyncio.to_thread(engine.redis.get, "trading:paused")
+        is_paused = paused_raw is not None and paused_raw == "1"
+
+        reason_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_reason")
+        reason = reason_raw.decode() if isinstance(reason_raw, bytes) else (reason_raw or "")
+
+        source_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
+        source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
+
+        remaining_seconds = None
+        countdown_str = None
+
+        if is_paused:
+            market_time_str = None
+            if source == "market_closed":
+                # Fetch the current clock to compute a live countdown and current market time
+                clock = await engine._get_clock()
+
+                market_time_str = None
+                if clock is not None:
+                    market_time_str = clock.timestamp.astimezone(ZoneInfo(settings.MARKET_TIMEZONE)).strftime('%H:%M %d/%m/%Y')
+                    if not clock.is_open:
+                        now_utc = datetime.now(timezone.utc)
+                        next_open = clock.next_open
+                        remaining = (next_open - now_utc).total_seconds()
+                        if remaining > 0:
+                            remaining_seconds = int(remaining)
+                            if remaining_seconds > 3600:
+                                hours = remaining_seconds // 3600
+                                minutes = (remaining_seconds % 3600) // 60
+                                countdown_str = f"{hours}h {minutes}m"
+                            elif remaining_seconds > 60:
+                                minutes = remaining_seconds // 60
+                                seconds = remaining_seconds % 60
+                                countdown_str = f"{minutes}m {seconds}s"
+                            else:
+                                countdown_str = f"{remaining_seconds}s"
+                else:
+                    # Fallback to the stored next_open if the clock is unavailable
+                    next_open_raw = await asyncio.to_thread(engine.redis.get, "trading:market_next_open")
+                    if next_open_raw:
+                        try:
+                            next_open_str = next_open_raw.decode() if isinstance(next_open_raw, bytes) else next_open_raw
+                            next_open_dt = datetime.fromisoformat(next_open_str)
+                            now_utc = datetime.now(timezone.utc)
+                            remaining = (next_open_dt - now_utc).total_seconds()
+                            if remaining > 0:
+                                remaining_seconds = int(remaining)
+                                if remaining_seconds > 3600:
+                                    hours = remaining_seconds // 3600
+                                    minutes = (remaining_seconds % 3600) // 60
+                                    countdown_str = f"{hours}h {minutes}m"
+                                elif remaining_seconds > 60:
+                                    minutes = remaining_seconds // 60
+                                    seconds = remaining_seconds % 60
+                                    countdown_str = f"{minutes}m {seconds}s"
+                                else:
+                                    countdown_str = f"{remaining_seconds}s"
+                                reason = "Market closed"
+                        except Exception:
+                            pass
+            else:
+                # LLM or manual pause with duration
+                pause_start_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_start")
+                pause_duration_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_duration")
+                if pause_start_raw and pause_duration_raw:
+                    try:
+                        pause_start = float(pause_start_raw)
+                        pause_duration = int(pause_duration_raw)
+                        elapsed = time.time() - pause_start
+                        remaining = pause_duration - elapsed
+                        if remaining > 0:
+                            remaining_seconds = int(remaining)
+                            if remaining_seconds > 3600:
+                                hours = remaining_seconds // 3600
+                                minutes = (remaining_seconds % 3600) // 60
+                                countdown_str = f"{hours}h {minutes}m"
+                            elif remaining_seconds > 60:
+                                minutes = remaining_seconds // 60
+                                seconds = remaining_seconds % 60
+                                countdown_str = f"{minutes}m {seconds}s"
+                            else:
+                                countdown_str = f"{remaining_seconds}s"
+                    except (ValueError, TypeError):
+                        pass
+
+        return {
+            "is_paused": is_paused,
+            "reason": reason,
+            "remaining_seconds": remaining_seconds,
+            "countdown_str": countdown_str,
+            "source": source,
+            "market_time_str": market_time_str if is_paused and source == "market_closed" else None,
+        }
