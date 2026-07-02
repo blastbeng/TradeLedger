@@ -2967,97 +2967,14 @@ class TradingEngine:
         if response is not None:
             try:
                 parsed = json.loads(response)
-                new_symbols: List[Dict[str, str]] = []
-
-                if isinstance(parsed, dict):
-                    # New format: {"stocks": [...], "max_stocks": N}
-                    stocks_list = parsed.get("stocks", [])
-                    llm_max_stocks = parsed.get("max_stocks")
-                    if not isinstance(stocks_list, list):
-                        logger.error("LLM symbol selection 'stocks' field is not a list.")
-                        stocks_list = []
-                    for item in stocks_list:
-                        if isinstance(item, dict) and "symbol" in item:
-                            sym = item["symbol"]
-                            normalized = self._normalize_llm_symbol(sym, sample_pairs)
-                            if normalized:
-                                sym = normalized
-                                tf = item.get("timeframe")
-                                if tf not in settings.OHLCV_TIMEFRAMES:
-                                    tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
-                                entry = {"symbol": sym, "timeframe": tf}
-                                sector = item.get("sector")
-                                if sector:
-                                    entry["sector"] = sector
-                                mth = item.get("max_tenure_hours")
-                                if mth is not None:
-                                    entry["max_tenure_hours"] = mth
-                                new_symbols.append(entry)
-                        elif isinstance(item, str):
-                            normalized = self._normalize_llm_symbol(item, sample_pairs)
-                            if normalized:
-                                default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
-                                new_symbols.append({"symbol": normalized, "timeframe": default_tf})
-                elif isinstance(parsed, list):
-                    # Old format: plain list of objects or strings
-                    for item in parsed:
-                        if isinstance(item, dict) and "symbol" in item:
-                            sym = item["symbol"]
-                            normalized = self._normalize_llm_symbol(sym, sample_pairs)
-                            if normalized:
-                                sym = normalized
-                                tf = item.get("timeframe")
-                                if tf not in settings.OHLCV_TIMEFRAMES:
-                                    tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
-                                entry = {"symbol": sym, "timeframe": tf}
-                                sector = item.get("sector")
-                                if sector:
-                                    entry["sector"] = sector
-                                mth = item.get("max_tenure_hours")
-                                if mth is not None:
-                                    entry["max_tenure_hours"] = mth
-                                new_symbols.append(entry)
-                        elif isinstance(item, str):
-                            normalized = self._normalize_llm_symbol(item, sample_pairs)
-                            if normalized:
-                                default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
-                                new_symbols.append({"symbol": normalized, "timeframe": default_tf})
-                else:
-                    logger.error("LLM symbol selection response is neither a list nor a dict.")
-
-                # Deduplicate by symbol, keeping first occurrence
-                seen = set()
-                deduped = []
-                for entry in new_symbols:
-                    sym = entry["symbol"]
-                    if sym not in seen:
-                        seen.add(sym)
-                        deduped.append(entry)
-
-                # Remove excluded pairs
-                deduped = [
-                    e for e in deduped
-                    if not self._is_excluded(e["symbol"], e["timeframe"])
-                ]
-
-                # Validate that each selected symbol/timeframe has OHLCV data;
-                # fall back to an available timeframe or skip the symbol entirely
-                validated_deduped = []
-                for entry in deduped:
-                    sym = entry["symbol"]
-                    tf = entry["timeframe"]
-                    sym_data = ohlcv_data.get(sym, {})
-                    if tf in sym_data and sym_data[tf]:
-                        validated_deduped.append(entry)
-                    else:
-                        available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if t in sym_data and sym_data[t]]
-                        if available_tfs:
-                            entry["timeframe"] = available_tfs[0]
-                            validated_deduped.append(entry)
-                            logger.info(f"No OHLCV data for {sym} on {tf}, falling back to {available_tfs[0]}")
-                        else:
-                            logger.warning(f"Skipping {sym}: no OHLCV data available for any timeframe")
-                deduped = validated_deduped
+                llm_max_stocks = parsed.get("max_stocks") if isinstance(parsed, dict) else None
+                deduped = self._symbol_reevaluator.parse_and_validate_symbols(
+                    response=response,
+                    sample_pairs=sample_pairs,
+                    ohlcv_data=ohlcv_data,
+                )
+                if deduped is None:
+                    deduped = []
 
                 # --- Extract pause_trading early so MIN_SYMBOLS enforcement can respect it ---
                 pause_trading = parsed.get("pause_trading")
@@ -3334,7 +3251,7 @@ class TradingEngine:
 
         # Also trigger immediate news fetch for newly selected symbols
         if settings.NEWS_ENABLED:
-            for entry in new_symbols:
+            for entry in deduped:
                 sym = entry["symbol"]
                 logger.info(f"Triggering immediate news fetch for newly selected symbol {sym}")
                 asyncio.create_task(self._fetch_and_store_news_for_symbol(sym))

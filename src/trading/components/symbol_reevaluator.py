@@ -1418,3 +1418,111 @@ class SymbolReevaluator:
             logger.warning("Fallback found no symbols. Keeping previously tracked symbols.")
             engine.current_symbols = old_symbols
             engine.effective_max_symbols = max(len(old_symbols), 1)
+
+    def parse_and_validate_symbols(
+        self,
+        response: str,
+        sample_pairs: List[str],
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+    ) -> Optional[List[Dict[str, str]]]:
+        """Parse the LLM stock selection response and validate symbols.
+
+        Returns a list of validated symbol entries (dicts with 'symbol' and
+        'timeframe' keys), or None if parsing fails.
+        """
+        engine = self.engine
+        try:
+            parsed = json.loads(response)
+        except json.JSONDecodeError:
+            logger.error("Failed to parse symbol selection response.")
+            return None
+
+        new_symbols: List[Dict[str, str]] = []
+
+        if isinstance(parsed, dict):
+            stocks_list = parsed.get("stocks", [])
+            if not isinstance(stocks_list, list):
+                logger.error("LLM symbol selection 'stocks' field is not a list.")
+                stocks_list = []
+            for item in stocks_list:
+                if isinstance(item, dict) and "symbol" in item:
+                    sym = item["symbol"]
+                    normalized = engine._normalize_llm_symbol(sym, sample_pairs)
+                    if normalized:
+                        sym = normalized
+                        tf = item.get("timeframe")
+                        if tf not in settings.OHLCV_TIMEFRAMES:
+                            tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+                        entry = {"symbol": sym, "timeframe": tf}
+                        sector = item.get("sector")
+                        if sector:
+                            entry["sector"] = sector
+                        mth = item.get("max_tenure_hours")
+                        if mth is not None:
+                            entry["max_tenure_hours"] = mth
+                        new_symbols.append(entry)
+                elif isinstance(item, str):
+                    normalized = engine._normalize_llm_symbol(item, sample_pairs)
+                    if normalized:
+                        default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+                        new_symbols.append({"symbol": normalized, "timeframe": default_tf})
+        elif isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, dict) and "symbol" in item:
+                    sym = item["symbol"]
+                    normalized = engine._normalize_llm_symbol(sym, sample_pairs)
+                    if normalized:
+                        sym = normalized
+                        tf = item.get("timeframe")
+                        if tf not in settings.OHLCV_TIMEFRAMES:
+                            tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+                        entry = {"symbol": sym, "timeframe": tf}
+                        sector = item.get("sector")
+                        if sector:
+                            entry["sector"] = sector
+                        mth = item.get("max_tenure_hours")
+                        if mth is not None:
+                            entry["max_tenure_hours"] = mth
+                        new_symbols.append(entry)
+                elif isinstance(item, str):
+                    normalized = engine._normalize_llm_symbol(item, sample_pairs)
+                    if normalized:
+                        default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+                        new_symbols.append({"symbol": normalized, "timeframe": default_tf})
+        else:
+            logger.error("LLM symbol selection response is neither a list nor a dict.")
+
+        # Deduplicate by symbol, keeping first occurrence
+        seen = set()
+        deduped = []
+        for entry in new_symbols:
+            sym = entry["symbol"]
+            if sym not in seen:
+                seen.add(sym)
+                deduped.append(entry)
+
+        # Remove excluded pairs
+        deduped = [
+            e for e in deduped
+            if not engine._is_excluded(e["symbol"], e["timeframe"])
+        ]
+
+        # Validate that each selected symbol/timeframe has OHLCV data;
+        # fall back to an available timeframe or skip the symbol entirely
+        validated_deduped = []
+        for entry in deduped:
+            sym = entry["symbol"]
+            tf = entry["timeframe"]
+            sym_data = ohlcv_data.get(sym, {})
+            if tf in sym_data and sym_data[tf]:
+                validated_deduped.append(entry)
+            else:
+                available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if t in sym_data and sym_data[t]]
+                if available_tfs:
+                    entry["timeframe"] = available_tfs[0]
+                    validated_deduped.append(entry)
+                    logger.info(f"No OHLCV data for {sym} on {tf}, falling back to {available_tfs[0]}")
+                else:
+                    logger.warning(f"Skipping {sym}: no OHLCV data available for any timeframe")
+
+        return validated_deduped
