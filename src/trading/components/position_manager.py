@@ -290,6 +290,48 @@ class PositionManager:
             'total_trades': total_trades,
         }
 
+    async def get_open_trades(self) -> List[Dict[str, Any]]:
+        """Return current open positions as trade-like dicts with unrealized P&L."""
+        engine = self.engine
+        open_trades = []
+        pos_tickers = await asyncio.to_thread(engine._get_all_position_tickers_sync)
+        for symbol, pos in engine.positions.items():
+            # Skip invalid positions (zero amount or zero price)
+            if pos.get("amount", 0) <= 0 or pos.get("price", 0) <= 0:
+                continue
+            try:
+                t = pos_tickers.get(symbol)
+                current_price = t['last'] if t and t.get('last') else pos['price']
+            except Exception:
+                current_price = pos['price']  # fallback to entry price
+
+            entry_price = pos['price']
+            amount = pos['amount']
+            cost_basis = pos.get('cost_basis', amount * entry_price)
+            unrealized_pnl = (current_price - entry_price) * amount
+            unrealized_pnl_pct = (unrealized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+
+            # Try to get fee from the most recent buy trade for this symbol
+            fee = {}
+            for t in reversed(engine.trade_history):
+                if t['symbol'] == symbol and t['side'] == 'buy':
+                    fee = t.get('fee', {})
+                    break
+
+            open_trades.append({
+                'symbol': symbol,
+                'timeframe': pos.get('timeframe'),
+                'side': 'buy',
+                'amount': amount,
+                'price': entry_price,
+                'timestamp': pos.get('timestamp', 0),
+                'fee': fee,
+                'unrealized_pnl': unrealized_pnl,
+                'unrealized_pnl_pct': unrealized_pnl_pct,
+                'cost_basis': cost_basis,
+            })
+        return open_trades
+
     def compute_equity_and_drawdown(self, trades_snapshot: List[Dict[str, Any]]) -> Dict[str, float]:
         """Compute current equity, peak, and drawdown percentage.
         
