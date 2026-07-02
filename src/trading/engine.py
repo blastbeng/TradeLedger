@@ -2385,45 +2385,11 @@ class TradingEngine:
             pause_trading=pause_trading,
         )
 
-        # Ensure all open positions remain in current_symbols so they continue to be managed by the LLM strategy
-        for symbol, pos in self.positions.items():
-            if not any(entry["symbol"] == symbol for entry in self.current_symbols):
-                tf = pos.get("timeframe") or (settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h")
-                self.current_symbols.append({"symbol": symbol, "timeframe": tf})
-                logger.info(f"Keeping {symbol} in current_symbols due to open position (timeframe={tf})")
-
-        # If trading is paused, we still keep all symbols so the LLM can generate signals
-        # (which will be notified but not executed in paper mode).
-        # The LLM may have just set pause_trading = true, so re-read Redis.
-        paused_now = await asyncio.to_thread(self.redis.get, "trading:paused")
-        if paused_now and paused_now == "1" and not force:
-            logger.info("Trading is paused. Keeping all symbols for signal generation.")
-
-        # Update symbol tenure tracking
-        now_ts = time.time()
-        new_symbol_set = {entry["symbol"] for entry in self.current_symbols}
-        for sym in new_symbol_set:
-            if sym not in self._symbol_first_seen:
-                self._symbol_first_seen[sym] = now_ts
-        for sym in list(self._symbol_first_seen.keys()):
-            if sym not in new_symbol_set:
-                del self._symbol_first_seen[sym]
-
-        # Trigger immediate backfill for newly selected symbols
-        old_symbol_set = {entry["symbol"] for entry in old_symbols}
-        for entry in self.current_symbols:
-            if entry["symbol"] not in old_symbol_set:
-                sym = entry["symbol"]
-                tf = entry["timeframe"]
-                logger.info(f"Triggering immediate backfill for newly selected symbol {sym} ({tf})")
-                asyncio.create_task(self._backfill_new_symbol(sym, tf))
-
-        # Also trigger immediate news fetch for newly selected symbols
-        if settings.NEWS_ENABLED:
-            for entry in deduped:
-                sym = entry["symbol"]
-                logger.info(f"Triggering immediate news fetch for newly selected symbol {sym}")
-                asyncio.create_task(self._fetch_and_store_news_for_symbol(sym))
+        await self._symbol_reevaluator.post_selection_cleanup_and_backfill(
+            old_symbols=old_symbols,
+            deduped=deduped,
+            force=force,
+        )
 
         await self._symbol_reevaluator.build_and_send_reeval_notification(
             base_balance=base_balance,
