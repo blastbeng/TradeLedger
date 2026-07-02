@@ -1487,6 +1487,57 @@ class SymbolReevaluator:
             engine.current_symbols = old_symbols
             engine.effective_max_symbols = max(len(old_symbols), 1)
 
+    def update_current_symbols(
+        self,
+        deduped: List[Dict[str, str]],
+        old_symbols: List[Dict[str, str]],
+    ) -> None:
+        """Replace current_symbols with the newly selected symbols.
+
+        Preserves entry_time and max_tenure_hours for existing symbols,
+        and updates position timeframes if they changed. If the LLM
+        returned no symbols, keeps previously tracked symbols.
+        """
+        engine = self.engine
+        if deduped and engine.effective_max_symbols > 0:
+            existing_symbols = {c['symbol']: c for c in engine.current_symbols}
+            for entry in deduped[: engine.effective_max_symbols]:
+                sym = entry['symbol']
+                new_tf = entry['timeframe']
+                if sym in existing_symbols:
+                    old_entry = existing_symbols[sym]
+                    if 'entry_time' in old_entry:
+                        entry['entry_time'] = old_entry['entry_time']
+                    else:
+                        entry['entry_time'] = time.time()
+                    
+                    # Preserve max_tenure_hours from existing symbol if LLM didn't specify it
+                    if 'max_tenure_hours' not in entry and 'max_tenure_hours' in old_entry:
+                        entry['max_tenure_hours'] = old_entry['max_tenure_hours']
+                        
+                    # Check if timeframe changed for an existing symbol
+                    old_tf = old_entry.get('timeframe')
+                    if old_tf != new_tf:
+                        logger.info(f"Timeframe changed for {sym}: {old_tf} -> {new_tf}")
+                        if sym in engine.positions:
+                            engine.positions[sym]['timeframe'] = new_tf
+                            # Clear max hold expired flags since the timeframe context changed
+                            engine.positions[sym].pop("_max_hold_expired", None)
+                            engine.positions[sym].pop("_max_hold_expired_count", None)
+                else:
+                    entry['entry_time'] = time.time()
+            engine.current_symbols = deduped[: engine.effective_max_symbols]
+        else:
+            # LLM returned no symbols – keep previously tracked symbols
+            if old_symbols:
+                logger.info("LLM selected 0 symbols. Keeping previously tracked symbols for signal generation.")
+                engine.current_symbols = old_symbols
+                engine.effective_max_symbols = max(len(old_symbols), 1)
+            else:
+                engine.current_symbols = []
+                engine.effective_max_symbols = 0
+                logger.info("LLM selected 0 symbols – pausing trading until next evaluation.")
+
     def parse_and_validate_symbols(
         self,
         response: str,
