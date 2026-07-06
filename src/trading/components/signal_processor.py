@@ -523,7 +523,7 @@ class SignalProcessor:
                 sorted_atr = sorted(atr_history)
                 rank = sum(1 for v in sorted_atr if v <= atr)
                 return round(rank / len(sorted_atr) * 100, 1)
-        except Exception as e:
+        except (json.JSONDecodeError, ValueError, TypeError, ConnectionError, TimeoutError, OSError) as e:
             logger.info(f"ATR percentile computation failed for {symbol}: {e}")
 
         return None
