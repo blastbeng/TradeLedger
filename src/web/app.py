@@ -103,7 +103,7 @@ def get_engine():
         raise HTTPException(status_code=503, detail="Engine not initialized")
     return _engine
 
-@http_router.get("/")
+@public_router.get("/")
 async def root():
     return FileResponse("src/web/static/index.html")
 

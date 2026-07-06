@@ -627,7 +627,10 @@
             ws.onclose = () => {
                 document.getElementById('status-dot').className = 'status-dot disconnected';
                 document.getElementById('status-text').textContent = 'Disconnected – retrying in 3s';
-                setTimeout(connect, 3000);
+                // Don't retry if the login overlay is showing
+                if (document.getElementById('login-overlay').style.display !== 'flex') {
+                    setTimeout(connect, 3000);
+                }
             };
             ws.onmessage = (event) => {
                 try {
