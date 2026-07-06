@@ -494,6 +494,18 @@ async def tickers(symbols: str = ""):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # Verify session for WebSocket
+    if settings.WEB_USERNAME and settings.WEB_PASSWORD:
+        token = websocket.cookies.get("session_token")
+        if not token:
+            await websocket.close(code=1008)  # Policy Violation
+            return
+        redis = get_redis_client()
+        session = await asyncio.to_thread(redis.get, f"session:{token}")
+        if not session:
+            await websocket.close(code=1008)
+            return
+
     await websocket.accept()
     logger.info("WebSocket client connected")
     last_sent_str = None

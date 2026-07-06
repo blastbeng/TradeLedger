@@ -612,6 +612,7 @@
 
         document.getElementById('btn-logout').addEventListener('click', async () => {
             await originalFetch('/api/logout', { method: 'POST' });
+            if (ws) ws.close(); // Close WebSocket to stop data flow
             showLoginOverlay();
         });
 
@@ -976,14 +977,14 @@
                     row.insertCell().textContent = '...'; // Last Price
                     row.insertCell().textContent = '—'; // Last Decision
                     const actionsCell = row.insertCell();
-                    
+
                     const btBtn = document.createElement('button');
                     btBtn.textContent = 'Backtest';
                     btBtn.id = `sim-bt-${entry.symbol}`;
                     btBtn.style.cssText = 'background: var(--accent); color: #fff; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; margin-right: 8px; font-size: 0.8rem;';
                     btBtn.onclick = () => runSimulation(entry.symbol, 'backtest');
                     actionsCell.appendChild(btBtn);
-                    
+
                     const decBtn = document.createElement('button');
                     decBtn.textContent = 'Simulate Decision';
                     decBtn.id = `sim-dec-${entry.symbol}`;
@@ -1508,7 +1509,7 @@
             document.getElementById('chart-to-date').value = '';
             modal.style.display = 'flex';
             await fetchAndRenderChart(symbol, timeframe);
-            
+
             if (chartUpdateTimer) clearInterval(chartUpdateTimer);
             chartUpdateTimer = setInterval(() => {
                 if (currentSymbol && modal.style.display === 'flex') {
@@ -1747,7 +1748,7 @@
             const originalText = btn.textContent;
             btn.textContent = '⏳ Running...';
             btn.disabled = true;
-            
+
             const rows = document.querySelectorAll('#simulation-table tbody tr');
             for (const row of rows) {
                 if (row.id && row.id.startsWith('sim-row-')) {
@@ -1755,7 +1756,7 @@
                     await runSimulation(symbol, 'decision');
                 }
             }
-            
+
             btn.textContent = originalText;
             btn.disabled = false;
             showToast('All simulations completed.');
@@ -1818,12 +1819,12 @@
         async function runSimulation(symbol, type) {
             const resultDiv = document.getElementById('simulation-result');
             resultDiv.textContent = `Running ${type} simulation for ${symbol}...`;
-            
+
             const row = document.getElementById(`sim-row-${symbol}`);
             const decCell = row ? row.cells[3] : null;
             const btBtn = document.getElementById(`sim-bt-${symbol}`);
             const decBtn = document.getElementById(`sim-dec-${symbol}`);
-            
+
             if (btBtn) btBtn.disabled = true;
             if (decBtn) decBtn.disabled = true;
             if (decCell) decCell.textContent = 'Running...';
