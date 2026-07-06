@@ -2200,7 +2200,7 @@ class OrderExecutor:
             if order_id in queued_ids:
                 continue   # this order is being monitored by _process_queued_orders
             created_at = order.get('timestamp', 0) / 1000.0  # ms to seconds
-            if now - created_at > 600:  # 10 minutes
+            if now - created_at > settings.ORPHANED_ORDER_TIMEOUT_SECONDS:
                 logger.warning(
                     f"Cancelling orphaned order {order_id} for {order['symbol']} "
                     f"(open for {now - created_at:.0f}s)."

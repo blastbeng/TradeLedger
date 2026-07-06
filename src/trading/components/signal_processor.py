@@ -1392,7 +1392,7 @@ class SignalProcessor:
             try:
                 last_notify_raw = await asyncio.to_thread(engine.redis.get, stale_notify_key)
                 if last_notify_raw:
-                    if (time.time() - float(last_notify_raw)) < 3600:
+                    if (time.time() - float(last_notify_raw)) < settings.STALENESS_NOTIFY_THRESHOLD_SECONDS:
                         should_notify = False
             except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
@@ -1484,7 +1484,7 @@ class SignalProcessor:
         try:
             last_notify_raw = await asyncio.to_thread(engine.redis.get, no_ohlcv_notify_key)
             if last_notify_raw:
-                if (time.time() - float(last_notify_raw)) < 3600:
+                if (time.time() - float(last_notify_raw)) < settings.STALENESS_NOTIFY_THRESHOLD_SECONDS:
                     should_notify = False
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass

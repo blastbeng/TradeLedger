@@ -452,7 +452,7 @@ class TradingEngine:
             if self._reevaluate_running:
                 # Wait briefly for the current re-evaluation to finish.
                 # Use a short sleep so queued triggers are picked up quickly.
-                await asyncio.sleep(1)
+                await asyncio.sleep(settings.SYMBOL_EVALUATION_DELAY_SECONDS)
                 continue
             self._reevaluate_running = True
             try:

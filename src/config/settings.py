@@ -673,6 +673,51 @@ class Settings(BaseSettings):
             raise ValueError("QUEUED_ORDER_TIMEOUT_SECONDS must be positive")
         return v
 
+    LLM_CACHE_TTL: int = 1800
+
+    @field_validator("LLM_CACHE_TTL")
+    @classmethod
+    def validate_llm_cache_ttl(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("LLM_CACHE_TTL must be positive")
+        return v
+
+    ORPHANED_ORDER_TIMEOUT_SECONDS: float = 600.0
+
+    @field_validator("ORPHANED_ORDER_TIMEOUT_SECONDS")
+    @classmethod
+    def validate_orphaned_order_timeout(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("ORPHANED_ORDER_TIMEOUT_SECONDS must be positive")
+        return v
+
+    SYMBOL_EVALUATION_DELAY_SECONDS: float = 1.0
+
+    @field_validator("SYMBOL_EVALUATION_DELAY_SECONDS")
+    @classmethod
+    def validate_symbol_evaluation_delay(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("SYMBOL_EVALUATION_DELAY_SECONDS must be positive")
+        return v
+
+    BACKTEST_MIN_CANDLES: int = 5
+
+    @field_validator("BACKTEST_MIN_CANDLES")
+    @classmethod
+    def validate_backtest_min_candles(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("BACKTEST_MIN_CANDLES must be positive")
+        return v
+
+    STALENESS_NOTIFY_THRESHOLD_SECONDS: int = 3600
+
+    @field_validator("STALENESS_NOTIFY_THRESHOLD_SECONDS")
+    @classmethod
+    def validate_staleness_notify_threshold(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("STALENESS_NOTIFY_THRESHOLD_SECONDS must be positive")
+        return v
+
     # Redis
     REDIS_HOST: str = "redis"
     REDIS_PORT: int = 6379

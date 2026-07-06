@@ -170,7 +170,7 @@ def backtest_strategy(
         total_pnl_pct, max_drawdown_pct, profit_factor, avg_hold_time_seconds,
         max_consecutive_losses, insufficient_data
     """
-    if not candles or len(candles) < 5:
+    if not candles or len(candles) < settings.BACKTEST_MIN_CANDLES:
         return _empty_result()
 
     if stop_loss_pct is None or stop_loss_pct <= 0:

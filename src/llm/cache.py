@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 def get_cached_llm_response(
     prompt: str,
     system_prompt: str = "",
-    ttl: int = 1800,
+    ttl: Optional[int] = None,
     market_hash: str = None,
     model_type: str = "actuator",
     temperature: Optional[float] = None,
@@ -30,6 +30,10 @@ def get_cached_llm_response(
     for that role is configured.
     """
     redis_client = get_redis_client()
+
+    if ttl is None:
+        ttl = settings.LLM_CACHE_TTL
+
 
     # Determine effective provider and model for the primary choice
     if model_type == "mind":
