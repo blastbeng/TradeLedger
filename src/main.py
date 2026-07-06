@@ -14,6 +14,7 @@ from src.database import init_db, get_telegram_chat_id, set_telegram_chat_id
 from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.trading.engine import TradingEngine
 from src.news.fetcher import test_rss_feeds
+from src.utils.task_supervisor import TaskSupervisor
 
 
 class HealthEndpointFilter(logging.Filter):
@@ -189,24 +190,27 @@ async def main():
         telegram_bot = TelegramBot(engine)
         engine.set_notifier(telegram_bot)
 
-    # Start the engine as a background task immediately
+    # Start the engine as a supervised background task immediately
     logging.info("Creating engine task...")
-    engine_task = asyncio.create_task(engine.run())
+    engine_supervisor = TaskSupervisor(engine.run, name="TradingEngine.run", max_restarts=10, restart_delay=10.0)
+    engine_task = asyncio.create_task(engine_supervisor.run(), name="supervisor:TradingEngine.run")
 
     def engine_task_done(task: asyncio.Task):
         try:
             task.result()
         except asyncio.CancelledError:
-            logging.info("Engine task was cancelled.")
+            logging.info("Engine supervisor was cancelled.")
         except Exception as e:
-            logging.critical(f"Engine task crashed: {e}", exc_info=True)
+            logging.critical(f"Engine supervisor crashed: {e}", exc_info=True)
 
     engine_task.add_done_callback(engine_task_done)
 
-    # Start Telegram bot as a background task so it never blocks the engine
+    # Start Telegram bot as a supervised background task so it never blocks the engine
+    telegram_supervisor = None
     telegram_task = None
     if settings.TELEGRAM_BOT_TOKEN:
-        telegram_task = asyncio.create_task(telegram_bot.start())
+        telegram_supervisor = TaskSupervisor(telegram_bot.start, name="TelegramBot.start", max_restarts=10, restart_delay=10.0)
+        telegram_task = asyncio.create_task(telegram_supervisor.run(), name="supervisor:TelegramBot.start")
 
     # Graceful shutdown handling
     shutdown_event = asyncio.Event()
@@ -229,6 +233,7 @@ async def main():
 
     # Stop the engine
     await engine.stop()
+    engine_supervisor.cancel()
     engine_task.cancel()
     try:
         await engine_task
@@ -237,6 +242,7 @@ async def main():
 
     # Stop Telegram bot if it was started
     if telegram_task is not None:
+        telegram_supervisor.cancel()
         telegram_task.cancel()
         try:
             await telegram_task
