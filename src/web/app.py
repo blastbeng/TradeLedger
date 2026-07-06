@@ -6,9 +6,8 @@ import os
 import secrets
 import sys
 import time
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, APIRouter
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Response, APIRouter, Body
 from fastapi.concurrency import run_in_threadpool
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from src.config.settings import settings
@@ -34,23 +33,50 @@ class ManualTradeRequest(BaseModel):
     money_spent: float
     fee: float = 0.0
 
-security = HTTPBasic(auto_error=False)
+async def verify_auth(request: Request):
+    """Verify the user is authenticated via a session cookie."""
+    if not settings.WEB_USERNAME or not settings.WEB_PASSWORD:
+        return True
 
-async def verify_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)):
-    if settings.WEB_USERNAME and settings.WEB_PASSWORD:
-        if not credentials or not (
-            secrets.compare_digest(credentials.username, settings.WEB_USERNAME) and
-            secrets.compare_digest(credentials.password, settings.WEB_PASSWORD)
-        ):
-            raise HTTPException(
-                status_code=401,
-                detail="Unauthorized",
-                headers={"WWW-Authenticate": "Basic"},
-            )
+    token = request.cookies.get("session_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    redis = get_redis_client()
+    session = await asyncio.to_thread(redis.get, f"session:{token}")
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+
     return True
 
 app = FastAPI(title="Trade Ledger")
 http_router = APIRouter(dependencies=[Depends(verify_auth)])
+
+@http_router.post("/api/login")
+async def login(request: Request, response: Response, credentials: dict = Body(...)):
+    """Authenticate the user and set a session cookie."""
+    username = credentials.get("username", "")
+    password = credentials.get("password", "")
+    if not (settings.WEB_USERNAME and settings.WEB_PASSWORD and
+            secrets.compare_digest(username, settings.WEB_USERNAME) and
+            secrets.compare_digest(password, settings.WEB_PASSWORD)):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = secrets.token_urlsafe(32)
+    redis = get_redis_client()
+    await asyncio.to_thread(redis.set, f"session:{token}", "1", ex=86400)  # 1 day expiry
+    response.set_cookie(key="session_token", value=token, httponly=True, samesite="lax", max_age=86400)
+    return {"status": "ok"}
+
+@http_router.post("/api/logout")
+async def logout(request: Request, response: Response):
+    """Clear the session cookie and invalidate the token."""
+    token = request.cookies.get("session_token")
+    if token:
+        redis = get_redis_client()
+        await asyncio.to_thread(redis.delete, f"session:{token}")
+    response.delete_cookie("session_token")
+    return {"status": "ok"}
 
 logger = logging.getLogger(__name__)
 
