@@ -202,10 +202,10 @@ class BacktestManager:
         # Fetch LLM-configured thresholds for backtest filters
         bt_max_rsi = 70.0
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_overbought")
+            raw = await engine.config_service.get_config("skip_eval_rsi_overbought")
             if raw:
                 bt_max_rsi = float(raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         # Fetch portfolio caps for position sizing simulation
@@ -213,16 +213,16 @@ class BacktestManager:
         bt_max_port_exp = None
         bt_max_port_risk = None
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:global_risk_multiplier")
+            raw = await engine.config_service.get_config("global_risk_multiplier")
             if raw:
                 bt_global_risk_mult = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_portfolio_exposure_pct")
+            raw = await engine.config_service.get_config("max_portfolio_exposure_pct")
             if raw:
                 bt_max_port_exp = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_portfolio_stop_risk_pct")
+            raw = await engine.config_service.get_config("max_portfolio_stop_risk_pct")
             if raw:
                 bt_max_port_risk = float(raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         if bt_candles and len(bt_candles) >= 20:

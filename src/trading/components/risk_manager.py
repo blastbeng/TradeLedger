@@ -247,19 +247,19 @@ class RiskManager:
         max_partial_tp_reviews = settings.MAX_PARTIAL_TP_REVIEWS
         max_dust_sweep_reviews = settings.MAX_DUST_SWEEP_REVIEWS
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_stop_loss_reviews")
+            raw = await engine.config_service.get_config("max_stop_loss_reviews")
             if raw:
                 max_sl_reviews = int(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_take_profit_reviews")
+            raw = await engine.config_service.get_config("max_take_profit_reviews")
             if raw:
                 max_tp_reviews = int(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_partial_tp_reviews")
+            raw = await engine.config_service.get_config("max_partial_tp_reviews")
             if raw:
                 max_partial_tp_reviews = int(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_dust_sweep_reviews")
+            raw = await engine.config_service.get_config("max_dust_sweep_reviews")
             if raw:
                 max_dust_sweep_reviews = int(raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
         return {
             "max_sl_reviews": max_sl_reviews,

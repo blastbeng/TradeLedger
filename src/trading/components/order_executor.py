@@ -833,14 +833,14 @@ class OrderExecutor:
             caps.append((available_risk_budget / sl_pct, f"max_portfolio_risk={max_portfolio_risk_pct:.2%}"))
 
         # Cap 3: max_portfolio_exposure_pct (global LLM setting from stock selection)
-        max_port_exp_raw = await asyncio.to_thread(engine.redis.get, "trading:max_portfolio_exposure_pct")
+        max_port_exp_raw = await engine.config_service.get_config("max_portfolio_exposure_pct")
         max_port_exp = float(max_port_exp_raw) if max_port_exp_raw else None
         if max_port_exp is not None and total_value > 0:
             available_exposure = max(0.0, (max_port_exp * total_value) - total_open_exposure)
             caps.append((available_exposure, f"max_exposure={max_port_exp:.2%}"))
 
         # Cap 4: max_portfolio_stop_risk_pct (global LLM setting from stock selection)
-        max_port_risk_raw = await asyncio.to_thread(engine.redis.get, "trading:max_portfolio_stop_risk_pct")
+        max_port_risk_raw = await engine.config_service.get_config("max_portfolio_stop_risk_pct")
         max_port_risk = float(max_port_risk_raw) if max_port_risk_raw else None
         if max_port_risk is not None and sl_pct > 0 and total_value > 0:
             available_stop_risk_budget = max(0.0, (total_value * max_port_risk) - total_open_stop_risk)
@@ -1558,10 +1558,10 @@ class OrderExecutor:
             # Read LLM-controlled limit price max distance (fallback to static setting)
             max_distance = settings.LIMIT_PRICE_MAX_DISTANCE_PCT
             try:
-                raw = await asyncio.to_thread(engine.redis.get, "trading:limit_price_max_distance_pct")
+                raw = await engine.config_service.get_config("limit_price_max_distance_pct")
                 if raw:
                     max_distance = float(raw)
-            except (TypeError, ValueError, RuntimeError):
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
             # For a sell, the limit must not be too far above the bid
             if max_distance > 0 and ticker and ticker.get('bid'):
@@ -1888,10 +1888,10 @@ class OrderExecutor:
             # Read LLM-controlled limit price max distance (fallback to static setting)
             max_distance = settings.LIMIT_PRICE_MAX_DISTANCE_PCT
             try:
-                raw = await asyncio.to_thread(engine.redis.get, "trading:limit_price_max_distance_pct")
+                raw = await engine.config_service.get_config("limit_price_max_distance_pct")
                 if raw:
                     max_distance = float(raw)
-            except (TypeError, ValueError, RuntimeError):
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
             if ticker and ticker.get('ask') and max_distance > 0:
                 ask = ticker['ask']
