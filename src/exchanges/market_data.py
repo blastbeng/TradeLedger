@@ -191,7 +191,7 @@ def _get_yf_session():
             _yf_session_cache = None
             _yf_session_created = True
             return None
-        except Exception as e:
+        except (ImportError, RuntimeError, OSError, AttributeError) as e:
             logger.warning(f"Failed to create curl_cffi session: {e}")
             # Don't set _yf_session_created so we retry on the next call
             return None
@@ -222,7 +222,7 @@ class DynamicProxyRotator:
                     port = cols[1].text.strip()
                     proxies.append(f"http://{ip}:{port}")
             return proxies
-        except Exception as e:
+        except (requests.RequestException, ValueError, OSError) as e:
             logger.warning(f"Error fetching raw proxies: {e}")
             return []
 
@@ -232,7 +232,7 @@ class DynamicProxyRotator:
             response = await client.get(self.test_url, proxy=proxy, timeout=3.0)
             if response.status_code == 200:
                 return proxy
-        except Exception:
+        except (httpx.RequestError, httpx.HTTPStatusError, OSError):
             pass
         return None
 
@@ -316,7 +316,7 @@ def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[s
                     if isin and re.match(r'^[A-Z]{2}[A-Z0-9]{9}\d$', isin):
                         # Borsa Italiana is the Italian exchange, so country is Italy
                         return isin, "Italy", name
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
         logger.debug(f"Borsa Italiana search failed for {base_symbol}: {e}")
     return None, None, None
 
@@ -347,7 +347,7 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
                 isin = isin.strip()
                 if isin == '-' or not isin:
                     isin = None
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError, AttributeError, OSError) as e:
             logger.debug(f"Failed to fetch ISIN for {base_symbol} from yfinance: {e}")
             isin = None
 
@@ -362,7 +362,7 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
         try:
             save_country = settings.TARGET_COUNTRY if settings.COUNTRY_FILTER_STRICT else None
             save_discovered_symbol(db_symbol, isin, None, "", country=save_country)
-        except Exception:
+        except (RuntimeError, ValueError, OSError):
             pass
 
     return isin
@@ -424,7 +424,7 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
                 
             logger.warning(f"Could not find Borsa Italiana token for {isin}-{market_code}")
             return None
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, AttributeError, OSError) as e:
         logger.warning(f"Failed to fetch Borsa Italiana token for {isin}-{market_code}: {e}")
         return None
 
@@ -498,7 +498,7 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
                         "last_update": int(time.time() * 1000),
                         "source": "borsa_italiana",
                     }
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
         logger.debug(f"Borsa Italiana quote fetch failed for {symbol}: {e}")
     return None
 
@@ -707,7 +707,7 @@ def get_borsa_italiana_candles(
 
         return None
 
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
         logger.debug(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {e}")
         return None
 
@@ -861,7 +861,7 @@ def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optio
                 if attempt < max_retries:
                     _time.sleep(0.5 * (2 ** attempt))
                     continue
-            except Exception as e:
+            except (RuntimeError, ValueError, KeyError, AttributeError, OSError) as e:
                 logger.debug(f"Failed to fetch info for {symbol} (attempt {attempt + 1}/{max_retries + 1}): {e}")
                 if attempt < max_retries:
                     _time.sleep(0.5 * (2 ** attempt))
@@ -901,7 +901,7 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 tables = pd.read_html(response.text)
-        except Exception as e:
+        except (requests.RequestException, ValueError, OSError) as e:
             logger.debug(f"Failed to scrape {url}: {str(e)[:200]}")
             continue
 
@@ -983,7 +983,7 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
                                 try:
                                     from src.database import save_discovered_symbol
                                     save_discovered_symbol(base, isin, "stock", "", country="italy")
-                                except Exception:
+                                except (RuntimeError, ValueError, OSError):
                                     pass
                 
                 if base_symbols:
@@ -1003,7 +1003,7 @@ def _load_static_tickers() -> List[str]:
     try:
         with open(path, "r") as f:
             return [line.strip().upper() for line in f if line.strip() and re.match(r"^[A-Z0-9]+$", line.strip())]
-    except Exception as e:
+    except (OSError, ValueError) as e:
         logger.warning(f"Failed to load static tickers file: {e}")
         return []
 
@@ -1050,7 +1050,7 @@ def _discover_financedatabase_tickers() -> List[str]:
 
         logger.info(f"Discovered {len(base_symbols)} tickers from FinanceDatabase for {country}")
         return base_symbols
-    except Exception as e:
+    except (ImportError, RuntimeError, ValueError, AttributeError, OSError) as e:
         logger.warning(f"FinanceDatabase ticker discovery failed: {e}")
         return []
 
@@ -1063,7 +1063,7 @@ def discover_italian_ucits_etfs() -> List[str]:
         cached = redis_client.get(cache_key)
         if cached:
             return json.loads(cached)
-    except Exception:
+    except (TypeError, ValueError, RuntimeError):
         pass
 
     try:
@@ -1081,7 +1081,7 @@ def discover_italian_ucits_etfs() -> List[str]:
         # Try to filter by country first, fallback to all if unsupported
         try:
             df = etfs.select(country="Italy")
-        except Exception:
+        except (RuntimeError, ValueError, AttributeError):
             df = etfs.select()
 
         if df is None or df.empty:
@@ -1107,7 +1107,7 @@ def discover_italian_ucits_etfs() -> List[str]:
         # Cache for 24 hours
         try:
             redis_client.set(cache_key, json.dumps(base_symbols), ex=86400)
-        except Exception:
+        except (TypeError, ValueError, RuntimeError):
             pass
         # Save ETF symbols to DB
         try:
@@ -1118,10 +1118,10 @@ def discover_italian_ucits_etfs() -> List[str]:
             ]
             if symbols_to_save:
                 save_discovered_symbols_batch(symbols_to_save)
-        except Exception as e:
+        except (RuntimeError, ValueError, OSError) as e:
             logger.warning(f"Failed to save ETF symbols to DB: {e}")
         return base_symbols
-    except Exception as e:
+    except (ImportError, RuntimeError, ValueError, AttributeError, OSError) as e:
         logger.warning(f"Failed to discover Italian UCITS ETFs: {e}")
         return []
 
@@ -1151,13 +1151,13 @@ def _save_discovered_assets_to_db(base_symbols: List[str], etf_symbols: List[str
         isin_map = get_isin_map_from_db(sym_list)
         # Filter out symbols that already have an ISIN
         symbols_to_save = [s for s in symbols_to_save if not isin_map.get(s["symbol"])]
-    except Exception:
+    except (RuntimeError, ValueError, OSError):
         pass  # If batch lookup fails, save all (upsert handles it)
     if symbols_to_save:
         try:
             save_discovered_symbols_batch(symbols_to_save)
             logger.info(f"Saved {len(symbols_to_save)} discovered symbols to database")
-        except Exception as e:
+        except (RuntimeError, ValueError, OSError) as e:
             logger.warning(f"Failed to save discovered symbols to database: {e}")
 
 
@@ -1228,7 +1228,7 @@ def get_tradable_assets() -> List[str]:
                 if t not in existing:
                     base_symbols.append(t)
                     existing.add(t)
-    except Exception as e:
+    except (RuntimeError, ValueError, OSError) as e:
         logger.warning(f"News ticker discovery failed: {e}")
 
     # --- Fallback: try static CSV file, then hardcoded list ---
@@ -1280,7 +1280,7 @@ def get_tradable_assets() -> List[str]:
                     logger.warning(f"Failed to merge DB symbols with cached list: {e}")
                 if cached_list:
                     return cached_list
-        except Exception:
+        except (TypeError, ValueError, RuntimeError):
             pass
         # No Redis cache — try DB only
         try:
@@ -1304,7 +1304,7 @@ def get_tradable_assets() -> List[str]:
                 if db_only_list:
                     logger.info(f"Discovery failed but recovered {len(db_only_list)} symbols from DB only")
                     return db_only_list
-        except Exception as e:
+        except (RuntimeError, ValueError, OSError) as e:
             logger.warning(f"Failed to recover symbols from DB: {e}")
         return []
 
@@ -1315,7 +1315,7 @@ def get_tradable_assets() -> List[str]:
         try:
             etf_set = set(etf_symbols)
             _save_discovered_assets_to_db(base_symbols, list(etf_set))
-        except Exception as e:
+        except (RuntimeError, ValueError, OSError) as e:
             logger.warning(f"Failed to save discovered assets to DB: {e}")
 
     suffix = settings.TICKER_SUFFIX
@@ -1359,7 +1359,7 @@ def get_tradable_assets() -> List[str]:
             except Exception as e:
                 logger.warning(f"Failed to merge DB symbols with cached list: {e}")
             return cached_list
-    except Exception:
+    except (TypeError, ValueError, RuntimeError):
         pass
 
     # Filter candidates by country using yfinance
@@ -1392,7 +1392,7 @@ def get_tradable_assets() -> List[str]:
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
                 save_discovered_symbol(db_base, None, None, name or "", country=None)
-            except Exception:
+            except (RuntimeError, ValueError, OSError):
                 pass
         if country is None:
             # yfinance failed to return country info.
@@ -1433,14 +1433,14 @@ def get_tradable_assets() -> List[str]:
             if symbols_to_save:
                 save_discovered_symbols_batch(symbols_to_save)
                 logger.info(f"Saved {len(symbols_to_save)} confirmed-Italian symbols to DB (strict mode)")
-        except Exception as e:
+        except (RuntimeError, ValueError, OSError) as e:
             logger.warning(f"Failed to save filtered assets to DB: {e}")
 
     # Cache the filtered list for 24 hours
     try:
         import json
         redis_client.set(cache_key, json.dumps(filtered), ex=86400)
-    except Exception as e:
+    except (TypeError, ValueError, RuntimeError) as e:
         logger.warning(f"Failed to cache tradable assets: {e}")
 
     # Merge with previously discovered symbols from DB so nothing is lost
@@ -1466,7 +1466,7 @@ def get_tradable_assets() -> List[str]:
                     filtered.append(candidate)
                     existing_set.add(candidate)
         logger.info(f"Merged {len(db_symbols)} symbols from DB, total: {len(filtered)}")
-    except Exception as e:
+    except (RuntimeError, ValueError, OSError) as e:
         logger.warning(f"Failed to merge discovered symbols from DB: {e}")
 
     logger.info(f"Tradable assets for {settings.TARGET_COUNTRY}: {len(filtered)} symbols")
@@ -1490,7 +1490,7 @@ def _enrich_quotes_with_btp_details(result: Dict[str, Dict[str, Any]], symbols: 
                     result[sym]["coupon"] = d["coupon"]
                 if not result[sym].get("name") and d.get("name"):
                     result[sym]["name"] = d["name"]
-    except Exception as e:
+    except (RuntimeError, ValueError, KeyError, OSError) as e:
         logger.debug(f"Failed to enrich BTP details in quotes: {e}")
 
 
@@ -1544,7 +1544,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 result[sym] = json.loads(cached)
             else:
                 missing_symbols.append(sym)
-        except Exception:
+        except (TypeError, ValueError, RuntimeError):
             missing_symbols.append(sym)
 
     if not missing_symbols:
@@ -1564,7 +1564,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     pass
         if db_quotes:
             logger.debug(f"Loaded {len(db_quotes)} quotes from database (Redis miss fallback)")
-    except Exception as e:
+    except (RuntimeError, ValueError, OSError) as e:
         logger.warning(f"DB quote fetch failed: {e}", exc_info=True)
 
     # --- Try DB close prices first (fast, no network call) ---
@@ -1597,7 +1597,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                         "source": "db_close",
                     }
                     # Do not remove from missing_symbols so yfinance can still try to update it
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError, OSError) as e:
             logger.warning(f"get_quotes: DB close price fallback failed: {e}")
 
     if not missing_symbols:
@@ -1607,13 +1607,13 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             if q.get("last") is not None:
                 try:
                     redis_client.set(f"quote:{sym}", json.dumps(q), ex=300)
-                except Exception:
+                except (TypeError, ValueError, RuntimeError):
                     pass
                 quotes_to_save[sym] = q
         if quotes_to_save:
             try:
                 save_quotes_batch(quotes_to_save)
-            except Exception as e:
+            except (RuntimeError, ValueError, OSError) as e:
                 logger.warning(f"Failed to save quotes to database: {e}")
         return result
 
@@ -1677,9 +1677,9 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                             if last_val is not None:
                                 result[sym]["change_24h"] = last_val - prev_close
                                 result[sym]["percentage"] = ((last_val - prev_close) / prev_close) * 100
-                except Exception:
+                except (KeyError, ValueError, AttributeError, IndexError):
                     pass
-        except Exception as e:
+        except (RuntimeError, ValueError, ConnectionError, OSError) as e:
             logger.warning(f"Batch download failed: {e}")
     elif stock_symbols and _check_yf_circuit():
         logger.warning(
@@ -1720,7 +1720,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                         last = result[sym]["last"]
                         result[sym]["change_24h"] = last - prev_close
                         result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError, OSError) as e:
             logger.warning(f"Failed to recompute change_24h/percentage from DB candles: {e}")
 
     # Ensure bid/ask are never NULL when last is available — use last as fallback
@@ -1737,7 +1737,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         if result[sym].get("last") is not None:
             try:
                 redis_client.set(f"quote:{sym}", json.dumps(result[sym]), ex=300)
-            except Exception:
+            except (TypeError, ValueError, RuntimeError):
                 pass
             quotes_to_save[sym] = result[sym]
 
@@ -1745,7 +1745,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     if quotes_to_save:
         try:
             save_quotes_batch(quotes_to_save)
-        except Exception as e:
+        except (RuntimeError, ValueError, OSError) as e:
             logger.warning(f"Failed to save quotes to database: {e}")
 
     # Summary log
@@ -1798,7 +1798,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                 result[sym] = json.loads(cached)
             else:
                 missing_symbols.append(sym)
-        except Exception:
+        except (TypeError, ValueError, RuntimeError):
             missing_symbols.append(sym)
 
     if not missing_symbols:
@@ -1816,7 +1816,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                     redis_client.set(f"quote:{sym}", json.dumps(db_quotes[sym]), ex=300)
                 except Exception:
                     pass
-    except Exception as e:
+    except (RuntimeError, ValueError, OSError) as e:
         logger.warning(f"get_quotes_cached: DB quote fetch failed: {e}", exc_info=True)
 
     # Try DB close prices for anything still missing
@@ -1847,7 +1847,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                         "source": "db_close",
                     }
                     missing_symbols.remove(sym)
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError, OSError) as e:
             logger.warning(f"get_quotes_cached: DB close price fallback failed: {e}")
 
     # Initialize remaining missing symbols with None values
@@ -1874,7 +1874,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                         last = result[sym]["last"]
                         result[sym]["change_24h"] = last - prev_close
                         result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError, OSError) as e:
             logger.warning(f"get_quotes_cached: Failed to recompute change_24h/percentage from DB candles: {e}")
 
     # Ensure bid/ask are never NULL when last is available — use last as fallback
@@ -1895,13 +1895,13 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         if q.get("last") is not None:
             try:
                 redis_client.set(f"quote:{sym}", json.dumps(q), ex=300)
-            except Exception:
+            except (TypeError, ValueError, RuntimeError):
                 pass
             quotes_to_save[sym] = q
     if quotes_to_save:
         try:
             save_quotes_batch(quotes_to_save)
-        except Exception as e:
+        except (RuntimeError, ValueError, OSError) as e:
             logger.warning(f"get_quotes_cached: Failed to save DB close prices to quotes table: {e}")
 
     # Enrich BTP quotes with maturity, coupon, and name from discovered_symbols
@@ -1949,7 +1949,7 @@ def get_multi_timeframe_bars(
             if cached:
                 result[tf] = json.loads(cached)
                 continue
-        except Exception:
+        except (TypeError, ValueError, RuntimeError):
             pass
 
         # BTPs: only borsaitaliana, no yfinance
@@ -1959,7 +1959,7 @@ def get_multi_timeframe_bars(
             if borsa_candles:
                 try:
                     redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
-                except Exception:
+                except (TypeError, ValueError, RuntimeError):
                     pass
             continue
 
@@ -1979,7 +1979,7 @@ def get_multi_timeframe_bars(
                 result[tf] = borsa_candles[-limit:] if limit else borsa_candles
                 try:
                     redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
-                except Exception:
+                except (TypeError, ValueError, RuntimeError):
                     pass
             else:
                 result[tf] = []
@@ -2011,7 +2011,7 @@ def get_multi_timeframe_bars(
                     if needs_aggregation:
                         candles = _aggregate_candles(candles, tf)
                     yf_candles = candles
-            except Exception as e:
+            except (RuntimeError, ValueError, KeyError, AttributeError, OSError) as e:
                 logger.debug(f"yfinance fetch failed for {symbol} {tf}: {e}")
 
         # Merge both sources
@@ -2021,7 +2021,7 @@ def get_multi_timeframe_bars(
             result[tf] = merged[-limit:] if limit else merged
             try:
                 redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
-            except Exception:
+            except (TypeError, ValueError, RuntimeError):
                 pass
         else:
             result[tf] = []
@@ -2054,7 +2054,7 @@ def get_bars_range(
         cached = redis_client.get(cache_key)
         if cached:
             return json.loads(cached)
-    except Exception:
+    except (TypeError, ValueError, RuntimeError):
         pass
 
     # BTPs: only borsaitaliana, no yfinance
@@ -2063,7 +2063,7 @@ def get_bars_range(
         if borsa_candles:
             try:
                 redis_client.set(cache_key, json.dumps(borsa_candles), ex=300)
-            except Exception:
+            except (TypeError, ValueError, RuntimeError):
                 pass
             return borsa_candles
         return []
@@ -2118,7 +2118,7 @@ def get_bars_range(
                 if needs_aggregation:
                     candles = _aggregate_candles(candles, timeframe)
                 yf_candles = candles
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError, AttributeError, OSError) as e:
             logger.debug(f"yfinance fetch failed for {symbol} {timeframe}: {e}")
 
     # Merge both sources
@@ -2130,7 +2130,7 @@ def get_bars_range(
             merged = merged[-limit:]
         try:
             redis_client.set(cache_key, json.dumps(merged), ex=300)
-        except Exception:
+        except (TypeError, ValueError, RuntimeError):
             pass
         return merged
     return []
@@ -2150,7 +2150,7 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
         cached = redis_client.get(cache_key)
         if cached:
             return json.loads(cached)
-    except Exception:
+    except (TypeError, ValueError, RuntimeError):
         pass
 
     url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/obbligazioni-in-euro/scheda/{isin}-MOTX.html?lang=it"
@@ -2191,11 +2191,11 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
             cache_ttl = 86400 if details else 3600
             try:
                 redis_client.set(cache_key, json.dumps(details), ex=cache_ttl)
-            except Exception:
+            except (TypeError, ValueError, RuntimeError):
                 pass
 
             return details
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, AttributeError, OSError) as e:
         logger.debug(f"Failed to fetch BTP details for {isin}: {e}")
         return {}
 
@@ -2211,7 +2211,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
         cached = redis_client.get(cache_key)
         if cached:
             bonds = json.loads(cached)
-    except Exception:
+    except (TypeError, ValueError, RuntimeError):
         pass
 
     _btp_list_was_cached = bonds is not None
@@ -2274,7 +2274,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
                             "coupon": coupon,
                             "maturity": maturity,
                         })
-            except Exception as e:
+            except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
                 logger.warning(f"Failed to fetch BTP page {page}: {e}")
                 break
 
@@ -2282,7 +2282,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
         if bonds:
             try:
                 redis_client.set(cache_key, json.dumps(bonds), ex=1800)
-            except Exception as e:
+            except (TypeError, ValueError, RuntimeError) as e:
                 logger.warning(f"Failed to cache BTP bonds: {e}")
 
     # Only fetch individual BTP details when the list was freshly scraped
@@ -2316,7 +2316,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
             ]
             if symbols_to_save:
                 save_discovered_symbols_batch(symbols_to_save)
-        except Exception as e:
+        except (RuntimeError, ValueError, OSError) as e:
             logger.warning(f"Failed to save BTP bonds to DB: {e}")
 
     return bonds
