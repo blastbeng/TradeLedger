@@ -567,23 +567,16 @@ class SignalProcessor:
                             logger.info(
                                 f"Indicators for {symbol} {tf} are stale "
                                 f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
-                                f"gap={latest_candle_ts - ind_ts}ms > {2 * tf_ms}ms). Recomputing on-the-fly."
+                                f"gap={latest_candle_ts - ind_ts}ms > {2 * tf_ms}ms). Scheduling background recomputation."
                             )
-                            try:
-                                fresh_ind = await asyncio.to_thread(compute_all_indicators, candles)
-                                if fresh_ind:
-                                    ind = fresh_ind
-                                else:
-                                    stale_indicators_warning += (
-                                        f"\n⚠️ **STALE INDICATORS:** Indicators for {symbol} on {tf} timeframe "
-                                        f"are stale and could not be recomputed. Use with caution.\n"
-                                    )
-                            except (ValueError, TypeError, IndexError, ZeroDivisionError) as e:
-                                logger.warning(f"Failed to recompute stale indicators for {symbol} {tf}: {e}")
-                                stale_indicators_warning += (
-                                    f"\n⚠️ **STALE INDICATORS:** Indicators for {symbol} on {tf} timeframe "
-                                    f"are stale (recomputation failed). Use with caution.\n"
-                                )
+                            # Schedule background recomputation to avoid blocking the evaluation loop
+                            asyncio.create_task(
+                                engine._market_data_manager.compute_and_store_indicators(symbol, tf, candles)
+                            )
+                            stale_indicators_warning += (
+                                f"\n⚠️ **STALE INDICATORS:** Indicators for {symbol} on {tf} timeframe "
+                                f"are stale. A background recomputation has been scheduled. Use with caution.\n"
+                            )
                     multi_tf_indicators[tf] = ind
                     if tf == assigned_tf:
                         atr = ind.get('atr')
