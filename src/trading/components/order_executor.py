@@ -1561,22 +1561,6 @@ class OrderExecutor:
             else:
                 order_type = "market"
 
-        # --- Reserve cycle budget before placing order to prevent race condition ---
-        async with engine._cycle_spent_lock:
-            available = max(0.0, quote_balance - engine._cycle_spent)
-            if amount > available:
-                logger.info(
-                    f"Skipping BUY {symbol}: cycle budget exhausted "
-                    f"(needed {amount:.2f}, available {available:.2f}) due to concurrent order"
-                )
-                if engine.notifier:
-                    await engine.notifier.send_notification(
-                        f"⚠️ Skipping BUY {display_symbol}: cycle budget exhausted by concurrent order",
-                        summary={"symbol": symbol, "action": "SKIP", "reason": "Cycle budget exhausted (concurrent order)"}
-                    )
-                return
-            engine._cycle_spent += amount
-
         try:
             if order_type == "market":
                 order = await asyncio.to_thread(
