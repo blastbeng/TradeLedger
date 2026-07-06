@@ -2309,35 +2309,36 @@ class SignalProcessor:
             _tp_str = f"{_sig_params.get('take_profit_pct', '?')}"
 
         # Record signal for the web dashboard
-        engine.recent_signals.append({
-            "symbol": symbol,
-            "display_symbol": display_symbol,
-            "stock_name": stock_name,
-            "timeframe": assigned_tf,
-            "action": validated.action,
-            "confidence": validated.confidence,
-            "reasoning": validated.reasoning or "",
-            "strategy_type": signal.strategy_type,
-            "model_type": getattr(validated, 'model_type', None),
-            "llm_provider": llm_provider,
-            "llm_model": llm_model,
-            "trade_amount": round(_trade_amount, 2),
-            "base_currency": engine.base_currency,
-            "timestamp": time.time(),
-            "entry_condition": _entry_cond_str,
-            "stop_loss": _sl_str,
-            "take_profit": _tp_str,
-            "position_size_fraction": _sig_params.get("position_size_fraction"),
-            "trailing_stop": _sig_params.get("trailing_stop"),
-            "trailing_stop_distance_pct": _sig_params.get("trailing_stop_distance_pct"),
-            "max_hold_time_seconds": _sig_params.get("max_hold_time_seconds"),
-            "cooldown_after_loss_seconds": _sig_params.get("cooldown_after_loss_seconds"),
-            "order_type": signal.order_type,
-            "limit_price": _sig_params.get("limit_price"),
-        })
-        # Keep only the last 50 signals
-        if len(engine.recent_signals) > 50:
-            engine.recent_signals = engine.recent_signals[-50:]
+        async with engine._recent_signals_lock:
+            engine.recent_signals.append({
+                "symbol": symbol,
+                "display_symbol": display_symbol,
+                "stock_name": stock_name,
+                "timeframe": assigned_tf,
+                "action": validated.action,
+                "confidence": validated.confidence,
+                "reasoning": validated.reasoning or "",
+                "strategy_type": signal.strategy_type,
+                "model_type": getattr(validated, 'model_type', None),
+                "llm_provider": llm_provider,
+                "llm_model": llm_model,
+                "trade_amount": round(_trade_amount, 2),
+                "base_currency": engine.base_currency,
+                "timestamp": time.time(),
+                "entry_condition": _entry_cond_str,
+                "stop_loss": _sl_str,
+                "take_profit": _tp_str,
+                "position_size_fraction": _sig_params.get("position_size_fraction"),
+                "trailing_stop": _sig_params.get("trailing_stop"),
+                "trailing_stop_distance_pct": _sig_params.get("trailing_stop_distance_pct"),
+                "max_hold_time_seconds": _sig_params.get("max_hold_time_seconds"),
+                "cooldown_after_loss_seconds": _sig_params.get("cooldown_after_loss_seconds"),
+                "order_type": signal.order_type,
+                "limit_price": _sig_params.get("limit_price"),
+            })
+            # Keep only the last 50 signals
+            if len(engine.recent_signals) > 50:
+                engine.recent_signals = engine.recent_signals[-50:]
 
         if engine.notifier:
             emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⏸️"}.get(validated.action, "❓")

@@ -129,6 +129,7 @@ class TradingEngine:
         self._positions_lock = asyncio.Lock()
         self._queued_orders_lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
+        self._recent_signals_lock = asyncio.Lock()
         self._state_save_pending = False
         self._state_dirty: bool = False
         # --- Extracted components ---
