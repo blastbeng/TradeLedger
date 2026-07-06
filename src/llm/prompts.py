@@ -405,7 +405,6 @@ def build_stock_selection_prompt(
     open_positions: Optional[Dict[str, Dict[str, Any]]] = None,
     symbol_tenure: Optional[Dict[str, float]] = None,
     symbol_max_tenure: Optional[Dict[str, Optional[float]]] = None,
-    vix: Optional[float] = None,
     trade_pattern_analysis: Optional[Dict[str, Any]] = None,
     symbol_events: Optional[Dict[str, Dict[str, Any]]] = None,
     symbol_trend_scores: Optional[Dict[str, float]] = None,
@@ -680,7 +679,6 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
         prompt += f"\nOverall market trend ({market_trend['symbol']}): daily change {market_trend.get('change_24h')}%, last price {market_trend.get('last')}\n"
     if session_info:
         prompt += f"\nCurrent UTC hour: {session_info['utc_hour']} ({session_info['session']} session)\n"
-    # VIX is not available for the Italian market — omitted.
     # --- Market regime summary (based on breadth only, VIX not available) ---
     regime_label = "neutral"
     if market_breadth:
@@ -766,7 +764,6 @@ def build_final_selection_prompt(
     symbol_max_tenure: Optional[Dict[str, Optional[float]]] = None,
     trade_pattern_analysis: Optional[Dict[str, Any]] = None,
     daily_pnl: Optional[float] = None,
-    vix: Optional[float] = None,
     min_viable_trade_amount: float = 0.0,
     available_timeframes: Optional[List[str]] = None,
     market_limits: Optional[Dict[str, Dict[str, Any]]] = None,
