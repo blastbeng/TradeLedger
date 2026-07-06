@@ -1330,71 +1330,7 @@ class TradingEngine:
     async def _backfill_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, max_candles: int = None, ignore_existing: bool = False, force: bool = False, quiet: bool = False) -> int:
         """Fetch and store all missing OHLCV candles between start_ms and end_ms.
         Returns the number of candles inserted."""
-        logger.debug(f"Backfill started for {symbol} {timeframe}: {start_ms} → {end_ms}")
-        if ignore_existing:
-            since = start_ms
-        else:
-            latest_ts = await asyncio.to_thread(get_latest_ohlcv_timestamp, symbol, timeframe)
-            if latest_ts is None:
-                since = start_ms
-            else:
-                # Skip the API call entirely if the latest candle is recent enough
-                # (within one candle interval of now). No new data to fetch.
-                if not force:
-                    interval_ms = self._timeframe_to_ms(timeframe)
-                    now_ms = int(time.time() * 1000)
-                    if latest_ts >= now_ms - interval_ms:
-                        logger.debug(f"Skipping backfill for {symbol} {timeframe}: data is up to date (latest_ts={latest_ts})")
-                        return 0
-                since = max(start_ms, latest_ts + 1)
-
-        total_inserted = 0
-        if max_candles is None:
-            max_candles = 10000  # Fetch all available history in one go
-        while since < end_ms:
-            try:
-                async with self._download_semaphore:
-                    loop = asyncio.get_running_loop()
-                    candles = await loop.run_in_executor(
-                        self._download_executor,
-                        get_bars_range,
-                        symbol.split("/")[0], timeframe, since, 10000
-                    )
-            except Exception as e:
-                logger.warning(f"get_bars_range failed for {symbol} {timeframe} at {since}: {e}")
-                break
-
-            if not candles:
-                break
-
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(self._db_executor, insert_ohlcv_batch, symbol, timeframe, candles)
-            batch_count = len(candles)
-            total_inserted += batch_count
-            logger.debug(f"Backfill batch: {symbol} {timeframe} fetched {batch_count} candles from {since}")
-
-            if total_inserted >= max_candles:
-                logger.debug(
-                    f"Backfill limit reached for {symbol} {timeframe}: {total_inserted} candles inserted "
-                    f"(max {max_candles}). Remaining range will be filled in next cycle."
-                )
-                break
-
-            last_ts = candles[-1][0]
-            if last_ts <= since:
-                # Avoid infinite loop if exchange returns same candle
-                break
-            since = last_ts + 1
-            # Small delay to avoid rate limits
-            await asyncio.sleep(0.05)
-
-        if total_inserted >= max_candles:
-            logger.debug(f"Backfill partial for {symbol} {timeframe}: {total_inserted} candles inserted (limit reached)")
-        elif quiet:
-            logger.debug(f"Backfill complete for {symbol} {timeframe}: {total_inserted} candles inserted")
-        else:
-            logger.info(f"Backfill complete for {symbol} {timeframe}: {total_inserted} candles inserted")
-        return total_inserted
+        return await self._market_data_manager._backfill_ohlcv(symbol, timeframe, start_ms, end_ms, max_candles, ignore_existing, force, quiet)
 
     async def _fill_gaps(self, symbol: str, timeframe: str):
         """Detect and fill gaps in stored OHLCV data for a symbol/timeframe."""
