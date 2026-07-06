@@ -2464,38 +2464,6 @@ class TradingEngine:
         """Return current Italian market session info using Europe/Rome timezone."""
         return self._market_data_manager._get_session_info()
 
-    def _default_limit_price(
-        self, symbol: str, action: str, ticker: Dict[str, Any], atr: Optional[float] = None
-    ) -> Optional[float]:
-        """Compute a default aggressive limit price for extended‑hours trading.
-
-        The buffer is scaled by ATR when available: buffer_pct = atr / price,
-        clamped to [0.001, 0.02] (0.1%–2%). Falls back to 0.2% when ATR is
-        unavailable.
-        """
-        last = ticker.get('last')
-        if not last or last <= 0:
-            return None
-
-        # Compute buffer percentage from ATR, clamped to [0.1%, 2%]
-        if atr is not None and atr > 0:
-            buffer_pct = max(0.001, min(atr / last, 0.02))
-        else:
-            buffer_pct = 0.002  # fallback 0.2%
-
-        if action == "BUY":
-            limit = last * (1 + buffer_pct)
-        elif action == "SELL":
-            limit = last * (1 - buffer_pct)
-        else:
-            return None
-
-        if last >= 1.0:
-            limit = round(limit, 2)
-        else:
-            limit = round(limit, 4)
-        return limit
-
     async def _remove_symbol_if_paused(self, symbol: str):
         """Clear pending entries for a symbol. Symbols are kept in current_symbols even when paused
         so the bot continues to generate and notify signals."""

@@ -195,6 +195,39 @@ class OrderExecutor:
             "take_profit_price": tp_price,
         }
 
+    @staticmethod
+    def _default_limit_price(
+        symbol: str, action: str, ticker: Dict[str, Any], atr: Optional[float] = None
+    ) -> Optional[float]:
+        """Compute a default aggressive limit price for extended‑hours trading.
+
+        The buffer is scaled by ATR when available: buffer_pct = atr / price,
+        clamped to [0.001, 0.02] (0.1%–2%). Falls back to 0.2% when ATR is
+        unavailable.
+        """
+        last = ticker.get('last')
+        if not last or last <= 0:
+            return None
+
+        # Compute buffer percentage from ATR, clamped to [0.1%, 2%]
+        if atr is not None and atr > 0:
+            buffer_pct = max(0.001, min(atr / last, 0.02))
+        else:
+            buffer_pct = 0.002  # fallback 0.2%
+
+        if action == "BUY":
+            limit = last * (1 + buffer_pct)
+        elif action == "SELL":
+            limit = last * (1 - buffer_pct)
+        else:
+            return None
+
+        if last >= 1.0:
+            limit = round(limit, 2)
+        else:
+            limit = round(limit, 4)
+        return limit
+
     async def cancel_exit_orders(self, symbol: str):
         """Cancel any native stop-loss and take-profit orders for a symbol."""
         engine = self.engine
@@ -1493,7 +1526,7 @@ class OrderExecutor:
             time_in_force = params.get("time_in_force", "day")
             need_limit = True  # force limit order path
         elif need_limit:
-            limit_price = engine._default_limit_price(symbol, "SELL", ticker, atr=atr)
+            limit_price = self._default_limit_price(symbol, "SELL", ticker, atr=atr)
             time_in_force = params.get("time_in_force", "day")
             if limit_price is None:
                 logger.error(f"Cannot place limit order for {symbol}: no limit price available.")
@@ -1868,7 +1901,7 @@ class OrderExecutor:
                         )
                     return None
         elif need_limit:
-            limit_price = engine._default_limit_price(symbol, "BUY", ticker, atr=atr)
+            limit_price = self._default_limit_price(symbol, "BUY", ticker, atr=atr)
             time_in_force = params.get("time_in_force", "day")
             if limit_price is None:
                 logger.error(f"Cannot place limit order for {symbol}: no limit price available.")
@@ -2743,7 +2776,7 @@ class OrderExecutor:
         limit_price = None
         time_in_force = "day"
         if need_limit:
-            limit_price = engine._default_limit_price(symbol, "SELL", ticker, atr=None)
+            limit_price = self._default_limit_price(symbol, "SELL", ticker, atr=None)
             if limit_price is None:
                 logger.error(f"Cannot place limit order for dust sweep on {symbol}: no limit price.")
                 return
@@ -2855,7 +2888,7 @@ class OrderExecutor:
         limit_price = None
         time_in_force = "day"
         if need_limit:
-            limit_price = engine._default_limit_price(symbol, "SELL", ticker, atr=atr)
+            limit_price = self._default_limit_price(symbol, "SELL", ticker, atr=atr)
             if limit_price is None:
                 logger.error(f"Cannot place limit order for {level_label} on {symbol}: no limit price.")
                 return False
