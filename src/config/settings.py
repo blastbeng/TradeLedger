@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     ENGINE_LOOP_INTERVAL_SECONDS: int = 60
 
     # Symbol re-evaluation interval (seconds) – how often the LLM re-selects symbols
-    SYMBOL_REEVALUATION_INTERVAL: int = 14400  # 4 hours
+    SYMBOL_REEVALUATION_INTERVAL: int = 43200  # 12 hours
 
     @field_validator("SYMBOL_REEVALUATION_INTERVAL")
     @classmethod
