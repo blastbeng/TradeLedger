@@ -479,7 +479,9 @@ Your available {base_currency} balance: {base_balance:.2f}
 Maximum number of stocks to trade: {max_symbols}
 Reference equal-share budget per stock (suggestion only — you decide actual allocations): {per_symbol_budget:.2f} {base_currency}
 Available timeframes: {json.dumps(available_timeframes)}
-Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols) if current_symbols else "None"}"""
+Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols) if current_symbols else "None"}
+
+**Capital Allocation:** When you select many tickers, you can and should potentially use all of the available balance ({base_balance:.2f} {base_currency}) across your trading decisions. Do not artificially restrict yourself to the equal-share budget if you have high conviction in specific setups."""
 
     # --- Open positions summary ---
     if open_positions:
@@ -1122,9 +1124,15 @@ Current balances: {json.dumps(balance)}
         other_symbols = [s for s in all_symbols if s["symbol"] != symbol]
         if other_symbols:
             symbol_list_str = ", ".join(f"{s['symbol']}({s['timeframe']})" for s in other_symbols)
-            prompt += f"Other symbols being traded (you must leave budget for them): {symbol_list_str}\n"
+            prompt += f"Other symbols being traded: {symbol_list_str}\n"
+            prompt += (
+                "**CRITICAL:** You must concentrate your trading decision entirely on THIS single selected ticker "
+                f"({symbol}) where a signal has been detected. While you should leave some budget for other promising "
+                "setups if possible, you may allocate a larger fraction of the available balance to this ticker if you "
+                "have high conviction.\n"
+            )
         else:
-            prompt += "This is the only symbol being traded; you may use the full budget.\n"
+            prompt += "This is the only symbol being traded; you may use the full available balance.\n"
     _positions_compact = [
         {
             "symbol": p.get("symbol"),
@@ -1139,6 +1147,8 @@ Current balances: {json.dumps(balance)}
 Your total available {base_currency} balance: {base_balance:.2f}
 Suggested equal share per symbol (balance / max_symbols): {per_symbol_budget:.2f} {base_currency}
 Maximum symbols to trade: {max_symbols}
+
+**Focus:** Concentrate your analysis and trading decision entirely on this single ticker ({symbol}). You may use up to the total available balance for this trade if your conviction is high, provided it does not exceed the remaining balance.
 """
     # --- Portfolio exposure summary ---
     if portfolio_total_value is not None:
