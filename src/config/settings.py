@@ -514,8 +514,8 @@ class Settings(BaseSettings):
     LLM_ACTUATOR_PROVIDER: str = ""
 
     # Enable automatic fallback to the other LLM provider if the primary fails.
-    # Default: False (opt-in) to avoid masking configuration errors and unexpected costs.
-    LLM_FALLBACK_ENABLED: bool = False
+    # Default: True to ensure the bot remains operational if the primary LLM provider fails.
+    LLM_FALLBACK_ENABLED: bool = True
 
     # Cache version key to invalidate LLM cache on settings reload.
     # Automatically generated on instantiation; changes when settings.reload() is called.
