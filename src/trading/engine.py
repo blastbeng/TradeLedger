@@ -1571,6 +1571,15 @@ class TradingEngine:
         """Persist current symbols, positions, and trade history to SQLite."""
         await self._state_persistence.save_state(force=force)
 
+    def _log_task_exception(self, task: asyncio.Task) -> None:
+        """Log exceptions from background tasks to prevent silent failures."""
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Background task {task.get_name()} failed: {e}", exc_info=True)
+
     async def run(self):
         """Main event‑driven loop using WebSocket ticker updates."""
         logger.info("Trading engine initializing...")
@@ -1578,30 +1587,33 @@ class TradingEngine:
         logger.info("Trading engine started.")
         # Start background tasks
         self._background_tasks: list = []
-        self._background_tasks.append(asyncio.create_task(self._refresh_news_cache()))
-        self._background_tasks.append(asyncio.create_task(self._refresh_current_symbols_news_fast()))
-        self._background_tasks.append(asyncio.create_task(self._download_market_data_loop()))
-        self._background_tasks.append(asyncio.create_task(self._download_all_assets_data_loop()))
-        # yfinance cache cleanup removed – it caused OperationalError('unable to open database file')
-        # when deleting the cache directory while yfinance was actively using it from other tasks.
-        # yfinance manages its own cache internally and does not need external cleanup.
-        self._background_tasks.append(asyncio.create_task(self._download_all_news_loop()))
-        self._background_tasks.append(asyncio.create_task(self._risk_management_loop()))
-        self._background_tasks.append(asyncio.create_task(self._periodic_reconcile()))
-        self._background_tasks.append(asyncio.create_task(self._periodic_reevaluate()))
-        self._background_tasks.append(asyncio.create_task(self._periodic_pause_check()))
-        self._background_tasks.append(asyncio.create_task(self._periodic_pause_resume_check()))
-        self._background_tasks.append(asyncio.create_task(self._periodic_full_market_breadth()))
-        self._background_tasks.append(asyncio.create_task(self._periodic_market_condition_check()))
-        self._background_tasks.append(asyncio.create_task(self._periodic_portfolio_rebalance()))
-        self._background_tasks.append(asyncio.create_task(self._check_pending_entries()))
-        self._background_tasks.append(asyncio.create_task(self._cleanup_orphaned_orders()))
-        self._background_tasks.append(asyncio.create_task(self._process_queued_orders()))
-        self._background_tasks.append(asyncio.create_task(self._monitor_entry_signals_loop()))
-        self._background_tasks.append(asyncio.create_task(self._market_clock_monitor()))
-        self._background_tasks.append(asyncio.create_task(self._refresh_all_quotes_loop()))
-        self._background_tasks.append(asyncio.create_task(self._refresh_ticker_discovery_loop()))
-        self._background_tasks.append(asyncio.create_task(self._redis_health_check_loop()))
+        background_coros = [
+            self._refresh_news_cache(),
+            self._refresh_current_symbols_news_fast(),
+            self._download_market_data_loop(),
+            self._download_all_assets_data_loop(),
+            self._download_all_news_loop(),
+            self._risk_management_loop(),
+            self._periodic_reconcile(),
+            self._periodic_reevaluate(),
+            self._periodic_pause_check(),
+            self._periodic_pause_resume_check(),
+            self._periodic_full_market_breadth(),
+            self._periodic_market_condition_check(),
+            self._periodic_portfolio_rebalance(),
+            self._check_pending_entries(),
+            self._cleanup_orphaned_orders(),
+            self._process_queued_orders(),
+            self._monitor_entry_signals_loop(),
+            self._market_clock_monitor(),
+            self._refresh_all_quotes_loop(),
+            self._refresh_ticker_discovery_loop(),
+            self._redis_health_check_loop(),
+        ]
+        for coro in background_coros:
+            task = asyncio.create_task(coro, name=coro.__qualname__)
+            task.add_done_callback(self._log_task_exception)
+            self._background_tasks.append(task)
 
         while self._running:
             try:
