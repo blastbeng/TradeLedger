@@ -240,7 +240,7 @@ class OrderExecutor:
                 try:
                     await asyncio.to_thread(engine.trader.cancel_order, order_id)
                     logger.info(f"Cancelled exit order {order_id} for {symbol}")
-                except Exception as e:
+                except (RuntimeError, ValueError, ConnectionError) as e:
                     logger.warning(f"Failed to cancel exit order {order_id}: {e}")
                 async with engine._queued_orders_lock:
                     engine.queued_orders = [
@@ -271,7 +271,7 @@ class OrderExecutor:
                 try:
                     await asyncio.to_thread(engine.trader.cancel_order, old_id)
                     logger.info(f"Cancelled old exit order {old_id} for {symbol}")
-                except Exception as e:
+                except (RuntimeError, ValueError, ConnectionError) as e:
                     logger.warning(f"Failed to cancel old exit order {old_id}: {e}")
                 # Remove from queued_orders
                 async with engine._queued_orders_lock:
@@ -337,7 +337,7 @@ class OrderExecutor:
                 }
                 async with engine._queued_orders_lock:
                     engine.queued_orders.append(_sl_queued)
-            except Exception as e:
+            except (RuntimeError, ValueError, ConnectionError) as e:
                 logger.error(f"Failed to place stop-loss order for {symbol}: {e}")
 
         elif sl_ot == "trailing_stop":
@@ -379,7 +379,7 @@ class OrderExecutor:
                         }
                         async with engine._queued_orders_lock:
                             engine.queued_orders.append(_trail_queued)
-                    except Exception as e:
+                    except (RuntimeError, ValueError, ConnectionError) as e:
                         logger.error(f"Failed to place trailing-stop order for {symbol}: {e}")
 
         # --- Take-profit order ---
@@ -425,7 +425,7 @@ class OrderExecutor:
                 }
                 async with engine._queued_orders_lock:
                     engine.queued_orders.append(_tp_queued)
-            except Exception as e:
+            except (RuntimeError, ValueError, ConnectionError) as e:
                 logger.error(f"Failed to place take-profit order for {symbol}: {e}")
 
         # --- Link OCO pair ---
@@ -640,7 +640,7 @@ class OrderExecutor:
                 try:
                     await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
                     logger.info(f"Cancelled OCO pair {oco_pair_id} for {queued['symbol']}")
-                except Exception as e:
+                except (RuntimeError, ValueError, ConnectionError) as e:
                     logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
                 async with engine._queued_orders_lock:
                     engine.queued_orders = [
@@ -655,7 +655,7 @@ class OrderExecutor:
                 try:
                     await asyncio.to_thread(engine.trader.cancel_order, order_id)
                     logger.info(f"Cancelled remaining part of partially filled exit order {order_id} for {queued['symbol']}")
-                except Exception as e:
+                except (RuntimeError, ValueError, ConnectionError) as e:
                     logger.warning(f"Failed to cancel remaining part of exit order {order_id}: {e}")
                 async with engine._queued_orders_lock:
                     engine.queued_orders = [
@@ -695,7 +695,7 @@ class OrderExecutor:
                         await engine._place_exit_orders(
                             queued["symbol"], _dummy_signal, _exit_prices, pos.get("timeframe")
                         )
-                    except Exception as _e:
+                    except (RuntimeError, ValueError, ConnectionError) as _e:
                         logger.warning(
                             f"Failed to place replacement exit orders after partial "
                             f"fill for {queued['symbol']}: {_e}"
@@ -800,7 +800,7 @@ class OrderExecutor:
                 if stop_loss is not None and price > 0:
                     loss_if_stop = pos_value * (price - stop_loss) / price
                     total_open_stop_risk += max(0, loss_if_stop)
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 pass
 
         # Apply global risk multiplier to desired amount (scales all positions)
@@ -1033,7 +1033,7 @@ class OrderExecutor:
                 min_amount_limit = float(asset.min_order_size) if asset.min_order_size else None
                 if not asset.fractionable and (min_amount_limit is None or min_amount_limit < 1.0):
                     min_amount_limit = 1.0
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 min_amount_limit = None
             # Compute min cost from min amount and current price
             if min_amount_limit is not None and price:
@@ -1103,6 +1103,7 @@ class OrderExecutor:
                         }
                     )
         except Exception as e:
+        except (AttributeError, TypeError, ValueError, RuntimeError) as e:
             logger.warning(f"Could not verify/adjust min order size for {symbol}: {e}")
 
         return amount
@@ -1392,7 +1393,7 @@ class OrderExecutor:
                 timeframe=timeframe,
                 atr=atr,
             )
-        except Exception as e:
+        except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
             async with engine._cycle_spent_lock:
                 engine._cycle_spent = max(0.0, engine._cycle_spent - amount)
             logger.error(f"Buy order failed for {symbol}: {e}")
@@ -1468,7 +1469,7 @@ class OrderExecutor:
                 min_amount_limit = float(asset.min_order_size) if asset.min_order_size else None
                 if not asset.fractionable and (min_amount_limit is None or min_amount_limit < 1.0):
                     min_amount_limit = 1.0
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 min_amount_limit = None
             if min_amount_limit is not None and price:
                 min_cost_limit = min_amount_limit * price
@@ -1499,6 +1500,7 @@ class OrderExecutor:
                     )
                 return
         except Exception as e:
+        except (AttributeError, TypeError, ValueError, RuntimeError, KeyError) as e:
             logger.warning(f"Could not verify min sell size for {symbol}: {e}")
 
         need_limit = not engine._is_regular_hours()
@@ -1540,7 +1542,7 @@ class OrderExecutor:
                 raw = await asyncio.to_thread(engine.redis.get, "trading:limit_price_max_distance_pct")
                 if raw:
                     max_distance = float(raw)
-            except Exception:
+            except (TypeError, ValueError, RuntimeError):
                 pass
             # For a sell, the limit must not be too far above the bid
             if max_distance > 0 and ticker and ticker.get('bid'):
@@ -1828,7 +1830,7 @@ class OrderExecutor:
                     sell_msg,
                     summary=sell_summary,
                 )
-        except Exception as e:
+        except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
             logger.error(f"Sell order failed for {symbol}: {e}")
             if engine.notifier:
                 await engine.notifier.send_notification(
@@ -1870,7 +1872,7 @@ class OrderExecutor:
                 raw = await asyncio.to_thread(engine.redis.get, "trading:limit_price_max_distance_pct")
                 if raw:
                     max_distance = float(raw)
-            except Exception:
+            except (TypeError, ValueError, RuntimeError):
                 pass
             if ticker and ticker.get('ask') and max_distance > 0:
                 ask = ticker['ask']
@@ -2114,7 +2116,8 @@ class OrderExecutor:
             base = queued["symbol"].split("/")[0]
             quotes = await engine._get_quotes_async([base], timeout=45.0)
             ticker = quotes.get(base)
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
+        except (KeyError, RuntimeError, ConnectionError, ValueError):
             return False
         if not ticker or ticker.get("last") is None:
             return False
@@ -2136,7 +2139,7 @@ class OrderExecutor:
             )
             if oco_order_obj is not None and oco_order_obj.status == "filled":
                 oco_already_filled = True
-        except Exception:
+        except (RuntimeError, ValueError, AttributeError):
             pass
 
         if oco_already_filled:
@@ -2155,7 +2158,7 @@ class OrderExecutor:
                     f"Stop triggered for {queued['symbol']} at {current_price:.4f}, "
                     f"cancelled OCO pair {oco_pair_id}"
                 )
-            except Exception as e:
+            except (RuntimeError, ValueError, ConnectionError) as e:
                 logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
             # Remove the cancelled take-profit from queued_orders (with lock)
             async with engine._queued_orders_lock:
@@ -2240,7 +2243,7 @@ class OrderExecutor:
         )
         try:
             await asyncio.to_thread(engine.trader.cancel_order, order_id)
-        except Exception as e:
+        except (RuntimeError, ValueError, ConnectionError) as e:
             logger.error(f"Failed to cancel timed-out order {order_id}: {e}")
 
         # Refund remaining reserved capital for buy orders
@@ -2319,7 +2322,7 @@ class OrderExecutor:
                 try:
                     await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
                     logger.info(f"Cancelled OCO pair {oco_pair_id} for {status} exit order {order_id}")
-                except Exception as e:
+                except (RuntimeError, ValueError, ConnectionError) as e:
                     logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
                 async with engine._queued_orders_lock:
                     engine.queued_orders = [
@@ -2533,7 +2536,7 @@ class OrderExecutor:
                     atr=queued.get('atr'),
                 )
                 await self.place_exit_orders(symbol, reconstructed_signal, exit_prices, queued.get('timeframe'))
-            except Exception as e:
+            except (TypeError, ValueError, RuntimeError, AttributeError) as e:
                 logger.error(f"Failed to place exit orders after queued buy fill for {symbol}: {e}")
                 if engine.notifier:
                     stock_name = await engine._get_stock_name(symbol)
@@ -2719,7 +2722,7 @@ class OrderExecutor:
         base = symbol.split("/")[0]
         try:
             balance = await asyncio.to_thread(engine.trader.get_balance, base)
-        except Exception as e:
+        except (RuntimeError, ValueError, ConnectionError) as e:
             logger.warning(f"Dust sweep: could not fetch balance for {base}: {e}")
             return
         if balance <= 0:
@@ -2734,7 +2737,7 @@ class OrderExecutor:
             quotes = await engine._get_quotes_async([base], timeout=45.0)
             ticker = quotes.get(base)
             price = ticker["last"]
-        except Exception as e:
+        except (KeyError, RuntimeError, ConnectionError, ValueError) as e:
             logger.warning(f"Dust sweep: could not fetch price for {symbol}: {e}")
             return
 
@@ -2744,7 +2747,7 @@ class OrderExecutor:
             min_amount = float(asset.min_order_size) if asset.min_order_size else None
             if not asset.fractionable and (min_amount is None or min_amount < 1.0):
                 min_amount = 1.0
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             min_amount = None
         if min_amount is not None and balance < float(min_amount):
             logger.info(f"Dust sweep: {balance} {base} below min amount {min_amount}, cannot sell.")
@@ -2819,7 +2822,7 @@ class OrderExecutor:
                         "exit_reason": "dust_sweep",
                     }
                 )
-        except Exception as e:
+        except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
             logger.error(f"Dust sweep failed for {symbol}: {e}")
 
     async def execute_partial_sell(
@@ -2859,7 +2862,7 @@ class OrderExecutor:
             min_amount = float(asset.min_order_size) if asset.min_order_size else None
             if not asset.fractionable and (min_amount is None or min_amount < 1.0):
                 min_amount = 1.0
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             min_amount = None
         if min_amount is not None and sell_amount < float(min_amount):
             logger.info(f"{level_label} sell amount {sell_amount:.6f} below min {min_amount} for {symbol}, skipping.")
@@ -2981,7 +2984,7 @@ class OrderExecutor:
                     summary=summary,
                 )
             return True
-        except Exception as e:
+        except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
             logger.error(f"{level_label} sell failed for {symbol}: {e}")
             if engine.notifier:
                 await engine.notifier.send_notification(
@@ -3156,7 +3159,7 @@ class OrderExecutor:
             try:
                 await asyncio.to_thread(engine.trader.cancel_order, old_order_id)
                 logger.info(f"Cancelled old stop order {old_order_id} for {symbol} (replaced by {new_order_id})")
-            except Exception as e:
+            except (RuntimeError, ValueError, ConnectionError) as e:
                 logger.warning(f"Failed to cancel old stop order {old_order_id} (new order {new_order_id} already placed): {e}")
 
             # Remove the old queued entry now that the new one is active
@@ -3181,7 +3184,7 @@ class OrderExecutor:
                         "new_stop_price": new_stop_price,
                     }
                 )
-        except Exception as e:
+        except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
             logger.error(
                 f"Failed to place replacement stop order for {symbol}: {e}. "
                 f"Old stop order {old_order_id} remains active at the previous price."
@@ -3248,7 +3251,7 @@ class OrderExecutor:
         if oco_pair_id:
             try:
                 await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 pass
             async with engine._queued_orders_lock:
                 engine.queued_orders = [q for q in engine.queued_orders if q.get("order_id") != oco_pair_id]
