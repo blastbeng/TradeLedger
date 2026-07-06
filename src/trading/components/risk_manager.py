@@ -20,8 +20,11 @@ logger = logging.getLogger(__name__)
 class RiskManager:
     """Handles risk management checks for open positions."""
 
-    def __init__(self, engine):
+    def __init__(self, engine, event_bus):
         self.engine = engine
+        self.event_bus = event_bus
+        self.event_bus.subscribe("check_risk_management", self.check_risk_management)
+        self.event_bus.subscribe("record_position_pnl_snapshots", self.record_position_pnl_snapshots)
 
     async def record_position_pnl_snapshots(self):
         """Record P&L snapshots for all open positions to the database."""
@@ -150,7 +153,7 @@ class RiskManager:
                     logger.info(f"Retrying deferred dust sweep for {symbol} (market is now open).")
                     async with engine._positions_lock:
                         pos.pop("_dust_sweep_pending", None)
-                    await engine._sweep_dust(symbol)
+                    await self.event_bus.publish("sweep_dust", symbol)
                     continue
 
                 ticker = risk_tickers.get(symbol)
@@ -305,7 +308,8 @@ class RiskManager:
                         "exit_reason": "hard_max_loss",
                     }
                 )
-            await engine._execute_signal(
+            await self.event_bus.publish(
+                "execute_signal",
                 symbol,
                 Signal(action="SELL", confidence=1.0, reasoning="Hard maximum loss threshold exceeded"),
                 exit_reason="hard_max_loss"
@@ -342,7 +346,8 @@ class RiskManager:
                             "exit_reason": "max_unrealized_loss",
                         }
                     )
-                await engine._execute_signal(
+                await self.event_bus.publish(
+                    "execute_signal",
                     symbol,
                     Signal(action="SELL", confidence=1.0, reasoning="Max unrealized loss"),
                     exit_reason="max_unrealized_loss"
@@ -393,7 +398,8 @@ class RiskManager:
                                     "exit_reason": "news_sentiment_exit",
                                 }
                             )
-                        await engine._execute_signal(
+                        await self.event_bus.publish(
+                            "execute_signal",
                             symbol,
                             Signal(action="SELL", confidence=1.0, reasoning="News sentiment exit"),
                             exit_reason="news_sentiment_exit"
@@ -624,8 +630,8 @@ class RiskManager:
                         f"Stop price changed for {symbol}: {original_stop:.4f} -> {pos['stop_loss']:.4f}. "
                         f"Replacing native stop order."
                     )
-                    await engine._replace_native_stop_order(
-                        symbol, pos, original_stop, pos["stop_loss"]
+                    await self.event_bus.publish(
+                        "replace_native_stop_order", symbol, pos, original_stop, pos["stop_loss"]
                     )
                     # Update the stored baseline
                     async with engine._positions_lock:
@@ -680,7 +686,7 @@ class RiskManager:
                     if review_count > max_partial_tp_reviews:
                         # Force execute
                         logger.info(f"Partial TP level {i} for {symbol}: max reviews reached, executing.")
-                        await engine._execute_partial_tp_level(symbol, i, current_price, None, ticker)
+                        await self.event_bus.publish("execute_partial_tp_level", symbol, i, current_price, None, ticker)
                         # After execution, the level is marked triggered; clear the review flags for this level
                         async with engine._positions_lock:
                             pos.pop("_partial_tp_triggered", None)
@@ -716,7 +722,7 @@ class RiskManager:
                     review_count = pos.get("_partial_tp_single_review_count", 0) + 1
                     if review_count > max_partial_tp_reviews:
                         logger.info(f"Single partial TP for {symbol}: max reviews reached, executing.")
-                        await engine._execute_partial_tp_single(symbol, current_price, None, ticker)
+                        await self.event_bus.publish("execute_partial_tp_single", symbol, current_price, None, ticker)
                         async with engine._positions_lock:
                             pos.pop("_partial_tp_triggered_single", None)
                             pos.pop("_partial_tp_single_review_count", None)
@@ -777,12 +783,12 @@ class RiskManager:
                                 "exit_reason": "dust_keep_timeout",
                             }
                         )
-                    await engine._sweep_dust(symbol)
+                    await self.event_bus.publish("sweep_dust", symbol)
                     return True
                 review_count = pos.get("_dust_sweep_review_count", 0) + 1
                 if review_count > max_dust_sweep_reviews:
                     logger.info(f"Dust sweep max reviews reached for {symbol}, force sweeping.")
-                    await engine._sweep_dust(symbol)
+                    await self.event_bus.publish("sweep_dust", symbol)
                     return True
                 else:
                     async with engine._positions_lock:
@@ -947,7 +953,7 @@ class RiskManager:
                     # The native stop-loss order filled — process the fill to
                     # update positions and trade history, avoiding a double sell.
                     logger.info(f"Stop-loss order {sl_order_id} filled for {symbol}, processing native fill.")
-                    await engine._process_native_exit_fill(symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
+                    await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
                 else:
                     # Stop-loss not yet filled — cancel it and execute manual sell
                     try:
@@ -963,7 +969,8 @@ class RiskManager:
                         pos.pop("stop_loss_order_id", None)
                         pos.pop("stop_loss_order_type", None)
                         pos.pop("_native_stop_price", None)
-                    await engine._execute_signal(
+                    await self.event_bus.publish(
+                        "execute_signal",
                         symbol,
                         Signal(action="SELL", confidence=1.0, reasoning="Stop-loss triggered (risk check)"),
                         exit_reason="stop_loss"
@@ -1041,7 +1048,7 @@ class RiskManager:
 
                 if tp_filled:
                     logger.info(f"Take-profit order {tp_order_id} filled for {symbol}, processing native fill.")
-                    await engine._process_native_exit_fill(symbol, tp_order_id, tp_order_obj, pos, "take_profit")
+                    await self.event_bus.publish("process_native_exit_fill", symbol, tp_order_id, tp_order_obj, pos, "take_profit")
                 else:
                     # TP not yet filled — cancel it and execute manual sell
                     try:
@@ -1055,7 +1062,8 @@ class RiskManager:
                         ]
                     async with engine._positions_lock:
                         pos.pop("take_profit_order_id", None)
-                    await engine._execute_signal(
+                    await self.event_bus.publish(
+                        "execute_signal",
                         symbol,
                         Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered (risk check)"),
                         exit_reason="take_profit"
@@ -1108,7 +1116,8 @@ class RiskManager:
                         "exit_reason": "stop_loss_max_reviews",
                     }
                 )
-            await engine._execute_signal(
+            await self.event_bus.publish(
+                "execute_signal",
                 symbol,
                 Signal(action="SELL", confidence=1.0, reasoning="Stop-loss (max reviews)"),
                 exit_reason="stop_loss_max_reviews"
@@ -1177,7 +1186,8 @@ class RiskManager:
                         "exit_reason": "take_profit_max_reviews",
                     }
                 )
-            await engine._execute_signal(
+            await self.event_bus.publish(
+                "execute_signal",
                 symbol,
                 Signal(action="SELL", confidence=1.0, reasoning="Take-profit (max reviews)"),
                 exit_reason="take_profit_max_reviews"

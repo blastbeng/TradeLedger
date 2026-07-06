@@ -41,8 +41,22 @@ class AssetInfo:
 class MarketDataManager:
     """Handles market data downloads and indicator computation for the TradingEngine."""
 
-    def __init__(self, engine):
+    def __init__(self, engine, event_bus):
         self.engine = engine
+        self.event_bus = event_bus
+        self.event_bus.subscribe("get_stock_name", self.get_stock_name)
+        self.event_bus.subscribe("get_tradable_assets", self.get_tradable_assets)
+        self.event_bus.subscribe("get_btp_bonds", self.get_btp_bonds)
+        self.event_bus.subscribe("get_etf_symbols", self.get_etf_symbols)
+        self.event_bus.subscribe("get_asset_info", self.get_asset_info)
+        self.event_bus.subscribe("get_quotes_async", self._get_quotes_async)
+        self.event_bus.subscribe("get_quotes_batched", self._get_quotes_batched)
+        self.event_bus.subscribe("get_all_position_tickers", self._get_all_position_tickers)
+        self.event_bus.subscribe("get_all_position_tickers_sync", self._get_all_position_tickers_sync)
+        self.event_bus.subscribe("get_tickers_for_symbols_sync", self._get_tickers_for_symbols_sync)
+        self.event_bus.subscribe("backfill_new_symbol", self._backfill_new_symbol)
+        self.event_bus.subscribe("get_clock", self.get_clock)
+        self.event_bus.subscribe("compute_and_store_indicators", self.compute_and_store_indicators)
         self._clock_cache: Optional[Any] = None
         self._clock_cache_time: float = 0.0
 

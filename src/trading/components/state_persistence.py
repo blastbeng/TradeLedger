@@ -22,8 +22,11 @@ logger = logging.getLogger(__name__)
 class StatePersistence:
     """Handles persistence of trading engine state to the database."""
 
-    def __init__(self, engine):
+    def __init__(self, engine, event_bus):
         self.engine = engine
+        self.event_bus = event_bus
+        self.event_bus.subscribe("save_state", self.save_state)
+        self.event_bus.subscribe("get_pause_status", self.get_pause_status)
 
     async def save_state(self, force: bool = False):
         """Persist current symbols, positions, and trade history to SQLite.

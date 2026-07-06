@@ -20,8 +20,19 @@ logger = logging.getLogger(__name__)
 class OrderExecutor:
     """Handles order execution and fill processing for the TradingEngine."""
 
-    def __init__(self, engine):
+    def __init__(self, engine, event_bus):
         self.engine = engine
+        self.event_bus = event_bus
+        self.event_bus.subscribe("execute_signal", self.execute_signal)
+        self.event_bus.subscribe("cancel_exit_orders", self.cancel_exit_orders)
+        self.event_bus.subscribe("place_exit_orders", self.place_exit_orders)
+        self.event_bus.subscribe("sweep_dust", self.sweep_dust)
+        self.event_bus.subscribe("execute_partial_tp_single", self.execute_partial_tp_single)
+        self.event_bus.subscribe("execute_partial_tp_level", self.execute_partial_tp_level)
+        self.event_bus.subscribe("replace_native_stop_order", self.replace_native_stop_order)
+        self.event_bus.subscribe("sell_all_positions", self.sell_all_positions)
+        self.event_bus.subscribe("sell_position", self.sell_position)
+        self.event_bus.subscribe("process_native_exit_fill", self.process_native_exit_fill)
 
     async def execute_signal(
         self,
@@ -121,7 +132,7 @@ class OrderExecutor:
                 )
             return
         for symbol in list(engine.positions.keys()):
-            await engine._execute_signal(
+            await self.execute_signal(
                 symbol,
                 Signal(action="SELL", confidence=1.0, reasoning="Manual sell all"),
                 exit_reason="manual_sell_all"
@@ -139,7 +150,7 @@ class OrderExecutor:
                 )
             return
         if symbol in engine.positions:
-            await engine._execute_signal(
+            await self.execute_signal(
                 symbol,
                 Signal(action="SELL", confidence=1.0, reasoning="Manual sell"),
                 exit_reason="manual_sell"
@@ -582,7 +593,7 @@ class OrderExecutor:
 
         engine._append_trade(trade)
         await asyncio.to_thread(insert_trade, trade)
-        await engine._save_state(force=True)
+        await self.event_bus.publish("save_state", force=True)
         engine._portfolio_exposure_cache = None
         logger.info(f"Manual trade logged: {side} {quantity} {symbol} @ {price:.4f}")
         return {"status": "ok", "trade": trade}
@@ -626,12 +637,12 @@ class OrderExecutor:
             # Update remaining quote amount
             original_amount = queued.get('original_amount', queued['amount'])
             queued['amount'] = original_amount - queued['filled_cost']
-            await engine._handle_queued_buy_fill(trade_dict, queued)
+            await self.handle_queued_buy_fill(trade_dict, queued)
         else:
             # Update remaining base amount
             original_amount = queued.get('original_amount', queued['amount'])
             queued['amount'] = original_amount - filled_qty
-            await engine._handle_queued_sell_fill(trade_dict, queued, partial=True)
+            await self.handle_queued_sell_fill(trade_dict, queued, partial=True)
 
         # --- OCO handling for exit orders ---
         if queued.get("is_exit_order"):
@@ -1423,7 +1434,7 @@ class OrderExecutor:
 
         # Cancel any native exit orders before selling
         if pos:
-            await engine._cancel_exit_orders(symbol)
+            await self.cancel_exit_orders(symbol)
 
         params = signal.strategy_params or {}
         fill_timeout = params.get("order_fill_timeout_seconds", settings.ORDER_FILL_TIMEOUT_SECONDS)
@@ -1752,7 +1763,7 @@ class OrderExecutor:
                     engine._last_strategy_eval.pop(symbol, None)
                     engine._last_decisions.pop(symbol, None)
                     engine._pending_entries.pop(symbol, None)
-                    await engine._remove_symbol_if_paused(symbol)
+                    await self.event_bus.publish("remove_symbol_if_paused", symbol)
                 else:
                     async with engine._positions_lock:
                         engine.positions[symbol]["amount"] = remaining_amount
@@ -1793,11 +1804,11 @@ class OrderExecutor:
                 engine._last_strategy_eval.pop(symbol, None)
                 engine._last_decisions.pop(symbol, None)
                 engine._pending_entries.pop(symbol, None)
-                await engine._remove_symbol_if_paused(symbol)
+                await self.event_bus.publish("remove_symbol_if_paused", symbol)
             engine._append_trade(order)
             engine._balance_cache = None
             await asyncio.to_thread(insert_trade, order)
-            await engine._save_state(force=True)
+            await self.event_bus.publish("save_state", force=True)
             engine._portfolio_exposure_cache = None
             if engine.notifier:
                 # Human-readable labels for common exit reasons
@@ -2078,7 +2089,7 @@ class OrderExecutor:
         engine._append_trade(order)
         engine._balance_cache = None  # force refresh on next fetch
         await asyncio.to_thread(insert_trade, order)
-        await engine._save_state(force=True)
+        await self.event_bus.publish("save_state", force=True)
         engine._portfolio_exposure_cache = None
         if engine.notifier:
             buy_msg = f"🟢 BUY {display_symbol}: {order['amount']:.6f} @ {order['price']:.4f}"
@@ -2507,7 +2518,7 @@ class OrderExecutor:
         # Note: _cycle_spent was already updated when the order was queued
         # in _execute_signal, so we do NOT add to it here to avoid double-counting.
         await asyncio.to_thread(insert_trade, trade_dict)
-        await engine._save_state(force=True)
+        await self.event_bus.publish("save_state", force=True)
         engine._portfolio_exposure_cache = None
         if engine.notifier:
             stock_name = await engine._get_stock_name(symbol)
@@ -2614,7 +2625,7 @@ class OrderExecutor:
             remaining_net_base = net_base - trade_dict['amount']
 
             # Cancel old exit orders because quantity changed
-            await engine._cancel_exit_orders(symbol)
+            await self.cancel_exit_orders(symbol)
 
             if remaining_amount <= 0 or remaining_net_base <= 0:
                 # Position fully closed via partial fills
@@ -2629,7 +2640,7 @@ class OrderExecutor:
                 engine._last_strategy_eval.pop(symbol, None)
                 engine._last_decisions.pop(symbol, None)
                 engine._pending_entries.pop(symbol, None)
-                await engine._remove_symbol_if_paused(symbol)
+                await self.event_bus.publish("remove_symbol_if_paused", symbol)
             else:
                 async with engine._positions_lock:
                     engine.positions[symbol]["amount"] = remaining_amount
@@ -2660,11 +2671,11 @@ class OrderExecutor:
                         "stop_loss_price": engine.positions[symbol].get("stop_loss"),
                         "take_profit_price": engine.positions[symbol].get("take_profit"),
                     }
-                await engine._place_exit_orders(symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe"))
+                await self.place_exit_orders(symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe"))
         else:
             # Full fill (non-partial) – original logic
             # Cancel any remaining exit orders before removing the position
-            await engine._cancel_exit_orders(symbol)
+            await self.cancel_exit_orders(symbol)
             if pos:
                 cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
                 realized_pnl = net_quote - cost_basis
@@ -2684,12 +2695,12 @@ class OrderExecutor:
             engine._last_strategy_eval.pop(symbol, None)
             engine._last_decisions.pop(symbol, None)
             engine._pending_entries.pop(symbol, None)
-            await engine._remove_symbol_if_paused(symbol)
+            await self.event_bus.publish("remove_symbol_if_paused", symbol)
 
         engine._append_trade(trade_dict)
         engine._balance_cache = None
         await asyncio.to_thread(insert_trade, trade_dict)
-        await engine._save_state(force=True)
+        await self.event_bus.publish("save_state", force=True)
         engine._portfolio_exposure_cache = None
         if engine.notifier:
             reason_labels = {
@@ -2816,18 +2827,18 @@ class OrderExecutor:
                     order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
                 engine._append_trade(order)
                 await asyncio.to_thread(insert_trade, order)
-                await engine._save_state(force=True)
+                await self.event_bus.publish("save_state", force=True)
                 engine._portfolio_exposure_cache = None
 
             # Cancel any remaining exit orders before removing the position
-            await engine._cancel_exit_orders(symbol)
+            await self.cancel_exit_orders(symbol)
 
             # Remove the now-empty position
             async with engine._positions_lock:
                 engine.positions.pop(symbol, None)
             engine._strategy_intervals.pop(symbol, None)
             engine._last_strategy_eval.pop(symbol, None)
-            await engine._remove_symbol_if_paused(symbol)
+            await self.event_bus.publish("remove_symbol_if_paused", symbol)
 
             if engine.notifier:
                 await engine.notifier.send_notification(
@@ -2932,7 +2943,7 @@ class OrderExecutor:
             remaining_cost_basis = cost_basis - prorated_cost_basis
             remaining_net_base = net_base - filled_amount
 
-            await engine._cancel_exit_orders(symbol)
+            await self.cancel_exit_orders(symbol)
 
             if remaining_amount <= 0 or remaining_net_base <= 0:
                 async with engine._positions_lock:
@@ -2940,7 +2951,7 @@ class OrderExecutor:
                 engine._strategy_intervals.pop(symbol, None)
                 engine._last_strategy_eval.pop(symbol, None)
                 engine._pending_entries.pop(symbol, None)
-                await engine._remove_symbol_if_paused(symbol)
+                await self.event_bus.publish("remove_symbol_if_paused", symbol)
             else:
                 async with engine._positions_lock:
                     engine.positions[symbol]["amount"] = remaining_amount
@@ -2953,7 +2964,7 @@ class OrderExecutor:
                 is_dust = min_amount is not None and remaining_amount < float(min_amount)
                 if is_dust:
                     logger.info(f"Remaining {remaining_amount:.6f} {base} is dust after {level_label} for {symbol}, sweeping.")
-                    await engine._sweep_dust(symbol)
+                    await self.sweep_dust(symbol)
                 else:
                     from src.strategies.base import Signal
                     dummy_params = {
@@ -2976,11 +2987,11 @@ class OrderExecutor:
                         "stop_loss_price": engine.positions[symbol].get("stop_loss"),
                         "take_profit_price": engine.positions[symbol].get("take_profit"),
                     }
-                    await engine._place_exit_orders(symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe"))
+                    await self.place_exit_orders(symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe"))
 
             engine._append_trade(order)
             await asyncio.to_thread(insert_trade, order)
-            await engine._save_state(force=True)
+            await self.event_bus.publish("save_state", force=True)
             engine._portfolio_exposure_cache = None
 
             if engine.notifier:
@@ -3262,7 +3273,7 @@ class OrderExecutor:
                     'status': 'closed',
                     'timestamp': int(time.time() * 1000),
                 }
-                await engine._handle_queued_sell_fill(trade_dict, queued, partial=False)
+                await self.handle_queued_sell_fill(trade_dict, queued, partial=False)
 
         # Cancel the OCO pair if it still exists
         oco_pair_id = queued.get("oco_pair") if queued else None

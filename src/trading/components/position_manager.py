@@ -23,8 +23,18 @@ logger = logging.getLogger(__name__)
 class PositionManager:
     """Handles position management operations for the TradingEngine."""
 
-    def __init__(self, engine):
+    def __init__(self, engine, event_bus):
         self.engine = engine
+        self.event_bus = event_bus
+        self.event_bus.subscribe("update_position_params", self.update_position_params)
+        self.event_bus.subscribe("compute_portfolio_exposure_summary", self.compute_portfolio_exposure_summary)
+        self.event_bus.subscribe("compute_equity_and_drawdown", self.compute_equity_and_drawdown)
+        self.event_bus.subscribe("compute_performance_metrics", self.compute_performance_metrics)
+        self.event_bus.subscribe("compute_trade_pattern_analysis", self.compute_trade_pattern_analysis)
+        self.event_bus.subscribe("get_open_trades", self.get_open_trades)
+        self.event_bus.subscribe("get_profit_summary", self.get_profit_summary)
+        self.event_bus.subscribe("get_risk_metrics", self.get_risk_metrics)
+        self.event_bus.subscribe("reconcile_positions", self.reconcile_positions)
 
     def ensure_cost_basis(self):
         """If positions lack cost_basis, compute it from amount and price (backward compat)."""
@@ -954,10 +964,10 @@ class PositionManager:
                 async with engine._cycle_spent_lock:
                     engine._cycle_spent = max(0.0, engine._cycle_spent - sum(q.get('amount', 0.0) for q in removed_buys))
             if symbol in engine.positions:
-                await engine._cancel_exit_orders(symbol)
+                await self.event_bus.publish("cancel_exit_orders", symbol)
                 async with engine._positions_lock:
                     pos = engine.positions.pop(symbol)
-                par_value = 100.0
+                par_value = 100.0;
                 cost = pos["amount"] * par_value
                 from src.exchanges.fees import calculate_transaction_costs
                 costs = calculate_transaction_costs("SELL", par_value, pos["amount"], symbol=symbol)
@@ -995,7 +1005,7 @@ class PositionManager:
                             "exit_reason": "btp_matured",
                         }
                     )
-                await engine._remove_symbol_if_paused(symbol)
+                await self.event_bus.publish("remove_symbol_if_paused", symbol)
 
         for entry in list(engine.current_symbols):
             symbol = entry["symbol"]
@@ -1010,7 +1020,7 @@ class PositionManager:
                     async with engine._cycle_spent_lock:
                         engine._cycle_spent = max(0.0, engine._cycle_spent - sum(q.get('amount', 0.0) for q in removed_buys))
                 if symbol in engine.positions:
-                    await engine._cancel_exit_orders(symbol)
+                    await self.event_bus.publish("cancel_exit_orders", symbol)
                     async with engine._positions_lock:
                         pos = engine.positions.pop(symbol)
                     cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
@@ -1049,7 +1059,7 @@ class PositionManager:
                     engine._append_trade(trade)
                     await asyncio.to_thread(insert_trade, trade)
                     logger.warning(f"Delisted {symbol}: recorded forced sell of {pos['amount']} at {close_price}.")
-                    await engine._remove_symbol_if_paused(symbol)
+                    await self.event_bus.publish("remove_symbol_if_paused", symbol)
 
         # --- Externally modified balances ---
         # Fetch all balances at once instead of per-position API calls
@@ -1108,7 +1118,7 @@ class PositionManager:
                     await engine._cancel_exit_orders(symbol)
                     async with engine._positions_lock:
                         del engine.positions[symbol]
-                    await engine._remove_symbol_if_paused(symbol)
+                    await self.event_bus.publish("remove_symbol_if_paused", symbol)
                 else:
                     async with engine._positions_lock:
                         engine.positions[symbol]["amount"] = actual_balance
@@ -1166,7 +1176,7 @@ class PositionManager:
                             }
                         )
                     signal = Signal(action="SELL", confidence=1.0, reasoning="Missing LLM risk parameters after re-evaluation attempts")
-                    await engine._execute_signal(symbol, signal, exit_reason="force_close")
+                    await self.event_bus.publish("execute_signal", symbol, signal, exit_reason="force_close")
                 else:
                     logger.info(
                         f"Position {symbol} still missing risk parameters "
@@ -1174,5 +1184,5 @@ class PositionManager:
                     )
 
         # Persist any changes made during reconciliation
-        await engine._save_state(force=True)
+        await self.event_bus.publish("save_state", force=True)
         engine._portfolio_exposure_cache = None

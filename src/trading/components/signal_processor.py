@@ -33,8 +33,14 @@ logger = logging.getLogger(__name__)
 class SignalProcessor:
     """Handles per-symbol signal processing for the TradingEngine."""
 
-    def __init__(self, engine):
+    def __init__(self, engine, event_bus):
         self.engine = engine
+        self.event_bus = event_bus
+        self.event_bus.subscribe("process_symbol", self.process_symbol)
+        self.event_bus.subscribe("check_pause_resume_decision", self.check_pause_resume_decision)
+        self.event_bus.subscribe("detect_entry_signal", self.detect_entry_signal)
+        self.event_bus.subscribe("process_pending_entry", self.process_pending_entry)
+        self.event_bus.subscribe("check_entry_condition_once", self.check_entry_condition_once)
 
     @staticmethod
     def _parse_analysis_response(response: str) -> Optional[Dict[str, Any]]:
@@ -1550,7 +1556,8 @@ class SignalProcessor:
                             "llm_model": llm_model,
                         }
                     )
-                await engine._position_manager.update_position_params(
+                await self.event_bus.publish(
+                    "update_position_params",
                     symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
                 )
                 engine._state_dirty = True
@@ -1569,7 +1576,8 @@ class SignalProcessor:
                             "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model,
                         }
                     )
-                await engine._execute_signal(
+                await self.event_bus.publish(
+                    "execute_signal",
                     symbol, Signal(action="SELL", confidence=1.0, reasoning="Max hold expired, LLM did not extend"),
                     exit_reason="max_hold_time_llm_no_extend"
                 )
@@ -1597,7 +1605,8 @@ class SignalProcessor:
                         engine.positions[symbol]["stop_loss"] = current_price * (1 - new_stop_pct)
                         engine.positions[symbol].pop("_stop_loss_triggered", None)
                         engine.positions[symbol].pop("_stop_loss_review_count", None)
-                    await engine._position_manager.update_position_params(
+                    await self.event_bus.publish(
+                        "update_position_params",
                         symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
                     )
                     engine._state_dirty = True
@@ -1627,7 +1636,8 @@ class SignalProcessor:
                             "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model,
                         }
                     )
-                await engine._execute_signal(
+                await self.event_bus.publish(
+                    "execute_signal",
                     symbol, Signal(action="SELL", confidence=1.0, reasoning="Stop-loss triggered, LLM did not provide new stop"),
                     exit_reason="stop_loss_llm_no_action"
                 )
@@ -1654,7 +1664,8 @@ class SignalProcessor:
                         engine.positions[symbol]["take_profit"] = current_price * (1 + new_tp_pct)
                         engine.positions[symbol].pop("_take_profit_triggered", None)
                         engine.positions[symbol].pop("_take_profit_review_count", None)
-                    await engine._position_manager.update_position_params(
+                    await self.event_bus.publish(
+                        "update_position_params",
                         symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
                     )
                     engine._state_dirty = True
@@ -1684,7 +1695,8 @@ class SignalProcessor:
                             "model_type": strategy_model_type, "llm_provider": llm_provider, "llm_model": llm_model,
                         }
                     )
-                await engine._execute_signal(
+                await self.event_bus.publish(
+                    "execute_signal",
                     symbol, Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered, LLM did not provide new take-profit"),
                     exit_reason="take_profit_llm_no_action"
                 )
@@ -1711,7 +1723,8 @@ class SignalProcessor:
                     engine.positions[symbol]["partial_tp_levels_triggered"] = []
                     engine.positions[symbol]["partial_tp_depth_wait_start"] = {}
                 logger.info(f"LLM updated partial TP levels for {symbol}")
-                await engine._position_manager.update_position_params(
+                await self.event_bus.publish(
+                    "update_position_params",
                     symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
                 )
                 engine._state_dirty = True
@@ -1724,13 +1737,13 @@ class SignalProcessor:
             else:
                 logger.info(f"LLM did not update partial TP levels for {symbol}, executing triggered level(s)")
                 if engine.positions[symbol].get("_partial_tp_triggered_single"):
-                    await engine._execute_partial_tp_single(symbol, current_price, None, ticker)
+                    await self.event_bus.publish("execute_partial_tp_single", symbol, current_price, None, ticker)
                     async with engine._positions_lock:
                         engine.positions[symbol].pop("_partial_tp_triggered_single", None)
                         engine.positions[symbol].pop("_partial_tp_single_review_count", None)
                 if engine.positions[symbol].get("_partial_tp_triggered"):
                     for lvl in engine.positions[symbol].get("_partial_tp_triggered_levels", []):
-                        await engine._execute_partial_tp_level(symbol, lvl, current_price, None, ticker)
+                        await self.event_bus.publish("execute_partial_tp_level", symbol, lvl, current_price, None, ticker)
                     async with engine._positions_lock:
                         engine.positions[symbol].pop("_partial_tp_triggered", None)
                         engine.positions[symbol].pop("_partial_tp_review_count", None)
@@ -1765,7 +1778,7 @@ class SignalProcessor:
                 engine.positions[symbol].pop("_dust_sweep_triggered", None)
                 engine.positions[symbol].pop("_dust_sweep_review_count", None)
             logger.info(f"LLM decided to sell dust for {symbol}")
-            await engine._sweep_dust(symbol)
+            await self.event_bus.publish("sweep_dust", symbol)
             return True
 
         return False
@@ -2539,7 +2552,8 @@ class SignalProcessor:
 
         # Apply any updated risk parameters from the LLM to the open position
         if symbol in engine.positions and signal.strategy_params:
-            await engine._position_manager.update_position_params(
+            await self.event_bus.publish(
+                "update_position_params",
                 symbol,
                 signal.strategy_params,
                 signal.indicator_config,
@@ -2566,7 +2580,7 @@ class SignalProcessor:
             ):
                 return
 
-            await engine._execute_signal(symbol, validated, timeframe=assigned_tf, atr=atr)
+            await self.event_bus.publish("execute_signal", symbol, validated, timeframe=assigned_tf, atr=atr)
 
     async def run_step1b_llm_call(
         self,

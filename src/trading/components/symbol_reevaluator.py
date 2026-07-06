@@ -29,8 +29,11 @@ logger = logging.getLogger(__name__)
 class SymbolReevaluator:
     """Handles symbol re-evaluation for the TradingEngine."""
 
-    def __init__(self, engine):
+    def __init__(self, engine, event_bus):
         self.engine = engine
+        self.event_bus = event_bus
+        self.event_bus.subscribe("reevaluate_symbols_impl", self.reevaluate_symbols_impl)
+        self.event_bus.subscribe("check_market_conditions", self.check_market_conditions)
 
     async def check_cooldown_and_reset(
         self, force: bool
@@ -130,7 +133,7 @@ class SymbolReevaluator:
                 sym = entry["symbol"]
                 tf = entry["timeframe"]
                 logger.info(f"Triggering immediate backfill for newly selected symbol {sym} ({tf})")
-                asyncio.create_task(engine._backfill_new_symbol(sym, tf))
+                asyncio.create_task(self.event_bus.publish("backfill_new_symbol", sym, tf))
 
         # Also trigger immediate news fetch for newly selected symbols
         if settings.NEWS_ENABLED:

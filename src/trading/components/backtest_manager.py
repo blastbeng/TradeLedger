@@ -26,8 +26,10 @@ logger = logging.getLogger(__name__)
 class BacktestManager:
     """Handles backtesting and final decision LLM calls for the TradingEngine."""
 
-    def __init__(self, engine):
+    def __init__(self, engine, event_bus):
         self.engine = engine
+        self.event_bus = event_bus
+        self.event_bus.subscribe("run_backtest_and_final_decision", self.run_backtest_and_final_decision)
 
     def _prepare_backtest_variants(
         self,
