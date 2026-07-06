@@ -988,4 +988,6 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
 
+from dotenv import load_dotenv
+load_dotenv(override=True)
 settings = Settings()
