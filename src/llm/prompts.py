@@ -514,43 +514,43 @@ Select between {settings.MIN_SYMBOLS if settings.MIN_SYMBOLS > 0 else 0} and {ma
             f"If you cannot find {settings.MIN_SYMBOLS} high-conviction setups, select the next best symbols with small position_size_fraction (0.01-0.05) and tight stops. "
             f"Do NOT select fewer than {settings.MIN_SYMBOLS} — the engine will override your selection and add more symbols automatically.\n"
         )
-    prompt += """
+    prompt += f"""
 
 Each symbol can only appear once in your selection. Choose the single best timeframe for each stock based on the multi-timeframe OHLCV data.
 
 **Output ONLY the raw JSON object as specified.**
 
 Return a JSON object with the following fields:
-- "stocks": a JSON array of objects, each with "symbol", "timeframe" (the timeframe must be one of the available timeframes, e.g., {', '.join([repr(tf) for tf in available_timeframes])}), and "sector" (a string representing the stock's sector, e.g., "Technology", "Healthcare", "Financials", "Energy", "Consumer Discretionary", "Consumer Staples", "Industrials", "Materials", "Real Estate", "Utilities", "Communication Services"). Each object may optionally include "max_tenure_hours" (a positive float, hours) to force-sell the stock after that many hours in the portfolio. Omit or set to null for no limit.
-- "max_stocks": an integer between 0 and {max_symbols} indicating how many stocks you actually want to trade. Set to 0 to pause trading. This must equal the length of the "stocks" array. **You should set this as high as possible (up to {max_symbols}) when there are profitable opportunities — do not default to small numbers like 2 or 3 when you have {max_symbols} slots available.**
-- "max_positions_per_sector": an integer between 1 and {max_symbols} indicating the maximum number of open positions allowed in the same sector at the same time. This helps diversify risk across different sectors. You decide this value based on current market volatility and your confidence in specific sectors.
-- "skip_eval_price_change_atr_mult": a float (e.g., 0.5) indicating the minimum price change (as a multiple of ATR%) required to trigger a new LLM strategy evaluation for a stock. If the price moves less than this, the LLM is skipped to save costs.
-- "skip_eval_rsi_change": a float (e.g., 5.0) indicating the minimum absolute RSI change required to trigger a new LLM evaluation.
-- "skip_eval_rsi_oversold": a float (e.g., 30.0) indicating the RSI level below which the bot should always trigger a new LLM evaluation (potential oversold buy signal), even if nothing else changed.
-- "skip_eval_rsi_overbought": a float (e.g., 70.0) indicating the RSI level above which the bot should always trigger a new LLM evaluation (potential overbought sell signal), even if nothing else changed.
-- "skip_eval_macd_hist_change": a float (e.g., 0.0005) indicating the minimum absolute MACD histogram change required to trigger a new LLM evaluation.
-- "regime_adx_strong": a float (e.g., 40.0) indicating the ADX level above which a trend is considered strong.
-- "regime_adx_moderate": a float (e.g., 25.0) indicating the ADX level above which a trend is considered moderate.
-- "regime_volatility_high_pct": a float (e.g., 80.0) indicating the ATR percentile above which volatility is considered high.
-- "regime_volatility_low_pct": a float (e.g., 20.0) indicating the ATR percentile below which volatility is considered low.
-- "regime_bb_squeeze_width": a float (e.g., 0.02) indicating the Bollinger Band width below which the market is considered in a squeeze.
-- "regime_bb_expansion_width": a float (e.g., 0.08) indicating the Bollinger Band width above which the market is considered in expansion.
-- "min_stop_loss_atr_mult": a float (e.g., 1.5) indicating the minimum stop-loss as a multiple of ATR%. Trades with a fixed stop below this multiple of ATR will be rejected. Lower values allow tighter stops; higher values require wider stops.
-- "min_max_hold_time_mult": a float (e.g., 2.0) indicating the minimum max_hold_time_seconds as a multiple of the candle timeframe (in seconds). Trades with max hold time below this multiple will be rejected.
-- "max_stop_loss_reviews": an integer between 1 and 20 (e.g., 3). The maximum number of times the LLM can review a triggered stop-loss before the engine force-sells the position. Lower values = quicker exit on stop-loss; higher values = more LLM discretion.
-- "max_take_profit_reviews": an integer between 1 and 20 (e.g., 3). The maximum number of times the LLM can review a triggered take-profit before the engine force-sells the position. Lower values = quicker profit-taking; higher values = more LLM discretion.
-- "max_partial_tp_reviews": an integer between 1 and 20 (e.g., 3). The maximum number of times the LLM can review a triggered partial take-profit before the engine force-executes the partial sell.
-- "max_dust_sweep_reviews": an integer between 1 and 20 (e.g., 3). The maximum number of times the LLM can review a triggered dust sweep before the engine force-sells the remaining dust.
-- "min_llm_pause_duration_seconds": an integer between 300 and 14400 (e.g., 3600). The minimum duration in seconds that the LLM must wait before it can resume trading after pausing. This prevents rapid pause/resume cycles. Lower values = faster resume capability; higher values = more conservative cooldown.
-- "pause_max_consecutive_keep": an integer between 1 and 10 (e.g., 3). The maximum number of consecutive "keep paused" decisions the LLM can make before the engine force-resumes trading with a reduced risk multiplier. Lower values = quicker force-resume; higher values = more patience with LLM's pause decisions.
-- "pause_force_resume_risk_multiplier": a float between 0.0 and 1.0 (e.g., 0.3). The global risk multiplier applied when the engine force-resumes trading after too many consecutive "keep paused" decisions. Lower values = more conservative forced resume; higher values = more aggressive.
-- "max_portfolio_exposure_pct": a float between 0.0 and 1.0 (e.g., 0.7 for 70%). The maximum percentage of total portfolio value that can be deployed in open positions.
-- "max_portfolio_stop_risk_pct": a float between 0.0 and 1.0 (e.g., 0.05 for 5%). The maximum total stop-loss risk as a percentage of portfolio value.
-- "min_risk_reward_ratio": a positive number (e.g., 1.5). The minimum reward:risk ratio required for all trades. Trades with a lower ratio will be rejected.
-- "confidence_rejection_threshold": a float between 0.0 and 1.0 (e.g., 0.4). The minimum confidence required for any trade to be executed. Trades with confidence below this threshold will be rejected. Set to 0.0 to disable. This is a global threshold that applies to all trades in the cycle.
-- "limit_price_max_distance_pct": an optional float between 0.0 and 1.0 (e.g., 0.05 for 5%). The maximum allowed distance of a limit price from the current best bid/ask. Orders with a limit price further away than this are rejected to avoid indefinite queuing. Set to 0.0 to disable the check entirely. If omitted, the engine uses its default (0.05).
-- "min_viable_trade_amount": an optional positive number (e.g., 500.0) indicating the minimum amount in {base_currency} that should be allocated to a single trade for it to be profitable after fees. This is a SUGGESTION only — the engine does NOT block trades below this value. You decide the actual position size dynamically. Set to 0 to allow trades of any size (only exchange minimums apply).
-- "reasoning": a short string (max 200 characters) explaining why you selected these specific stocks and timeframes. This will be shown to the user, so make it informative.
+- `"stocks"`: Array of objects with `"symbol"`, `"timeframe"` (one of: {', '.join([repr(tf) for tf in available_timeframes])}), `"sector"`, and optional `"max_tenure_hours"` (float).
+- `"max_stocks"`: Integer 0-{max_symbols}. Must equal length of `"stocks"`. Set high (up to {max_symbols}) when opportunities exist.
+- `"max_positions_per_sector"`: Integer 1-{max_symbols}. Max open positions per sector.
+- `"skip_eval_price_change_atr_mult"`: Float (e.g., 0.5). Min price change (ATR%) to trigger LLM eval.
+- `"skip_eval_rsi_change"`: Float (e.g., 5.0). Min RSI change to trigger LLM eval.
+- `"skip_eval_rsi_oversold"`: Float (e.g., 30.0). RSI level below which LLM eval is always triggered.
+- `"skip_eval_rsi_overbought"`: Float (e.g., 70.0). RSI level above which LLM eval is always triggered.
+- `"skip_eval_macd_hist_change"`: Float (e.g., 0.0005). Min MACD histogram change to trigger LLM eval.
+- `"regime_adx_strong"`: Float (e.g., 40.0). ADX level for strong trend.
+- `"regime_adx_moderate"`: Float (e.g., 25.0). ADX level for moderate trend.
+- `"regime_volatility_high_pct"`: Float (e.g., 80.0). ATR percentile for high volatility.
+- `"regime_volatility_low_pct"`: Float (e.g., 20.0). ATR percentile for low volatility.
+- `"regime_bb_squeeze_width"`: Float (e.g., 0.02). Bollinger Band width for squeeze.
+- `"regime_bb_expansion_width"`: Float (e.g., 0.08). Bollinger Band width for expansion.
+- `"min_stop_loss_atr_mult"`: Float (e.g., 1.5). Min stop-loss as ATR% multiple.
+- `"min_max_hold_time_mult"`: Float (e.g., 2.0). Min max_hold_time as candle timeframe multiple.
+- `"max_stop_loss_reviews"`: Integer 1-20. Max LLM reviews on stop-loss trigger.
+- `"max_take_profit_reviews"`: Integer 1-20. Max LLM reviews on take-profit trigger.
+- `"max_partial_tp_reviews"`: Integer 1-20. Max LLM reviews on partial take-profit trigger.
+- `"max_dust_sweep_reviews"`: Integer 1-20. Max LLM reviews on dust sweep trigger.
+- `"min_llm_pause_duration_seconds"`: Integer 300-14400. Min pause duration before resume.
+- `"pause_max_consecutive_keep"`: Integer 1-10. Max consecutive "keep paused" before force-resume.
+- `"pause_force_resume_risk_multiplier"`: Float 0.0-1.0. Risk multiplier on force-resume.
+- `"max_portfolio_exposure_pct"`: Float 0.0-1.0. Max portfolio value deployed.
+- `"max_portfolio_stop_risk_pct"`: Float 0.0-1.0. Max total stop-loss risk as portfolio %.
+- `"min_risk_reward_ratio"`: Positive number (e.g., 1.5). Min reward:risk ratio.
+- `"confidence_rejection_threshold"`: Float 0.0-1.0. Min confidence for trade execution.
+- `"limit_price_max_distance_pct"`: Optional Float 0.0-1.0. Max limit price distance from bid/ask.
+- `"min_viable_trade_amount"`: Optional positive number. Suggested min trade amount in {base_currency}.
+- `"reasoning"`: Short string (max 200 chars) explaining your selection.
 
 You may optionally include the following fields:
 - "stock_revaluation_interval_seconds" (integer >= 3600, i.e., at least 1 hour) to change how often the bot re-evaluates the stock list. The bot also re-evaluates automatically before market open and when unusual market conditions are detected (significant news, extreme indicators, unusually active market).
