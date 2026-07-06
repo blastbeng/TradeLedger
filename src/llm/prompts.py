@@ -1162,26 +1162,21 @@ Maximum symbols to trade: {max_symbols}
             )
     if cycle_spent is not None and remaining_balance is not None:
         prompt += (
-            f"Amount already allocated to other symbols in this cycle: {cycle_spent:.2f} {base_currency}\n"
+            f"Amount allocated to other symbols this cycle: {cycle_spent:.2f} {base_currency}\n"
             f"Remaining available for this symbol: {remaining_balance:.2f} {base_currency}\n"
-            "Your position_size_fraction must not require more than the remaining balance. "
-            "If the remaining balance is low, reduce your fraction accordingly or output HOLD.\n"
+            "Your `position_size_fraction` must not exceed the remaining balance. If low, reduce fraction or HOLD.\n"
         )
-        # Help the LLM set min_profit_per_trade realistically
         max_possible_amount = min(per_symbol_budget, remaining_balance)
         prompt += (
-            f"The maximum amount that can actually be allocated to this trade is "
-            f"{max_possible_amount:.2f} {base_currency} (the smaller of the per‑symbol budget and the remaining balance). "
-            "If you set `min_profit_per_trade`, ensure it is not larger than "
-            "`max_possible_amount * take_profit_pct`. Otherwise the trade will be skipped.\n"
+            f"Max amount allocatable to this trade: {max_possible_amount:.2f} {base_currency} "
+            f"(min of per-symbol budget and remaining balance). If setting `min_profit_per_trade`, "
+            f"ensure it is ≤ `max_possible_amount * take_profit_pct`.\n"
         )
     if global_risk_multiplier is not None and global_risk_multiplier < 1.0:
         prompt += (
-            f"\n**Global risk multiplier is currently {global_risk_multiplier}.** "
-            "All position sizes will be multiplied by this factor. "
-            "The actual amount used will be: position_size_fraction × total_balance × global_risk_multiplier. "
-            "Adjust your position_size_fraction accordingly – if you want a certain exposure, "
-            "you may need to set a higher fraction to compensate, or accept the reduced size.\n"
+            f"\n**Global risk multiplier: {global_risk_multiplier}.** "
+            "Actual amount used = `position_size_fraction × total_balance × global_risk_multiplier`. "
+            "Adjust `position_size_fraction` to compensate if you want a specific exposure.\n"
         )
     # --- Queued orders for this symbol ---
     if queued_orders:
