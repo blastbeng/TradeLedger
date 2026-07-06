@@ -1052,7 +1052,7 @@ class SignalProcessor:
         volume_trend_val = None
         current_volume = ticker.get('quoteVolume', 0) or 0
         if current_volume > 0:
-            volume_trend_val = await engine._compute_volume_trend(symbol, current_volume, timeframe=assigned_tf)
+            volume_trend_val = await self._compute_volume_trend(symbol, current_volume, timeframe=assigned_tf)
 
         # Full market breadth from Redis
         full_market_breadth = None
@@ -3847,6 +3847,65 @@ class SignalProcessor:
         # Have an open position – skip if price far from stop/tp and indicators calm
         # (the risk management loop will handle stop/tp)
         return True
+
+    async def _compute_volume_trend(self, symbol: str, current_volume: float, timeframe: Optional[str] = None) -> Optional[float]:
+        """Compute volume trend as ratio of current 24h volume to EMA of past volumes.
+
+        Returns the ratio (e.g., 2.0 means current volume is 2× the average).
+        Returns None if volume data is unavailable.
+
+        For long-term timeframes (>= 1 day), the ratio is cached in Redis
+        to avoid recomputing on every evaluation cycle.
+        """
+        engine = self.engine
+        if current_volume <= 0:
+            return None
+
+        # Determine cache TTL based on timeframe
+        cache_ttl = 0  # no caching by default
+        if timeframe is not None:
+            tf_seconds = engine._timeframe_to_seconds(timeframe)
+            if tf_seconds >= 2_592_000:  # >= 1 month
+                cache_ttl = 3600       # 1 hour
+            elif tf_seconds >= 604_800:  # >= 1 week
+                cache_ttl = 1800       # 30 minutes
+            elif tf_seconds >= 86_400:  # >= 1 day
+                cache_ttl = 900        # 15 minutes
+
+        # Check ratio cache first (long timeframes only)
+        ratio_cache_key = f"volume_trend:ratio:{symbol}"
+        if cache_ttl > 0:
+            try:
+                cached_ratio = await asyncio.to_thread(engine.redis.get, ratio_cache_key)
+                if cached_ratio is not None:
+                    return round(float(cached_ratio), 3)
+            except Exception:
+                pass
+
+        redis_key = f"volume_trend:ema:{symbol}"
+        alpha = 0.3  # EMA smoothing factor
+
+        try:
+            stored = await asyncio.to_thread(engine.redis.get, redis_key)
+            if stored is not None:
+                old_avg = float(stored)
+                new_avg = alpha * current_volume + (1 - alpha) * old_avg
+                ratio = current_volume / old_avg if old_avg > 0 else 1.0
+                # Store the updated average with 7-day TTL
+                await asyncio.to_thread(engine.redis.setex, redis_key, 7 * 24 * 3600, str(new_avg))
+                # Cache the ratio for long-term timeframes
+                if cache_ttl > 0:
+                    await asyncio.to_thread(engine.redis.setex, ratio_cache_key, cache_ttl, str(ratio))
+                return round(ratio, 3)
+            else:
+                # First observation: initialize with current volume, ratio = 1.0
+                await asyncio.to_thread(engine.redis.setex, redis_key, 7 * 24 * 3600, str(current_volume))
+                if cache_ttl > 0:
+                    await asyncio.to_thread(engine.redis.setex, ratio_cache_key, cache_ttl, "1.0")
+                return 1.0
+        except Exception as e:
+            logger.info(f"Volume trend computation failed for {symbol}: {e}")
+            return None
 
     async def detect_entry_signal(self, symbol: str, timeframe: str) -> bool:
         """Return True if a favourable entry condition is detected for the symbol.
