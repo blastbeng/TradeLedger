@@ -1088,7 +1088,13 @@ def _discover_financedatabase_tickers() -> List[str]:
     suffix = settings.TICKER_SUFFIX
     try:
         equities = fd.Equities()
-        df = equities.select(country=country)
+        try:
+            df = equities.select(country=country)
+        except (RuntimeError, ValueError, AttributeError, TypeError):
+            df = equities.select()
+            # Fallback: filter the dataframe manually if 'country' arg is unsupported
+            if df is not None and not df.empty and 'country' in df.columns:
+                df = df[df['country'].str.lower() == country.lower()]
         if df is None or df.empty:
             logger.warning(f"No tickers found in FinanceDatabase for country: {country}")
             return []
@@ -1141,6 +1147,9 @@ def discover_italian_ucits_etfs() -> List[str]:
             df = etfs.select(country="Italy")
         except (RuntimeError, ValueError, AttributeError, TypeError):
             df = etfs.select()
+            # Fallback: filter the dataframe manually if 'country' arg is unsupported
+            if df is not None and not df.empty and 'country' in df.columns:
+                df = df[df['country'].str.lower() == 'italy']
 
         if df is None or df.empty:
             return []
