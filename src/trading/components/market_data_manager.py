@@ -9,7 +9,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
@@ -488,3 +488,68 @@ class MarketDataManager:
                 logger.debug(f"Indicators computed and stored for {symbol} {timeframe}")
         except Exception as e:
             logger.warning(f"Failed to compute/store indicators for {symbol} {timeframe}: {e}")
+    async def _fill_gaps(self, symbol: str, timeframe: str):
+        """Detect and fill gaps in stored OHLCV data for a symbol/timeframe."""
+        engine = self.engine
+        interval_ms = engine._timeframe_to_ms(timeframe)
+        if interval_ms <= 0:
+            return
+
+        # Get all stored timestamps
+        loop = asyncio.get_running_loop()
+        candles = await loop.run_in_executor(engine._download_executor, get_ohlcv, symbol, timeframe, 50000)
+        if len(candles) < 2:
+            logger.debug(f"Not enough data to check gaps for {symbol} {timeframe}")
+            return
+
+        timestamps = sorted(c["timestamp"] for c in candles)
+
+        # Find all gaps larger than 1.5x the expected interval
+        gaps: List[Tuple[int, int, int]] = []  # (gap_size, gap_start, gap_end)
+        for i in range(len(timestamps) - 1):
+            gap = timestamps[i + 1] - timestamps[i]
+            if gap > interval_ms * 1.5:
+                gap_start = timestamps[i] + interval_ms
+                gap_end = timestamps[i + 1] - interval_ms
+                if gap_end > gap_start:
+                    gaps.append((gap, gap_start, gap_end))
+
+        gaps_found = len(gaps)
+        gaps_filled = 0
+        max_gaps_per_cycle = 5  # Limit gap fills per cycle to avoid rate limits
+
+        # Sort by gap size descending so the largest (most impactful) gaps are filled first
+        gaps.sort(key=lambda g: g[0], reverse=True)
+
+        for gap_size, gap_start, gap_end in gaps[:max_gaps_per_cycle]:
+            logger.debug(f"Gap detected for {symbol} {timeframe}: {gap_start} → {gap_end} (size {gap_size}ms)")
+            await self._backfill_ohlcv(symbol, timeframe, gap_start, gap_end, ignore_existing=True)
+            gaps_filled += 1
+
+        if gaps_found == 0:
+            logger.debug(f"No gaps found for {symbol} {timeframe}")
+        else:
+            logger.debug(f"Gap check for {symbol} {timeframe}: {gaps_found} gaps found, {gaps_filled} filled")
+
+    async def _backfill_new_symbol(self, symbol: str, timeframe: str):
+        """Immediately backfill 30 days of OHLCV data for a newly selected symbol (assigned timeframe only)."""
+        now_ms = int(time.time() * 1000)
+        start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+        logger.debug(f"Starting immediate backfill for newly selected symbol {symbol} ({timeframe})")
+        await self._download_symbol_ohlcv(symbol, timeframe, start_ms, now_ms)
+        logger.debug(f"Immediate backfill complete for {symbol} ({timeframe})")
+
+    async def _download_symbol_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, quiet: bool = False, force: bool = False) -> None:
+        """Download OHLCV, fill gaps, and compute/store indicators for a single symbol/timeframe."""
+        engine = self.engine
+        loop = asyncio.get_running_loop()
+        try:
+            inserted = await self._backfill_ohlcv(symbol, timeframe, start_ms, end_ms, quiet=quiet, force=force)
+            if inserted > 0 or force:
+                await self._fill_gaps(symbol, timeframe)
+                db_candles = await loop.run_in_executor(engine._download_executor, get_ohlcv, symbol, timeframe, 200)
+                if db_candles:
+                    raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+                    await self.compute_and_store_indicators(symbol, timeframe, raw_candles)
+        except Exception as e:
+            logger.warning(f"Download failed for {symbol} {timeframe}: {e}")
