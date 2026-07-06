@@ -55,17 +55,12 @@ class TelegramBot:
             return False
         return update.effective_chat.id == self.allowed_chat_id
 
-    async def _send_long_reply(self, update: Update, text: str, parse_mode: str = None, reply_markup=None):
-        """Send a message, splitting it into chunks if it exceeds Telegram's 4096 char limit."""
-        max_len = 4000
-        if len(text) <= max_len:
-            await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-            return
-        
-        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
-        for i, chunk in enumerate(chunks):
-            # Only attach reply_markup to the last message
-            markup = reply_markup if i == len(chunks) - 1 else None
+    async def _send_long_reply(self, update: Update, text: str, parse_mode: str = None, reply_markup=None):                                                                                                                                                       
+        """Send a message, splitting it into chunks if it exceeds Telegram's 4096 char limit."""                                                                                                                                                                  
+        chunks = self._split_text(text)                                                                                                                                                                                                                           
+        for i, chunk in enumerate(chunks):                                                                                                                                                                                                                        
+            # Only attach reply_markup to the last message                                                                                                                                                                                                        
+            markup = reply_markup if i == len(chunks) - 1 else None                                                                                                                                                                                               
             await update.message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup)
 
     @staticmethod
