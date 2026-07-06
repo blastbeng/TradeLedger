@@ -44,6 +44,7 @@ services:
     volumes:
       - ./src:/app/src   # for development hot-reload (optional)
       - ./data:/app/data
+      - ./.env:/app/.env:ro
 
   trade-ledger-redis-dummy:
     image: alpine

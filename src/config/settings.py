@@ -957,6 +957,9 @@ class Settings(BaseSettings):
         - REDIS_HOST / REDIS_PORT / REDIS_DB — Redis client already connected
         - WEB_HOST / WEB_PORT — Uvicorn already listening
         """
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+
         new_settings = self.__class__()
         new_settings.validate_llm_settings()
 
