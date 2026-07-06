@@ -297,6 +297,9 @@ class TradingEngine:
         self._state_dirty = True
         await self._save_state(force=True)
 
+        # Persist the new PAPER_INITIAL_BALANCE so we don't reset again on next restart
+        await asyncio.to_thread(save_trading_state, "paper_initial_balance", settings.PAPER_INITIAL_BALANCE)
+
         if self.notifier:
             await self.notifier.send_notification(
                 "♻️ Paper trading state has been reset due to PAPER_INITIAL_BALANCE change.",
