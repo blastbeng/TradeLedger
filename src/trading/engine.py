@@ -2232,28 +2232,6 @@ class TradingEngine:
             llm_model="default_hold",
         )
 
-    def _parse_analysis_response(self, response: str) -> Optional[Dict[str, Any]]:
-        """Parse the Step 1a analysis LLM response into a dict.
-
-        Expected fields: action, confidence, reasoning, strategy_direction.
-        Returns None if parsing fails.
-        """
-        try:
-            parsed = json.loads(response)
-            if not isinstance(parsed, dict):
-                return None
-            action = parsed.get("action", "").upper()
-            if action not in ("BUY", "SELL", "HOLD"):
-                return None
-            return {
-                "action": action,
-                "confidence": float(parsed.get("confidence", 0.0)),
-                "reasoning": parsed.get("reasoning", ""),
-                "strategy_direction": parsed.get("strategy_direction", ""),
-            }
-        except (json.JSONDecodeError, TypeError, ValueError):
-            return None
-
     async def _get_global_risk_multiplier(self) -> Optional[float]:
         """Return the global risk multiplier, falling back to persisted value if Redis key expired."""
         raw = await asyncio.to_thread(self.redis.get, "trading:global_risk_multiplier")

@@ -36,6 +36,29 @@ class SignalProcessor:
     def __init__(self, engine):
         self.engine = engine
 
+    @staticmethod
+    def _parse_analysis_response(response: str) -> Optional[Dict[str, Any]]:
+        """Parse the Step 1a analysis LLM response into a dict.
+
+        Expected fields: action, confidence, reasoning, strategy_direction.
+        Returns None if parsing fails.
+        """
+        try:
+            parsed = json.loads(response)
+            if not isinstance(parsed, dict):
+                return None
+            action = parsed.get("action", "").upper()
+            if action not in ("BUY", "SELL", "HOLD"):
+                return None
+            return {
+                "action": action,
+                "confidence": float(parsed.get("confidence", 0.0)),
+                "reasoning": parsed.get("reasoning", ""),
+                "strategy_direction": parsed.get("strategy_direction", ""),
+            }
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
+
     async def process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False) -> None:
         """Fetch market data, get LLM strategy, validate, and execute."""
         engine = self.engine
@@ -2442,7 +2465,7 @@ class SignalProcessor:
             llm_provider = step1a_result["provider"]
             llm_model = step1a_result["model"]
             logger.info(f"LLM Step 1a (analysis) completed for {symbol} (provider={llm_provider}, model={llm_model})")
-            analysis_result = engine._parse_analysis_response(step1a_response)
+            analysis_result = self._parse_analysis_response(step1a_response)
             if analysis_result is None:
                 logger.warning(f"Failed to parse Step 1a analysis response for {symbol}. Retrying with correction.")
                 correction_prompt = (
@@ -2462,7 +2485,7 @@ class SignalProcessor:
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
-                analysis_result = engine._parse_analysis_response(retry_result["response"])
+                analysis_result = self._parse_analysis_response(retry_result["response"])
                 llm_provider = retry_result["provider"]
                 llm_model = retry_result["model"]
             # Update snapshot after a real LLM call
@@ -4217,7 +4240,7 @@ class SignalProcessor:
         except Exception as e:
             return None, None, None, {"error": f"LLM Step 1a call failed: {e}"}
 
-        analysis = engine._parse_analysis_response(step1a_response)
+        analysis = self._parse_analysis_response(step1a_response)
         if analysis is None:
             return None, None, None, {"error": "Failed to parse Step 1a analysis response", "raw_response": step1a_response}
 
