@@ -578,6 +578,99 @@
             };
         }
 
+        function updateProfitUI(p) {
+            const profitDiv = document.getElementById('profit');
+            if (p) {
+                const cur = p.base_currency || '';
+                const totalWallet = (p.current_balance || 0) + (p.open_value || 0);
+                const pnlSign = p.total_pnl >= 0 ? '+' : '';
+                const pnlPctSign = p.pnl_percent >= 0 ? '+' : '';
+                const wins = p.wins ?? 0;
+                const losses = p.losses ?? 0;
+                const winRate = (p.win_rate ?? 0) * 100;
+                profitDiv.innerHTML = `
+                    💱 Base Currency: ${cur}<br><br>
+                    💵 Initial Balance:  ${p.initial_balance?.toFixed(6)}<br>
+                    🏦 Current Balance:  ${p.current_balance?.toFixed(6)}<br>
+                    📊 Open Positions:   ${p.open_value?.toFixed(6)}<br>
+                    💼 Total Wallet:     ${totalWallet.toFixed(6)}<br>
+                    🧾 Fees Paid:        ${p.total_fees?.toFixed(6)}<br>
+                    📈 Total P&L: <span class="${p.total_pnl >= 0 ? 'green' : 'red'}">${pnlSign}${p.total_pnl?.toFixed(6)}  (${pnlPctSign}${p.pnl_percent?.toFixed(2)}%)</span><br>
+                    <br>
+                    🏆 Wins: ${wins}  💔 Losses: ${losses}<br>
+                    📊 Win Rate: ${winRate.toFixed(1)}%
+                `;
+            }
+        }
+
+        function updatePerformanceUI(perf) {
+            const perfBody = document.querySelector('#performance-table tbody');
+            const perfFoot = document.querySelector('#performance-table tfoot');
+            perfBody.innerHTML = '';
+            perfFoot.innerHTML = '';
+            if (perf) {
+                if (perf.rows && perf.rows.length > 0) {
+                    perf.rows.forEach(r => {
+                        const row = perfBody.insertRow();
+                        row.insertCell().textContent = r.display_symbol || r.symbol;
+                        row.insertCell().textContent = r.timeframe || '—';
+                        row.insertCell().textContent = r.trade_count;
+                        const profitCell = row.insertCell();
+                        profitCell.textContent = r.profit?.toFixed(4);
+                        profitCell.className = r.profit >= 0 ? 'green' : 'red';
+                        const profitPctCell = row.insertCell();
+                        profitPctCell.textContent = r.profit_pct?.toFixed(2) + '%';
+                        profitPctCell.className = r.profit_pct >= 0 ? 'green' : 'red';
+                        row.insertCell().textContent = r.win_rate?.toFixed(1) + '%';
+                    });
+                } else {
+                    const row = perfBody.insertRow();
+                    const cell = row.insertCell();
+                    cell.colSpan = 6;
+                    cell.textContent = '📭 No closed sell trades yet';
+                    cell.style.textAlign = 'center';
+                    cell.style.color = 'var(--text-secondary)';
+                }
+                if (perf.total) {
+                    const t = perf.total;
+                    const footRow = perfFoot.insertRow();
+                    footRow.insertCell().textContent = t.display_symbol || t.symbol;
+                    footRow.insertCell().textContent = t.timeframe || '—';
+                    footRow.insertCell().textContent = t.trade_count;
+                    const totalProfitCell = footRow.insertCell();
+                    totalProfitCell.textContent = t.profit?.toFixed(4);
+                    totalProfitCell.className = t.profit >= 0 ? 'green' : 'red';
+                    const totalProfitPctCell = footRow.insertCell();
+                    totalProfitPctCell.textContent = t.profit_pct?.toFixed(2) + '%';
+                    totalProfitPctCell.className = t.profit_pct >= 0 ? 'green' : 'red';
+                    footRow.insertCell().textContent = t.win_rate?.toFixed(1) + '%';
+                    footRow.style.fontWeight = 'bold';
+                    footRow.style.borderTop = '2px solid var(--border)';
+                }
+            }
+        }
+
+        function updateMarketStatusUI(ms) {
+            const marketStatusDiv = document.getElementById('market-status');
+            if (marketStatusDiv) {
+                if (ms) {
+                    let html = '';
+                    if (ms.market_breadth) {
+                        html += `<strong>📊 Market Breadth (candidates):</strong> ${ms.market_breadth.positive_pct}% positive (${ms.market_breadth.positive_count}/${ms.market_breadth.total_count})<br>`;
+                    }
+                    if (ms.full_market_breadth) {
+                        html += `<strong>🌐 Full Market Breadth:</strong> ${ms.full_market_breadth.positive_pct}% positive (${ms.full_market_breadth.positive_count}/${ms.full_market_breadth.total_count})<br>`;
+                    }
+                    if (ms.spy_price != null) {
+                        html += `<strong>📈 Benchmark Price:</strong> ${ms.spy_price.toFixed(2)}<br>`;
+                    }
+                    marketStatusDiv.innerHTML = html || 'Market data not available yet.';
+                } else {
+                    marketStatusDiv.textContent = 'Market data not available yet.';
+                }
+            }
+        }
+
         function updateUI(data) {
             // Trading status badge
             const tradingDot = document.getElementById('trading-dot');
@@ -882,98 +975,11 @@
                     .join('<br>') || 'None';
             }
 
-            // Profit
-            const profitDiv = document.getElementById('profit');
-            if (data.profit) {
-                const p = data.profit;
-                const cur = p.base_currency || '';
-                const totalWallet = (p.current_balance || 0) + (p.open_value || 0);
-                const pnlSign = p.total_pnl >= 0 ? '+' : '';
-                const pnlPctSign = p.pnl_percent >= 0 ? '+' : '';
-                const wins = p.wins ?? 0;
-                const losses = p.losses ?? 0;
-                const winRate = (p.win_rate ?? 0) * 100;
-                profitDiv.innerHTML = `
-                    💱 Base Currency: ${cur}<br><br>
-                    💵 Initial Balance:  ${p.initial_balance?.toFixed(6)}<br>
-                    🏦 Current Balance:  ${p.current_balance?.toFixed(6)}<br>
-                    📊 Open Positions:   ${p.open_value?.toFixed(6)}<br>
-                    💼 Total Wallet:     ${totalWallet.toFixed(6)}<br>
-                    🧾 Fees Paid:        ${p.total_fees?.toFixed(6)}<br>
-                    📈 Total P&L: <span class="${p.total_pnl >= 0 ? 'green' : 'red'}">${pnlSign}${p.total_pnl?.toFixed(6)}  (${pnlPctSign}${p.pnl_percent?.toFixed(2)}%)</span><br>
-                    <br>
-                    🏆 Wins: ${wins}  💔 Losses: ${losses}<br>
-                    📊 Win Rate: ${winRate.toFixed(1)}%
-                `;
-            }
+            if (data.profit) updateProfitUI(data.profit);
 
-            // Performance
-            const perfBody = document.querySelector('#performance-table tbody');
-            const perfFoot = document.querySelector('#performance-table tfoot');
-            perfBody.innerHTML = '';
-            perfFoot.innerHTML = '';
-            if (data.performance) {
-                const perf = data.performance;
-                if (perf.rows && perf.rows.length > 0) {
-                    perf.rows.forEach(r => {
-                        const row = perfBody.insertRow();
-                        row.insertCell().textContent = r.display_symbol || r.symbol;
-                        row.insertCell().textContent = r.timeframe || '—';
-                        row.insertCell().textContent = r.trade_count;
-                        const profitCell = row.insertCell();
-                        profitCell.textContent = r.profit?.toFixed(4);
-                        profitCell.className = r.profit >= 0 ? 'green' : 'red';
-                        const profitPctCell = row.insertCell();
-                        profitPctCell.textContent = r.profit_pct?.toFixed(2) + '%';
-                        profitPctCell.className = r.profit_pct >= 0 ? 'green' : 'red';
-                        row.insertCell().textContent = r.win_rate?.toFixed(1) + '%';
-                    });
-                } else {
-                    const row = perfBody.insertRow();
-                    const cell = row.insertCell();
-                    cell.colSpan = 6;
-                    cell.textContent = '📭 No closed sell trades yet';
-                    cell.style.textAlign = 'center';
-                    cell.style.color = 'var(--text-secondary)';
-                }
-                if (perf.total) {
-                    const t = perf.total;
-                    const footRow = perfFoot.insertRow();
-                    footRow.insertCell().textContent = t.display_symbol || t.symbol;
-                    footRow.insertCell().textContent = t.timeframe || '—';
-                    footRow.insertCell().textContent = t.trade_count;
-                    const totalProfitCell = footRow.insertCell();
-                    totalProfitCell.textContent = t.profit?.toFixed(4);
-                    totalProfitCell.className = t.profit >= 0 ? 'green' : 'red';
-                    const totalProfitPctCell = footRow.insertCell();
-                    totalProfitPctCell.textContent = t.profit_pct?.toFixed(2) + '%';
-                    totalProfitPctCell.className = t.profit_pct >= 0 ? 'green' : 'red';
-                    footRow.insertCell().textContent = t.win_rate?.toFixed(1) + '%';
-                    footRow.style.fontWeight = 'bold';
-                    footRow.style.borderTop = '2px solid var(--border)';
-                }
-            }
+            if (data.performance) updatePerformanceUI(data.performance);
 
-            // Market Status
-            const marketStatusDiv = document.getElementById('market-status');
-            if (marketStatusDiv) {
-                if (data.market_status) {
-                    const ms = data.market_status;
-                    let html = '';
-                    if (ms.market_breadth) {
-                        html += `<strong>📊 Market Breadth (candidates):</strong> ${ms.market_breadth.positive_pct}% positive (${ms.market_breadth.positive_count}/${ms.market_breadth.total_count})<br>`;
-                    }
-                    if (ms.full_market_breadth) {
-                        html += `<strong>🌐 Full Market Breadth:</strong> ${ms.full_market_breadth.positive_pct}% positive (${ms.full_market_breadth.positive_count}/${ms.full_market_breadth.total_count})<br>`;
-                    }
-                    if (ms.spy_price != null) {
-                        html += `<strong>📈 Benchmark Price:</strong> ${ms.spy_price.toFixed(2)}<br>`;
-                    }
-                    marketStatusDiv.innerHTML = html || 'Market data not available yet.';
-                } else {
-                    marketStatusDiv.textContent = 'Market data not available yet.';
-                }
-            }
+            if (data.market_status) updateMarketStatusUI(data.market_status);
 
         }
 
