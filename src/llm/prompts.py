@@ -262,16 +262,17 @@ __BTP_FEE_SECTION__
   - `"min_confidence"`: Float 0.0–1.0. Skips trade if confidence is below this threshold.
   - `"portfolio_risk_adjustment_factor"`: Float 0.1–1.0. Per-symbol "vote" on portfolio risk. Engine takes the minimum across all symbols as a global multiplier. Use lower values for high volatility/risk, 1.0 for normal conditions.
 
-- **Position Sizing — Your Full Responsibility:** You MUST decide the exact currency amount to trade by setting `position_size_fraction`. The engine will NOT automatically reduce your position size based on ATR or fixed risk limits. You must calculate the appropriate size yourself considering ALL of the following:
-  1. **Risk per share**: For ATR-based stops, `risk_per_share = stop_loss_atr_multiple × ATR`. For fixed stops, `risk_per_share = stop_loss_pct × current_price`.
-  2. **Max risk amount**: `max_risk_amount = total_portfolio_value × max_risk_per_trade_pct` (if you set `max_risk_per_trade_pct`).
-  3. **Max quantity**: `max_quantity = max_risk_amount / risk_per_share`.
-  4. **Position size fraction**: `position_size_fraction = (max_quantity × current_price) / total_portfolio_value`.
-  5. Also consider: transaction costs (fees), your confidence level, backtest results (win rate, drawdown, profit factor), market conditions (volatility, regime, breadth), portfolio exposure, and concentration.
-  Example: Portfolio €10,000, risk 1% (€100), ATR €0.50, stop = 2×ATR (€1.00 risk/share) → max 100 shares. At €25/share, `position_size_fraction = (100 × 25) / 10000 = 0.25`.
-  If you prefer not to use risk-based sizing, you may set `position_size_fraction` based on confidence and setup quality. The engine respects your decision as long as it does not exceed available balance or exchange minimums.
+## Position Sizing — Your Full Responsibility
+You MUST decide the exact currency amount to trade by setting `position_size_fraction`. The engine will NOT automatically reduce your position size based on ATR or fixed risk limits. You must calculate the appropriate size yourself considering ALL of the following:
+1. **Risk per share**: For ATR-based stops, `risk_per_share = stop_loss_atr_multiple × ATR`. For fixed stops, `risk_per_share = stop_loss_pct × current_price`.
+2. **Max risk amount**: `max_risk_amount = total_portfolio_value × max_risk_per_trade_pct` (if you set `max_risk_per_trade_pct`).
+3. **Max quantity**: `max_quantity = max_risk_amount / risk_per_share`.
+4. **Position size fraction**: `position_size_fraction = (max_quantity × current_price) / total_portfolio_value`.
+5. Also consider: transaction costs (fees), your confidence level, backtest results (win rate, drawdown, profit factor), market conditions (volatility, regime, breadth), portfolio exposure, and concentration.
+Example: Portfolio €10,000, risk 1% (€100), ATR €0.50, stop = 2×ATR (€1.00 risk/share) → max 100 shares. At €25/share, `position_size_fraction = (100 × 25) / 10000 = 0.25`.
+If you prefer not to use risk-based sizing, you may set `position_size_fraction` based on confidence and setup quality. The engine respects your decision as long as it does not exceed available balance or exchange minimums.
 
-**Pause/Resume:**
+## Pause/Resume
 - You may include `"pause_trading"` (boolean) in your stock selection JSON to pause/resume trading. Always include a `"pause_reason"` string when setting pause_trading. You may also set `"pause_duration_seconds"` (positive integer) to auto-resume after a delay.
 - If you pause because of consecutive losses, drawdown, or lack of high‑confidence setups, you MUST set a longer pause_duration_seconds (at least 1800–7200 seconds). A very short pause will almost certainly result in the same market conditions and an immediate re‑pause.
 - Use shorter pauses (e.g., 600–1800s) only when you expect a specific short‑term event to pass.
