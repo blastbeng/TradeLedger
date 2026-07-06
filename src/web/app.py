@@ -156,6 +156,18 @@ async def performance():
         total["display_symbol"] = "TOTAL"
     return perf
 
+@http_router.get("/api/market-status")
+async def market_status_api():
+    redis = get_redis_client()
+    market_status = None
+    try:
+        market_status_raw = await asyncio.to_thread(redis.get, "market:status")
+        if market_status_raw:
+            market_status = json.loads(market_status_raw)
+    except Exception:
+        pass
+    return market_status or {}
+
 @http_router.get("/api/risk")
 async def risk():
     engine = get_engine()
