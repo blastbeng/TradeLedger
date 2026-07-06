@@ -1330,7 +1330,7 @@ class SignalProcessor:
             historical_backtest_results=historical_backtest_results,
         )
         # Add quote staleness warning if the price data is outdated
-        staleness_warning = engine._get_quote_staleness_warning(ticker)
+        staleness_warning = engine._market_data_manager._get_quote_staleness_warning(ticker)
         if staleness_warning:
             analysis_prompt += staleness_warning
         if stale_indicators_warning:
