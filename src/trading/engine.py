@@ -81,6 +81,7 @@ class TradingEngine:
         self._indicator_semaphore = asyncio.Semaphore(4)  # limit concurrent indicator computations
         self._backtest_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_BACKTESTS)  # limit concurrent backtest variants
         self._download_semaphore = asyncio.Semaphore(5)  # max 5 concurrent background OHLCV backfills
+        self._symbol_processing_semaphore = asyncio.Semaphore(3)  # limit concurrent symbol evaluations
 
         # Dedicated thread pool for database writes – prevents write contention
         # from starving the default asyncio thread pool used by the web server,
@@ -1603,6 +1604,8 @@ class TradingEngine:
                         except Exception:
                             continue
 
+                # Collect symbols that need evaluation this cycle
+                symbols_to_process = []
                 for symbol_entry in current_symbols_snapshot:
                     symbol = symbol_entry["symbol"]
                     tf = symbol_entry.get("timeframe", "1d")
@@ -1643,24 +1646,34 @@ class TradingEngine:
                         interval = self._strategy_intervals.get(symbol, default_interval)
                         last_eval = self._last_strategy_eval.get(symbol, 0)
                     if now - last_eval >= interval:
-                        # Check if trading is paused (skip BUY signals)
-                        paused = await asyncio.to_thread(self.redis.get, "trading:paused")
-                        trading_paused = paused is not None and paused == "1"
-                        try:
-                            await asyncio.wait_for(
-                                self._process_symbol(symbol_entry, trading_paused=trading_paused),
-                                timeout=settings.LLM_TIMEOUT + 10  # slightly longer than the LLM timeout
-                            )
-                            async with self._eval_state_lock:
-                                self._last_strategy_eval[symbol] = now
-                        except asyncio.TimeoutError:
-                            logger.error(f"Timeout processing symbol {symbol_entry['symbol']} – skipping. Will retry on next loop iteration.")
-                            if self.notifier:
-                                await self.notifier.send_notification(
-                                    f"⏱️ Processing timeout for {symbol_entry['symbol']} – skipping this cycle.",
-                                    summary={"symbol": symbol_entry["symbol"], "action": "SKIP", "reason": "Processing timeout"}
+                        symbols_to_process.append(symbol_entry)
+
+                if symbols_to_process:
+                    # Check if trading is paused (skip BUY signals)
+                    paused = await asyncio.to_thread(self.redis.get, "trading:paused")
+                    trading_paused = paused is not None and paused == "1"
+
+                    async def _process_symbol_task(entry: Dict[str, str]):
+                        async with self._symbol_processing_semaphore:
+                            sym = entry["symbol"]
+                            try:
+                                await asyncio.wait_for(
+                                    self._process_symbol(entry, trading_paused=trading_paused),
+                                    timeout=settings.LLM_TIMEOUT + 10
                                 )
-                        await asyncio.sleep(0.2)   # small delay to reduce contention
+                                async with self._eval_state_lock:
+                                    self._last_strategy_eval[sym] = now
+                            except asyncio.TimeoutError:
+                                logger.error(f"Timeout processing symbol {sym} – skipping. Will retry on next loop iteration.")
+                                if self.notifier:
+                                    await self.notifier.send_notification(
+                                        f"⏱️ Processing timeout for {sym} – skipping this cycle.",
+                                        summary={"symbol": sym, "action": "SKIP", "reason": "Processing timeout"}
+                                    )
+                            except Exception as e:
+                                logger.error(f"Error processing symbol {sym}: {e}", exc_info=True)
+
+                    await asyncio.gather(*[_process_symbol_task(entry) for entry in symbols_to_process])
 
                 # Save state periodically (every 5 minutes) when dirty
                 if now - self._last_state_save > 300 and self._state_dirty:
