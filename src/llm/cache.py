@@ -70,6 +70,21 @@ def get_cached_llm_response(
             base_url = settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL
             api_key = settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY
 
+    # Resolve effective temperature: use explicit temperature if provided,
+    # otherwise fall back to per-role temperature, then global temperature.
+    if temperature is None:
+        if model_type == "mind" and settings.LLM_MIND_TEMPERATURE:
+            temp_range = settings.parse_temperature_range(settings.LLM_MIND_TEMPERATURE)
+            temperature = temp_range[0] if temp_range else settings.LLM_TEMPERATURE
+        elif model_type == "weak" and settings.LLM_WEAK_TEMPERATURE:
+            temp_range = settings.parse_temperature_range(settings.LLM_WEAK_TEMPERATURE)
+            temperature = temp_range[0] if temp_range else settings.LLM_TEMPERATURE
+        elif model_type == "actuator" and settings.LLM_ACTUATOR_TEMPERATURE:
+            temp_range = settings.parse_temperature_range(settings.LLM_ACTUATOR_TEMPERATURE)
+            temperature = temp_range[0] if temp_range else settings.LLM_TEMPERATURE
+        else:
+            temperature = settings.LLM_TEMPERATURE
+
     # Round temperature to 1 decimal place for cache key to improve cache hit rate
     # when temperature is dynamically computed based on complexity.
     cache_temp = round(temperature, 1) if temperature is not None else None
