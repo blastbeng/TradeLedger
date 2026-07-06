@@ -569,13 +569,11 @@ class SignalProcessor:
                                 f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
                                 f"gap={latest_candle_ts - ind_ts}ms > {2 * tf_ms}ms). Scheduling background recomputation."
                             )
-                            # Schedule background recomputation to avoid blocking the evaluation loop
+                            # Recompute indicators synchronously to avoid using stale data for the current decision
+                            ind = await asyncio.to_thread(compute_all_indicators, candles)
+                            # Schedule background storage of the recomputed indicators
                             asyncio.create_task(
                                 engine._market_data_manager.compute_and_store_indicators(symbol, tf, candles)
-                            )
-                            stale_indicators_warning += (
-                                f"\n⚠️ **STALE INDICATORS:** Indicators for {symbol} on {tf} timeframe "
-                                f"are stale. A background recomputation has been scheduled. Use with caution.\n"
                             )
                     multi_tf_indicators[tf] = ind
                     if tf == assigned_tf:
