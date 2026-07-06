@@ -1098,12 +1098,7 @@ def _discover_financedatabase_tickers() -> List[str]:
                     df = df[df['country'].str.lower() == country.lower()]
                 elif 'exchange' in df.columns:
                     df = df[df['exchange'].str.lower().isin(['mil', 'mta', 'borsa italiana'])]
-                else:
-                    suffix = settings.TICKER_SUFFIX
-                    if suffix:
-                        df = df[df.index.str.endswith(suffix)]
-                    else:
-                        df = pd.DataFrame()  # Return empty to avoid non-Italian equities
+                # If no country/exchange columns, let yfinance filter by country later
         if df is None or df.empty:
             logger.warning(f"No tickers found in FinanceDatabase for country: {country}")
             return []
@@ -1163,13 +1158,7 @@ def discover_italian_ucits_etfs() -> List[str]:
                 elif 'exchange' in df.columns:
                     # Filter by Italian exchanges (e.g., MIL, MTA)
                     df = df[df['exchange'].str.lower().isin(['mil', 'mta', 'borsa italiana'])]
-                else:
-                    # Last resort: filter by symbol suffix (e.g., .MI)
-                    suffix = settings.TICKER_SUFFIX
-                    if suffix:
-                        df = df[df.index.str.endswith(suffix)]
-                    else:
-                        df = pd.DataFrame()  # Return empty to avoid non-Italian ETFs
+                # If no country/exchange columns, let yfinance filter by country later
 
         if df is None or df.empty:
             return []
