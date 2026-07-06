@@ -1205,7 +1205,7 @@ def discover_italian_ucits_etfs() -> List[str]:
         except (RuntimeError, ValueError, OSError) as e:
             logger.warning(f"Failed to save ETF symbols to DB: {e}")
         return base_symbols
-    except (ImportError, RuntimeError, ValueError, AttributeError, OSError) as e:
+    except (ImportError, RuntimeError, ValueError, AttributeError, OSError, TypeError) as e:
         logger.warning(f"Failed to discover Italian UCITS ETFs: {e}")
         return []
 
