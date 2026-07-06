@@ -313,7 +313,7 @@ class SymbolReevaluator:
 
     def compute_correlation_matrix(
         self,
-        ohlcv_data: Dict[str, List[List]],
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
         sorted_by_vol: List[str],
     ) -> Dict[str, Dict[str, float]]:
         """Compute pairwise Pearson correlation matrix from OHLCV close prices.
