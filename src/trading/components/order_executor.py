@@ -703,7 +703,7 @@ class OrderExecutor:
                         "take_profit_price": pos.get("take_profit"),
                     }
                     try:
-                        await engine._place_exit_orders(
+                        await self.place_exit_orders(
                             queued["symbol"], _dummy_signal, _exit_prices, pos.get("timeframe")
                         )
                     except (RuntimeError, ValueError, ConnectionError) as _e:
@@ -1793,7 +1793,7 @@ class OrderExecutor:
                         "take_profit_price": engine.positions[symbol].get("take_profit"),
                     }
                     try:
-                        await engine._place_exit_orders(symbol, _dummy_signal, _exit_prices, engine.positions[symbol].get("timeframe"))
+                        await self.place_exit_orders(symbol, _dummy_signal, _exit_prices, engine.positions[symbol].get("timeframe"))
                     except (TypeError, ValueError, RuntimeError, AttributeError) as _e:
                         logger.warning(f"Failed to place replacement exit orders after partial sell for {symbol}: {_e}")
             else:

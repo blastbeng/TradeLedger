@@ -1252,7 +1252,7 @@ class SignalProcessor:
                 logger.info(f"Max symbol tenure reached for {symbol} ({max_tenure_hours:.1f}h), forcing sell")
                 from src.strategies.base import Signal
                 signal = Signal(action="SELL", confidence=1.0, reasoning="Max symbol tenure reached")
-                await engine._execute_signal(symbol, signal, exit_reason="max_tenure")
+                await self.event_bus.publish("execute_signal", symbol, signal, exit_reason="max_tenure")
                 async with engine._eval_state_lock:
                     engine._force_eval.pop(symbol, None)
                 return None
@@ -2325,7 +2325,8 @@ class SignalProcessor:
                         f"⏱️ LLM timeout for {display_symbol} with critical flag – forcing SELL.",
                         summary={"symbol": symbol, "action": "SELL", "reason": critical_reason, "model_type": strategy_model_type}
                     )
-                await engine._execute_signal(
+                await self.event_bus.publish(
+                    "execute_signal",
                     symbol,
                     Signal(action="SELL", confidence=1.0, reasoning=critical_reason),
                     exit_reason=critical_reason.replace(" ", "_").lower()
@@ -4126,7 +4127,8 @@ class SignalProcessor:
                     summary={"symbol": symbol, "action": "SKIP", "reason": "Trading paused"}
                 )
         else:
-            await engine._execute_signal(
+            await self.event_bus.publish(
+                "execute_signal",
                 symbol,
                 _signal,
                 timeframe=entry_tf,
