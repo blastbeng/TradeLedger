@@ -2535,7 +2535,7 @@ class SignalProcessor:
             logger.warning(f"Step 1a analysis failed for {symbol} after all retries. Using fallback HOLD.")
             engine._force_eval.pop(symbol, None)
             # Create a fallback HOLD signal so the bot continues functioning
-            preliminary_signal = engine._create_fallback_hold_signal(
+            preliminary_signal = self._create_fallback_hold_signal(
                 symbol, "LLM Step 1a analysis failed after retries", strategy_model_type
             )
             signal = preliminary_signal
@@ -2884,7 +2884,7 @@ class SignalProcessor:
                 llm_model = response2["model"]
             except Exception as e2:
                 logger.error(f"LLM Step 1b response still invalid after retry for {symbol}: {e2}")
-                preliminary_strategy = LLMStrategy(engine._create_fallback_hold_signal(
+                preliminary_strategy = LLMStrategy(self._create_fallback_hold_signal(
                     symbol, "Failed to parse LLM Step 1b response after retry", strategy_model_type
                 ))
 

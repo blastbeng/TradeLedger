@@ -2213,25 +2213,6 @@ class TradingEngine:
             "macd_hist": macd_hist,
         }
 
-    def _create_fallback_hold_signal(
-        self, symbol: str, reason: str, strategy_model_type: str = "actuator"
-    ) -> Signal:
-        """Create a default HOLD signal when LLM calls fail after all retries.
-
-        This ensures the bot continues to function even if the LLM is temporarily
-        unavailable or producing invalid output.
-        """
-        return Signal(
-            action="HOLD",
-            confidence=0.0,
-            reasoning=f"Fallback: {reason}",
-            strategy_type="fallback",
-            strategy_params={},
-            model_type=strategy_model_type,
-            llm_provider="fallback",
-            llm_model="default_hold",
-        )
-
     async def _get_global_risk_multiplier(self) -> Optional[float]:
         """Return the global risk multiplier, falling back to persisted value if Redis key expired."""
         raw = await asyncio.to_thread(self.redis.get, "trading:global_risk_multiplier")
