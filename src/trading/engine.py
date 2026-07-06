@@ -2319,11 +2319,9 @@ class TradingEngine:
             return False
         return clock.is_open
 
-    def _is_regular_hours(self) -> bool:
+    async def _is_regular_hours(self) -> bool:
         """Return True if the market is currently open."""
-        if self._market_data_manager._clock_cache is None:
-            return False
-        return self._market_data_manager._clock_cache.is_open
+        return await self._is_market_open()
 
     def _get_session_info(self) -> dict:
         """Return current Italian market session info using Europe/Rome timezone."""
