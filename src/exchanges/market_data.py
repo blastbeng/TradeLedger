@@ -109,7 +109,7 @@ def _check_bi_circuit() -> bool:
     with _bi_lock:
         return time.time() < _bi_circuit_open_until
 
-def _record_bi_error():
+def _record_bi_error(exc: Optional[Exception] = None):
     """Record a Borsa Italiana error and potentially trip the circuit breaker."""
     global _bi_error_count, _bi_last_error_time, _bi_circuit_open_until
     with _bi_lock:
@@ -120,7 +120,8 @@ def _record_bi_error():
         _bi_last_error_time = now
         if _bi_error_count >= BI_MAX_ERRORS:
             if _bi_circuit_open_until < now:
-                logger.error(f"Borsa Italiana circuit breaker tripped due to {_bi_error_count} errors. Blocking BI calls for {BI_CIRCUIT_COOLDOWN}s.")
+                exc_msg = f" Last error: {exc}" if exc else ""
+                logger.error(f"Borsa Italiana circuit breaker tripped due to {_bi_error_count} errors. Blocking BI calls for {BI_CIRCUIT_COOLDOWN}s.{exc_msg}")
             _bi_circuit_open_until = now + BI_CIRCUIT_COOLDOWN
 
 def _reset_bi_circuit():
@@ -356,7 +357,7 @@ def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[s
                         _reset_bi_circuit()
                         return isin, "Italy", name
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
-        _record_bi_error()
+        _record_bi_error(e)
         logger.debug(f"Borsa Italiana search failed for {base_symbol}: {e}")
     return None, None, None
 
@@ -472,7 +473,7 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
             logger.warning(f"Could not find Borsa Italiana token for {isin}-{market_code}")
             return None
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, AttributeError, OSError) as e:
-        _record_bi_error()
+        _record_bi_error(e)
         logger.warning(f"Failed to fetch Borsa Italiana token for {isin}-{market_code}: {e}")
         return None
 
@@ -551,7 +552,7 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
                         "source": "borsa_italiana",
                     }
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
-        _record_bi_error()
+        _record_bi_error(e)
         logger.debug(f"Borsa Italiana quote fetch failed for {symbol}: {e}")
     return None
 
@@ -765,7 +766,7 @@ def get_borsa_italiana_candles(
         return None
 
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
-        _record_bi_error()
+        _record_bi_error(e)
         logger.debug(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {e}")
         return None
 
@@ -2284,7 +2285,7 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
             _reset_bi_circuit()
             return details
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, AttributeError, OSError) as e:
-        _record_bi_error()
+        _record_bi_error(e)
         logger.debug(f"Failed to fetch BTP details for {isin}: {e}")
         return {}
 
@@ -2367,7 +2368,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
                             "maturity": maturity,
                         })
             except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
-                _record_bi_error()
+                _record_bi_error(e)
                 logger.warning(f"Failed to fetch BTP page {page}: {e}")
                 break
 
