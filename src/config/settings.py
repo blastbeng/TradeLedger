@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     # Paper trading initial balance (only used in paper mode)
     PAPER_INITIAL_BALANCE: float = 10000.0
+    PAPER_BALANCE_CHANGED: bool = False
 
     # Risk management check interval (seconds) – stop-loss/take-profit checks
     RISK_CHECK_INTERVAL_SECONDS: int = 120
@@ -925,15 +926,17 @@ class Settings(BaseSettings):
         - Proxy settings (HTTP_PROXY_ENABLED, HTTP_PROXIES)
         - Notification settings (NOTIFICATION_VERBOSITY, etc.)
         - BTP settings (BTP_URL, BTP_FEE_PERC, etc.)
+        - PAPER_INITIAL_BALANCE — triggers a soft-restart of paper trading state
 
         **Requires restart (NOT safe to reload):**
         - DATABASE_BACKEND / DATABASE_PATH — connections already open
         - REDIS_HOST / REDIS_PORT / REDIS_DB — Redis client already connected
         - WEB_HOST / WEB_PORT — Uvicorn already listening
-        - PAPER_INITIAL_BALANCE — only used at first initialization
         """
         new_settings = self.__class__()
         new_settings.validate_llm_settings()
+
+        old_paper_balance = self.PAPER_INITIAL_BALANCE
 
         # Fields that are NOT safe to reload at runtime
         unsafe_fields = {
@@ -944,13 +947,15 @@ class Settings(BaseSettings):
             "REDIS_DB",
             "WEB_HOST",
             "WEB_PORT",
-            "PAPER_INITIAL_BALANCE",
         }
 
         for field_name in self.model_fields:
             if field_name in unsafe_fields:
                 continue
             setattr(self, field_name, getattr(new_settings, field_name))
+
+        if self.PAPER_INITIAL_BALANCE != old_paper_balance:
+            self.PAPER_BALANCE_CHANGED = True
 
     class Config:
         env_file = ".env"

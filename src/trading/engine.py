@@ -56,7 +56,7 @@ from src.strategies.validator import validate_signal
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary
 from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.utils.symbol_utils import is_btp_isin
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data
 from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.risk_manager import RiskManager
 from src.trading.components.state_persistence import StatePersistence
@@ -236,6 +236,47 @@ class TradingEngine:
             self._cycle_spent = queued_buy_total
         if queued_buy_total > 0:
             logger.info(f"Initialized _cycle_spent={queued_buy_total:.2f} from {sum(1 for q in self.queued_orders if q.get('side') == 'buy')} queued buy orders.")
+
+    async def reset_paper_trading_state(self):
+        """Reset paper trading state when PAPER_INITIAL_BALANCE changes."""
+        logger.info("Resetting paper trading state due to PAPER_INITIAL_BALANCE change...")
+
+        # Clear in-memory state
+        self.positions = {}
+        self.queued_orders = []
+        self.trade_history = []
+        self.current_symbols = []
+        self._pending_entries = {}
+        self._last_strategy_eval = {}
+        self._strategy_intervals = {}
+        self._force_eval = {}
+        self._force_eval_time = {}
+        self._entry_signal_state = {}
+        self._last_decisions = {}
+        self._last_eval_snapshot = {}
+        self.recent_signals = []
+        self._cycle_spent = 0.0
+        self._balance_cache = None
+        self._portfolio_exposure_cache = None
+        self._perf_cache = None
+        self._trade_pattern_cache = None
+
+        # Reset DB data
+        await asyncio.to_thread(reset_paper_trading_data)
+
+        # Re-initialize paper trader with new balance
+        self.trader = PaperTrader()
+
+        # Save the fresh state
+        self._state_dirty = True
+        await self._save_state(force=True)
+
+        if self.notifier:
+            await self.notifier.send_notification(
+                "♻️ Paper trading state has been reset due to PAPER_INITIAL_BALANCE change.",
+                summary={"action": "RESET", "reason": "Paper balance changed"}
+            )
+        logger.info("Paper trading state reset complete.")
 
     def set_notifier(self, notifier):
         """Attach a notification service (e.g., TelegramBot)."""
@@ -1543,6 +1584,11 @@ class TradingEngine:
 
         while self._running:
             try:
+                if getattr(settings, 'PAPER_BALANCE_CHANGED', False):
+                    settings.PAPER_BALANCE_CHANGED = False
+                    await self.reset_paper_trading_state()
+                    continue
+
                 await asyncio.sleep(settings.ENGINE_LOOP_INTERVAL_SECONDS)
 
                 # Process any symbol whose evaluation interval has elapsed
