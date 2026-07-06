@@ -1290,64 +1290,52 @@ Maximum symbols to trade: {max_symbols}
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)
         prompt += (
-            f"\n**Your previous decision for {symbol} (made {age_seconds:.0f}s ago):**\n"
-            f"  Action: {last_decision.get('action')}\n"
-            f"  Confidence: {last_decision.get('confidence', 0):.2f}\n"
+            f"\n**Previous decision for {symbol} ({age_seconds:.0f}s ago):**\n"
+            f"  Action: {last_decision.get('action')}, Confidence: {last_decision.get('confidence', 0):.2f}\n"
             f"  Reasoning: {last_decision.get('reasoning', '')}\n"
         )
         sl_pct = last_decision.get("stop_loss_pct")
         tp_pct = last_decision.get("take_profit_pct")
         psf = last_decision.get("position_size_fraction")
         sl_method = last_decision.get("stop_loss_method")
-        if sl_method:
-            prompt += f"  Stop-loss method: {sl_method}\n"
-        if sl_pct is not None:
-            prompt += f"  Stop-loss pct: {sl_pct}\n"
-        if tp_pct is not None:
-            prompt += f"  Take-profit pct: {tp_pct}\n"
-        if psf is not None:
-            prompt += f"  Position size fraction: {psf}\n"
+        if sl_method: prompt += f"  SL method: {sl_method}\n"
+        if sl_pct is not None: prompt += f"  SL pct: {sl_pct}\n"
+        if tp_pct is not None: prompt += f"  TP pct: {tp_pct}\n"
+        if psf is not None: prompt += f"  Size fraction: {psf}\n"
     if unrealized_pnl is not None and position_info:
         prompt += f"Current position unrealized P&L: {unrealized_pnl:.2f} {base_currency}\n"
         entry_price = position_info.get('price', 0)
         amount = position_info.get('amount', 0)
-        prompt += f"Position details: entry price {entry_price}, amount {amount}\n"
-        prompt += f"\n**You currently hold {amount:.6f} {base_symbol} at an average entry of {entry_price:.4f}.**\n"
-        prompt += "If you output BUY, you will ADD to this existing position (scale in). If you output SELL, you will close the ENTIRE position.\n"
-        # Compute and show P&L percentage explicitly so the LLM doesn't have to calculate it
+        prompt += f"Position: entry {entry_price}, amount {amount}\n"
+        prompt += f"\n**You hold {amount:.6f} {base_symbol} @ {entry_price:.4f}.**\n"
+        prompt += "BUY = ADD to position (scale in). SELL = close ENTIRE position.\n"
         if entry_price > 0 and amount > 0:
             cost_basis = entry_price * amount
             if cost_basis > 0:
                 pnl_pct = (unrealized_pnl / cost_basis) * 100
-                prompt += f"Unrealized P&L percentage: {pnl_pct:+.2f}%\n"
-        # Explicitly show current risk levels (these are otherwise buried in the open_positions JSON)
+                prompt += f"Unrealized P&L: {pnl_pct:+.2f}%\n"
         current_sl = position_info.get('stop_loss')
         current_tp = position_info.get('take_profit')
-        if current_sl is not None:
-            prompt += f"Current stop-loss price: {current_sl:.6f}\n"
-        if current_tp is not None:
-            prompt += f"Current take-profit price: {current_tp:.6f}\n"
-        # Show distance from current price to stop/TP as percentages
+        if current_sl is not None: prompt += f"Current SL price: {current_sl:.6f}\n"
+        if current_tp is not None: prompt += f"Current TP price: {current_tp:.6f}\n"
         if current_price and current_price > 0:
             if current_sl is not None:
                 sl_distance_pct = ((current_price - current_sl) / current_price) * 100
-                prompt += f"Distance to stop-loss: {sl_distance_pct:.2f}% below current price\n"
+                prompt += f"Distance to SL: {sl_distance_pct:.2f}% below current\n"
             if current_tp is not None:
                 tp_distance_pct = ((current_tp - current_price) / current_price) * 100
-                prompt += f"Distance to take-profit: {tp_distance_pct:.2f}% above current price\n"
-        # Show trailing stop status
+                prompt += f"Distance to TP: {tp_distance_pct:.2f}% above current\n"
         trailing_active = position_info.get('trailing_stop', False)
         if trailing_active:
             trailing_dist = position_info.get('trailing_stop_distance_pct')
             trailing_act = position_info.get('trailing_stop_activation_pct')
-            prompt += f"Trailing stop: enabled (distance={trailing_dist}, activation={trailing_act})\n"
-        # Show max hold time remaining
+            prompt += f"Trailing stop: enabled (dist={trailing_dist}, act={trailing_act})\n"
         max_hold = position_info.get('max_hold_time_seconds')
         if max_hold is not None and max_hold > 0:
             entry_ts = position_info.get('timestamp', 0) / 1000.0
             elapsed = time.time() - entry_ts if entry_ts > 0 else 0
             remaining = max(0, max_hold - elapsed)
-            prompt += f"Max hold time: {max_hold:.0f}s total, {remaining:.0f}s remaining\n"
+            prompt += f"Max hold: {max_hold:.0f}s total, {remaining:.0f}s remaining\n"
 
     # --- Multi-timeframe OHLCV summary and indicators ---
     if multi_tf_raw_candles:
