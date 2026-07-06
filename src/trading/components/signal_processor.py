@@ -12,11 +12,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.database import get_latest_ohlcv_timestamp, get_ohlcv, get_indicators, get_backtest_results_for_symbol, get_indicators_for_symbols
+from src.database import get_latest_ohlcv_timestamp, get_ohlcv, get_indicators, get_backtest_results_for_symbol, get_indicators_for_symbols, get_aggregate_sentiment_from_db
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
 from src.indicators import compute_all_indicators, compute_ema, compute_vwap, compute_pivot_points
 from src.llm.cache import get_cached_llm_response, compute_market_hash
-from src.llm.prompts import build_analysis_prompt, compact_prompt, build_backtest_variants_prompt, build_system_prompt
+from src.llm.prompts import build_analysis_prompt, compact_prompt, build_backtest_variants_prompt, build_system_prompt, get_cached_news_summary
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
@@ -2147,6 +2147,41 @@ class SignalProcessor:
 
         return False
 
+    async def _get_sentiment_str(self, symbol: str) -> str:
+        """Get a short news sentiment string for notifications, including an LLM summary."""
+        if not settings.NEWS_ENABLED:
+            return ""
+        try:
+            base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+            agg_sent = await asyncio.to_thread(get_aggregate_sentiment_from_db, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
+            if not agg_sent:
+                return ""
+
+            compound = agg_sent["avg_compound"]
+            sentiment_label = "positive" if compound > 0.05 else "negative" if compound < -0.05 else "neutral"
+            total = agg_sent["total_articles"]
+
+            # Try to get an LLM-generated summary of the news
+            summary = ""
+            try:
+                summary_raw = await asyncio.to_thread(get_cached_news_summary, symbol)
+                if isinstance(summary_raw, dict):
+                    summary = summary_raw.get("summary", "")
+                else:
+                    summary = summary_raw
+                if summary in ("No recent news.", "Could not generate summary."):
+                    summary = ""
+            except Exception:
+                pass  # fallback to no summary
+
+            base = f"📰 (sentiment: {compound:+.2f}[{sentiment_label}], {total} articles)"
+            if summary:
+                return f"{base} – {summary}"
+            return base
+        except Exception:
+            pass
+        return ""
+
     async def log_and_notify_decision(
         self,
         symbol: str,
@@ -2324,7 +2359,7 @@ class SignalProcessor:
             if keltner_channels is not None:
                 ind_parts.append(f"Kelt={keltner_channels['lower']:.4f}/{keltner_channels['middle']:.4f}/{keltner_channels['upper']:.4f}")
             indicator_str = " | ".join(ind_parts) if ind_parts else "No indicators (insufficient OHLCV data)"
-            sentiment_str = await engine._get_sentiment_str(symbol)
+            sentiment_str = await self._get_sentiment_str(symbol)
             reasoning_str = f" – {validated.reasoning}" if validated.reasoning else ""
             msg = f"{emoji} {display_symbol}: {validated.action} (confidence: {validated.confidence:.2f}){reasoning_str}{paused_tag}"
             if sentiment_str:

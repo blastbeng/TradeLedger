@@ -27,7 +27,6 @@ from src.llm.prompts import (
     build_final_decision_prompt,
     _format_news_for_prompt,
     compact_prompt,
-    get_cached_news_summary,
 )
 
 def _get_compacted_system_prompt() -> str:
@@ -877,42 +876,6 @@ class TradingEngine:
             except Exception as e:
                 logger.error(f"Market clock monitor error: {e}", exc_info=True)
             await asyncio.sleep(30)  # check every 30 seconds
-
-    async def _get_sentiment_str(self, symbol: str) -> str:
-        """Get a short news sentiment string for notifications, including an LLM summary."""
-        if not settings.NEWS_ENABLED:
-            return ""
-        try:
-            base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
-            agg_sent = await asyncio.to_thread(get_aggregate_sentiment_from_db, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
-            if not agg_sent:
-                return ""
-
-            compound = agg_sent["avg_compound"]
-            sentiment_label = "positive" if compound > 0.05 else "negative" if compound < -0.05 else "neutral"
-            total = agg_sent["total_articles"]
-
-            # Try to get an LLM-generated summary of the news
-            summary = ""
-            try:
-                summary_raw = await asyncio.to_thread(get_cached_news_summary, symbol)
-                if isinstance(summary_raw, dict):
-                    summary = summary_raw.get("summary", "")
-                else:
-                    summary = summary_raw
-                if summary in ("No recent news.", "Could not generate summary."):
-                    summary = ""
-            except Exception:
-                pass  # fallback to no summary
-
-            base = f"📰 (sentiment: {compound:+.2f}[{sentiment_label}], {total} articles)"
-            if summary:
-                return f"{base} – {summary}"
-            return base
-        except Exception:
-            pass
-        return ""
-
 
     @staticmethod
     def _get_quote_staleness_warning(ticker: Dict[str, Any]) -> str:
