@@ -63,18 +63,10 @@ from src.trading.components.state_persistence import StatePersistence
 from src.trading.components.position_manager import PositionManager
 from src.trading.components.signal_processor import SignalProcessor
 from src.trading.components.backtest_manager import BacktestManager
-from src.trading.components.market_data_manager import MarketDataManager
+from src.trading.components.market_data_manager import MarketDataManager, ClockInfo
 from src.trading.components.symbol_reevaluator import SymbolReevaluator
 
 logger = logging.getLogger(__name__)
-
-@dataclass
-class ClockInfo:
-    """Market clock info for Euronext Milan (XMIL)."""
-    is_open: bool
-    timestamp: datetime
-    next_open: datetime
-
 
 class TradingEngine:
     def __init__(self):
@@ -218,10 +210,6 @@ class TradingEngine:
         self._force_eval_time: Dict[str, float] = {}
         # Per‑symbol state for crossover detection (stores last known indicator values)
         self._entry_signal_state: Dict[str, Dict[str, Any]] = {}
-
-        # Market clock cache
-        self._clock_cache: Optional[Any] = None
-        self._clock_cache_time: float = 0.0
 
     async def _initialize_clients(self):
         """Initialize clients and load persisted state (non‑blocking)."""
@@ -452,139 +440,7 @@ class TradingEngine:
             return None
 
     async def _get_clock(self, ttl: float = 30.0) -> Optional[ClockInfo]:
-        """Return Euronext Milan market clock info, cached for `ttl` seconds.
-
-        Uses pandas_market_calendars only to detect holidays/weekends.
-        Open/close times are hardcoded to Borsa Italiana continuous trading:
-        09:00–17:30 Rome time (Monday–Friday, excluding holidays).
-        """
-        now = time.time()
-        if self._clock_cache is not None and (now - self._clock_cache_time) < ttl:
-            return self._clock_cache
-
-        rome_tz = ZoneInfo(settings.MARKET_TIMEZONE)
-        now_rome = datetime.now(timezone.utc).astimezone(rome_tz)
-        today = now_rome.date()
-
-        # Configurable trading hours
-        MARKET_OPEN_HOUR = settings.MARKET_OPEN_HOUR
-        MARKET_OPEN_MINUTE = settings.MARKET_OPEN_MINUTE
-        MARKET_CLOSE_HOUR = settings.MARKET_CLOSE_HOUR
-        MARKET_CLOSE_MINUTE = settings.MARKET_CLOSE_MINUTE
-
-        market_open_today = datetime(today.year, today.month, today.day,
-                                     MARKET_OPEN_HOUR, MARKET_OPEN_MINUTE, tzinfo=rome_tz)
-        market_close_today = datetime(today.year, today.month, today.day,
-                                      MARKET_CLOSE_HOUR, MARKET_CLOSE_MINUTE, tzinfo=rome_tz)
-
-        is_open = False
-        next_open = None
-
-        try:
-            # Run mcal calls in a thread to avoid blocking the event loop
-            def _get_mcal_schedule():
-                cal = mcal.get_calendar('XMIL')
-                # Fetch schedule for a window around today to find next trading days
-                return cal.schedule(start_date=today - timedelta(days=1),
-                                    end_date=today + timedelta(days=10))
-            schedule = await asyncio.to_thread(_get_mcal_schedule)
-
-            # --- Fallback when the calendar has no data for the requested range ---
-            if schedule.empty:
-                # Simple weekday + hardcoded hours check
-                if today.weekday() < 5 and market_open_today <= now_rome < market_close_today:
-                    is_open = True
-                else:
-                    is_open = False
-
-                if is_open:
-                    # Next open is tomorrow (or next weekday) at 09:00
-                    next_open = market_open_today + timedelta(days=1)
-                    while next_open.weekday() >= 5:
-                        next_open += timedelta(days=1)
-                else:
-                    if now_rome < market_open_today and today.weekday() < 5:
-                        next_open = market_open_today
-                    else:
-                        next_open = market_open_today + timedelta(days=1)
-                        while next_open.weekday() >= 5:
-                            next_open += timedelta(days=1)
-
-                clock = ClockInfo(is_open=is_open, timestamp=now_rome, next_open=next_open)
-                self._clock_cache = clock
-                self._clock_cache_time = now
-                return clock
-            # --- End fallback ---
-
-            # Determine if today is a trading day (any session that covers today's date)
-            today_is_trading_day = False
-            next_trading_day = None
-
-            if not schedule.empty:
-                for idx in range(len(schedule)):
-                    session_start = schedule.iloc[idx]['market_open'].tz_convert(rome_tz)
-                    session_end = schedule.iloc[idx]['market_close'].tz_convert(rome_tz)
-                    session_date = session_start.date()
-
-                    if session_date == today:
-                        today_is_trading_day = True
-                    elif session_date > today and next_trading_day is None:
-                        next_trading_day = session_start
-
-            if today_is_trading_day:
-                if market_open_today <= now_rome < market_close_today:
-                    is_open = True
-                    # Next open is tomorrow's session (if exists) else next weekday 09:00
-                    if next_trading_day is not None:
-                        next_open = next_trading_day.replace(hour=MARKET_OPEN_HOUR,
-                                                             minute=MARKET_OPEN_MINUTE,
-                                                             second=0, microsecond=0)
-                    else:
-                        # Fallback: next weekday at 09:00
-                        next_open = market_open_today + timedelta(days=1)
-                        while next_open.weekday() >= 5:
-                            next_open += timedelta(days=1)
-                elif now_rome < market_open_today:
-                    # Before open today
-                    next_open = market_open_today
-                else:
-                    # After close today
-                    if next_trading_day is not None:
-                        next_open = next_trading_day.replace(hour=MARKET_OPEN_HOUR,
-                                                             minute=MARKET_OPEN_MINUTE,
-                                                             second=0, microsecond=0)
-                    else:
-                        next_open = market_open_today + timedelta(days=1)
-                        while next_open.weekday() >= 5:
-                            next_open += timedelta(days=1)
-            else:
-                # Today is not a trading day (holiday/weekend)
-                if next_trading_day is not None:
-                    next_open = next_trading_day.replace(hour=MARKET_OPEN_HOUR,
-                                                         minute=MARKET_OPEN_MINUTE,
-                                                         second=0, microsecond=0)
-                else:
-                    # No trading days in schedule – fallback to next weekday 09:00
-                    next_open = market_open_today + timedelta(days=1)
-                    while next_open.weekday() >= 5:
-                        next_open += timedelta(days=1)
-
-        except Exception as e:
-            logger.error(f"Failed to get market clock from pandas_market_calendars: {e}")
-            # Fallback: simple weekday + time check, assume no holidays
-            if today.weekday() < 5 and market_open_today <= now_rome < market_close_today:
-                is_open = True
-            next_open = market_open_today + timedelta(days=1)
-            while next_open.weekday() >= 5:
-                next_open += timedelta(days=1)
-
-        if next_open is None:
-            next_open = now_rome + timedelta(days=1)
-
-        clock = ClockInfo(is_open=is_open, timestamp=now_rome, next_open=next_open)
-        self._clock_cache = clock
-        self._clock_cache_time = now
-        return clock
+        return await self._market_data_manager.get_clock(ttl)
 
     async def stop(self):
         """Gracefully stop the engine and all background tasks."""
@@ -963,7 +819,7 @@ class TradingEngine:
                             summary={"action": "PAUSE", "reason": reason}
                         )
                     # Invalidate clock cache so the next monitor cycle sees the updated state
-                    self._clock_cache = None
+                    self._market_data_manager.invalidate_clock_cache()
 
                 # --- Periodic countdown updates while market is closed ---
                 # Only send updates if we are currently paused due to market_closed
@@ -1056,7 +912,7 @@ class TradingEngine:
                             # Only trigger re-evaluation when we actually resumed from a pause
                             self._reeval_trigger.set()
                             # Invalidate clock cache so subsequent calls get fresh data
-                            self._clock_cache = None
+                            self._market_data_manager.invalidate_clock_cache()
                         else:
                             logger.debug("Market open, but trading paused by '%s' – not clearing.", source)
                     else:
@@ -2803,9 +2659,9 @@ class TradingEngine:
 
     def _is_regular_hours(self) -> bool:
         """Return True if the market is currently open."""
-        if self._clock_cache is None:
+        if self._market_data_manager._clock_cache is None:
             return False
-        return self._clock_cache.is_open
+        return self._market_data_manager._clock_cache.is_open
 
     def _get_session_info(self) -> dict:
         """Return current Italian market session info using Europe/Rome timezone."""
