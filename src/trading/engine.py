@@ -273,10 +273,6 @@ class TradingEngine:
         self._symbol_first_seen = {}
         self._market_breadth = None
         self.initial_balance = settings.PAPER_INITIAL_BALANCE
-        self._trade_pattern_cache_trade_count = -1
-        self._trade_history_version = 0
-        self._realized_pnl_offset = 0.0
-        self.trade_history = []
 
         # Reset DB data (unconditionally clear all trade data for both modes)
         await asyncio.to_thread(reset_paper_trading_data, keep_trade_history=False)
