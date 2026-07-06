@@ -15,8 +15,8 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 
 from src.config.settings import settings
-from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol
-from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session
+from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch
+from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session, get_bars_range
 from src.indicators import compute_all_indicators
 
 logger = logging.getLogger(__name__)
