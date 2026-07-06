@@ -1144,23 +1144,21 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"  Total portfolio value: {portfolio_total_value:.2f} {base_currency}\n"
         prompt += f"  Open positions: {portfolio_open_count}\n"
         if portfolio_exposure_pct is not None:
-            prompt += f"  Capital deployed: {portfolio_exposure_pct:.1f}% of portfolio\n"
+            prompt += f"  Capital deployed: {portfolio_exposure_pct:.1f}%\n"
         if portfolio_stop_risk_pct is not None:
-            prompt += f"  Total stop-loss risk: {portfolio_stop_risk_pct:.2f}% of portfolio (loss if ALL stops hit)\n"
+            prompt += f"  Total stop-loss risk: {portfolio_stop_risk_pct:.2f}% (loss if ALL stops hit)\n"
         if portfolio_available_capital is not None:
-            prompt += f"  Available capital for new positions: {portfolio_available_capital:.2f} {base_currency}\n"
+            prompt += f"  Available capital: {portfolio_available_capital:.2f} {base_currency}\n"
         if max_portfolio_exposure_pct is not None and max_portfolio_stop_risk_pct is not None:
             prompt += (
-                f"Use this summary to decide position_size_fraction. If capital deployment is already high "
-                f"(>{max_portfolio_exposure_pct*100:.0f}%) or total stop-loss risk is elevated "
-                f"(>{max_portfolio_stop_risk_pct*100:.0f}%), reduce your position_size_fraction or output HOLD. "
-                "If you have low exposure and low risk, you may allocate more capital to high-conviction trades.\n"
+                f"Use this to decide `position_size_fraction`. If deployment is high (>{max_portfolio_exposure_pct*100:.0f}%) "
+                f"or stop-loss risk is elevated (>{max_portfolio_stop_risk_pct*100:.0f}%), reduce size or HOLD. "
+                "If low exposure/risk, allocate more to high-conviction trades.\n"
             )
         else:
             prompt += (
-                "Use this summary to decide position_size_fraction. If capital deployment is already high "
-                "or total stop-loss risk is elevated, reduce your position_size_fraction or output HOLD. "
-                "If you have low exposure and low risk, you may allocate more capital to high-conviction trades.\n"
+                "Use this to decide `position_size_fraction`. If deployment is high or stop-loss risk is elevated, "
+                "reduce size or HOLD. If low exposure/risk, allocate more to high-conviction trades.\n"
             )
     if cycle_spent is not None and remaining_balance is not None:
         prompt += (
