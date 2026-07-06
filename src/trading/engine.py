@@ -827,37 +827,48 @@ class TradingEngine:
                     source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
                     source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
                     already_market_closed = (source == "market_closed")
-                    # Delete all existing pause keys to ensure clean state
-                    pause_keys = [
-                        "trading:paused",
-                        "trading:pause_source",
-                        "trading:pause_start",
-                        "trading:pause_duration",
-                        "trading:pause_reason",
-                        "trading:llm_pause_time",
-                        "trading:market_next_open",
-                    ]
-                    for key in pause_keys:
-                        await asyncio.to_thread(self.redis.delete, key)
-                    # Set new pause keys unconditionally
-                    await asyncio.to_thread(self.redis.set, "trading:paused", "1")
-                    await asyncio.to_thread(self.redis.set, "trading:pause_source", "market_closed")
-                    await asyncio.to_thread(self.redis.set, "trading:pause_reason", reason)
+
+                    # Set market closed flag and next open time
+                    await asyncio.to_thread(self.redis.set, "trading:market_closed", "1")
                     await asyncio.to_thread(self.redis.set, "trading:market_next_open", clock.next_open.isoformat())
-                    logger.debug(f"Market closed, pausing trading. Reason: {reason}")
-                    if self.notifier and not already_market_closed:
-                        await self.notifier.send_notification(
-                            f"⏸️ {reason}",
-                            summary={"action": "PAUSE", "reason": reason}
-                        )
+
+                    if source != "llm":
+                        # Only overwrite pause keys if not already paused by LLM
+                        pause_keys = [
+                            "trading:paused",
+                            "trading:pause_source",
+                            "trading:pause_start",
+                            "trading:pause_duration",
+                            "trading:pause_reason",
+                            "trading:llm_pause_time",
+                        ]
+                        for key in pause_keys:
+                            await asyncio.to_thread(self.redis.delete, key)
+                        # Set new pause keys
+                        await asyncio.to_thread(self.redis.set, "trading:paused", "1")
+                        await asyncio.to_thread(self.redis.set, "trading:pause_source", "market_closed")
+                        await asyncio.to_thread(self.redis.set, "trading:pause_reason", reason)
+                        logger.debug(f"Market closed, pausing trading. Reason: {reason}")
+                        if self.notifier and not already_market_closed:
+                            await self.notifier.send_notification(
+                                f"⏸️ {reason}",
+                                summary={"action": "PAUSE", "reason": reason}
+                            )
+                    elif not already_market_closed:
+                        # Market closed but LLM already paused. Just notify.
+                        if self.notifier:
+                            await self.notifier.send_notification(
+                                f"⏸️ Market closed (trading already paused by LLM).",
+                                summary={"action": "PAUSE", "reason": "Market closed (LLM pause active)"}
+                            )
                     # Invalidate clock cache so the next monitor cycle sees the updated state
                     self._market_data_manager.invalidate_clock_cache()
 
                 # --- Periodic countdown updates while market is closed ---
-                # Only send updates if we are currently paused due to market_closed
-                source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
-                source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
-                if source == "market_closed" and not is_open:
+                # Only send updates if the market is currently closed
+                market_closed_raw = await asyncio.to_thread(self.redis.get, "trading:market_closed")
+                is_market_closed_flag = market_closed_raw is not None
+                if is_market_closed_flag and not is_open:
                     now_ts = time.time()
                     # Recompute remaining seconds from the live clock (or fallback)
                     if clock is not None:
@@ -916,6 +927,10 @@ class TradingEngine:
                 else:
                     # Market open – resume trading only if paused due to market closure.
                     # Respect LLM-initiated and manual pauses while the market is open.
+                    # Always clear market-closed specific keys
+                    await asyncio.to_thread(self.redis.delete, "trading:market_closed")
+                    await asyncio.to_thread(self.redis.delete, "trading:market_next_open")
+
                     paused = await asyncio.to_thread(self.redis.get, "trading:paused")
                     if paused:
                         source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
@@ -929,7 +944,6 @@ class TradingEngine:
                                 "trading:pause_duration",
                                 "trading:pause_reason",
                                 "trading:llm_pause_time",
-                                "trading:market_next_open",
                             ]
                             for key in pause_keys:
                                 await asyncio.to_thread(self.redis.delete, key)
