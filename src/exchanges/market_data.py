@@ -1093,8 +1093,17 @@ def _discover_financedatabase_tickers() -> List[str]:
         except (RuntimeError, ValueError, AttributeError, TypeError):
             df = equities.select()
             # Fallback: filter the dataframe manually if 'country' arg is unsupported
-            if df is not None and not df.empty and 'country' in df.columns:
-                df = df[df['country'].str.lower() == country.lower()]
+            if df is not None and not df.empty:
+                if 'country' in df.columns:
+                    df = df[df['country'].str.lower() == country.lower()]
+                elif 'exchange' in df.columns:
+                    df = df[df['exchange'].str.lower().isin(['mil', 'mta', 'borsa italiana'])]
+                else:
+                    suffix = settings.TICKER_SUFFIX
+                    if suffix:
+                        df = df[df.index.str.endswith(suffix)]
+                    else:
+                        df = pd.DataFrame()  # Return empty to avoid non-Italian equities
         if df is None or df.empty:
             logger.warning(f"No tickers found in FinanceDatabase for country: {country}")
             return []
@@ -1148,8 +1157,19 @@ def discover_italian_ucits_etfs() -> List[str]:
         except (RuntimeError, ValueError, AttributeError, TypeError):
             df = etfs.select()
             # Fallback: filter the dataframe manually if 'country' arg is unsupported
-            if df is not None and not df.empty and 'country' in df.columns:
-                df = df[df['country'].str.lower() == 'italy']
+            if df is not None and not df.empty:
+                if 'country' in df.columns:
+                    df = df[df['country'].str.lower() == 'italy']
+                elif 'exchange' in df.columns:
+                    # Filter by Italian exchanges (e.g., MIL, MTA)
+                    df = df[df['exchange'].str.lower().isin(['mil', 'mta', 'borsa italiana'])]
+                else:
+                    # Last resort: filter by symbol suffix (e.g., .MI)
+                    suffix = settings.TICKER_SUFFIX
+                    if suffix:
+                        df = df[df.index.str.endswith(suffix)]
+                    else:
+                        df = pd.DataFrame()  # Return empty to avoid non-Italian ETFs
 
         if df is None or df.empty:
             return []
