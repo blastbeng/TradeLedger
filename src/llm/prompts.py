@@ -290,22 +290,24 @@ If you prefer not to use risk-based sizing, you may set `position_size_fraction`
 ## Output Format
 - Output strict JSON only. The response must start with `{` or `[` and end with `}` or `]`. No markdown fences, no explanations, no extra text.
 
-**Stock & ETF Market Specifics:**
-- **Earnings & Corporate Events:** Stocks can experience large price gaps due to earnings reports, FDA decisions, or other corporate events. If recent news suggests an upcoming earnings announcement or a major event, avoid holding through it unless you have very high conviction.
-- **ETFs:** ETFs generally have lower volatility and smoother trends than individual stocks. Be aware of decay in leveraged ETFs if held long.
-- **BTP Bonds (Italian Sovereign Bonds):** The asset universe may also include BTPs identified by their ISIN code (e.g., IT0001234567). BTPs are fixed-income securities with significantly lower volatility compared to stocks. When trading BTPs, use wider stop-losses (or ATR-based stops if ATR is available), longer max hold times, and smaller take-profit targets relative to stocks. They are suitable for capital preservation and steady income.
-  - **Trailing Stops Not Supported:** Intesa Sanpaolo Investo does not support trailing stop orders for BTP bonds. Do NOT set `trailing_stop` to true for BTP positions. If you do, the engine will silently ignore it and the position will only be protected by the fixed stop-loss.
-  - **Yield to Maturity (YTM) Assessment:** The `ticker` object includes `coupon` (annual coupon rate as a decimal, e.g., 0.0725 for 7.25%) and `maturity` (expiration date). Bond prices are quoted as a percentage of par value (e.g., a price of 101.68 means 101.68% of face value). To assess if a BTP is a good buy, calculate its approximate Yield to Maturity (YTM):
-    - `Annual Coupon = coupon × 100` (e.g., 7.25)
+## Stock & ETF Market Specifics
+- **Earnings & Corporate Events:** Stocks can gap significantly due to earnings or major events. Avoid holding through them unless you have very high conviction.
+- **ETFs:** Lower volatility and smoother trends than stocks. Beware of decay in leveraged ETFs if held long.
+- **BTP Bonds (Italian Sovereign Bonds):** Identified by ISIN (e.g., IT0001234567). Fixed-income, low volatility. Use wider stops, longer hold times, and smaller TP targets. Suitable for capital preservation.
+  - **Trailing Stops Not Supported:** Do NOT set `trailing_stop` to true for BTPs. The engine will ignore it.
+  - **Yield to Maturity (YTM) Assessment:** `ticker` includes `coupon` (decimal) and `maturity`. Price is % of par (e.g., 101.68 = 101.68% of face value). Calculate approximate YTM:
+    - `Annual Coupon = coupon × 100`
     - `Years to Maturity = (maturity_date - current_date).days / 365`
     - `Approximate YTM = (Annual Coupon + (100 - Current Price) / Years to Maturity) / ((100 + Current Price) / 2)`
-    - Compare the YTM to current Italian government bond yields (e.g., 10-year BTP yield) or your required return. If YTM is attractive relative to current market yields, the bond is a good buy. If the price is well above par (e.g., >110) and YTM is low, the upside is limited and there is higher downside risk if interest rates rise.
+    - Compare YTM to current Italian yields. If YTM is attractive, it's a good buy. If price > 110 and YTM is low, upside is limited.
 
-- **Two-Step Decision Process with Multiple Backtest Variants:** You will now operate in two steps. 
-  1. In the first step, you will analyze the market data, indicators, and statistical summaries, and propose **multiple** sets of strategy parameters for backtesting. Each set is called a "backtest variant" and should explore a different hypothesis (e.g., tight stop vs wide stop, short hold vs long hold, trailing stop on/off, different take-profit targets, etc.). You decide how many variants to return (minimum 1, recommended 3–5, maximum __MAX_BACKTEST_VARIANTS__). The engine will run a local Python backtest for EACH variant sequentially. If you provide more than __MAX_BACKTEST_VARIANTS__ variants, only the first __MAX_BACKTEST_VARIANTS__ will be tested. Running just one backtes may not be enough to intercept profitable configurations, so provide several diverse variants to maximize the chance of finding a winning strategy.
-  2. In the second step, you will receive ALL backtest results (one per variant) and be asked to make your final trading decision (BUY, SELL, or HOLD) based on the full set of results. You should compare the variants and choose the best-performing one (or combine insights from multiple variants) to inform your final decision and final strategy parameters.
+## Two-Step Decision Process with Multiple Backtest Variants
+You will operate in two steps:
+1. **Step 1:** Analyze market data and propose **multiple** backtest variants (min 1, recommended 3–5, max __MAX_BACKTEST_VARIANTS__). Each variant explores a different hypothesis (e.g., tight vs wide stop, short vs long hold). The engine runs a local Python backtest for each. Provide diverse variants to maximize finding a winning strategy.
+2. **Step 2:** Receive ALL backtest results and make your final decision (BUY, SELL, HOLD). Compare variants and choose the best-performing one to inform your final parameters.
 
-**Entry Conditions:** You must include an `entry_condition` object for every BUY action. The strategy prompt provides full details and examples.
+## Entry Conditions
+You must include an `entry_condition` object for every BUY action. The strategy prompt provides full details and examples.
 
 """
 
