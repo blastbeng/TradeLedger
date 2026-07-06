@@ -1245,6 +1245,22 @@ class OrderExecutor:
             else:
                 order_type = "market"
 
+        # --- Reserve cycle budget before placing order to prevent race condition ---
+        async with engine._cycle_spent_lock:
+            available = max(0.0, quote_balance - engine._cycle_spent)
+            if amount > available:
+                logger.info(
+                    f"Skipping BUY {symbol}: cycle budget exhausted "
+                    f"(needed {amount:.2f}, available {available:.2f}) due to concurrent order"
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"⚠️ Skipping BUY {display_symbol}: cycle budget exhausted by concurrent order",
+                        summary={"symbol": symbol, "action": "SKIP", "reason": "Cycle budget exhausted (concurrent order)"}
+                    )
+                return
+            engine._cycle_spent += amount
+
         try:
             if order_type == "market":
                 order = await asyncio.to_thread(
@@ -1310,26 +1326,6 @@ class OrderExecutor:
                 }
                 async with engine._queued_orders_lock:
                     engine.queued_orders.append(queued_entry)
-                # Reserve capital when the order is queued, not just when it fills,
-                # so subsequent symbols in the same cycle see reduced available capital.
-                async with engine._cycle_spent_lock:
-                    available = max(0.0, quote_balance - engine._cycle_spent)
-                    if amount > available:
-                        logger.info(
-                            f"Skipping queued BUY {symbol}: cycle budget exhausted "
-                            f"(needed {amount:.2f}, available {available:.2f}) due to concurrent order"
-                        )
-                        try:
-                            await asyncio.to_thread(engine.trader.cancel_order, order['id'])
-                        except Exception:
-                            pass
-                        if engine.notifier:
-                            await engine.notifier.send_notification(
-                                f"⚠️ Skipping BUY {display_symbol}: cycle budget exhausted by concurrent order",
-                                summary={"symbol": symbol, "action": "SKIP", "reason": "Cycle budget exhausted (concurrent order)"}
-                            )
-                        return
-                    engine._cycle_spent += amount
                 if engine.notifier:
                     await engine.notifier.send_notification(
                         f"⏳ BUY {order_type} order for {display_symbol} queued{price_str}",
@@ -1337,6 +1333,8 @@ class OrderExecutor:
                     )
                 return
             if order.get('status') == 'rejected':
+                async with engine._cycle_spent_lock:
+                    engine._cycle_spent = max(0.0, engine._cycle_spent - amount)
                 logger.warning(f"BUY order rejected for {symbol}")
                 if engine.notifier:
                     await engine.notifier.send_notification(
@@ -1367,26 +1365,6 @@ class OrderExecutor:
                 }
                 async with engine._queued_orders_lock:
                     engine.queued_orders.append(queued_entry)
-            async with engine._cycle_spent_lock:
-                available = max(0.0, quote_balance - engine._cycle_spent)
-                if amount > available:
-                    # The order has already been filled — we cannot un-fill it.
-                    # Log a warning and proceed to record the trade rather than
-                    # returning and leaving the system in an inconsistent state
-                    # (balance debited but no trade/position recorded).
-                    logger.warning(
-                        f"BUY {symbol} filled but cycle budget exhausted by concurrent order "
-                        f"(needed {amount:.2f}, available {available:.2f}). "
-                        f"Recording trade anyway to maintain consistency."
-                    )
-                    if engine.notifier:
-                        await engine.notifier.send_notification(
-                            f"⚠️ {display_symbol}: order filled but cycle budget was exhausted by concurrent order. Recording anyway.",
-                            summary={"symbol": symbol, "action": "WARN", "reason": "Cycle budget exhausted after fill (concurrent order)"}
-                        )
-                # Reserve the full desired amount, not just the filled portion,
-                # so the queued remainder is also accounted for in this cycle.
-                engine._cycle_spent += amount
             await self.update_or_create_buy_position(
                 symbol=symbol,
                 order=order,
@@ -1410,6 +1388,8 @@ class OrderExecutor:
                 atr=atr,
             )
         except Exception as e:
+            async with engine._cycle_spent_lock:
+                engine._cycle_spent = max(0.0, engine._cycle_spent - amount)
             logger.error(f"Buy order failed for {symbol}: {e}")
             if engine.notifier:
                 await engine.notifier.send_notification(
@@ -1580,6 +1560,22 @@ class OrderExecutor:
                 order_type = "limit"
             else:
                 order_type = "market"
+
+        # --- Reserve cycle budget before placing order to prevent race condition ---
+        async with engine._cycle_spent_lock:
+            available = max(0.0, quote_balance - engine._cycle_spent)
+            if amount > available:
+                logger.info(
+                    f"Skipping BUY {symbol}: cycle budget exhausted "
+                    f"(needed {amount:.2f}, available {available:.2f}) due to concurrent order"
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"⚠️ Skipping BUY {display_symbol}: cycle budget exhausted by concurrent order",
+                        summary={"symbol": symbol, "action": "SKIP", "reason": "Cycle budget exhausted (concurrent order)"}
+                    )
+                return
+            engine._cycle_spent += amount
 
         try:
             if order_type == "market":
