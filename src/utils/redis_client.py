@@ -62,7 +62,7 @@ def check_redis_connection() -> bool:
         _redis_client.ping()
         set_redis_available(True)
         return True
-    except (redis.ConnectionError, redis.TimeoutError) as e:
+    except Exception as e:
         logger.critical("Redis connection failed: %s", e)
         set_redis_available(False)
         return False
