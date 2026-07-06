@@ -128,7 +128,7 @@ class SignalProcessor:
         if settings.NEWS_ENABLED and detect_upcoming_events is not None:
             try:
                 symbol_event = await asyncio.to_thread(detect_upcoming_events, symbol)
-            except Exception:
+            except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, json.JSONDecodeError):
                 pass
 
         _ctx = await self.gather_prompt_context(
@@ -4400,7 +4400,7 @@ class SignalProcessor:
         if settings.NEWS_ENABLED and detect_upcoming_events is not None:
             try:
                 symbol_event = await asyncio.to_thread(detect_upcoming_events, symbol)
-            except Exception:
+            except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, json.JSONDecodeError):
                 pass
 
         stale_indicators_warning = symbol_data.get("stale_indicators_warning", "")
