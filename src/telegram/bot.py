@@ -651,6 +651,7 @@ class TelegramBot:
                 try:
                     news_data = await asyncio.to_thread(get_cached_news_summary, symbol)
                     summary_text = html.escape(news_data["summary"])
+                    summary_text = html.escape(news_data["summary"])
                     provider = news_data.get("provider", "")
                     model = news_data.get("model", "")
                 except Exception:
