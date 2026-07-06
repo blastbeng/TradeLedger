@@ -818,38 +818,49 @@ class OrderExecutor:
             except (ValueError, TypeError):
                 pass
 
-        # Compute single hard ceiling from all risk caps
-        hard_max = float('inf')
+        # --- Compute individual caps ---
+        caps = []
 
         # Cap 1: max_risk_per_trade_pct (per-trade risk from LLM strategy params)
         max_risk_pct = params.get("max_risk_per_trade_pct")
         if max_risk_pct is not None and sl_pct > 0:
-            hard_max = min(hard_max, (total_value * max_risk_pct) / sl_pct)
+            caps.append(((total_value * max_risk_pct) / sl_pct, f"max_risk_per_trade={max_risk_pct:.2%}"))
 
         # Cap 2: max_portfolio_risk_pct (portfolio risk from LLM strategy params)
         max_portfolio_risk_pct = params.get("max_portfolio_risk_pct")
         if max_portfolio_risk_pct is not None and sl_pct > 0:
             available_risk_budget = max(0.0, (total_value * max_portfolio_risk_pct) - total_open_stop_risk)
-            hard_max = min(hard_max, available_risk_budget / sl_pct)
+            caps.append((available_risk_budget / sl_pct, f"max_portfolio_risk={max_portfolio_risk_pct:.2%}"))
 
         # Cap 3: max_portfolio_exposure_pct (global LLM setting from stock selection)
         max_port_exp_raw = await asyncio.to_thread(engine.redis.get, "trading:max_portfolio_exposure_pct")
         max_port_exp = float(max_port_exp_raw) if max_port_exp_raw else None
         if max_port_exp is not None and total_value > 0:
             available_exposure = max(0.0, (max_port_exp * total_value) - total_open_exposure)
-            hard_max = min(hard_max, available_exposure)
+            caps.append((available_exposure, f"max_exposure={max_port_exp:.2%}"))
 
         # Cap 4: max_portfolio_stop_risk_pct (global LLM setting from stock selection)
         max_port_risk_raw = await asyncio.to_thread(engine.redis.get, "trading:max_portfolio_stop_risk_pct")
         max_port_risk = float(max_port_risk_raw) if max_port_risk_raw else None
         if max_port_risk is not None and sl_pct > 0 and total_value > 0:
             available_stop_risk_budget = max(0.0, (total_value * max_port_risk) - total_open_stop_risk)
-            hard_max = min(hard_max, available_stop_risk_budget / sl_pct)
+            caps.append((available_stop_risk_budget / sl_pct, f"max_stop_risk={max_port_risk:.2%}"))
 
-        # Cap at remaining cycle budget (use lock for consistent read)
+        # Cap 5: remaining cycle budget
         async with engine._cycle_spent_lock:
             available = max(0.0, quote_balance - engine._cycle_spent)
-        hard_max = min(hard_max, available)
+        caps.append((available, "cycle_budget"))
+
+        # --- Determine the binding cap ---
+        hard_max = float('inf')
+        binding_reason = None
+        for cap_value, cap_reason in caps:
+            if cap_value < hard_max:
+                hard_max = cap_value
+                binding_reason = cap_reason
+
+        if hard_max == float('inf'):
+            hard_max = 0.0
 
         # Final amount: min of LLM's desired amount and the single hard ceiling
         amount = min(desired_amount, hard_max)
@@ -872,14 +883,8 @@ class OrderExecutor:
         if amount < desired_amount:
             # Single consolidated notification about which cap was binding
             cap_reasons = []
-            if max_risk_pct is not None and sl_pct > 0:
-                cap_reasons.append(f"max_risk_per_trade={max_risk_pct:.2%}")
-            if max_portfolio_risk_pct is not None:
-                cap_reasons.append(f"max_portfolio_risk={max_portfolio_risk_pct:.2%}")
-            if max_port_exp is not None:
-                cap_reasons.append(f"max_exposure={max_port_exp:.2%}")
-            if max_port_risk is not None:
-                cap_reasons.append(f"max_stop_risk={max_port_risk:.2%}")
+            if binding_reason:
+                cap_reasons.append(binding_reason)
             if global_mult is not None and global_mult < 1.0:
                 cap_reasons.append(f"global_risk_mult={global_mult:.2f}")
             if per_symbol_mult is not None and per_symbol_mult < 1.0:
