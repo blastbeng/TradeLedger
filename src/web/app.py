@@ -616,7 +616,7 @@ async def websocket_endpoint(websocket: WebSocket):
             except Exception as e:
                 logger.error(f"WebSocket error: {e}", exc_info=True)
                 break
-            await asyncio.sleep(2)
+            await asyncio.sleep(_ws_payload_ttl)
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
 
