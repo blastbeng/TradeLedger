@@ -65,13 +65,18 @@ async def rate_limit_middleware(request: Request, call_next):
     now = time.time()
 
     # Remove timestamps older than the window
-    while _rate_limit_store[client_ip] and _rate_limit_store[client_ip][0] < now - RATE_LIMIT_WINDOW:
-        _rate_limit_store[client_ip].popleft()
+    ip_deque = _rate_limit_store[client_ip]
+    while ip_deque and ip_deque[0] < now - RATE_LIMIT_WINDOW:
+        ip_deque.popleft()
 
-    if len(_rate_limit_store[client_ip]) >= RATE_LIMIT_REQUESTS:
+    # Optional: clean up empty deques to prevent memory bloat
+    if not ip_deque:
+        _rate_limit_store.pop(client_ip, None)
+
+    if len(ip_deque) >= RATE_LIMIT_REQUESTS:
         return JSONResponse(status_code=429, content={"detail": "Too Many Requests"})
 
-    _rate_limit_store[client_ip].append(now)
+    ip_deque.append(now)
     response = await call_next(request)
     return response
 
