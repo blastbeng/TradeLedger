@@ -2178,6 +2178,206 @@ class SymbolReevaluator:
                 }
             )
 
+    async def process_llm_response(
+        self,
+        response: Optional[str],
+        llm_provider: Optional[str],
+        llm_model: Optional[str],
+        effective_temp: float,
+        sample_pairs: List[str],
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+        sorted_by_composite: List[str],
+        market_limits: Dict[str, Dict[str, float]],
+        base_balance: float,
+        old_symbols: List[Dict[str, str]],
+        trading_paused_bool: bool,
+    ) -> Tuple[Dict[str, Any], Optional[bool], str, Optional[Any], List[Dict[str, str]], Optional[str], Optional[str]]:
+        """Process the LLM response, parse symbols, and handle pause/resume logic.
+
+        Returns (parsed, pause_trading, pause_reason, pause_duration, deduped, llm_provider, llm_model).
+        """
+        engine = self.engine
+
+        logger.info("Re-evaluation: LLM response received (%d chars), parsing...", len(response) if response else 0)
+        if response:
+            # Truncate long responses to avoid flooding logs with HTML error pages
+            if len(response) > 500:
+                logger.info("LLM stock selection raw response (truncated): %.500s...", response)
+            else:
+                logger.info("LLM stock selection raw response: %s", response)
+            # Warn if the response looks like HTML (common when the LLM endpoint returns an error page)
+            if response.lstrip().startswith('<'):
+                logger.warning(
+                    "LLM stock selection response appears to be HTML (length %d). "
+                    "The LLM endpoint may be returning an error page.",
+                    len(response)
+                )
+        else:
+            logger.info("LLM stock selection returned empty response")
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    "⚠️ LLM symbol selection failed after all retries. " +
+                    ("Keeping previously tracked symbols." if old_symbols else "Will attempt fallback selection."),
+                    summary={
+                        "action": "ERROR",
+                        "reason": "LLM symbol selection failed after all retries",
+                        "model_type": "mind",
+                    }
+                )
+
+        # Initialize variables that may be used later even if LLM fails
+        parsed = {}
+        pause_trading = None
+        pause_reason = ""
+        pause_duration = None
+        new_symbols: List[Dict[str, str]] = []
+        deduped: List[Dict[str, str]] = []
+
+        # Retry JSON parsing if the first attempt fails
+        if response is not None:
+            try:
+                json.loads(response)  # validate
+            except json.JSONDecodeError:
+                response, llm_provider, llm_model = await self.retry_json_parsing(
+                    response=response,
+                    effective_temp=effective_temp,
+                )
+
+        if response is not None:
+            try:
+                parsed = json.loads(response)
+                llm_max_stocks = parsed.get("max_stocks") if isinstance(parsed, dict) else None
+                deduped = self.parse_and_validate_symbols(
+                    response=response,
+                    sample_pairs=sample_pairs,
+                    ohlcv_data=ohlcv_data,
+                )
+                if deduped is None:
+                    deduped = []
+
+                # --- Extract pause_trading early so MIN_SYMBOLS enforcement can respect it ---
+                pause_trading = parsed.get("pause_trading")
+                if isinstance(pause_trading, str):
+                    low = pause_trading.strip().lower()
+                    if low in ("true", "1"):
+                        pause_trading = True
+                    elif low in ("false", "0"):
+                        pause_trading = False
+                    else:
+                        pause_trading = None
+
+                # Use the LLM's chosen number of symbols to update effective_max_symbols
+                if llm_max_stocks is not None and isinstance(llm_max_stocks, int) and 0 <= llm_max_stocks <= engine.max_symbols:
+                    engine.effective_max_symbols = llm_max_stocks
+                else:
+                    # Fallback: use the length of the deduped list, capped at the engine's max
+                    engine.effective_max_symbols = min(len(deduped), engine.effective_max_symbols)
+
+                self.enforce_min_symbols(
+                    deduped=deduped,
+                    pause_trading=pause_trading,
+                    sorted_by_composite=sorted_by_composite,
+                    market_limits=market_limits,
+                    base_balance=base_balance,
+                )
+
+                # --- Store LLM-decided parameters to Redis ---
+                await self.store_llm_decided_parameters(parsed)
+
+                pause_trading, pause_reason, pause_duration = await self.handle_pause_resume_and_risk_multiplier(
+                    parsed=parsed,
+                    pause_trading=pause_trading,
+                    trading_paused_bool=trading_paused_bool,
+                )
+
+                self.update_current_symbols(
+                    deduped=deduped,
+                    old_symbols=old_symbols,
+                )
+
+            except json.JSONDecodeError:
+                logger.error("Failed to parse symbol selection response.")
+
+        return parsed, pause_trading, pause_reason, pause_duration, deduped, llm_provider, llm_model
+
+    async def finalize_reevaluation(
+        self,
+        sample_pairs: List[str],
+        composite_scores: Dict[str, float],
+        tickers: Dict[str, Dict[str, Any]],
+        market_limits: Dict[str, Dict[str, float]],
+        base_balance: float,
+        old_symbols: List[Dict[str, str]],
+        deduped: List[Dict[str, str]],
+        pause_trading: Optional[bool],
+        pause_reason: str,
+        pause_duration: Optional[Any],
+        trading_paused_bool: bool,
+        force: bool,
+        is_user_forced: bool,
+        parsed: Dict[str, Any],
+        llm_provider: Optional[str],
+        llm_model: Optional[str],
+        is_market_condition_trigger: bool,
+        per_symbol_budget: float,
+        last_key: str,
+        now: float,
+    ) -> None:
+        """Apply fallback selection, cleanup, send notifications, and finalize state."""
+        engine = self.engine
+
+        await self.apply_fallback_selection(
+            sample_pairs=sample_pairs,
+            composite_scores=composite_scores,
+            tickers=tickers,
+            market_limits=market_limits,
+            base_balance=base_balance,
+            old_symbols=old_symbols,
+            pause_trading=pause_trading,
+        )
+
+        await self.post_selection_cleanup_and_backfill(
+            old_symbols=old_symbols,
+            deduped=deduped,
+            force=force,
+        )
+
+        await self.build_and_send_reeval_notification(
+            base_balance=base_balance,
+            per_symbol_budget=per_symbol_budget,
+            pause_trading=pause_trading,
+            pause_reason=pause_reason,
+            pause_duration=pause_duration,
+            trading_paused_bool=trading_paused_bool,
+            force=force,
+            is_user_forced=is_user_forced,
+            parsed=parsed,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+        )
+
+        # If no symbols were selected, shorten the re‑evaluation interval to retry sooner.
+        if not engine.current_symbols:
+            engine._symbol_reevaluation_interval = max(engine._symbol_reevaluation_interval, settings.MIN_SYMBOL_REEVALUATION_INTERVAL)
+            logger.info(f"No symbols selected – next re‑evaluation in {engine._symbol_reevaluation_interval}s")
+        # else: keep the current interval (may have been set by LLM via
+        # stock_revaluation_interval_seconds, or the default SYMBOL_REEVALUATION_INTERVAL)
+
+        # Set the triggered cooldown key AFTER a successful market-condition-triggered
+        # re-evaluation to prevent the market condition monitor from firing again too soon.
+        # This must be set at the END, not at the trigger point, otherwise the re-evaluation
+        # itself would see the cooldown as active and skip itself.
+        if is_market_condition_trigger:
+            await asyncio.to_thread(engine.redis.set, "trading:last_triggered_reeval", str(time.time()))
+            await asyncio.to_thread(engine.redis.expire, "trading:last_triggered_reeval", 7200)
+
+        # --- Cleanup stale entries from engine state dicts and caches ---
+        await self.cleanup_stale_state_entries()
+
+        engine._state_dirty = True
+        logger.info("Re-evaluation complete: %d symbols selected.", len(engine.current_symbols))
+        await asyncio.to_thread(engine.redis.set, last_key, now)
+
     async def reevaluate_symbols_impl(self, force: bool = False):
         """Main re-evaluation orchestration: fetch assets, quotes, indicators,
         run LLM chunked evaluation, final selection, and post-selection cleanup."""
@@ -2311,125 +2511,28 @@ class SymbolReevaluator:
             effective_temp=effective_temp,
         )
 
-        logger.info("Re-evaluation: LLM response received (%d chars), parsing...", len(response) if response else 0)
-        if response:
-            # Truncate long responses to avoid flooding logs with HTML error pages
-            if len(response) > 500:
-                logger.info("LLM stock selection raw response (truncated): %.500s...", response)
-            else:
-                logger.info("LLM stock selection raw response: %s", response)
-            # Warn if the response looks like HTML (common when the LLM endpoint returns an error page)
-            if response.lstrip().startswith('<'):
-                logger.warning(
-                    "LLM stock selection response appears to be HTML (length %d). "
-                    "The LLM endpoint may be returning an error page.",
-                    len(response)
-                )
-        else:
-            logger.info("LLM stock selection returned empty response")
-            if engine.notifier:
-                await engine.notifier.send_notification(
-                    "⚠️ LLM symbol selection failed after all retries. " +
-                    ("Keeping previously tracked symbols." if old_symbols else "Will attempt fallback selection."),
-                    summary={
-                        "action": "ERROR",
-                        "reason": "LLM symbol selection failed after all retries",
-                        "model_type": "mind",
-                    }
-                )
+        parsed, pause_trading, pause_reason, pause_duration, deduped, llm_provider, llm_model = await self.process_llm_response(
+            response=response,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            effective_temp=effective_temp,
+            sample_pairs=sample_pairs,
+            ohlcv_data=ohlcv_data,
+            sorted_by_composite=sorted_by_composite,
+            market_limits=market_limits,
+            base_balance=base_balance,
+            old_symbols=old_symbols,
+            trading_paused_bool=trading_paused_bool,
+        )
 
-        # Initialize variables that may be used later even if LLM fails
-        parsed = {}
-        pause_trading = None
-        pause_reason = ""
-        pause_duration = None
-        new_symbols: List[Dict[str, str]] = []
-        deduped: List[Dict[str, str]] = []
-
-        # Retry JSON parsing if the first attempt fails
-        if response is not None:
-            try:
-                json.loads(response)  # validate
-            except json.JSONDecodeError:
-                response, llm_provider, llm_model = await self.retry_json_parsing(
-                    response=response,
-                    effective_temp=effective_temp,
-                )
-
-        if response is not None:
-            try:
-                parsed = json.loads(response)
-                llm_max_stocks = parsed.get("max_stocks") if isinstance(parsed, dict) else None
-                deduped = self.parse_and_validate_symbols(
-                    response=response,
-                    sample_pairs=sample_pairs,
-                    ohlcv_data=ohlcv_data,
-                )
-                if deduped is None:
-                    deduped = []
-
-                # --- Extract pause_trading early so MIN_SYMBOLS enforcement can respect it ---
-                pause_trading = parsed.get("pause_trading")
-                if isinstance(pause_trading, str):
-                    low = pause_trading.strip().lower()
-                    if low in ("true", "1"):
-                        pause_trading = True
-                    elif low in ("false", "0"):
-                        pause_trading = False
-                    else:
-                        pause_trading = None
-
-                # Use the LLM's chosen number of symbols to update effective_max_symbols
-                if llm_max_stocks is not None and isinstance(llm_max_stocks, int) and 0 <= llm_max_stocks <= engine.max_symbols:
-                    engine.effective_max_symbols = llm_max_stocks
-                else:
-                    # Fallback: use the length of the deduped list, capped at the engine's max
-                    engine.effective_max_symbols = min(len(deduped), engine.effective_max_symbols)
-
-                self.enforce_min_symbols(
-                    deduped=deduped,
-                    pause_trading=pause_trading,
-                    sorted_by_composite=sorted_by_composite,
-                    market_limits=market_limits,
-                    base_balance=base_balance,
-                )
-
-                # --- Store LLM-decided parameters to Redis ---
-                await self.store_llm_decided_parameters(parsed)
-
-                pause_trading, pause_reason, pause_duration = await self.handle_pause_resume_and_risk_multiplier(
-                    parsed=parsed,
-                    pause_trading=pause_trading,
-                    trading_paused_bool=trading_paused_bool,
-                )
-
-                self.update_current_symbols(
-                    deduped=deduped,
-                    old_symbols=old_symbols,
-                )
-
-            except json.JSONDecodeError:
-                logger.error("Failed to parse symbol selection response.")
-
-        await self.apply_fallback_selection(
+        await self.finalize_reevaluation(
             sample_pairs=sample_pairs,
             composite_scores=composite_scores,
             tickers=tickers,
             market_limits=market_limits,
             base_balance=base_balance,
             old_symbols=old_symbols,
-            pause_trading=pause_trading,
-        )
-
-        await self.post_selection_cleanup_and_backfill(
-            old_symbols=old_symbols,
             deduped=deduped,
-            force=force,
-        )
-
-        await self.build_and_send_reeval_notification(
-            base_balance=base_balance,
-            per_symbol_budget=per_symbol_budget,
             pause_trading=pause_trading,
             pause_reason=pause_reason,
             pause_duration=pause_duration,
@@ -2439,26 +2542,8 @@ class SymbolReevaluator:
             parsed=parsed,
             llm_provider=llm_provider,
             llm_model=llm_model,
+            is_market_condition_trigger=is_market_condition_trigger,
+            per_symbol_budget=per_symbol_budget,
+            last_key=last_key,
+            now=now,
         )
-
-        # If no symbols were selected, shorten the re‑evaluation interval to retry sooner.
-        if not engine.current_symbols:
-            engine._symbol_reevaluation_interval = max(engine._symbol_reevaluation_interval, settings.MIN_SYMBOL_REEVALUATION_INTERVAL)
-            logger.info(f"No symbols selected – next re‑evaluation in {engine._symbol_reevaluation_interval}s")
-        # else: keep the current interval (may have been set by LLM via
-        # stock_revaluation_interval_seconds, or the default SYMBOL_REEVALUATION_INTERVAL)
-
-        # Set the triggered cooldown key AFTER a successful market-condition-triggered
-        # re-evaluation to prevent the market condition monitor from firing again too soon.
-        # This must be set at the END, not at the trigger point, otherwise the re-evaluation
-        # itself would see the cooldown as active and skip itself.
-        if is_market_condition_trigger:
-            await asyncio.to_thread(engine.redis.set, "trading:last_triggered_reeval", str(time.time()))
-            await asyncio.to_thread(engine.redis.expire, "trading:last_triggered_reeval", 7200)
-
-        # --- Cleanup stale entries from engine state dicts and caches ---
-        await self.cleanup_stale_state_entries()
-
-        engine._state_dirty = True
-        logger.info("Re-evaluation complete: %d symbols selected.", len(engine.current_symbols))
-        await asyncio.to_thread(engine.redis.set, last_key, now)
