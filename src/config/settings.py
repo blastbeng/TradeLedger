@@ -646,6 +646,17 @@ class Settings(BaseSettings):
             raise ValueError("LLM_TIMEOUT must be positive")
         return v
 
+    # LLM timeout (seconds) for time-critical actuator calls (stop-loss/take-profit reviews, pause/resume).
+    # This should be shorter than LLM_TIMEOUT to prevent the market from moving too much during the wait.
+    LLM_ACTUATOR_TIMEOUT: float = 60.0
+
+    @field_validator("LLM_ACTUATOR_TIMEOUT")
+    @classmethod
+    def validate_llm_actuator_timeout(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("LLM_ACTUATOR_TIMEOUT must be positive")
+        return v
+
     # Enforce the LLM's minimum profit per trade check.
     # Set to False to allow trades with very small expected profit.
     ENFORCE_MIN_PROFIT_PER_TRADE: bool = False
@@ -941,7 +952,7 @@ class Settings(BaseSettings):
         modules that imported ``settings`` see the new values immediately.
 
         **Safe to reload at runtime:**
-        - LLM provider/model/temperature/timeout settings
+        - LLM provider/model/temperature/timeout settings (including LLM_ACTUATOR_TIMEOUT)
         - News settings (NEWS_ENABLED, NEWS_API_KEY, RSS_FEEDS, etc.)
         - Trading mode (TRADING_MODE), MAX_SYMBOLS
         - Risk/engine loop intervals
