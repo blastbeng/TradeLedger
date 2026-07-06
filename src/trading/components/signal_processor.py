@@ -183,7 +183,7 @@ class SignalProcessor:
             max_partial_tp_reviews_prompt=flags["max_partial_tp_reviews_prompt"], max_dust_sweep_reviews_prompt=flags["max_dust_sweep_reviews_prompt"],
             portfolio_exposure_pct=_portfolio["portfolio_exposure_pct"], portfolio_stop_risk_pct=_portfolio["portfolio_stop_risk_pct"],
             portfolio_total_value=_portfolio["portfolio_total_value"], portfolio_available_capital=_portfolio["portfolio_available_capital"],
-            remaining=remaining, stale_indicators_warning=symbol_data.get("stale_indicators_warning", ""),
+            remaining=remaining,
             market_regime=_ctx["market_regime"], multi_tf_raw_candles=symbol_data["multi_tf_raw_candles"],
             multi_tf_indicators=symbol_data["multi_tf_indicators"], atr_percentile=_ctx["atr_percentile"],
         )
@@ -550,7 +550,6 @@ class SignalProcessor:
 
         batch_inds = await asyncio.to_thread(get_indicators_for_symbols, [symbol], settings.OHLCV_TIMEFRAMES)
         symbol_inds = batch_inds.get(symbol, {})
-        stale_indicators_warning = ""
 
         for tf in settings.OHLCV_TIMEFRAMES:
             if tf in ohlcv_data and ohlcv_data[tf]:
@@ -620,7 +619,6 @@ class SignalProcessor:
             "ichimoku": ichimoku, "donchian_channels": donchian_channels,
             "parabolic_sar": parabolic_sar, "keltner_channels": keltner_channels,
             "vwap": vwap, "daily_pivot_points": daily_pivot_points,
-            "stale_indicators_warning": stale_indicators_warning,
         }
 
     async def fetch_symbol_market_data(self, symbol: str, assigned_tf: str) -> Optional[Dict[str, Any]]:
@@ -724,7 +722,6 @@ class SignalProcessor:
             "keltner_channels": _inds["keltner_channels"],
             "vwap": _inds["vwap"],
             "daily_pivot_points": _inds["daily_pivot_points"],
-            "stale_indicators_warning": _inds.get("stale_indicators_warning", ""),
         }
 
     async def gather_prompt_context(
@@ -1031,7 +1028,6 @@ class SignalProcessor:
         portfolio_total_value: float,
         portfolio_available_capital: float,
         remaining: float,
-        stale_indicators_warning: str,
         market_regime: str,
         multi_tf_raw_candles: Dict[str, List[List]],
         multi_tf_indicators: Dict[str, Dict[str, Any]],
@@ -1143,8 +1139,6 @@ class SignalProcessor:
         staleness_warning = engine._market_data_manager._get_quote_staleness_warning(ticker)
         if staleness_warning:
             analysis_prompt += staleness_warning
-        if stale_indicators_warning:
-            analysis_prompt += stale_indicators_warning
         # Add auto-resume note so the LLM sees this context in per-symbol decisions
         last_auto_resume_raw = await asyncio.to_thread(engine.redis.get, "trading:last_auto_resume")
         if last_auto_resume_raw:
@@ -4387,7 +4381,6 @@ class SignalProcessor:
             except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, json.JSONDecodeError):
                 pass
 
-        stale_indicators_warning = symbol_data.get("stale_indicators_warning", "")
         analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(
             symbol=symbol,
             ticker=ticker,
@@ -4469,7 +4462,6 @@ class SignalProcessor:
             portfolio_total_value=portfolio_total_value,
             portfolio_available_capital=portfolio_available_capital,
             remaining=remaining,
-            stale_indicators_warning=stale_indicators_warning,
             market_regime=market_regime,
             multi_tf_raw_candles=multi_tf_raw_candles,
             multi_tf_indicators=multi_tf_indicators,
