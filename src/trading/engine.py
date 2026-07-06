@@ -56,6 +56,7 @@ from src.strategies.validator import validate_signal
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary
 from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.utils.symbol_utils import is_btp_isin
+from src.utils.task_supervisor import TaskSupervisor
 from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data
 from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.risk_manager import RiskManager
@@ -171,6 +172,7 @@ class TradingEngine:
         self._full_download_running = False
         self._quotes_fetch_running = False
         self._delayed_entry_tasks: set = set()
+        self._supervisors: list = []
 
         # Market-closed periodic notification tracking
         self._last_market_closed_notify_time: float = 0.0
@@ -500,6 +502,15 @@ class TradingEngine:
             task.cancel()
         self._delayed_entry_tasks.clear()
         logger.info("Cancelled delayed entry tasks.")
+
+        # Cancel supervised background tasks
+        for sup in self._supervisors:
+            sup.cancel()
+        for task in self._background_tasks:
+            task.cancel()
+        # Wait for them to actually finish cancelling
+        await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        logger.info("Cancelled background tasks.")
         self._db_executor.shutdown(wait=True)
         self._download_executor.shutdown(wait=True)
         logger.info("Database write executor shut down.")
@@ -1642,33 +1653,36 @@ class TradingEngine:
         logger.info("Trading engine started.")
         # Start background tasks
         self._background_tasks: list = []
-        background_coros = [
-            self._refresh_news_cache(),
-            self._refresh_current_symbols_news_fast(),
-            self._download_market_data_loop(),
-            self._download_all_assets_data_loop(),
-            self._download_all_news_loop(),
-            self._risk_management_loop(),
-            self._periodic_reconcile(),
-            self._periodic_reevaluate(),
-            self._periodic_pause_check(),
-            self._periodic_pause_resume_check(),
-            self._periodic_full_market_breadth(),
-            self._periodic_market_condition_check(),
-            self._periodic_portfolio_rebalance(),
-            self._check_pending_entries(),
-            self._cleanup_orphaned_orders(),
-            self._process_queued_orders(),
-            self._monitor_entry_signals_loop(),
-            self._market_clock_monitor(),
-            self._refresh_all_quotes_loop(),
-            self._refresh_ticker_discovery_loop(),
-            self._redis_health_check_loop(),
+        self._supervisors: list = []
+        background_factories = [
+            self._refresh_news_cache,
+            self._refresh_current_symbols_news_fast,
+            self._download_market_data_loop,
+            self._download_all_assets_data_loop,
+            self._download_all_news_loop,
+            self._risk_management_loop,
+            self._periodic_reconcile,
+            self._periodic_reevaluate,
+            self._periodic_pause_check,
+            self._periodic_pause_resume_check,
+            self._periodic_full_market_breadth,
+            self._periodic_market_condition_check,
+            self._periodic_portfolio_rebalance,
+            self._check_pending_entries,
+            self._cleanup_orphaned_orders,
+            self._process_queued_orders,
+            self._monitor_entry_signals_loop,
+            self._market_clock_monitor,
+            self._refresh_all_quotes_loop,
+            self._refresh_ticker_discovery_loop,
+            self._redis_health_check_loop,
         ]
-        for coro in background_coros:
-            task = asyncio.create_task(coro, name=coro.__qualname__)
+        for factory in background_factories:
+            sup = TaskSupervisor(factory, name=factory.__qualname__)
+            task = asyncio.create_task(sup.run(), name=f"supervisor:{factory.__qualname__}")
             task.add_done_callback(self._log_task_exception)
             self._background_tasks.append(task)
+            self._supervisors.append(sup)
 
         while self._running:
             try:
