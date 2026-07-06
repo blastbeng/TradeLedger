@@ -566,7 +566,8 @@ class MarketDataManager:
         if ignore_existing:
             since = start_ms
         else:
-            latest_ts = await asyncio.to_thread(get_latest_ohlcv_timestamp, symbol, timeframe)
+            loop = asyncio.get_running_loop()
+            latest_ts = await loop.run_in_executor(self.engine._db_executor, get_latest_ohlcv_timestamp, symbol, timeframe)
             if latest_ts is None:
                 since = start_ms
             else:
@@ -653,7 +654,7 @@ class MarketDataManager:
 
         # Get all stored timestamps
         loop = asyncio.get_running_loop()
-        candles = await loop.run_in_executor(engine._download_executor, get_ohlcv, symbol, timeframe, 50000)
+        candles = await loop.run_in_executor(engine._db_executor, get_ohlcv, symbol, timeframe, 50000)
         if len(candles) < 2:
             logger.debug(f"Not enough data to check gaps for {symbol} {timeframe}")
             return
@@ -703,7 +704,7 @@ class MarketDataManager:
             inserted = await self._backfill_ohlcv(symbol, timeframe, start_ms, end_ms, quiet=quiet, force=force)
             if inserted > 0 or force:
                 await self._fill_gaps(symbol, timeframe)
-                db_candles = await loop.run_in_executor(engine._download_executor, get_ohlcv, symbol, timeframe, 200)
+                db_candles = await loop.run_in_executor(engine._db_executor, get_ohlcv, symbol, timeframe, 200)
                 if db_candles:
                     raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                     await self.compute_and_store_indicators(symbol, timeframe, raw_candles)

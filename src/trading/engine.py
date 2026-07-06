@@ -86,7 +86,7 @@ class TradingEngine:
         # Dedicated thread pool for database writes – prevents write contention
         # from starving the default asyncio thread pool used by the web server,
         # Telegram bot, and all other to_thread calls.
-        self._db_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="dbwriter")
+        self._db_executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="dbwriter")
         # Dedicated thread pool for download/indicator operations – prevents
         # download tasks from exhausting the default asyncio thread pool used
         # by the web server, Telegram bot, and engine loop.
@@ -718,7 +718,8 @@ class TradingEngine:
                     plain_breadth = [s.split("/")[0] for s in breadth_pairs]
 
                     # Use cached quotes (Redis/DB only, no network calls)
-                    raw_breadth = await asyncio.to_thread(get_quotes_cached, plain_breadth)
+                    loop = asyncio.get_running_loop()
+                    raw_breadth = await loop.run_in_executor(self._quote_executor, get_quotes_cached, plain_breadth)
                     breadth_tickers = {pair: raw_breadth.get(pair.split("/")[0], {}) for pair in breadth_pairs}
 
                     # Fall back to DB close prices for symbols without cached quotes
@@ -728,7 +729,7 @@ class TradingEngine:
                     ]
                     if missing_breadth:
                         try:
-                            db_candles = await asyncio.to_thread(get_latest_close_prices, missing_breadth)
+                            db_candles = await loop.run_in_executor(self._db_executor, get_latest_close_prices, missing_breadth)
                             for pair in breadth_pairs:
                                 base = pair.split("/")[0]
                                 if base in db_candles and db_candles[base].get("last", 0) > 0:
@@ -1013,9 +1014,10 @@ class TradingEngine:
         try:
             from src.news.fetcher import fetch_news_for_symbol
             stock_name = await self._get_stock_name(symbol)
-            articles = await asyncio.to_thread(fetch_news_for_symbol, symbol, stock_name)
+            loop = asyncio.get_running_loop()
+            articles = await loop.run_in_executor(self._download_executor, fetch_news_for_symbol, symbol, stock_name)
             if articles:
-                await asyncio.to_thread(store_news_articles, base_symbol, articles)
+                await loop.run_in_executor(self._db_executor, store_news_articles, base_symbol, articles)
             else:
                 # Cache the fact that we found 0 articles to avoid re-fetching too soon
                 try:
@@ -1320,8 +1322,9 @@ class TradingEngine:
                     """Return list of timeframes that are missing or stale for a pair."""
                     stale_tfs = []
                     now_ms = int(time.time() * 1000)
+                    loop = asyncio.get_running_loop()
                     for tf in settings.OHLCV_TIMEFRAMES:
-                        latest_ts = await asyncio.to_thread(get_latest_ohlcv_timestamp, pair, tf)
+                        latest_ts = await loop.run_in_executor(self._db_executor, get_latest_ohlcv_timestamp, pair, tf)
                         if latest_ts is None:
                             stale_tfs.append(tf)
                         else:
@@ -1456,22 +1459,27 @@ class TradingEngine:
 
                 if settings.NEWS_ENABLED and settings.NEWS_TICKER_DISCOVERY_ENABLED and discover_tickers_from_news is not None:
                     logger.info("Background: refreshing RSS ticker discovery...")
-                    await asyncio.to_thread(
-                        discover_tickers_from_news,
-                        existing_pairs=available_pairs,
-                        cache_only=False,
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        self._download_executor,
+                        lambda: discover_tickers_from_news(
+                            existing_pairs=available_pairs,
+                            cache_only=False,
+                        )
                     )
 
                 if settings.NEWS_ENABLED and settings.NEWS_SYMBOL_DISCOVERY_ENABLED and discover_trending_stocks is not None:
                     logger.info("Background: refreshing trending stock discovery...")
-                    await asyncio.to_thread(
-                        discover_trending_stocks,
-                        self.base_currency,
-                        available_pairs,
-                        max_symbols=settings.NEWS_SYMBOL_DISCOVERY_MAX_SYMBOLS,
-                        min_sentiment=settings.NEWS_SYMBOL_DISCOVERY_MIN_SENTIMENT,
-                        min_articles=settings.NEWS_SYMBOL_DISCOVERY_MIN_ARTICLES,
-                        cache_only=False,
+                    await loop.run_in_executor(
+                        self._download_executor,
+                        lambda: discover_trending_stocks(
+                            self.base_currency,
+                            available_pairs,
+                            max_symbols=settings.NEWS_SYMBOL_DISCOVERY_MAX_SYMBOLS,
+                            min_sentiment=settings.NEWS_SYMBOL_DISCOVERY_MIN_SENTIMENT,
+                            min_articles=settings.NEWS_SYMBOL_DISCOVERY_MIN_ARTICLES,
+                            cache_only=False,
+                        )
                     )
             except Exception as e:
                 logger.error(f"Ticker discovery refresh error: {e}", exc_info=True)
@@ -1765,7 +1773,8 @@ class TradingEngine:
         await asyncio.sleep(30)
         while self._running:
             was_available = is_redis_available()
-            check_redis_connection()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(self._db_executor, check_redis_connection)
             is_available = is_redis_available()
             if was_available and not is_available:
                 logger.critical("Redis connection lost. Degrading to no-cache mode.")
