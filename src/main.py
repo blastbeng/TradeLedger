@@ -39,10 +39,6 @@ else:
 # Suppress urllib3 warnings (e.g., "Connection pool is full, discarding connection")
 logging.getLogger("urllib3").setLevel(logging.ERROR)
 
-if not check_redis_connection():
-    logging.critical("Redis is not reachable. Exiting.")
-    sys.exit(1)
-
 # --- Redis log handler for the web dashboard ---
 import logging.handlers
 import json as _json
@@ -121,8 +117,29 @@ def _seed_telegram_chat_id():
 
 
 
+def _validate_startup_settings():
+    """Validate that critical settings are properly configured at startup."""
+    if not check_redis_connection():
+        logging.critical("Redis is not reachable. Exiting.")
+        sys.exit(1)
+
+    try:
+        settings.validate_llm_settings()
+    except ValueError as e:
+        logging.critical(f"{e} Exiting.")
+        sys.exit(1)
+
+    try:
+        from src.database import save_trading_state, load_trading_state
+        save_trading_state("__startup_test__", "ok")
+        load_trading_state()
+    except Exception as e:
+        logging.critical(f"Database is not writable: {e}. Exiting.")
+        sys.exit(1)
+
 async def main():
     init_db()
+    _validate_startup_settings()
     # Pre-create yfinance cache directory to avoid race condition errors
     # when multiple threads try to create it simultaneously.
     import os

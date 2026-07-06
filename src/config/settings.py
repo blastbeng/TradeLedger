@@ -853,6 +853,17 @@ class Settings(BaseSettings):
             raise ValueError(f"NOTIFICATION_VERBOSITY must be one of {allowed}")
         return v
 
+    def validate_llm_settings(self):
+        """Validate that LLM provider settings are properly configured."""
+        if self.LLM_PROVIDER == "ollama":
+            if not (self.OLLAMA_MODEL or (self.OLLAMA_MIND_MODEL and self.OLLAMA_ACTUATOR_MODEL)):
+                raise ValueError("Ollama LLM provider is selected but no model is configured (OLLAMA_MODEL or OLLAMA_MIND_MODEL/OLLAMA_ACTUATOR_MODEL).")
+        elif self.LLM_PROVIDER == "openai":
+            if not self.OPENAI_API_KEY:
+                raise ValueError("OpenAI LLM provider is selected but OPENAI_API_KEY is not set.")
+            if not (self.OPENAI_MODEL or (self.OPENAI_MIND_MODEL and self.OPENAI_ACTUATOR_MODEL)):
+                raise ValueError("OpenAI LLM provider is selected but no model is configured (OPENAI_MODEL or OPENAI_MIND_MODEL/OPENAI_ACTUATOR_MODEL).")
+
     def reload(self):
         """Reload settings from .env file and environment variables.
 
