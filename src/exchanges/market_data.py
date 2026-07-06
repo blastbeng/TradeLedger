@@ -65,6 +65,15 @@ _yf_lock = threading.Lock()
 YF_MAX_ERRORS = 20
 YF_CIRCUIT_COOLDOWN = 300  # 5 minutes
 
+# --- Borsa Italiana Circuit Breaker ---
+_bi_error_count = 0
+_bi_last_error_time = 0.0
+_bi_circuit_open_until = 0.0
+_bi_lock = threading.Lock()
+
+BI_MAX_ERRORS = 20
+BI_CIRCUIT_COOLDOWN = 300  # 5 minutes
+
 _yf_session_cache = None
 _yf_session_lock = threading.Lock()
 _yf_session_created = False  # True only after successful creation or confirmed ImportError
@@ -93,6 +102,32 @@ def _reset_yf_circuit():
     global _yf_error_count
     with _yf_lock:
         _yf_error_count = 0
+
+
+def _check_bi_circuit() -> bool:
+    """Return True if the Borsa Italiana circuit is open (calls should be skipped)."""
+    with _bi_lock:
+        return time.time() < _bi_circuit_open_until
+
+def _record_bi_error():
+    """Record a Borsa Italiana error and potentially trip the circuit breaker."""
+    global _bi_error_count, _bi_last_error_time, _bi_circuit_open_until
+    with _bi_lock:
+        now = time.time()
+        if now - _bi_last_error_time > 300:
+            _bi_error_count = 0
+        _bi_error_count += 1
+        _bi_last_error_time = now
+        if _bi_error_count >= BI_MAX_ERRORS:
+            if _bi_circuit_open_until < now:
+                logger.error(f"Borsa Italiana circuit breaker tripped due to {_bi_error_count} errors. Blocking BI calls for {BI_CIRCUIT_COOLDOWN}s.")
+            _bi_circuit_open_until = now + BI_CIRCUIT_COOLDOWN
+
+def _reset_bi_circuit():
+    """Reset the Borsa Italiana circuit breaker after a successful call."""
+    global _bi_error_count
+    with _bi_lock:
+        _bi_error_count = 0
 
 
 class YFinanceRateLimiter:
@@ -300,6 +335,9 @@ def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[s
 
     Returns (isin, country, name). Country is always 'Italy' if found.
     """
+    if _check_bi_circuit():
+        return None, None, None
+
     url = f"https://www.borsaitaliana.it/borsa/search/srch.ash?testo={base_symbol}&lang=it"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -315,8 +353,10 @@ def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[s
                     name = item.get("Name")
                     if isin and re.match(r'^[A-Z]{2}[A-Z0-9]{9}\d$', isin):
                         # Borsa Italiana is the Italian exchange, so country is Italy
+                        _reset_bi_circuit()
                         return isin, "Italy", name
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
+        _record_bi_error()
         logger.debug(f"Borsa Italiana search failed for {base_symbol}: {e}")
     return None, None, None
 
@@ -387,6 +427,9 @@ _BORSA_TOKEN_CACHE_TTL = 300  # 5 minutes
 
 def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
     """Dynamically fetch the bearer token from the Borsa Italiana summary chart page, with caching."""
+    if _check_bi_circuit():
+        return None
+
     cache_key = f"{isin}-{market_code}"
     now = time.time()
 
@@ -409,22 +452,27 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
             soup = BeautifulSoup(response.text, "html.parser")
             chart_tag = soup.find("chart-allinone")
             token = chart_tag.get("token") if chart_tag else None
+
             
             if not token:
                 # Fallback to regex if BeautifulSoup fails to find the tag
                 match = re.search(r'<chart-allinone[^>]*token="([^"]+)"', response.text)
                 if match:
                     token = match.group(1)
+
             
             if token:
                 # Cache the token
                 with _borsa_token_cache_lock:
                     _borsa_token_cache[cache_key] = (now, token)
+                _reset_bi_circuit()
                 return token
                 
+
             logger.warning(f"Could not find Borsa Italiana token for {isin}-{market_code}")
             return None
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, AttributeError, OSError) as e:
+        _record_bi_error()
         logger.warning(f"Failed to fetch Borsa Italiana token for {isin}-{market_code}: {e}")
         return None
 
@@ -436,6 +484,9 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
     quoteVolume, last_update, source.
     Returns None if the quote cannot be fetched.
     """
+    if _check_bi_circuit():
+        return None
+
     base = symbol.split("/")[0] if "/" in symbol else symbol
 
     if is_btp_isin(base):
@@ -489,6 +540,7 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
                 last_price = float(latest.get("endPx", 0))
                 if last_price > 0:
                     vol = float(latest.get("vol", 0) or 0)
+                    _reset_bi_circuit()
                     return {
                         "last": last_price,
                         "bid": last_price,
@@ -499,6 +551,7 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
                         "source": "borsa_italiana",
                     }
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
+        _record_bi_error()
         logger.debug(f"Borsa Italiana quote fetch failed for {symbol}: {e}")
     return None
 
@@ -518,6 +571,9 @@ def get_borsa_italiana_candles(
     Returns list of [timestamp_ms, open, high, low, close, volume].
     Returns None if the download fails or the timeframe is not supported.
     """
+    if _check_bi_circuit():
+        return None
+
     if timeframe not in BORSA_TIMEFRAME_MAP:
         return None
 
@@ -703,11 +759,13 @@ def get_borsa_italiana_candles(
 
         if rows:
             logger.info(f"Downloaded {len(rows)} candles from borsaitaliana for {symbol} {timeframe}")
+            _reset_bi_circuit()
             return _validate_and_clean_candles(rows)
 
         return None
 
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
+        _record_bi_error()
         logger.debug(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {e}")
         return None
 
@@ -2143,6 +2201,9 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
     to extract the Scadenza (maturity), coupon rate, and denomination.
     Results are cached in Redis for 24 hours.
     """
+    if _check_bi_circuit():
+        return {}
+
     # Check Redis cache first
     redis_client = get_redis_client()
     cache_key = f"btp_details:{isin}"
@@ -2194,14 +2255,19 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
             except (TypeError, ValueError, RuntimeError):
                 pass
 
+            _reset_bi_circuit()
             return details
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, AttributeError, OSError) as e:
+        _record_bi_error()
         logger.debug(f"Failed to fetch BTP details for {isin}: {e}")
         return {}
 
 
 def discover_btp_bonds() -> List[Dict[str, Any]]:
     """Discover and parse BTP bonds from Borsa Italiana."""
+    if _check_bi_circuit():
+        return []
+
     redis_client = get_redis_client()
     cache_key = "btp_bonds_list"
     import json
@@ -2275,6 +2341,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
                             "maturity": maturity,
                         })
             except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
+                _record_bi_error()
                 logger.warning(f"Failed to fetch BTP page {page}: {e}")
                 break
 
@@ -2284,6 +2351,9 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
                 redis_client.set(cache_key, json.dumps(bonds), ex=1800)
             except (TypeError, ValueError, RuntimeError) as e:
                 logger.warning(f"Failed to cache BTP bonds: {e}")
+
+    if bonds:
+        _reset_bi_circuit()
 
     # Only fetch individual BTP details when the list was freshly scraped
     # (not from Redis cache). Bonds that already have maturity/coupon from
