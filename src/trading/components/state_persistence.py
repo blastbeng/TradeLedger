@@ -57,14 +57,15 @@ class StatePersistence:
         await asyncio.to_thread(save_trading_state, "queued_orders", engine.queued_orders)
         await asyncio.to_thread(save_trading_state, "recent_signals", engine.recent_signals)
         # Serialize pending entries (convert Signal objects to dicts for JSON storage)
-        pending_entries_serializable = {}
-        for symbol, entry in engine._pending_entries.items():
-            pending_entries_serializable[symbol] = {
-                "signal": asdict(entry["signal"]),
-                "deadline": entry["deadline"],
-                "timeframe": entry["timeframe"],
-                "condition": entry["condition"],
-            }
+        async with engine._pending_entries_lock:
+            pending_entries_serializable = {}
+            for symbol, entry in engine._pending_entries.items():
+                pending_entries_serializable[symbol] = {
+                    "signal": asdict(entry["signal"]),
+                    "deadline": entry["deadline"],
+                    "timeframe": entry["timeframe"],
+                    "condition": entry["condition"],
+                }
         await asyncio.to_thread(save_trading_state, "pending_entries", pending_entries_serializable)
         await asyncio.to_thread(save_trading_state, "symbol_first_seen", engine._symbol_first_seen)
         await asyncio.to_thread(save_trading_state, "entry_signal_state", engine._entry_signal_state)

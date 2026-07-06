@@ -2015,12 +2015,13 @@ class SignalProcessor:
             timeout = min_timeout
         deadline = time.time() + timeout
         # Store for background checking – do NOT block the main loop
-        engine._pending_entries[symbol] = {
-            "signal": validated,
-            "deadline": deadline,
-            "timeframe": assigned_tf,
-            "condition": validated.entry_condition,
-        }
+        async with engine._pending_entries_lock:
+            engine._pending_entries[symbol] = {
+                "signal": validated,
+                "deadline": deadline,
+                "timeframe": assigned_tf,
+                "condition": validated.entry_condition,
+            }
         logger.info(
             f"Queued entry condition for {symbol} (type={etype}, deadline in {timeout}s). "
             f"Will monitor in background."
@@ -4241,15 +4242,36 @@ class SignalProcessor:
     async def process_pending_entry(self, symbol: str, now: float) -> None:
         """Process a single pending entry: check timeout and condition, execute if met."""
         engine = self.engine
-        entry = engine._pending_entries.get(symbol)
-        if entry is None:
-            return
-        entry_tf = entry.get("timeframe")
-        stock_name = await engine._get_stock_name(symbol)
-        display_symbol = engine._format_symbol_display(symbol, stock_name, entry_tf)
-        if now >= entry["deadline"]:
-            # Timeout – clear and notify
-            logger.info(f"Entry condition timeout for {symbol}")
+        async with engine._pending_entries_lock:
+            entry = engine._pending_entries.get(symbol)
+            if entry is None:
+                return
+            entry_tf = entry.get("timeframe")
+            stock_name = await engine._get_stock_name(symbol)
+            display_symbol = engine._format_symbol_display(symbol, stock_name, entry_tf)
+            if now >= entry["deadline"]:
+                # Timeout – clear and notify
+                logger.info(f"Entry condition timeout for {symbol}")
+                del engine._pending_entries[symbol]
+                engine._state_dirty = True
+                _timed_out = True
+                _signal = None
+            else:
+                # Check the condition (non‑blocking)
+                condition_met = await self.check_entry_condition_once(
+                    symbol, entry["condition"], entry["timeframe"]
+                )
+                if condition_met:
+                    logger.info(f"Entry condition met for {symbol}, executing BUY")
+                    # Remove from pending before executing to avoid re‑trigger
+                    _signal = entry["signal"]
+                    del engine._pending_entries[symbol]
+                    engine._state_dirty = True
+                    _timed_out = False
+                else:
+                    return  # condition not met, keep pending
+
+        if _timed_out:
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"⏭️ Entry condition timeout for {display_symbol} – skipping BUY.",
@@ -4259,36 +4281,25 @@ class SignalProcessor:
                         "reason": "Entry condition timeout",
                     }
                 )
-            del engine._pending_entries[symbol]
-            engine._state_dirty = True
             return
 
-        # Check the condition (non‑blocking)
-        condition_met = await self.check_entry_condition_once(
-            symbol, entry["condition"], entry["timeframe"]
-        )
-        if condition_met:
-            logger.info(f"Entry condition met for {symbol}, executing BUY")
-            # Remove from pending before executing to avoid re‑trigger
-            signal = entry["signal"]
-            del engine._pending_entries[symbol]
-            engine._state_dirty = True
-            # Check trading pause again (may have changed)
-            paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
-            if paused:
-                logger.info(f"Ignoring queued BUY {symbol}: trading is now paused.")
-                if engine.notifier:
-                    await engine.notifier.send_notification(
-                        f"⏸️ Queued BUY for {display_symbol} skipped – trading paused.",
-                        summary={"symbol": symbol, "action": "SKIP", "reason": "Trading paused"}
-                    )
-            else:
-                await engine._execute_signal(
-                    symbol,
-                    signal,
-                    timeframe=entry["timeframe"],
-                    atr=None,
+        # condition_met is True here
+        # Check trading pause again (may have changed)
+        paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
+        if paused:
+            logger.info(f"Ignoring queued BUY {symbol}: trading is now paused.")
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⏸️ Queued BUY for {display_symbol} skipped – trading paused.",
+                    summary={"symbol": symbol, "action": "SKIP", "reason": "Trading paused"}
                 )
+        else:
+            await engine._execute_signal(
+                symbol,
+                _signal,
+                timeframe=entry_tf,
+                atr=None,
+            )
 
     async def run_simulation_step1(
         self,

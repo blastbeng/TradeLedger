@@ -128,6 +128,7 @@ class TradingEngine:
         self._market_breadth: Optional[Dict[str, Any]] = None
         self._cycle_spent_lock = asyncio.Lock()
         self._positions_lock = asyncio.Lock()
+        self._pending_entries_lock = asyncio.Lock()
         self._queued_orders_lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
         self._recent_signals_lock = asyncio.Lock()
