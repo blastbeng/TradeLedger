@@ -223,6 +223,19 @@ class TradingEngine:
         # Check if PAPER_INITIAL_BALANCE changed since last run
         state = await asyncio.to_thread(load_trading_state)
         persisted_balance = state.get("paper_initial_balance")
+
+        # If paper_initial_balance was never persisted, infer it from paper_balances
+        if persisted_balance is None:
+            paper_balances = state.get("paper_balances")
+            if paper_balances and isinstance(paper_balances, dict):
+                persisted_balance = paper_balances.get(self.base_currency)
+                if persisted_balance is not None:
+                    logger.info(
+                        f"paper_initial_balance not found in DB. "
+                        f"Inferred {persisted_balance} from paper_balances. "
+                        f"Current setting: {settings.PAPER_INITIAL_BALANCE}."
+                    )
+
         if persisted_balance is not None and persisted_balance != settings.PAPER_INITIAL_BALANCE:
             logger.info(
                 f"PAPER_INITIAL_BALANCE changed from {persisted_balance} to {settings.PAPER_INITIAL_BALANCE}. "
