@@ -151,6 +151,7 @@ class TradingEngine:
         self._force_reeval: bool = False
         self._user_forced_reeval: bool = False
         self._pre_market_reeval: bool = False
+        self._rebalance_reeval: bool = False
         self._running = True
         self._last_state_save = 0
         self._last_eval_snapshot: Dict[str, Dict[str, float]] = {}  # symbol -> indicator snapshot
@@ -256,6 +257,13 @@ class TradingEngine:
                 pass
         elif self._reevaluate_running:
             logger.info("Re-evaluation already running; queued re-evaluation for after current cycle completes.")
+        self._reeval_trigger.set()
+
+    def trigger_portfolio_rebalance(self):
+        """Trigger a portfolio rebalance re-evaluation."""
+        logger.info("Portfolio rebalance triggered")
+        self._force_reeval = True
+        self._rebalance_reeval = True
         self._reeval_trigger.set()
 
     async def force_download_all_assets(self):
@@ -716,6 +724,19 @@ class TradingEngine:
             except Exception as e:
                 logger.error(f"Market condition check error: {e}", exc_info=True)
             await asyncio.sleep(1800)  # check every 30 minutes (medium/long-term)
+
+    async def _periodic_portfolio_rebalance(self):
+        """Periodically trigger portfolio rebalance for long-term trading."""
+        if not getattr(settings, 'PORTFOLIO_REBALANCE_ENABLED', False):
+            return
+        await asyncio.sleep(3600)  # initial delay
+        while self._running:
+            try:
+                logger.info("Periodic portfolio rebalance triggered.")
+                self.trigger_portfolio_rebalance()
+            except Exception as e:
+                logger.error(f"Periodic portfolio rebalance error: {e}", exc_info=True)
+            await asyncio.sleep(getattr(settings, 'PORTFOLIO_REBALANCE_INTERVAL_SECONDS', 7776000))  # default 90 days
 
     async def _market_clock_monitor(self):
         """Periodically check market clock and pause/resume trading based on market open/close."""
@@ -1509,6 +1530,7 @@ class TradingEngine:
         self._background_tasks.append(asyncio.create_task(self._periodic_pause_resume_check()))
         self._background_tasks.append(asyncio.create_task(self._periodic_full_market_breadth()))
         self._background_tasks.append(asyncio.create_task(self._periodic_market_condition_check()))
+        self._background_tasks.append(asyncio.create_task(self._periodic_portfolio_rebalance()))
         self._background_tasks.append(asyncio.create_task(self._check_pending_entries()))
         self._background_tasks.append(asyncio.create_task(self._cleanup_orphaned_orders()))
         self._background_tasks.append(asyncio.create_task(self._process_queued_orders()))

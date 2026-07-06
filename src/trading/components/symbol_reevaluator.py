@@ -62,7 +62,7 @@ class SymbolReevaluator:
         # Forced re-evaluations (explicit user or critical condition requests) always bypass
         # the cooldown since they are intentionally requested.
         # Capture whether this is a market-condition trigger before clearing flags
-        is_market_condition_trigger = force and not engine._pre_market_reeval and not engine._user_forced_reeval
+        is_market_condition_trigger = force and not engine._pre_market_reeval and not engine._user_forced_reeval and not engine._rebalance_reeval
 
         if is_market_condition_trigger:
             last_triggered = await asyncio.to_thread(engine.redis.get, "trading:last_triggered_reeval")
@@ -73,10 +73,12 @@ class SymbolReevaluator:
                     return None
 
         is_user_forced = engine._user_forced_reeval
+        is_rebalance = engine._rebalance_reeval
         # Clear the pre-market flag after reading it
         engine._pre_market_reeval = False
         # Clear the user-forced flag after reading it
         engine._user_forced_reeval = False
+        engine._rebalance_reeval = False
 
         # Only re-evaluate every SYMBOL_REVALUATION_INTERVAL
         last_key = "trading:last_symbol_eval"
@@ -86,7 +88,7 @@ class SymbolReevaluator:
             logger.info("Skipping symbol re-evaluation: last eval was recent and symbols are already loaded.")
             return None
 
-        return (is_user_forced, is_market_condition_trigger, now)
+        return (is_user_forced, is_market_condition_trigger, now, is_rebalance)
 
     async def post_selection_cleanup_and_backfill(
         self,
@@ -1114,6 +1116,7 @@ class SymbolReevaluator:
         ohlcv_data: Dict[str, Dict[str, List[List]]],
         sentiment_trend: Dict[str, Optional[float]],
         market_breadth: Dict[str, Any],
+        is_rebalance: bool = False,
     ) -> Tuple[bool, Dict[str, float], Dict[str, Any], str, Dict[str, Dict[str, Dict[str, Any]]], float]:
         """Prepare context variables needed for the re-evaluation LLM prompts.
 
@@ -1155,6 +1158,9 @@ class SymbolReevaluator:
                     )
             except (ValueError, TypeError):
                 pass
+
+        if is_rebalance:
+            auto_resume_note += "\n**NOTE:** This is a periodic portfolio rebalance. Please re-evaluate all positions and rebalance the portfolio accordingly.\n"
 
         # Compute OHLCV summary for the prompt (do not pass raw candles to the LLM)
         ohlcv_summary = self.compute_ohlcv_summary(ohlcv_data, sample_pairs)
@@ -2179,7 +2185,7 @@ class SymbolReevaluator:
         _cooldown_result = await self.check_cooldown_and_reset(force)
         if _cooldown_result is None:
             return
-        is_user_forced, is_market_condition_trigger, now = _cooldown_result
+        is_user_forced, is_market_condition_trigger, now, is_rebalance = _cooldown_result
         _assets_result = await self.fetch_and_filter_candidate_assets(now)
         if _assets_result is None:
             return
@@ -2251,6 +2257,7 @@ class SymbolReevaluator:
             ohlcv_data=ohlcv_data,
             sentiment_trend=sentiment_trend,
             market_breadth=market_breadth,
+            is_rebalance=is_rebalance,
         )
 
         # --- Chunked LLM evaluation ---
