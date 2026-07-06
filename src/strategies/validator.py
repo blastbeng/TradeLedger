@@ -1,6 +1,8 @@
 from .base import Signal
 from typing import Dict, Any, Optional
 
+from src.utils.symbol_utils import is_btp_isin
+
 VALID_STRATEGY_TYPES = {"momentum", "mean_reversion", "breakout", "swing", "position"}
 
 
@@ -14,6 +16,7 @@ def validate_signal(
     min_stop_atr_mult: float = 1.0,
     min_hold_time_mult: float = 1.0,
     global_min_risk_reward_ratio: Optional[float] = None,
+    symbol: Optional[str] = None,
 ) -> Signal:
     """
     Validate a trading signal.
@@ -126,6 +129,8 @@ def validate_signal(
         if not isinstance(trailing, bool):
             return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop must be boolean")
         if trailing:
+            if symbol and is_btp_isin(symbol):
+                return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")
             tsd = params.get("trailing_stop_distance_pct")
             ts_atr = params.get("trailing_stop_atr_multiple")
             tsd_valid = tsd is not None and isinstance(tsd, (int, float)) and (0 < tsd < 1.0)
@@ -343,6 +348,8 @@ def validate_signal(
             if sl is not None and tp <= sl:
                 return Signal(action="HOLD", confidence=0.0, reasoning="take_profit_pct must be greater than stop_loss_pct")
         if trailing:
+            if symbol and is_btp_isin(symbol):
+                return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")
             tsd = params.get("trailing_stop_distance_pct")
             if tsd is not None and sl is not None and tsd >= sl:
                 return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop_distance_pct must be less than stop_loss_pct")

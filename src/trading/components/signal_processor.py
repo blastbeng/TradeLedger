@@ -2650,6 +2650,7 @@ class SignalProcessor:
             min_stop_atr_mult=min_stop_atr_mult,
             min_hold_time_mult=min_hold_time_mult,
             global_min_risk_reward_ratio=global_min_rr,
+            symbol=symbol,
         )
         validated.model_type = getattr(signal, 'model_type', None)
         validated.backtest_summary = getattr(signal, 'backtest_summary', None)
