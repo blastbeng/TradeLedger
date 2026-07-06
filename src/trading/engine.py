@@ -1239,34 +1239,45 @@ class TradingEngine:
                 now_ms = int(time.time() * 1000)
                 start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
 
-                # Prioritize symbols with missing data for configured timeframes
-                async def _has_missing_data(pair: str) -> bool:
-                    """Return True if pair is missing OHLCV data for any configured timeframe."""
+                # Prioritize symbols with missing or stale data for configured timeframes
+                async def _get_stale_timeframes(pair: str) -> List[str]:
+                    """Return list of timeframes that are missing or stale for a pair."""
+                    stale_tfs = []
+                    now_ms = int(time.time() * 1000)
                     for tf in settings.OHLCV_TIMEFRAMES:
                         latest_ts = await asyncio.to_thread(get_latest_ohlcv_timestamp, pair, tf)
                         if latest_ts is None:
-                            return True
-                    return False
+                            stale_tfs.append(tf)
+                        else:
+                            interval_ms = self._timeframe_to_ms(tf)
+                            if latest_ts < now_ms - interval_ms:
+                                stale_tfs.append(tf)
+                    return stale_tfs
 
-                missing_checks = await asyncio.gather(*[_has_missing_data(pair) for pair in all_pairs])
-                pairs_missing = [pair for pair, missing in zip(all_pairs, missing_checks) if missing]
-                pairs_complete = [pair for pair, missing in zip(all_pairs, missing_checks) if not missing]
-                random.shuffle(pairs_missing)
-                random.shuffle(pairs_complete)
-                if pairs_missing:
-                    logger.info(f"Prioritizing {len(pairs_missing)} symbols with missing OHLCV data out of {len(all_pairs)} total.")
-                all_pairs = pairs_missing + pairs_complete
+                # Limit concurrency of DB checks to avoid exhausting the connection pool
+                tf_check_concurrency = asyncio.Semaphore(20)
+                async def _limited_tf_check(pair: str) -> Tuple[str, List[str]]:
+                    async with tf_check_concurrency:
+                        return pair, await _get_stale_timeframes(pair)
 
-                async def _download_symbol_data(pair: str):
-                    for tf in settings.OHLCV_TIMEFRAMES:
+                tf_checks = await asyncio.gather(*[_limited_tf_check(pair) for pair in all_pairs])
+                pairs_with_stale_data = [(pair, tfs) for pair, tfs in tf_checks if tfs]
+                pairs_complete = [pair for pair, tfs in tf_checks if not tfs]
+
+                random.shuffle(pairs_with_stale_data)
+                if pairs_with_stale_data:
+                    logger.info(f"Prioritizing {len(pairs_with_stale_data)} symbols with stale/missing OHLCV data out of {len(all_pairs)} total.")
+
+                async def _download_symbol_data(pair: str, tfs: List[str]):
+                    for tf in tfs:
                         await self._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True)
 
                 # Limit concurrent symbol downloads to avoid thread pool exhaustion
                 download_concurrency = asyncio.Semaphore(10)
-                async def _limited_download(pair: str):
+                async def _limited_download(pair: str, tfs: List[str]):
                     async with download_concurrency:
-                        await _download_symbol_data(pair)
-                download_tasks = [_limited_download(pair) for pair in all_pairs]
+                        await _download_symbol_data(pair, tfs)
+                download_tasks = [_limited_download(pair, tfs) for pair, tfs in pairs_with_stale_data]
                 await asyncio.gather(*download_tasks)
 
                 # Clean up old data
