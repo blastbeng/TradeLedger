@@ -353,7 +353,7 @@ class SymbolReevaluator:
                     else:
                         # Find the longest timeframe where both symbols have valid returns
                         best_tf = None
-                        for tf in settings.OHLCV_TIMEFRAMES:
+                        for tf in reversed(settings.OHLCV_TIMEFRAMES):
                             if tf in sym_tf_returns[sym_a] and tf in sym_tf_returns[sym_b]:
                                 best_tf = tf
                                 break
