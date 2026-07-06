@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import logging
 import os
@@ -7,6 +8,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import List
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from src.config.settings import settings
@@ -641,7 +643,7 @@ class TelegramBot:
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                 try:
                     news_data = await asyncio.to_thread(get_cached_news_summary, symbol)
-                    summary_text = news_data["summary"]
+                    summary_text = html.escape(news_data["summary"])
                     provider = news_data.get("provider", "")
                     model = news_data.get("model", "")
                 except Exception:
@@ -926,21 +928,13 @@ class TelegramBot:
                         if action not in ("BUY", "SELL"):
                             disable_notification = True
 
-                    max_len = 4000
-                    if len(message) <= max_len:
+                    chunks = self._split_text(message)
+                    for chunk in chunks:
                         await self.app.bot.send_message(
                             chat_id=int(chat_id),
-                            text=message,
+                            text=chunk,
                             disable_notification=disable_notification,
                         )
-                    else:
-                        chunks = [message[i:i+max_len] for i in range(0, len(message), max_len)]
-                        for chunk in chunks:
-                            await self.app.bot.send_message(
-                                chat_id=int(chat_id),
-                                text=chunk,
-                                disable_notification=disable_notification,
-                            )
                     logger.debug(f"Notification sent successfully (silent={disable_notification}).")
                     break
                 except Exception as e:
