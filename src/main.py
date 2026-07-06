@@ -24,16 +24,31 @@ from datetime import datetime, timezone
 
 class JsonFormatter(logging.Formatter):
     """Formats log records as JSON strings for structured logging."""
+    # Standard LogRecord attributes that should not be treated as 'extra' fields
+    _standard_attrs = {
+        'name', 'msg', 'args', 'levelname', 'levelno', 'pathname', 'filename',
+        'module', 'exc_info', 'exc_text', 'stack_info', 'lineno', 'funcName',
+        'created', 'msecs', 'relativeCreated', 'thread', 'threadName',
+        'processName', 'process', 'message', 'asctime', 'taskName'
+    }
+
     def format(self, record):
         log_entry = {
-            "timestamp": self.formatTime(record, self.datefmt),
+            "timestamp": datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
         }
+
+        # Include any extra fields passed to the log record
+        for key, value in record.__dict__.items():
+            if key not in self._standard_attrs and not key.startswith('_'):
+                log_entry[key] = value
+
         if record.exc_info:
             log_entry["exception"] = self.formatException(record.exc_info)
-        return _json.dumps(log_entry)
+
+        return _json.dumps(log_entry, default=str)
 
 class HealthEndpointFilter(logging.Filter):
     """Suppress uvicorn access logs for /health."""
