@@ -605,10 +605,12 @@ def compute_all_indicators(
     # EMA (compute what we can; ema_slow needs ema_slow candles, ema_fast needs ema_fast)
     if len(candles) >= ema_fast:
         ema_9_list = compute_ema(closes, ema_fast)
-        ind['ema_9'] = ema_9_list[-1] if ema_9_list and not np.isnan(ema_9_list[-1]) else None
+        last_ema_9 = ema_9_list[-1] if ema_9_list else None
+        ind['ema_9'] = last_ema_9 if last_ema_9 is not None and not np.isnan(last_ema_9) else None
     if len(candles) >= ema_slow:
         ema_21_list = compute_ema(closes, ema_slow)
-        ind['ema_21'] = ema_21_list[-1] if ema_21_list and not np.isnan(ema_21_list[-1]) else None
+        last_ema_21 = ema_21_list[-1] if ema_21_list else None
+        ind['ema_21'] = last_ema_21 if last_ema_21 is not None and not np.isnan(last_ema_21) else None
 
     # Stochastic (needs stoch_k_period + stoch_d_period - 1)
     min_stoch = stoch_k_period + stoch_d_period - 1
@@ -687,7 +689,7 @@ def compute_keltner_channels(
     if not ema_values:
         return None
     middle = ema_values[-1]
-    if np.isnan(middle):
+    if middle is None or np.isnan(middle):
         return None
     candles = [[0, 0, h, l, c, 0] for h, l, c in zip(highs, lows, closes)]
     atr = compute_atr(candles, period)
