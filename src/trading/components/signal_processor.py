@@ -424,7 +424,7 @@ class SignalProcessor:
             if _should_return:
                 return
 
-            signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest = self.handle_step1a_fallback(
+            signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest = await self.handle_step1a_fallback(
                 symbol=symbol,
                 analysis_result=analysis_result,
                 has_position=has_position,
@@ -2527,7 +2527,7 @@ class SignalProcessor:
 
         return analysis_result, llm_provider, llm_model, False
 
-    def handle_step1a_fallback(
+    async def handle_step1a_fallback(
         self,
         symbol: str,
         analysis_result: Optional[Dict[str, Any]],
