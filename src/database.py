@@ -1152,12 +1152,23 @@ def insert_ohlcv_batch(symbol: str, timeframe: str, candles: List[List]):
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """
             )
-        conn.executemany(sql, [
-            (symbol, timeframe, int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5]))
-            for c in candles
-        ])
-        conn.commit()
-        logger.debug(f"Inserted {len(candles)} OHLCV candles for {symbol} {timeframe}")
+
+        # Filter out invalid candles before insertion
+        valid_candles = []
+        for c in candles:
+            if len(c) < 6:
+                continue
+            ts, o, h, l, cl, v = int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])
+            if o <= 0 or h <= 0 or l <= 0 or cl <= 0 or v < 0:
+                continue
+            if h < max(o, cl, l) or l > min(o, cl, h):
+                continue
+            valid_candles.append((symbol, timeframe, ts, o, h, l, cl, v))
+
+        if valid_candles:
+            conn.executemany(sql, valid_candles)
+            conn.commit()
+            logger.debug(f"Inserted {len(valid_candles)} valid OHLCV candles for {symbol} {timeframe}")
     finally:
         conn.close()
 

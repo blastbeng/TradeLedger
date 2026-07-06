@@ -703,7 +703,7 @@ def get_borsa_italiana_candles(
 
         if rows:
             logger.info(f"Downloaded {len(rows)} candles from borsaitaliana for {symbol} {timeframe}")
-            return rows
+            return _validate_and_clean_candles(rows)
 
         return None
 
@@ -735,6 +735,44 @@ TIMEFRAME_MS = {
     "3Y": 94_608_000_000,
     "5Y": 157_680_000_000,
 }
+
+def _validate_and_clean_candles(candles: List[List]) -> List[List]:
+    """Validate and clean OHLCV candles to ensure data quality.
+
+    Removes candles with:
+    - Non-positive prices (open, high, low, close)
+    - Negative volume
+    - Invalid high/low relationships (high < max(open, close, low) or low > min(open, close, high))
+    - Duplicate timestamps (keeps the last occurrence)
+    """
+    if not candles:
+        return []
+
+    seen_timestamps = {}
+
+    for c in candles:
+        if len(c) < 6:
+            continue
+
+        ts, o, h, l, cl, v = c[0], c[1], c[2], c[3], c[4], c[5]
+
+        # Check for non-positive prices
+        if o <= 0 or h <= 0 or l <= 0 or cl <= 0:
+            continue
+
+        # Check for negative volume
+        if v < 0:
+            continue
+
+        # Check high/low relationships
+        if h < max(o, cl, l) or l > min(o, cl, h):
+            continue
+
+        # Track timestamps to remove duplicates (keep last)
+        seen_timestamps[ts] = c
+
+    # Sort by timestamp to maintain chronological order
+    return sorted(seen_timestamps.values(), key=lambda x: x[0])
 
 def _aggregate_candles(candles: List[List], target_tf: str) -> List[List]:
     """Aggregate monthly candles into larger timeframes (6M, 1Y, 3Y, 5Y)."""
@@ -1979,6 +2017,7 @@ def get_multi_timeframe_bars(
         # Merge both sources
         merged = _merge_candles(borsa_candles, yf_candles)
         if merged:
+            merged = _validate_and_clean_candles(merged)
             result[tf] = merged[-limit:] if limit else merged
             try:
                 redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
@@ -2084,6 +2123,7 @@ def get_bars_range(
 
     # Merge both sources
     merged = _merge_candles(borsa_candles, yf_candles)
+    merged = _validate_and_clean_candles(merged)
 
     if merged:
         if limit and len(merged) > limit:
