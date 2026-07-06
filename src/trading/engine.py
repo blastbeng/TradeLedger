@@ -1530,11 +1530,15 @@ class TradingEngine:
                     if pos_pct > 80 or pos_pct < 20:
                         is_highly_active = True
 
+                # Snapshot current_symbols to avoid race condition with
+                # re-evaluation modifying the list while we iterate.
+                current_symbols_snapshot = list(self.current_symbols)
+
                 # Check for significant news sentiment shifts for all tracked symbols
                 # We store this in a dict so we can use it per-symbol
                 symbol_has_significant_news: Dict[str, bool] = {}
                 if settings.NEWS_ENABLED:
-                    for entry in self.current_symbols:
+                    for entry in current_symbols_snapshot:
                         symbol = entry["symbol"]
                         try:
                             agg = await self._get_cached_sentiment(symbol)
@@ -1550,7 +1554,7 @@ class TradingEngine:
                         except Exception:
                             continue
 
-                for symbol_entry in self.current_symbols:
+                for symbol_entry in current_symbols_snapshot:
                     symbol = symbol_entry["symbol"]
                     tf = symbol_entry.get("timeframe", "1d")
 
