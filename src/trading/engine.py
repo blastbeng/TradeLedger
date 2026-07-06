@@ -173,6 +173,7 @@ class TradingEngine:
         self._quotes_fetch_running = False
         self._delayed_entry_tasks: set = set()
         self._supervisors: list = []
+        self._background_tasks: list = []
 
         # Market-closed periodic notification tracking
         self._last_market_closed_notify_time: float = 0.0
@@ -1652,8 +1653,8 @@ class TradingEngine:
         await self._initialize_clients()
         logger.info("Trading engine started.")
         # Start background tasks
-        self._background_tasks: list = []
-        self._supervisors: list = []
+        self._background_tasks.clear()
+        self._supervisors.clear()
         background_factories = [
             self._refresh_news_cache,
             self._refresh_current_symbols_news_fast,

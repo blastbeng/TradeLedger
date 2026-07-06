@@ -26,11 +26,17 @@ class TaskSupervisor:
             try:
                 self._task = asyncio.create_task(self.coro_factory(), name=self.name)
                 await self._task
+                # Task completed without exception — reset restart count
+                # so that occasional failures over a long uptime don't exhaust the budget.
+                self._restart_count = 0
                 # If the task exits normally, it might be a graceful shutdown.
                 # If the supervisor is still running, we should restart it.
                 if not self._running:
                     break
-                logger.warning(f"Task {self.name} exited normally but supervisor is still running. Restarting...")
+                logger.warning(f"Task {self.name} exited normally but supervisor is still running. Restarting in {self.restart_delay}s...")
+                # Delay before restarting to avoid tight loops for tasks that
+                # exit immediately (e.g., when a feature is disabled).
+                await asyncio.sleep(self.restart_delay)
             except asyncio.CancelledError:
                 logger.info(f"Supervisor for {self.name} cancelled.")
                 if self._task and not self._task.done():
