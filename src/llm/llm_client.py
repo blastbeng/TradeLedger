@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 def _get_ollama_response(prompt: str, system_prompt: str = "", model: str = None,
                          base_url: str = None, api_key: str = None,
-                         temperature: Optional[float] = None) -> str:
+                         temperature: Optional[float] = None,
+                         timeout: Optional[float] = None) -> str:
     """Send a prompt to the configured Ollama model and return the response text."""
     url = f"{(base_url or settings.OLLAMA_BASE_URL).rstrip('/')}/api/chat"
     headers = {"Content-Type": "application/json"}
@@ -36,13 +37,13 @@ def _get_ollama_response(prompt: str, system_prompt: str = "", model: str = None
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            timeout = httpx.Timeout(
+            httpx_timeout = httpx.Timeout(
                 connect=10.0,
-                read=settings.LLM_TIMEOUT,
+                read=timeout if timeout is not None else settings.LLM_TIMEOUT,
                 write=10.0,
                 pool=5.0,
             )
-            with httpx.Client(timeout=timeout) as client:
+            with httpx.Client(timeout=httpx_timeout) as client:
                 response = client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
@@ -90,7 +91,8 @@ def _get_ollama_response(prompt: str, system_prompt: str = "", model: str = None
 
 def _get_openai_response(prompt: str, system_prompt: str = "", model: str = None,
                          base_url: str = None, api_key: str = None,
-                         temperature: Optional[float] = None) -> str:
+                         temperature: Optional[float] = None,
+                         timeout: Optional[float] = None) -> str:
     """Send a prompt to the configured OpenAI-compatible API and return the response text."""
     url = f"{(base_url or settings.OPENAI_BASE_URL).rstrip('/')}/chat/completions"
     headers = {"Content-Type": "application/json"}
@@ -113,13 +115,13 @@ def _get_openai_response(prompt: str, system_prompt: str = "", model: str = None
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            timeout = httpx.Timeout(
+            httpx_timeout = httpx.Timeout(
                 connect=10.0,
-                read=settings.LLM_TIMEOUT,
+                read=timeout if timeout is not None else settings.LLM_TIMEOUT,
                 write=10.0,
                 pool=5.0,
             )
-            with httpx.Client(timeout=timeout) as client:
+            with httpx.Client(timeout=httpx_timeout) as client:
                 response = client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()

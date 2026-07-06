@@ -89,6 +89,12 @@ def get_cached_llm_response(
     # when temperature is dynamically computed based on complexity.
     cache_temp = round(temperature, 1) if temperature is not None else None
 
+    # Determine effective timeout: use shorter timeout for actuator calls
+    if model_type == "actuator":
+        effective_timeout = settings.LLM_ACTUATOR_TIMEOUT
+    else:
+        effective_timeout = settings.LLM_TIMEOUT
+
     # Build cache key
     if market_hash:
         sys_hash = hashlib.sha256(system_prompt.encode()).hexdigest()[:16] if system_prompt else "none"
@@ -126,10 +132,10 @@ def get_cached_llm_response(
     try:
         if provider == "openai":
             from src.llm.llm_client import _get_openai_response
-            response_text = _get_openai_response(prompt, system_prompt, model=model, base_url=base_url, api_key=api_key, temperature=temperature)
+            response_text = _get_openai_response(prompt, system_prompt, model=model, base_url=base_url, api_key=api_key, temperature=temperature, timeout=effective_timeout)
         else:
             from src.llm.llm_client import _get_ollama_response
-            response_text = _get_ollama_response(prompt, system_prompt, model=model, base_url=base_url, api_key=api_key, temperature=temperature)
+            response_text = _get_ollama_response(prompt, system_prompt, model=model, base_url=base_url, api_key=api_key, temperature=temperature, timeout=effective_timeout)
         
         if not response_text or not response_text.strip():
             raise RuntimeError("LLM returned an empty response")
@@ -170,6 +176,7 @@ def get_cached_llm_response(
                         base_url=fallback_base_url,
                         api_key=fallback_api_key,
                         temperature=temperature,
+                        timeout=effective_timeout,
                     )
                     used_provider = "openai"
                     used_model = fallback_model
@@ -210,6 +217,7 @@ def get_cached_llm_response(
                         base_url=fallback_base_url,
                         api_key=fallback_api_key,
                         temperature=temperature,
+                        timeout=effective_timeout,
                     )
                     used_provider = "ollama"
                     used_model = fallback_model
