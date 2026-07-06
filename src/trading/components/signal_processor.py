@@ -59,21 +59,12 @@ class SignalProcessor:
         except (json.JSONDecodeError, TypeError, ValueError):
             return None
 
-    async def process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False) -> None:
-        """Fetch market data, get LLM strategy, validate, and execute."""
+    async def _get_initial_context(self, symbol: str, symbol_entry: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        """Fetch initial context: display symbol, min viable amount, and position flags."""
         engine = self.engine
-        symbol = symbol_entry["symbol"]
-        assigned_tf = symbol_entry["timeframe"]
-        tf_seconds = engine._timeframe_to_seconds(assigned_tf)
-
-        # Pre‑compute the display symbol for all notifications in this method
         stock_name = await engine._get_stock_name(symbol)
-        display_symbol = engine._format_symbol_display(symbol, stock_name, assigned_tf)
+        display_symbol = engine._format_symbol_display(symbol, stock_name, symbol_entry["timeframe"])
 
-        base_symbol = symbol.split("/")[0]
-        is_btp = is_btp_isin(base_symbol)
-
-        # Read min viable trade amount (LLM override or settings default)
         min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
         try:
             raw = await asyncio.to_thread(engine.redis.get, "trading:min_viable_trade_amount")
@@ -84,451 +75,289 @@ class SignalProcessor:
 
         _flags = await self.read_position_trigger_flags(symbol, symbol_entry)
         if _flags is None:
-            return
-        max_hold_expired = _flags["max_hold_expired"]
-        max_hold_expired_count = _flags["max_hold_expired_count"]
-        stop_loss_triggered = _flags["stop_loss_triggered"]
-        stop_loss_review_count = _flags["stop_loss_review_count"]
-        take_profit_triggered = _flags["take_profit_triggered"]
-        take_profit_review_count = _flags["take_profit_review_count"]
-        partial_tp_triggered = _flags["partial_tp_triggered"]
-        partial_tp_review_count = _flags["partial_tp_review_count"]
-        partial_tp_triggered_levels = _flags["partial_tp_triggered_levels"]
-        dust_sweep_triggered = _flags["dust_sweep_triggered"]
-        dust_sweep_review_count = _flags["dust_sweep_review_count"]
-        max_sl_reviews_prompt = _flags["max_sl_reviews_prompt"]
-        max_tp_reviews_prompt = _flags["max_tp_reviews_prompt"]
-        max_partial_tp_reviews_prompt = _flags["max_partial_tp_reviews_prompt"]
-        max_dust_sweep_reviews_prompt = _flags["max_dust_sweep_reviews_prompt"]
+            return None
+
+        return {
+            "stock_name": stock_name,
+            "display_symbol": display_symbol,
+            "min_viable_amount": min_viable_amount,
+            "flags": _flags,
+        }
+
+    async def _fetch_and_validate_data(self, symbol: str, symbol_entry: Dict[str, str], display_symbol: str) -> Optional[Dict[str, Any]]:
+        """Fetch market data and check skip conditions. Returns symbol_data or None if skipped."""
+        engine = self.engine
+        assigned_tf = symbol_entry["timeframe"]
+        symbol_data = await self.fetch_symbol_market_data(symbol, assigned_tf)
+        if symbol_data is None:
+            logger.warning(f"No ticker data for {symbol}, skipping.")
+            return None
+
+        ticker = symbol_data["ticker"]
+        base_balance = symbol_data["base_balance"]
+        ohlcv_data = symbol_data["ohlcv_data"]
+        has_position = symbol in engine.positions
+
+        if await self.check_skip_conditions(symbol, display_symbol, ticker, assigned_tf, has_position, base_balance):
+            return None
+        if base_balance <= 0:
+            logger.info(f"Evaluating {symbol} for position management only (base_balance={base_balance:.2f}, no new capital available).")
+        if await self.check_no_ohlcv(symbol, display_symbol, assigned_tf, ohlcv_data):
+            return None
+
+        return symbol_data
+
+    async def _gather_and_build_prompt(self, symbol: str, symbol_entry: Dict[str, str], symbol_data: Dict[str, Any], min_viable_amount: float, flags: Dict[str, Any]) -> Dict[str, Any]:
+        """Gather prompt context and build the analysis prompt. Returns a context dict."""
+        engine = self.engine
+        assigned_tf = symbol_entry["timeframe"]
+        tf_seconds = engine._timeframe_to_seconds(assigned_tf)
+
+        ticker = symbol_data["ticker"]
+        current_price = symbol_data["current_price"]
+        base_balance = symbol_data["base_balance"]
+        ohlcv_data = symbol_data["ohlcv_data"]
+
+        open_positions = [pos for pos in engine.positions.values() if pos.get("symbol") == symbol]
+        per_symbol_budget = base_balance / engine.effective_max_symbols if engine.effective_max_symbols > 0 else 0.0
+
+        perf = await asyncio.to_thread(engine._compute_performance_metrics)
+        trade_pattern_analysis = await asyncio.to_thread(engine._compute_trade_pattern_analysis)
+
+        symbol_event = None
+        if settings.NEWS_ENABLED and detect_upcoming_events is not None:
+            try:
+                symbol_event = await asyncio.to_thread(detect_upcoming_events, symbol)
+            except Exception:
+                pass
+
+        _ctx = await self.gather_prompt_context(
+            symbol=symbol, assigned_tf=assigned_tf, tf_seconds=tf_seconds, ticker=ticker,
+            base_balance=base_balance, ohlcv_data=ohlcv_data,
+            multi_tf_indicators=symbol_data["multi_tf_indicators"],
+            multi_tf_raw_candles=symbol_data["multi_tf_raw_candles"],
+            atr=symbol_data["atr"], rsi=symbol_data["rsi"], macd=symbol_data["macd"],
+            macd_signal=symbol_data["macd_signal"], macd_hist=symbol_data["macd_hist"],
+            bb_upper=symbol_data["bb_upper"], bb_middle=symbol_data["bb_middle"], bb_lower=symbol_data["bb_lower"],
+            ema_9=symbol_data["ema_9"], ema_21=symbol_data["ema_21"],
+            adx=symbol_data["adx"], plus_di=symbol_data["plus_di"], minus_di=symbol_data["minus_di"],
+        )
+
+        _portfolio = await engine._position_manager.compute_portfolio_exposure_summary(base_balance)
+        async with engine._cycle_spent_lock:
+            remaining = max(0.0, base_balance - engine._cycle_spent)
+
+        analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(
+            symbol=symbol, ticker=ticker, balance=symbol_data["balance"], open_positions=open_positions,
+            per_symbol_budget=per_symbol_budget, ohlcv_data=ohlcv_data, assigned_tf=assigned_tf,
+            atr=symbol_data["atr"], atr_multi_tf=_ctx["atr_multi_tf"], rsi=symbol_data["rsi"],
+            macd=symbol_data["macd"], macd_signal=symbol_data["macd_signal"], macd_hist=symbol_data["macd_hist"],
+            bb_upper=symbol_data["bb_upper"], bb_middle=symbol_data["bb_middle"], bb_lower=symbol_data["bb_lower"],
+            ema_9=symbol_data["ema_9"], ema_21=symbol_data["ema_21"],
+            stochastic_k=symbol_data["stochastic_k"], stochastic_d=symbol_data["stochastic_d"],
+            adx=symbol_data["adx"], plus_di=symbol_data["plus_di"], minus_di=symbol_data["minus_di"],
+            obv=symbol_data["obv"], mfi=symbol_data["mfi"], cci=symbol_data["cci"], williams_r=symbol_data["williams_r"],
+            ichimoku=symbol_data["ichimoku"], donchian_channels=symbol_data["donchian_channels"],
+            parabolic_sar=symbol_data["parabolic_sar"], keltner_channels=symbol_data["keltner_channels"],
+            vwap=symbol_data["vwap"], daily_pivot_points=symbol_data["daily_pivot_points"],
+            unrealized_pnl=_ctx["unrealized_pnl"], position_info=_ctx["position_info"],
+            raw_candles=_ctx["raw_candles"], recent_trades_summary=_ctx["recent_trades_summary"],
+            historical_ohlcv=_ctx["historical_ohlcv"], min_order_amount=_ctx["min_order_amount"],
+            min_order_cost=_ctx["min_order_cost"], past_trades=_ctx["past_trades"], perf=perf,
+            trade_pattern_analysis=trade_pattern_analysis, symbol_event=symbol_event,
+            fundamentals=symbol_data["fundamentals"], aggregate_sentiment=_ctx["aggregate_sentiment"],
+            sentiment_trend_val=_ctx["sentiment_trend_val"], volume_trend_val=_ctx["volume_trend_val"],
+            full_market_breadth=_ctx["full_market_breadth"], session_info=_ctx["session_info"],
+            minutes_to_market_close=_ctx["minutes_to_market_close"], global_risk_mult=_ctx["global_risk_mult"],
+            max_port_exp=_ctx["max_port_exp"], max_port_risk=_ctx["max_port_risk"],
+            min_stop_atr_mult=_ctx["min_stop_atr_mult"], min_hold_time_mult=_ctx["min_hold_time_mult"],
+            min_viable_amount=min_viable_amount, historical_backtest_results=_ctx["historical_backtest_results"],
+            trading_paused=False, # Pass False here, actual pause status handled later
+            max_hold_expired=flags["max_hold_expired"], max_hold_expired_count=flags["max_hold_expired_count"],
+            stop_loss_triggered=flags["stop_loss_triggered"], stop_loss_review_count=flags["stop_loss_review_count"],
+            take_profit_triggered=flags["take_profit_triggered"], take_profit_review_count=flags["take_profit_review_count"],
+            partial_tp_triggered=flags["partial_tp_triggered"], partial_tp_review_count=flags["partial_tp_review_count"],
+            partial_tp_triggered_levels=flags["partial_tp_triggered_levels"], partial_tp_executed_levels=_ctx["partial_tp_executed_levels"],
+            dust_sweep_triggered=flags["dust_sweep_triggered"], dust_sweep_review_count=flags["dust_sweep_review_count"],
+            max_sl_reviews_prompt=flags["max_sl_reviews_prompt"], max_tp_reviews_prompt=flags["max_tp_reviews_prompt"],
+            max_partial_tp_reviews_prompt=flags["max_partial_tp_reviews_prompt"], max_dust_sweep_reviews_prompt=flags["max_dust_sweep_reviews_prompt"],
+            portfolio_exposure_pct=_portfolio["portfolio_exposure_pct"], portfolio_stop_risk_pct=_portfolio["portfolio_stop_risk_pct"],
+            portfolio_total_value=_portfolio["portfolio_total_value"], portfolio_available_capital=_portfolio["portfolio_available_capital"],
+            remaining=remaining, stale_indicators_warning=symbol_data.get("stale_indicators_warning", ""),
+            market_regime=_ctx["market_regime"], multi_tf_raw_candles=symbol_data["multi_tf_raw_candles"],
+            multi_tf_indicators=symbol_data["multi_tf_indicators"], atr_percentile=_ctx["atr_percentile"],
+        )
+
+        return {
+            "ticker": ticker, "current_price": current_price, "base_balance": base_balance,
+            "atr": symbol_data["atr"], "rsi": symbol_data["rsi"], "macd": symbol_data["macd"],
+            "macd_signal": symbol_data["macd_signal"], "macd_hist": symbol_data["macd_hist"],
+            "bb_upper": symbol_data["bb_upper"], "bb_middle": symbol_data["bb_middle"], "bb_lower": symbol_data["bb_lower"],
+            "ema_9": symbol_data["ema_9"], "ema_21": symbol_data["ema_21"],
+            "stochastic_k": symbol_data["stochastic_k"], "stochastic_d": symbol_data["stochastic_d"],
+            "adx": symbol_data["adx"], "plus_di": symbol_data["plus_di"], "minus_di": symbol_data["minus_di"],
+            "obv": symbol_data["obv"], "mfi": symbol_data["mfi"], "cci": symbol_data["cci"], "williams_r": symbol_data["williams_r"],
+            "ichimoku": symbol_data["ichimoku"], "donchian_channels": symbol_data["donchian_channels"],
+            "parabolic_sar": symbol_data["parabolic_sar"], "keltner_channels": symbol_data["keltner_channels"],
+            "aggregate_sentiment": _ctx["aggregate_sentiment"], "market_regime": _ctx["market_regime"],
+            "min_stop_atr_mult": _ctx["min_stop_atr_mult"], "min_hold_time_mult": _ctx["min_hold_time_mult"],
+            "global_min_rr": _ctx["global_min_rr"],
+            "analysis_prompt": analysis_prompt, "market_snapshot": market_snapshot, "market_hash": market_hash,
+            "historical_ohlcv": _ctx["historical_ohlcv"], "raw_candles": _ctx["raw_candles"],
+            "is_btp": symbol_data["is_btp"], "portfolio_total_value": _portfolio["portfolio_total_value"],
+            "portfolio_exposure_pct": _portfolio["portfolio_exposure_pct"], "portfolio_stop_risk_pct": _portfolio["portfolio_stop_risk_pct"],
+            "portfolio_available_capital": _portfolio["portfolio_available_capital"], "remaining": remaining,
+            "per_symbol_budget": per_symbol_budget, "min_order_amount": _ctx["min_order_amount"],
+            "min_order_cost": _ctx["min_order_cost"], "max_port_exp": _ctx["max_port_exp"], "max_port_risk": _ctx["max_port_risk"],
+            "global_risk_mult": _ctx["global_risk_mult"], "historical_backtest_results": _ctx["historical_backtest_results"],
+        }
+
+    async def _check_skip_and_model_tier(self, symbol: str, ctx: Dict[str, Any], flags: Dict[str, Any]) -> Optional[Tuple[str, float]]:
+        """Check if LLM eval should be skipped and compute model tier. Returns (model_type, temp) or None if skipped."""
+        engine = self.engine
+        is_critical = flags["max_hold_expired"] or flags["stop_loss_triggered"] or flags["take_profit_triggered"] or flags["partial_tp_triggered"] or flags["dust_sweep_triggered"]
+        has_position = symbol in engine.positions
+
+        if await self.should_skip_llm_eval(
+            symbol=symbol, current_price=ctx["current_price"], atr=ctx["atr"], rsi=ctx["rsi"],
+            macd_hist=ctx["macd_hist"], atr_percentile=ctx.get("atr_percentile"), market_regime=ctx["market_regime"],
+            sentiment_trend_val=ctx.get("sentiment_trend_val"), timeframe_seconds=engine._timeframe_to_seconds(ctx.get("assigned_tf", "1d")),
+            has_position=has_position, is_critical=is_critical,
+        ):
+            logger.info(f"Skipping LLM for {symbol}: market unchanged, no strong signals.")
+            async with engine._eval_state_lock:
+                engine._force_eval.pop(symbol, None)
+            return None
+
+        strategy_model_type, effective_temp = self.compute_model_tier_and_temperature(
+            atr=ctx["atr"], atr_percentile=ctx.get("atr_percentile"), rsi=ctx["rsi"], macd=ctx["macd"],
+            macd_signal=ctx["macd_signal"], macd_hist=ctx["macd_hist"], bb_upper=ctx["bb_upper"], bb_middle=ctx["bb_middle"], bb_lower=ctx["bb_lower"],
+            ema_9=ctx["ema_9"], ema_21=ctx["ema_21"], stochastic_k=ctx["stochastic_k"], adx=ctx["adx"], plus_di=ctx["plus_di"], minus_di=ctx["minus_di"],
+            mfi=ctx["mfi"], cci=ctx["cci"], williams_r=ctx["williams_r"], ichimoku=ctx["ichimoku"], market_regime=ctx["market_regime"],
+            market_breadth=getattr(engine, '_market_breadth', None), full_market_breadth=ctx.get("full_market_breadth"),
+            sentiment_trend_val=ctx.get("sentiment_trend_val"), volume_trend_val=ctx.get("volume_trend_val"),
+            unrealized_pnl=ctx.get("unrealized_pnl"), drawdown_pct=ctx.get("drawdown_pct"),
+            portfolio_exposure_pct=ctx["portfolio_exposure_pct"], portfolio_stop_risk_pct=ctx["portfolio_stop_risk_pct"],
+            is_critical=is_critical, trading_paused=False, symbol_event=ctx.get("symbol_event"),
+            fundamentals=ctx.get("fundamentals"), consecutive_losses=ctx.get("consecutive_losses", 0),
+            current_price=ctx["current_price"], num_candidates=len(engine.current_symbols),
+        )
+        return strategy_model_type, effective_temp
+
+    async def _run_llm_steps(self, symbol: str, display_symbol: str, symbol_entry: Dict[str, str], ctx: Dict[str, Any], strategy_model_type: str, effective_temp: float, flags: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Run Step 1a, 1b, and Step 2 LLM calls. Returns dict with signal/provider/model or None if should return."""
+        engine = self.engine
+        assigned_tf = symbol_entry["timeframe"]
+        tf_seconds = engine._timeframe_to_seconds(assigned_tf)
+        is_critical = flags["max_hold_expired"] or flags["stop_loss_triggered"] or flags["take_profit_triggered"] or flags["partial_tp_triggered"] or flags["dust_sweep_triggered"]
+        has_position = symbol in engine.positions
+
+        critical_reason = None
+        if is_critical:
+            critical_reason = "LLM timeout"
+            if flags["max_hold_expired"]: critical_reason = "Max hold expired, LLM timeout"
+            elif flags["stop_loss_triggered"]: critical_reason = "Stop-loss triggered, LLM timeout"
+            elif flags["take_profit_triggered"]: critical_reason = "Take-profit triggered, LLM timeout"
+            elif flags["partial_tp_triggered"]: critical_reason = "Partial TP triggered, LLM timeout"
+            elif flags["dust_sweep_triggered"]: critical_reason = "Dust sweep triggered, LLM timeout"
+
+        analysis_result, llm_provider, llm_model, _should_return = await self.run_step1a_llm_call(
+            symbol=symbol, display_symbol=display_symbol, analysis_prompt=ctx["analysis_prompt"],
+            system_prompt=compact_prompt(build_system_prompt()), market_hash=ctx["market_hash"],
+            strategy_model_type=strategy_model_type, effective_temp=effective_temp,
+            current_price=ctx["current_price"], rsi=ctx["rsi"], macd_hist=ctx["macd_hist"],
+            is_critical=is_critical, critical_reason=critical_reason,
+        )
+        if _should_return:
+            return None
+
+        signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest = await self.handle_step1a_fallback(
+            symbol=symbol, analysis_result=analysis_result, has_position=has_position,
+            strategy_model_type=strategy_model_type, llm_provider=llm_provider, llm_model=llm_model,
+        )
+
+        if not _skip_backtest:
+            preliminary_signal, llm_provider, llm_model = await self.run_step1b_llm_call(
+                symbol=symbol, analysis_result=analysis_result, ticker=ctx["ticker"], current_price=ctx["current_price"],
+                atr=ctx["atr"], assigned_tf=assigned_tf, base_balance=ctx["base_balance"], per_symbol_budget=ctx["per_symbol_budget"],
+                min_order_amount=ctx["min_order_amount"], min_order_cost=ctx["min_order_cost"], remaining=ctx["remaining"],
+                portfolio_total_value=ctx["portfolio_total_value"], portfolio_exposure_pct=ctx["portfolio_exposure_pct"],
+                portfolio_stop_risk_pct=ctx["portfolio_stop_risk_pct"], portfolio_available_capital=ctx["portfolio_available_capital"],
+                max_port_exp=ctx["max_port_exp"], max_port_risk=ctx["max_port_risk"], global_risk_mult=ctx["global_risk_mult"],
+                min_stop_atr_mult=ctx["min_stop_atr_mult"], min_hold_time_mult=ctx["min_hold_time_mult"], trading_paused=False,
+                has_position=has_position, strategy_model_type=strategy_model_type, effective_temp=effective_temp,
+                market_snapshot=ctx["market_snapshot"], historical_backtest_results=ctx["historical_backtest_results"],
+            )
+            signal, combined_bt_summary, llm_provider, llm_model = await engine._run_backtest_and_final_decision(
+                symbol=symbol, assigned_tf=assigned_tf, tf_seconds=tf_seconds, current_price=ctx["current_price"],
+                atr=ctx["atr"], historical_ohlcv=ctx["historical_ohlcv"], raw_candles=ctx["raw_candles"],
+                base_balance=ctx["base_balance"], is_btp=ctx["is_btp"], trading_paused=False,
+                strategy_model_type=strategy_model_type, effective_temp=effective_temp,
+                preliminary_signal=preliminary_signal, display_symbol=display_symbol, ticker=ctx["ticker"],
+            )
+
+        return {"signal": signal, "llm_provider": llm_provider, "llm_model": llm_model}
+
+    async def process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False) -> None:
+        """Fetch market data, get LLM strategy, validate, and execute."""
+        engine = self.engine
+        symbol = symbol_entry["symbol"]
+        assigned_tf = symbol_entry["timeframe"]
+        tf_seconds = engine._timeframe_to_seconds(assigned_tf)
 
         try:
-            symbol_data = await self.fetch_symbol_market_data(symbol, assigned_tf)
+            _init_ctx = await self._get_initial_context(symbol, symbol_entry)
+            if _init_ctx is None:
+                return
+            stock_name = _init_ctx["stock_name"]
+            display_symbol = _init_ctx["display_symbol"]
+            min_viable_amount = _init_ctx["min_viable_amount"]
+            _flags = _init_ctx["flags"]
+
+            symbol_data = await self._fetch_and_validate_data(symbol, symbol_entry, display_symbol)
             if symbol_data is None:
-                logger.warning(f"No ticker data for {symbol}, skipping.")
-                return
-            ticker = symbol_data["ticker"]
-            current_price = symbol_data["current_price"]
-            fundamentals = symbol_data["fundamentals"]
-            balance = symbol_data["balance"]
-            base_balance = symbol_data["base_balance"]
-            ohlcv_data = symbol_data["ohlcv_data"]
-            is_btp = symbol_data["is_btp"]
-            tf_seconds = symbol_data["tf_seconds"]
-            multi_tf_indicators = symbol_data["multi_tf_indicators"]
-            multi_tf_raw_candles = symbol_data["multi_tf_raw_candles"]
-            atr = symbol_data["atr"]
-            rsi = symbol_data["rsi"]
-            macd = symbol_data["macd"]
-            macd_signal = symbol_data["macd_signal"]
-            macd_hist = symbol_data["macd_hist"]
-            bb_upper = symbol_data["bb_upper"]
-            bb_middle = symbol_data["bb_middle"]
-            bb_lower = symbol_data["bb_lower"]
-            ema_9 = symbol_data["ema_9"]
-            ema_21 = symbol_data["ema_21"]
-            stochastic_k = symbol_data["stochastic_k"]
-            stochastic_d = symbol_data["stochastic_d"]
-            adx = symbol_data["adx"]
-            plus_di = symbol_data["plus_di"]
-            minus_di = symbol_data["minus_di"]
-            obv = symbol_data["obv"]
-            mfi = symbol_data["mfi"]
-            cci = symbol_data["cci"]
-            williams_r = symbol_data["williams_r"]
-            ichimoku = symbol_data["ichimoku"]
-            donchian_channels = symbol_data["donchian_channels"]
-            parabolic_sar = symbol_data["parabolic_sar"]
-            keltner_channels = symbol_data["keltner_channels"]
-            vwap = symbol_data["vwap"]
-            daily_pivot_points = symbol_data["daily_pivot_points"]
-            has_position = symbol in engine.positions
-
-            # --- Skip conditions: stale quotes, no balance, no OHLCV ---
-            if await self.check_skip_conditions(
-                symbol, display_symbol, ticker, assigned_tf, has_position, base_balance
-            ):
-                return
-            # For positions we still need to manage, use a per_symbol_budget of 0
-            # so the LLM knows no new capital is available for scaling in.
-            if base_balance <= 0:
-                logger.info(
-                    f"Evaluating {symbol} for position management only "
-                    f"(base_balance={base_balance:.2f}, no new capital available)."
-                )
-            if await self.check_no_ohlcv(
-                symbol, display_symbol, assigned_tf, ohlcv_data
-            ):
                 return
 
-            open_positions = [
-                pos for pos in engine.positions.values() if pos.get("symbol") == symbol
-            ]
+            ctx = await self._gather_and_build_prompt(symbol, symbol_entry, symbol_data, min_viable_amount, _flags)
+            ctx["assigned_tf"] = assigned_tf
+            ctx["sentiment_trend_val"] = ctx.get("sentiment_trend_val") # ensure exists
+            ctx["volume_trend_val"] = ctx.get("volume_trend_val")
+            ctx["unrealized_pnl"] = ctx.get("unrealized_pnl")
+            ctx["drawdown_pct"] = ctx.get("drawdown_pct")
+            ctx["full_market_breadth"] = ctx.get("full_market_breadth")
+            ctx["symbol_event"] = ctx.get("symbol_event")
+            ctx["fundamentals"] = symbol_data.get("fundamentals")
+            ctx["consecutive_losses"] = ctx.get("consecutive_losses", 0)
+            ctx["atr_percentile"] = ctx.get("atr_percentile")
 
-            # Compute per-symbol budget for this symbol
-            per_symbol_budget = base_balance / engine.effective_max_symbols if engine.effective_max_symbols > 0 else 0.0
-
-            perf = await asyncio.to_thread(engine._compute_performance_metrics)
-            trade_pattern_analysis = await asyncio.to_thread(engine._compute_trade_pattern_analysis)
-
-            # --- Detect upcoming corporate events for this symbol ---
-            symbol_event = None
-            if settings.NEWS_ENABLED and detect_upcoming_events is not None:
-                try:
-                    symbol_event = await asyncio.to_thread(detect_upcoming_events, symbol)
-                except Exception:
-                    pass
-
-            # --- Compute additional metrics for the LLM ---
-            # Build indicator config from position or defaults
-            ind_cfg = engine.positions.get(symbol, {}).get('indicator_config') if symbol in engine.positions else None
-
-            _ctx = await self.gather_prompt_context(
-                symbol=symbol,
-                assigned_tf=assigned_tf,
-                tf_seconds=tf_seconds,
-                ticker=ticker,
-                base_balance=base_balance,
-                ohlcv_data=ohlcv_data,
-                multi_tf_indicators=multi_tf_indicators,
-                multi_tf_raw_candles=multi_tf_raw_candles,
-                atr=atr,
-                rsi=rsi,
-                macd=macd,
-                macd_signal=macd_signal,
-                macd_hist=macd_hist,
-                bb_upper=bb_upper,
-                bb_middle=bb_middle,
-                bb_lower=bb_lower,
-                ema_9=ema_9,
-                ema_21=ema_21,
-                adx=adx,
-                plus_di=plus_di,
-                minus_di=minus_di,
-            )
-            atr_multi_tf = _ctx["atr_multi_tf"]
-            atr_percentile = _ctx["atr_percentile"]
-            market_regime = _ctx["market_regime"]
-            raw_candles = _ctx["raw_candles"]
-            historical_ohlcv = _ctx["historical_ohlcv"]
-            unrealized_pnl = _ctx["unrealized_pnl"]
-            position_info = _ctx["position_info"]
-            recent_trades_summary = _ctx["recent_trades_summary"]
-            min_order_amount = _ctx["min_order_amount"]
-            min_order_cost = _ctx["min_order_cost"]
-            past_trades = _ctx["past_trades"]
-            aggregate_sentiment = _ctx["aggregate_sentiment"]
-            sentiment_trend_val = _ctx["sentiment_trend_val"]
-            volume_trend_val = _ctx["volume_trend_val"]
-            full_market_breadth = _ctx["full_market_breadth"]
-            session_info = _ctx["session_info"]
-            minutes_to_market_close = _ctx["minutes_to_market_close"]
-            global_risk_mult = _ctx["global_risk_mult"]
-            max_port_exp = _ctx["max_port_exp"]
-            max_port_risk = _ctx["max_port_risk"]
-            partial_tp_executed_levels = _ctx["partial_tp_executed_levels"]
-            min_stop_atr_mult = _ctx["min_stop_atr_mult"]
-            min_hold_time_mult = _ctx["min_hold_time_mult"]
-            global_min_rr = _ctx["global_min_rr"]
-            historical_backtest_results = _ctx["historical_backtest_results"]
-
-            # --- Compute portfolio exposure summary for the prompt ---
-            _portfolio = await engine._position_manager.compute_portfolio_exposure_summary(base_balance)
-            portfolio_total_value = _portfolio["portfolio_total_value"]
-            portfolio_exposure = _portfolio["portfolio_exposure"]
-            portfolio_stop_risk = _portfolio["portfolio_stop_risk"]
-            portfolio_exposure_pct = _portfolio["portfolio_exposure_pct"]
-            portfolio_stop_risk_pct = _portfolio["portfolio_stop_risk_pct"]
-            portfolio_available_capital = _portfolio["portfolio_available_capital"]
-
-            async with engine._cycle_spent_lock:
-                remaining = max(0.0, base_balance - engine._cycle_spent)
-
-            # --- Step 1a: Analysis call (focused on market analysis only) ---
-            stale_indicators_warning = symbol_data.get("stale_indicators_warning", "")
-            analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(
-                symbol=symbol,
-                ticker=ticker,
-                balance=balance,
-                open_positions=open_positions,
-                per_symbol_budget=per_symbol_budget,
-                ohlcv_data=ohlcv_data,
-                assigned_tf=assigned_tf,
-                atr=atr,
-                atr_multi_tf=atr_multi_tf,
-                rsi=rsi,
-                macd=macd,
-                macd_signal=macd_signal,
-                macd_hist=macd_hist,
-                bb_upper=bb_upper,
-                bb_middle=bb_middle,
-                bb_lower=bb_lower,
-                ema_9=ema_9,
-                ema_21=ema_21,
-                stochastic_k=stochastic_k,
-                stochastic_d=stochastic_d,
-                adx=adx,
-                plus_di=plus_di,
-                minus_di=minus_di,
-                obv=obv,
-                mfi=mfi,
-                cci=cci,
-                williams_r=williams_r,
-                ichimoku=ichimoku,
-                donchian_channels=donchian_channels,
-                parabolic_sar=parabolic_sar,
-                keltner_channels=keltner_channels,
-                vwap=vwap,
-                daily_pivot_points=daily_pivot_points,
-                unrealized_pnl=unrealized_pnl,
-                position_info=position_info,
-                raw_candles=raw_candles,
-                recent_trades_summary=recent_trades_summary,
-                historical_ohlcv=historical_ohlcv,
-                min_order_amount=min_order_amount,
-                min_order_cost=min_order_cost,
-                past_trades=past_trades,
-                perf=perf,
-                trade_pattern_analysis=trade_pattern_analysis,
-                symbol_event=symbol_event,
-                fundamentals=fundamentals,
-                aggregate_sentiment=aggregate_sentiment,
-                sentiment_trend_val=sentiment_trend_val,
-                volume_trend_val=volume_trend_val,
-                full_market_breadth=full_market_breadth,
-                session_info=session_info,
-                minutes_to_market_close=minutes_to_market_close,
-                global_risk_mult=global_risk_mult,
-                max_port_exp=max_port_exp,
-                max_port_risk=max_port_risk,
-                min_stop_atr_mult=min_stop_atr_mult,
-                min_hold_time_mult=min_hold_time_mult,
-                min_viable_amount=min_viable_amount,
-                historical_backtest_results=historical_backtest_results,
-                trading_paused=trading_paused,
-                max_hold_expired=max_hold_expired,
-                max_hold_expired_count=max_hold_expired_count,
-                stop_loss_triggered=stop_loss_triggered,
-                stop_loss_review_count=stop_loss_review_count,
-                take_profit_triggered=take_profit_triggered,
-                take_profit_review_count=take_profit_review_count,
-                partial_tp_triggered=partial_tp_triggered,
-                partial_tp_review_count=partial_tp_review_count,
-                partial_tp_triggered_levels=partial_tp_triggered_levels,
-                partial_tp_executed_levels=partial_tp_executed_levels,
-                dust_sweep_triggered=dust_sweep_triggered,
-                dust_sweep_review_count=dust_sweep_review_count,
-                max_sl_reviews_prompt=max_sl_reviews_prompt,
-                max_tp_reviews_prompt=max_tp_reviews_prompt,
-                max_partial_tp_reviews_prompt=max_partial_tp_reviews_prompt,
-                max_dust_sweep_reviews_prompt=max_dust_sweep_reviews_prompt,
-                portfolio_exposure_pct=portfolio_exposure_pct,
-                portfolio_stop_risk_pct=portfolio_stop_risk_pct,
-                portfolio_total_value=portfolio_total_value,
-                portfolio_available_capital=portfolio_available_capital,
-                remaining=remaining,
-                stale_indicators_warning=stale_indicators_warning,
-                market_regime=market_regime,
-                multi_tf_raw_candles=multi_tf_raw_candles,
-                multi_tf_indicators=multi_tf_indicators,
-                atr_percentile=atr_percentile,
-            )
-            # Determine whether we even need to call the LLM, and if so which model to use
-            is_critical = max_hold_expired or stop_loss_triggered or take_profit_triggered or partial_tp_triggered or dust_sweep_triggered
-            has_position = symbol in engine.positions
-
-            if await self.should_skip_llm_eval(
-                symbol=symbol,
-                current_price=current_price,
-                atr=atr,
-                rsi=rsi,
-                macd_hist=macd_hist,
-                atr_percentile=atr_percentile,
-                market_regime=market_regime,
-                sentiment_trend_val=sentiment_trend_val,
-                timeframe_seconds=tf_seconds,
-                has_position=has_position,
-                is_critical=is_critical,
-            ):
-                logger.info(f"Skipping LLM for {symbol}: market unchanged, no strong signals.")
-                async with engine._eval_state_lock:
-                    engine._force_eval.pop(symbol, None)
+            model_tier = await self._check_skip_and_model_tier(symbol, ctx, _flags)
+            if model_tier is None:
                 return
+            strategy_model_type, effective_temp = model_tier
 
-            strategy_model_type, effective_temp = self.compute_model_tier_and_temperature(
-                atr=atr,
-                atr_percentile=atr_percentile,
-                rsi=rsi,
-                macd=macd,
-                macd_signal=macd_signal,
-                macd_hist=macd_hist,
-                bb_upper=bb_upper,
-                bb_middle=bb_middle,
-                bb_lower=bb_lower,
-                ema_9=ema_9,
-                ema_21=ema_21,
-                stochastic_k=stochastic_k,
-                adx=adx,
-                plus_di=plus_di,
-                minus_di=minus_di,
-                mfi=mfi,
-                cci=cci,
-                williams_r=williams_r,
-                ichimoku=ichimoku,
-                market_regime=market_regime,
-                market_breadth=getattr(engine, '_market_breadth', None),
-                full_market_breadth=full_market_breadth,
-                sentiment_trend_val=sentiment_trend_val,
-                volume_trend_val=volume_trend_val,
-                unrealized_pnl=unrealized_pnl,
-                drawdown_pct=perf.get("equity_curve", {}).get("drawdown_pct"),
-                portfolio_exposure_pct=portfolio_exposure_pct,
-                portfolio_stop_risk_pct=portfolio_stop_risk_pct,
-                is_critical=is_critical,
-                trading_paused=trading_paused,
-                symbol_event=symbol_event,
-                fundamentals=fundamentals,
-                consecutive_losses=perf.get("equity_curve", {}).get("consecutive_losses", 0),
-                current_price=ticker['last'],
-                num_candidates=len(engine.current_symbols),
-            )
-
-            # --- Step 1a: Call LLM for analysis ---
-            critical_reason = None
-            if is_critical:
-                critical_reason = "LLM timeout"
-                if max_hold_expired:
-                    critical_reason = "Max hold expired, LLM timeout"
-                elif stop_loss_triggered:
-                    critical_reason = "Stop-loss triggered, LLM timeout"
-                elif take_profit_triggered:
-                    critical_reason = "Take-profit triggered, LLM timeout"
-                elif partial_tp_triggered:
-                    critical_reason = "Partial TP triggered, LLM timeout"
-                elif dust_sweep_triggered:
-                    critical_reason = "Dust sweep triggered, LLM timeout"
-
-            analysis_result, llm_provider, llm_model, _should_return = await self.run_step1a_llm_call(
-                symbol=symbol,
-                display_symbol=display_symbol,
-                analysis_prompt=analysis_prompt,
-                system_prompt=compact_prompt(build_system_prompt()),
-                market_hash=market_hash,
-                strategy_model_type=strategy_model_type,
-                effective_temp=effective_temp,
-                current_price=current_price,
-                rsi=rsi,
-                macd_hist=macd_hist,
-                is_critical=is_critical,
-                critical_reason=critical_reason,
-            )
-            if _should_return:
+            llm_result = await self._run_llm_steps(symbol, display_symbol, symbol_entry, ctx, strategy_model_type, effective_temp, _flags)
+            if llm_result is None:
                 return
-
-            signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest = await self.handle_step1a_fallback(
-                symbol=symbol,
-                analysis_result=analysis_result,
-                has_position=has_position,
-                strategy_model_type=strategy_model_type,
-                llm_provider=llm_provider,
-                llm_model=llm_model,
-            )
-
-            if not _skip_backtest:
-                # --- Step 1b: Call LLM for backtest variants and parameters ---
-                preliminary_signal, llm_provider, llm_model = await self.run_step1b_llm_call(
-                    symbol=symbol,
-                    analysis_result=analysis_result,
-                    ticker=ticker,
-                    current_price=current_price,
-                    atr=atr,
-                    assigned_tf=assigned_tf,
-                    base_balance=base_balance,
-                    per_symbol_budget=per_symbol_budget,
-                    min_order_amount=min_order_amount,
-                    min_order_cost=min_order_cost,
-                    remaining=remaining,
-                    portfolio_total_value=portfolio_total_value,
-                    portfolio_exposure_pct=portfolio_exposure_pct,
-                    portfolio_stop_risk_pct=portfolio_stop_risk_pct,
-                    portfolio_available_capital=portfolio_available_capital,
-                    max_port_exp=max_port_exp,
-                    max_port_risk=max_port_risk,
-                    global_risk_mult=global_risk_mult,
-                    min_stop_atr_mult=min_stop_atr_mult,
-                    min_hold_time_mult=min_hold_time_mult,
-                    trading_paused=trading_paused,
-                    has_position=has_position,
-                    strategy_model_type=strategy_model_type,
-                    effective_temp=effective_temp,
-                    market_snapshot=market_snapshot,
-                    historical_backtest_results=historical_backtest_results,
-                )
-
-                # --- Step 2: Run backtest(s) and ask LLM for final decision ---
-                signal, combined_bt_summary, llm_provider, llm_model = await engine._run_backtest_and_final_decision(
-                    symbol=symbol,
-                    assigned_tf=assigned_tf,
-                    tf_seconds=tf_seconds,
-                    current_price=current_price,
-                    atr=atr,
-                    historical_ohlcv=historical_ohlcv,
-                    raw_candles=raw_candles,
-                    base_balance=base_balance,
-                    is_btp=is_btp,
-                    trading_paused=trading_paused,
-                    strategy_model_type=strategy_model_type,
-                    effective_temp=effective_temp,
-                    preliminary_signal=preliminary_signal,
-                    display_symbol=display_symbol,
-                    ticker=ticker,
-                )
+            signal = llm_result["signal"]
+            llm_provider = llm_result["llm_provider"]
+            llm_model = llm_result["llm_model"]
 
             await self.process_post_llm_decision(
-                symbol=symbol,
-                display_symbol=display_symbol,
-                stock_name=stock_name,
-                assigned_tf=assigned_tf,
-                tf_seconds=tf_seconds,
-                ticker=ticker,
-                signal=signal,
-                llm_provider=llm_provider,
-                llm_model=llm_model,
-                trading_paused=trading_paused,
-                base_balance=base_balance,
-                current_price=current_price,
-                atr=atr,
-                rsi=rsi,
-                macd=macd,
-                macd_signal=macd_signal,
-                macd_hist=macd_hist,
-                bb_upper=bb_upper,
-                bb_middle=bb_middle,
-                bb_lower=bb_lower,
-                ema_9=ema_9,
-                ema_21=ema_21,
-                stochastic_k=stochastic_k,
-                stochastic_d=stochastic_d,
-                adx=adx,
-                plus_di=plus_di,
-                minus_di=minus_di,
-                obv=obv,
-                mfi=mfi,
-                cci=cci,
-                williams_r=williams_r,
-                ichimoku=ichimoku,
-                donchian_channels=donchian_channels,
-                parabolic_sar=parabolic_sar,
-                keltner_channels=keltner_channels,
-                aggregate_sentiment=aggregate_sentiment,
-                market_regime=market_regime,
-                min_stop_atr_mult=min_stop_atr_mult,
-                min_hold_time_mult=min_hold_time_mult,
-                global_min_rr=global_min_rr,
-                max_hold_expired=max_hold_expired,
-                stop_loss_triggered=stop_loss_triggered,
-                take_profit_triggered=take_profit_triggered,
-                partial_tp_triggered=partial_tp_triggered,
-                dust_sweep_triggered=dust_sweep_triggered,
+                symbol=symbol, display_symbol=display_symbol, stock_name=stock_name,
+                assigned_tf=assigned_tf, tf_seconds=tf_seconds, ticker=ctx["ticker"], signal=signal,
+                llm_provider=llm_provider, llm_model=llm_model, trading_paused=trading_paused,
+                base_balance=ctx["base_balance"], current_price=ctx["current_price"], atr=ctx["atr"],
+                rsi=ctx["rsi"], macd=ctx["macd"], macd_signal=ctx["macd_signal"], macd_hist=ctx["macd_hist"],
+                bb_upper=ctx["bb_upper"], bb_middle=ctx["bb_middle"], bb_lower=ctx["bb_lower"],
+                ema_9=ctx["ema_9"], ema_21=ctx["ema_21"], stochastic_k=ctx["stochastic_k"], stochastic_d=ctx["stochastic_d"],
+                adx=ctx["adx"], plus_di=ctx["plus_di"], minus_di=ctx["minus_di"], obv=ctx["obv"], mfi=ctx["mfi"],
+                cci=ctx["cci"], williams_r=ctx["williams_r"], ichimoku=ctx["ichimoku"], donchian_channels=ctx["donchian_channels"],
+                parabolic_sar=ctx["parabolic_sar"], keltner_channels=ctx["keltner_channels"],
+                aggregate_sentiment=ctx["aggregate_sentiment"], market_regime=ctx["market_regime"],
+                min_stop_atr_mult=ctx["min_stop_atr_mult"], min_hold_time_mult=ctx["min_hold_time_mult"],
+                global_min_rr=ctx["global_min_rr"], max_hold_expired=_flags["max_hold_expired"],
+                stop_loss_triggered=_flags["stop_loss_triggered"], take_profit_triggered=_flags["take_profit_triggered"],
+                partial_tp_triggered=_flags["partial_tp_triggered"], dust_sweep_triggered=_flags["dust_sweep_triggered"],
                 strategy_model_type=strategy_model_type,
             )
         except Exception as e:
@@ -536,11 +365,7 @@ class SignalProcessor:
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"❌ Error processing {display_symbol}: {e}",
-                    summary={
-                        "symbol": symbol,
-                        "action": "ERROR",
-                        "reason": str(e)[:200],
-                    }
+                    summary={"symbol": symbol, "action": "ERROR", "reason": str(e)[:200]}
                 )
 
     async def classify_market_regime(
