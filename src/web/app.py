@@ -505,20 +505,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     ) if engine.positions else []
                     positions = dict(position_results)
 
-                    perf = await engine.get_performance_summary()
-                    if perf.get("rows"):
-                        async def _add_display_to_row(row):
-                            row["display_symbol"] = await _get_display_symbol(engine, row["symbol"], row.get("timeframe"))
-                            return row
-                        perf["rows"] = await asyncio.gather(
-                            *[_add_display_to_row(row) for row in perf["rows"]]
-                        )
-                    if perf.get("total"):
-                        total = perf["total"]
-                        total["display_symbol"] = "TOTAL"
-
                     balances = await run_in_threadpool(engine.trader.fetch_balance)
-                    profit_summary = await engine.get_profit_summary()
                     pause_info = await engine.get_pause_status()
 
                     # Strip large/unserializable fields from queued orders before sending
@@ -533,26 +520,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     except Exception:
                         is_paused = False
 
-                    # Fetch market status from Redis
-                    market_status = None
-                    try:
-                        market_status_raw = await asyncio.to_thread(redis.get, "market:status")
-                        if market_status_raw:
-                            market_status = json.loads(market_status_raw)
-                    except Exception:
-                        pass
-
                     payload = {
                         "current_symbols": current_symbols,
                         "positions": positions,
                         "balances": balances,
-                        "profit": profit_summary,
-                        "performance": perf,
                         "paused": is_paused,
                         "pause_info": pause_info,
                         "queued_orders": queued_orders_payload,
                         "market_open": market_open,
-                        "market_status": market_status,
                     }
                     _ws_payload_cache = payload
                     _ws_payload_cache_time = now

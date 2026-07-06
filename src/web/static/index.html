@@ -1298,6 +1298,18 @@
                 .then(res => res.json())
                 .then(risk => updateRiskUI(risk))
                 .catch(() => {});
+            fetch('/api/profit')
+                .then(res => res.json())
+                .then(profit => updateProfitUI(profit))
+                .catch(() => {});
+            fetch('/api/performance')
+                .then(res => res.json())
+                .then(perf => updatePerformanceUI(perf))
+                .catch(() => {});
+            fetch('/api/market-status')
+                .then(res => res.json())
+                .then(ms => updateMarketStatusUI(ms))
+                .catch(() => {});
             fetchMessages();
             fetchSignals();
         }
