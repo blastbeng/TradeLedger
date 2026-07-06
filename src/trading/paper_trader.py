@@ -222,6 +222,21 @@ class PaperTrader:
             logger.warning(f"Failed to compute dynamic slippage for {symbol}: {e}")
             return self.slippage_base_pct
 
+    def _get_max_fillable_volume(self, symbol: str) -> Optional[float]:
+        """Estimate max fillable volume based on recent 1m candle volume."""
+        base = symbol.split("/")[0] if "/" in symbol else symbol
+        try:
+            candles = get_ohlcv(base, "1m", limit=2)
+            if not candles:
+                return None
+            # Use the most recent completed candle's volume
+            vol = candles[-2]["volume"] if len(candles) >= 2 else candles[-1]["volume"]
+            # Assume we can fill up to 10% of the last minute's volume
+            return vol * 0.1
+        except Exception as e:
+            logger.warning(f"Failed to fetch volume for partial fill check for {symbol}: {e}")
+            return None
+
     @staticmethod
     def _generate_order_id() -> str:
         return str(uuid.uuid4())
@@ -359,6 +374,13 @@ class PaperTrader:
         fill_price = fill_price * (1 + slippage_pct)
 
         base_amount = amount / fill_price
+
+        # Check for volume-based partial fill
+        max_vol = self._get_max_fillable_volume(symbol)
+        if max_vol is not None and base_amount > max_vol:
+            logger.info(f"Partial fill for {symbol}: requested {base_amount}, capped to {max_vol}")
+            base_amount = max_vol
+
         costs = calculate_transaction_costs("BUY", fill_price, base_amount, symbol=symbol)
         total_cost = costs["net_value"]
         fee_cost = costs["total_costs"]
@@ -377,9 +399,6 @@ class PaperTrader:
                     "timestamp": int(time.time() * 1000),
                 }
 
-            # NOTE: The paper trader assumes full fills for market orders to keep
-            # paper trading consistent with backtesting results. Partial fills
-            # based on volume are not simulated.
             filled_base_amount = base_amount
             filled_cost = filled_base_amount * fill_price
 
@@ -448,6 +467,12 @@ class PaperTrader:
         slippage_pct = self._get_dynamic_slippage(symbol, fill_price)
         fill_price = fill_price * (1 - slippage_pct)
 
+        # Check for volume-based partial fill
+        max_vol = self._get_max_fillable_volume(symbol)
+        if max_vol is not None and amount > max_vol:
+            logger.info(f"Partial fill for {symbol}: requested {amount}, capped to {max_vol}")
+            amount = max_vol
+
         with self._lock:
             base_balance = self._balances.get(base, 0.0)
             if amount > base_balance:
@@ -461,9 +486,6 @@ class PaperTrader:
                     "timestamp": int(time.time() * 1000),
                 }
 
-            # NOTE: The paper trader assumes full fills for market orders to keep
-            # paper trading consistent with backtesting results. Partial fills
-            # based on volume are not simulated.
             filled_amount = amount
 
             costs = calculate_transaction_costs("SELL", fill_price, filled_amount, symbol=symbol)
