@@ -39,6 +39,10 @@ class Settings(BaseSettings):
             raise ValueError("SYMBOL_REEVALUATION_INTERVAL must be >= 300")
         return v
 
+    # Portfolio rebalance settings
+    PORTFOLIO_REBALANCE_ENABLED: bool = False
+    PORTFOLIO_REBALANCE_INTERVAL_SECONDS: int = 7776000  # 90 days
+
     # Fallback strategy evaluation interval (seconds) when no timeframe or no symbols
     DEFAULT_STRATEGY_INTERVAL: int = 3600  # 1 hour
 
