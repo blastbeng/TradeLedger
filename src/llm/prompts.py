@@ -1115,10 +1115,9 @@ Current balances: {json.dumps(balance)}
             symbol_list_str = ", ".join(f"{s['symbol']}({s['timeframe']})" for s in other_symbols)
             prompt += f"Other symbols being traded: {symbol_list_str}\n"
             prompt += (
-                "**CRITICAL:** You must concentrate your trading decision entirely on THIS single selected ticker "
-                f"({symbol}) where a signal has been detected. While you should leave some budget for other promising "
-                "setups if possible, you may allocate a larger fraction of the available balance to this ticker if you "
-                "have high conviction.\n"
+                f"**CRITICAL:** Concentrate your trading decision entirely on THIS single selected ticker ({symbol}) "
+                "where a signal has been detected. You may allocate a larger fraction of the available balance to this "
+                "ticker if you have high conviction, but leave some budget for other promising setups if possible.\n"
             )
         else:
             prompt += "This is the only symbol being traded; you may use the full available balance.\n"
@@ -1133,8 +1132,8 @@ Current balances: {json.dumps(balance)}
         for p in open_positions
     ]
     prompt += f"""Open positions: {json.dumps(_positions_compact)}
-Your total available {base_currency} balance: {base_balance:.2f}
-Suggested equal share per symbol (balance / max_symbols): {per_symbol_budget:.2f} {base_currency}
+Total available {base_currency} balance: {base_balance:.2f}
+Suggested equal share per symbol: {per_symbol_budget:.2f} {base_currency}
 Maximum symbols to trade: {max_symbols}
 
 **Focus:** Concentrate your analysis and trading decision entirely on this single ticker ({symbol}). You may use up to the total available balance for this trade if your conviction is high, provided it does not exceed the remaining balance.
