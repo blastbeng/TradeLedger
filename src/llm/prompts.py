@@ -945,43 +945,43 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
     # Output format
     prompt += f"""
 Return a JSON object with the following fields:
-- "stocks": a JSON array of objects, each with "symbol", "timeframe" (one of {', '.join([repr(tf) for tf in available_timeframes])}), "sector", and optionally "max_tenure_hours"
-- "max_stocks": an integer between 0 and {max_symbols}
-- "max_positions_per_sector": an integer between 1 and {max_symbols}
-- "reasoning": a short string (max 200 characters) explaining your final selection
-- "skip_eval_price_change_atr_mult": a float (e.g., 0.5)
-- "skip_eval_rsi_change": a float (e.g., 5.0)
-- "skip_eval_rsi_oversold": a float (e.g., 30.0)
-- "skip_eval_rsi_overbought": a float (e.g., 70.0)
-- "skip_eval_macd_hist_change": a float (e.g., 0.0005)
-- "regime_adx_strong": a float (e.g., 40.0)
-- "regime_adx_moderate": a float (e.g., 25.0)
-- "regime_volatility_high_pct": a float (e.g., 80.0)
-- "regime_volatility_low_pct": a float (e.g., 20.0)
-- "regime_bb_squeeze_width": a float (e.g., 0.02)
-- "regime_bb_expansion_width": a float (e.g., 0.08)
-- "min_stop_loss_atr_mult": a float (e.g., 1.5)
-- "min_max_hold_time_mult": a float (e.g., 2.0)
-- "max_stop_loss_reviews": an integer between 1 and 20
-- "max_take_profit_reviews": an integer between 1 and 20
-- "max_partial_tp_reviews": an integer between 1 and 20
-- "max_dust_sweep_reviews": an integer between 1 and 20
-- "min_llm_pause_duration_seconds": an integer between 300 and 14400
-- "pause_max_consecutive_keep": an integer between 1 and 10
-- "pause_force_resume_risk_multiplier": a float between 0.0 and 1.0
-- "max_portfolio_exposure_pct": a float between 0.0 and 1.0
-- "max_portfolio_stop_risk_pct": a float between 0.0 and 1.0
-- "min_risk_reward_ratio": a positive number
-- "confidence_rejection_threshold": a float between 0.0 and 1.0
-- "limit_price_max_distance_pct": an optional float between 0.0 and 1.0
-- "min_viable_trade_amount": an optional positive number
-- "stock_revaluation_interval_seconds": an optional integer >= 3600
-- "pause_trading": optional boolean
-- "pause_reason": optional string
-- "pause_duration_seconds": optional positive integer
-- "global_risk_multiplier": optional float (0.0-1.0)
+- `"stocks"`: Array of objects with `"symbol"`, `"timeframe"` (one of: {', '.join([repr(tf) for tf in available_timeframes])}), `"sector"`, and optional `"max_tenure_hours"`.
+- `"max_stocks"`: Integer 0-{max_symbols}. Must equal length of `"stocks"`.
+- `"max_positions_per_sector"`: Integer 1-{max_symbols}. Max open positions per sector.
+- `"reasoning"`: Short string (max 200 chars) explaining your final selection.
+- `"skip_eval_price_change_atr_mult"`: Float (e.g., 0.5). Min price change (ATR%) to trigger LLM eval.
+- `"skip_eval_rsi_change"`: Float (e.g., 5.0). Min RSI change to trigger LLM eval.
+- `"skip_eval_rsi_oversold"`: Float (e.g., 30.0). RSI level below which LLM eval is always triggered.
+- `"skip_eval_rsi_overbought"`: Float (e.g., 70.0). RSI level above which LLM eval is always triggered.
+- `"skip_eval_macd_hist_change"`: Float (e.g., 0.0005). Min MACD histogram change to trigger LLM eval.
+- `"regime_adx_strong"`: Float (e.g., 40.0). ADX level for strong trend.
+- `"regime_adx_moderate"`: Float (e.g., 25.0). ADX level for moderate trend.
+- `"regime_volatility_high_pct"`: Float (e.g., 80.0). ATR percentile for high volatility.
+- `"regime_volatility_low_pct"`: Float (e.g., 20.0). ATR percentile for low volatility.
+- `"regime_bb_squeeze_width"`: Float (e.g., 0.02). Bollinger Band width for squeeze.
+- `"regime_bb_expansion_width"`: Float (e.g., 0.08). Bollinger Band width for expansion.
+- `"min_stop_loss_atr_mult"`: Float (e.g., 1.5). Min stop-loss as ATR% multiple.
+- `"min_max_hold_time_mult"`: Float (e.g., 2.0). Min max_hold_time as candle timeframe multiple.
+- `"max_stop_loss_reviews"`: Integer 1-20. Max LLM reviews on stop-loss trigger.
+- `"max_take_profit_reviews"`: Integer 1-20. Max LLM reviews on take-profit trigger.
+- `"max_partial_tp_reviews"`: Integer 1-20. Max LLM reviews on partial take-profit trigger.
+- `"max_dust_sweep_reviews"`: Integer 1-20. Max LLM reviews on dust sweep trigger.
+- `"min_llm_pause_duration_seconds"`: Integer 300-14400. Min pause duration before resume.
+- `"pause_max_consecutive_keep"`: Integer 1-10. Max consecutive "keep paused" before force-resume.
+- `"pause_force_resume_risk_multiplier"`: Float 0.0-1.0. Risk multiplier on force-resume.
+- `"max_portfolio_exposure_pct"`: Float 0.0-1.0. Max portfolio value deployed.
+- `"max_portfolio_stop_risk_pct"`: Float 0.0-1.0. Max total stop-loss risk as portfolio %.
+- `"min_risk_reward_ratio"`: Positive number (e.g., 1.5). Min reward:risk ratio.
+- `"confidence_rejection_threshold"`: Float 0.0-1.0. Min confidence for trade execution.
+- `"limit_price_max_distance_pct"`: Optional Float 0.0-1.0. Max limit price distance from bid/ask.
+- `"min_viable_trade_amount"`: Optional positive number. Suggested min trade amount in {base_currency}.
+- `"stock_revaluation_interval_seconds"`: Optional integer >= 3600.
+- `"pause_trading"`: Optional boolean.
+- `"pause_reason"`: Optional string.
+- `"pause_duration_seconds"`: Optional positive integer.
+- `"global_risk_multiplier"`: Optional Float 0.0-1.0.
 
-Set max_portfolio_exposure_pct to at least 0.8 and max_portfolio_stop_risk_pct to at least 0.1 unless you have a very strong reason to be more conservative.
+Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_risk_pct` to at least **0.1** unless you have a very strong reason to be more conservative.
 
 Output ONLY the raw JSON object."""
     return prompt
