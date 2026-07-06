@@ -130,6 +130,7 @@ class BacktestManager:
         # --- Fallback to shorter timeframes when the assigned timeframe has too few candles ---
         MIN_BACKTEST_CANDLES = 20
         backtest_fallback_note = ""
+        actual_bt_tf = assigned_tf
         if bt_candles is None or len(bt_candles) < MIN_BACKTEST_CANDLES:
             if assigned_tf in settings.OHLCV_TIMEFRAMES:
                 tf_idx = settings.OHLCV_TIMEFRAMES.index(assigned_tf)
@@ -157,6 +158,7 @@ class BacktestManager:
                                 f"with {settings.OHLCV_RETENTION_DAYS} days retention. "
                                 f"Results from {shorter_tf} may not accurately represent {assigned_tf} behavior — treat with caution."
                             )
+                            actual_bt_tf = shorter_tf
                             logger.info(
                                 f"Backtest fallback for {symbol}: assigned_tf={assigned_tf} had insufficient candles, "
                                 f"using {shorter_tf} ({len(bt_candles)} candles)."
@@ -274,6 +276,8 @@ class BacktestManager:
                 candles=bt_candles,
                 **bt_kwargs,
             )
+            backtest_stats["actual_timeframe"] = actual_bt_tf
+            backtest_stats["assigned_timeframe"] = assigned_tf
             bt_entry_config_used = bt_entry_config is not None and isinstance(bt_entry_config, dict) and len(bt_entry_config) > 0
             bt_summary = format_backtest_summary(backtest_stats, entry_config_used=bt_entry_config_used)
             if backtest_fallback_note:
