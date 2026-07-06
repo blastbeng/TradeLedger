@@ -244,7 +244,6 @@ class TradingEngine:
         # Clear in-memory state
         self.positions = {}
         self.queued_orders = []
-        self.trade_history = []
         self.current_symbols = []
         self._pending_entries = {}
         self._last_strategy_eval = {}
@@ -262,7 +261,14 @@ class TradingEngine:
         self._trade_pattern_cache = None
 
         # Reset DB data
-        await asyncio.to_thread(reset_paper_trading_data)
+        # In notify mode, preserve manual trade history
+        if settings.TRADING_MODE == "notify":
+            await asyncio.to_thread(reset_paper_trading_data, keep_trade_history=True)
+            # Reload trade history from DB so we don't lose manual trades
+            self.trade_history = await asyncio.to_thread(get_all_trades)
+        else:
+            self.trade_history = []
+            await asyncio.to_thread(reset_paper_trading_data, keep_trade_history=False)
 
         # Re-initialize paper trader with new balance
         self.trader = PaperTrader()

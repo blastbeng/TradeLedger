@@ -647,11 +647,12 @@ def cleanup_old_backtest_results(retention_days: int = 90):
         conn.close()
 
 @retry_on_db_lock()
-def reset_paper_trading_data():
+def reset_paper_trading_data(keep_trade_history: bool = False):
     """Delete all paper trading related data (trades, positions, orders, balances)."""
     conn = get_connection()
     try:
-        conn.execute(_adapt_sql("DELETE FROM trade_history"))
+        if not keep_trade_history:
+            conn.execute(_adapt_sql("DELETE FROM trade_history"))
         conn.execute(_adapt_sql("DELETE FROM position_pnl"))
         conn.execute(_adapt_sql("DELETE FROM backtest_results"))
         conn.execute(_adapt_sql("DELETE FROM trading_state WHERE key IN ('paper_balances', 'paper_orders')"))
