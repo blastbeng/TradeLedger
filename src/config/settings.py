@@ -376,7 +376,7 @@ class Settings(BaseSettings):
     # Maximum age (seconds) for a quote to be considered fresh enough for trading.
     # The actual threshold is scaled by the symbol's timeframe (longer timeframes
     # allow staler quotes). Set to 0 to disable the staleness guard.
-    QUOTE_MAX_STALENESS_SECONDS: float = 900.0  # 15 minutes
+    QUOTE_MAX_STALENESS_SECONDS: float = 3600.0  # 1 hour
 
     @field_validator("QUOTE_MAX_STALENESS_SECONDS")
     @classmethod
