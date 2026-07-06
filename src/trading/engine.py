@@ -389,18 +389,7 @@ class TradingEngine:
     async def _get_quotes_async(self, symbols: List[str], timeout: float = 45.0) -> Dict[str, Dict[str, Any]]:
         """Fetch quotes using the dedicated quote thread pool with a timeout.
         This prevents slow yfinance calls from blocking the default asyncio thread pool."""
-        loop = asyncio.get_running_loop()
-        try:
-            return await asyncio.wait_for(
-                loop.run_in_executor(self._quote_executor, get_quotes, symbols),
-                timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            logger.warning(f"Quote fetch timed out for {len(symbols)} symbols")
-            return {}
-        except Exception as e:
-            logger.warning(f"Quote fetch failed for {len(symbols)} symbols: {e}")
-            return {}
+        return await self._market_data_manager._get_quotes_async(symbols, timeout)
 
     async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 45.0, chunk_size: int = 50) -> Dict[str, Dict[str, Any]]:
         """Fetch quotes for a large list of symbols in batches to avoid yfinance timeouts.
@@ -409,18 +398,7 @@ class TradingEngine:
         sequentially.  ``get_quotes`` uses a global lock internally, so
         concurrent calls would queue behind the lock and potentially time out.
         """
-        if not symbols:
-            return {}
-
-        if len(symbols) <= chunk_size:
-            return await self._get_quotes_async(symbols, timeout=timeout_per_chunk)
-
-        result: Dict[str, Dict[str, Any]] = {}
-        for i in range(0, len(symbols), chunk_size):
-            chunk = symbols[i:i + chunk_size]
-            chunk_result = await self._get_quotes_async(chunk, timeout=timeout_per_chunk)
-            result.update(chunk_result)
-        return result
+        return await self._market_data_manager._get_quotes_batched(symbols, timeout_per_chunk, chunk_size)
 
     async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Return aggregate news sentiment, cached for 60 seconds to reduce DB load."""
