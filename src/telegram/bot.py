@@ -948,7 +948,9 @@ class TelegramBot:
                         logger.warning(f"Failed to send Telegram notification (attempt {attempt}/{max_retries}): {e}. Retrying in {retry_delay}s...")
                         await asyncio.sleep(retry_delay)
                     else:
-                        logger.error(f"Failed to send Telegram notification after {max_retries} attempts: {e}", exc_info=True)
+                        logger.critical(f"Failed to send Telegram notification after {max_retries} attempts: {e}", exc_info=True)
+                        if is_critical:
+                            raise RuntimeError(f"Failed to send critical Telegram notification: {e}")
         else:
             logger.info("Notification suppressed by verbosity setting.")
 

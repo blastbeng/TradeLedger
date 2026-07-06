@@ -50,33 +50,38 @@ class StatePersistence:
     async def _save_state_impl(self):
         """Actual state persistence (must be called under _state_lock)."""
         engine = self.engine
-        await asyncio.to_thread(save_trading_state, "current_symbols", engine.current_symbols)
-        async with engine._positions_lock:
-            positions_snapshot = dict(engine.positions)
-        await asyncio.to_thread(save_trading_state, "positions", positions_snapshot)
-        await asyncio.to_thread(save_trading_state, "queued_orders", engine.queued_orders)
-        await asyncio.to_thread(save_trading_state, "recent_signals", engine.recent_signals)
-        # Serialize pending entries (convert Signal objects to dicts for JSON storage)
-        async with engine._pending_entries_lock:
-            pending_entries_serializable = {}
-            for symbol, entry in engine._pending_entries.items():
-                pending_entries_serializable[symbol] = {
-                    "signal": asdict(entry["signal"]),
-                    "deadline": entry["deadline"],
-                    "timeframe": entry["timeframe"],
-                    "condition": entry["condition"],
-                }
-        await asyncio.to_thread(save_trading_state, "pending_entries", pending_entries_serializable)
-        await asyncio.to_thread(save_trading_state, "symbol_first_seen", engine._symbol_first_seen)
-        await asyncio.to_thread(save_trading_state, "entry_signal_state", engine._entry_signal_state)
-        await asyncio.to_thread(save_trading_state, "last_eval_snapshot", engine._last_eval_snapshot)
-        await asyncio.to_thread(save_trading_state, "force_eval", engine._force_eval)
-        await asyncio.to_thread(save_trading_state, "force_eval_time", engine._force_eval_time)
-        await asyncio.to_thread(save_trading_state, "strategy_intervals", engine._strategy_intervals)
-        await asyncio.to_thread(save_trading_state, "last_decisions", engine._last_decisions)
-        await asyncio.to_thread(save_trading_state, "last_loss_time", engine.last_loss_time)
-        await asyncio.to_thread(save_trading_state, "cooldown_durations", engine.cooldown_durations)
-        await asyncio.to_thread(save_trading_state, "global_risk_multiplier", engine._global_risk_multiplier)
+        try:
+            await asyncio.to_thread(save_trading_state, "current_symbols", engine.current_symbols)
+            async with engine._positions_lock:
+                positions_snapshot = dict(engine.positions)
+            await asyncio.to_thread(save_trading_state, "positions", positions_snapshot)
+            await asyncio.to_thread(save_trading_state, "queued_orders", engine.queued_orders)
+            await asyncio.to_thread(save_trading_state, "recent_signals", engine.recent_signals)
+            # Serialize pending entries (convert Signal objects to dicts for JSON storage)
+            async with engine._pending_entries_lock:
+                pending_entries_serializable = {}
+                for symbol, entry in engine._pending_entries.items():
+                    pending_entries_serializable[symbol] = {
+                        "signal": asdict(entry["signal"]),
+                        "deadline": entry["deadline"],
+                        "timeframe": entry["timeframe"],
+                        "condition": entry["condition"],
+                    }
+            await asyncio.to_thread(save_trading_state, "pending_entries", pending_entries_serializable)
+            await asyncio.to_thread(save_trading_state, "symbol_first_seen", engine._symbol_first_seen)
+            await asyncio.to_thread(save_trading_state, "entry_signal_state", engine._entry_signal_state)
+            await asyncio.to_thread(save_trading_state, "last_eval_snapshot", engine._last_eval_snapshot)
+            await asyncio.to_thread(save_trading_state, "force_eval", engine._force_eval)
+            await asyncio.to_thread(save_trading_state, "force_eval_time", engine._force_eval_time)
+            await asyncio.to_thread(save_trading_state, "strategy_intervals", engine._strategy_intervals)
+            await asyncio.to_thread(save_trading_state, "last_decisions", engine._last_decisions)
+            await asyncio.to_thread(save_trading_state, "last_loss_time", engine.last_loss_time)
+            await asyncio.to_thread(save_trading_state, "cooldown_durations", engine.cooldown_durations)
+            await asyncio.to_thread(save_trading_state, "global_risk_multiplier", engine._global_risk_multiplier)
+        except Exception as e:
+            logger.critical(f"Failed to save trading state: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to save trading state: {e}")
+
         logger.debug("Saved trading state: %d symbols, %d positions, %d trades",
                      len(engine.current_symbols), len(engine.positions), len(engine.trade_history))
         engine._state_dirty = False
