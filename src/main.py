@@ -11,7 +11,7 @@ import uvicorn.config
 from src.web.app import app
 from src.config.settings import settings
 from src.database import init_db, get_telegram_chat_id, set_telegram_chat_id
-from src.utils.redis_client import get_redis_client, check_redis_connection
+from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.trading.engine import TradingEngine
 from src.news.fetcher import test_rss_feeds
 
@@ -65,6 +65,8 @@ class RedisLogHandler(logging.Handler):
         self._thread.start()
 
     def emit(self, record):
+        if not is_redis_available():
+            return
         try:
             entry = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),

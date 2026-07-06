@@ -54,7 +54,7 @@ from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary
-from src.utils.redis_client import get_redis_client
+from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.utils.symbol_utils import is_btp_isin
 from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results
 from src.trading.components.order_executor import OrderExecutor
@@ -1505,6 +1505,7 @@ class TradingEngine:
         self._background_tasks.append(asyncio.create_task(self._market_clock_monitor()))
         self._background_tasks.append(asyncio.create_task(self._refresh_all_quotes_loop()))
         self._background_tasks.append(asyncio.create_task(self._refresh_ticker_discovery_loop()))
+        self._background_tasks.append(asyncio.create_task(self._redis_health_check_loop()))
 
         while self._running:
             try:
@@ -1653,6 +1654,29 @@ class TradingEngine:
             except Exception as e:
                 logger.error(f"Pause/resume check error: {e}", exc_info=True)
             await asyncio.sleep(1800)  # every 30 minutes
+
+    async def _redis_health_check_loop(self):
+        """Periodically check Redis connection and alert on state changes."""
+        await asyncio.sleep(30)
+        while self._running:
+            was_available = is_redis_available()
+            check_redis_connection()
+            is_available = is_redis_available()
+            if was_available and not is_available:
+                logger.critical("Redis connection lost. Degrading to no-cache mode.")
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        "⚠️ Redis connection lost. The bot is now running in degraded mode (caching disabled).",
+                        summary={"action": "ERROR", "reason": "Redis connection lost"}
+                    )
+            elif not was_available and is_available:
+                logger.info("Redis connection restored. Caching resumed.")
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        "✅ Redis connection restored. Caching resumed.",
+                        summary={"action": "INFO", "reason": "Redis connection restored"}
+                    )
+            await asyncio.sleep(60)
 
     async def _check_pause_resume_decision(self):
         """When trading is paused, ask the LLM whether to resume (lightweight)."""
