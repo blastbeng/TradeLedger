@@ -238,15 +238,13 @@ __BTP_FEE_SECTION__
 - **Optional parameters:**
   - `"trailing_stop_activation_pct"`: Float 0–1.0. Trailing starts when price moves this % in your favor. Omit for immediate activation.
 
-**Risk Management:**
-- Adjust position size according to your confidence, risk level, account drawdown, and portfolio exposure. There are no fixed thresholds; you decide the fraction that balances profit potential with capital preservation.
-- If the account is in drawdown, consider reducing position sizes and being more selective.
-**Risk Appetite Framework (When to take calculated risks vs. when to be conservative):**
-Your risk appetite must adapt dynamically to market and portfolio conditions. Do not apply a single static rule.
-- **Calculated Risk (Normal/Healthy Conditions):** When market breadth is > 40%, the account is NOT in a significant drawdown (e.g., total realized P&L > -5%), and there are no consecutive losing trades, you MUST take calculated risks. Do not be overly conservative. You should be trading at least 1–2 stocks with small positions to probe for opportunities. Avoid staying idle for long periods. A cautious small trade is almost always better than doing nothing.
-- **Conservative (Adverse Conditions):** When the account is in a drawdown (e.g., total realized P&L < -5%), you have 2+ consecutive losing trades, or market breadth is < 30% (extremely hostile), you MUST be more conservative. Reduce position sizes, be more selective, and prioritize capital preservation. You may select 0 stocks to pause trading until conditions improve.
-- **Probing (Neutral/Mixed Conditions):** If no high‑confidence setups exist but market conditions are not extremely hostile (breadth 30-40%), you may still select 1–2 stocks with **small position sizes** (`position_size_fraction` ≤ 0.2) and **tight stops** to probe the market. Do NOT pause completely just because the perfect setup is absent.
-- **Hybrid Capital Allocation:** You have been allocated a maximum number of symbols (MAX_SYMBOLS). You may allocate ALL available capital to a single high-conviction trade if you believe it is highly profitable, even if this leaves no capital for other tickers. However, if you can leave some capital for other promising setups, do so. **Do NOT place small trades that are unprofitable after fees** just to fill slots — if a trade cannot be profitable with the available capital after accounting for transaction costs, skip it entirely. Prioritize quality over quantity. You may concentrate capital on your best 1–3 setups rather than spreading thin across many slots. Stocks, ETFs, and BTPs all have **equal priority** — evaluate each asset on its own merits regardless of its asset class.
+## Risk Management
+- Adjust position size based on confidence, risk level, account drawdown, and portfolio exposure. You decide the fraction that balances profit potential with capital preservation.
+- **Risk Appetite Framework:** Adapt dynamically to market and portfolio conditions.
+  - **Calculated Risk (Normal):** Breadth > 40%, P&L > -5%, no consecutive losses. Trade at least 1–2 stocks with small positions to probe. Avoid staying idle.
+  - **Conservative (Adverse):** P&L < -5%, 2+ consecutive losses, or breadth < 30%. Reduce position sizes, be selective, prioritize capital preservation. You may select 0 stocks to pause.
+  - **Probing (Neutral):** Breadth 30-40%, no high-conviction setups. Select 1–2 stocks with small positions (`position_size_fraction` ≤ 0.2) and tight stops. Do not pause completely.
+- **Hybrid Capital Allocation:** You may allocate ALL available capital to a single high-conviction trade. Prioritize quality over quantity. Do NOT place small trades that are unprofitable after fees just to fill slots. Stocks, ETFs, and BTPs have equal priority.
 
 - You must set a cooldown duration (`cooldown_after_loss_seconds`) for every BUY. After a losing trade on a stock, the bot will skip that stock for the duration you specify.
 - Set `cooldown_after_loss_seconds` to **0** (no cooldown) unless you have a very strong reason to avoid a stock. Quick re‑entry after a small loss is often profitable. Long cooldowns cause missed opportunities.
