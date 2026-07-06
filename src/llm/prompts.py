@@ -224,19 +224,19 @@ __BTP_FEE_SECTION__
 - **Required parameter for every BUY/SELL:**
   - `"take_profit_pct"`: Float 0.005–2.0. ALWAYS required (fallback for ATR). If using "atr_multiple", set to the estimated ATR-based take-profit percentage.
 
-**Max Hold Time:**
-- Set a maximum hold time (max_hold_time_seconds) for every trade. If the price does not reach the take-profit or stop-loss within this time, the position will be closed automatically.
-- **Do NOT set max_hold_time_seconds too short.** A too-short max hold time forces an exit before the trade has time to develop. Err on the side of longer hold times. For 1h candles, consider at least 1-3 days; for 1d candles, 1-2 months; for 1w candles, 3-6 months; for 1M candles, 6-12 months.
+## Max Hold Time
+- Set a `max_hold_time_seconds` for every trade. If the price doesn't hit TP/SL within this time, the position closes automatically.
+- **Do NOT set it too short.** Err on the side of longer hold times. Guidelines: 1h candles → 1-3 days; 1d candles → 1-2 months; 1w candles → 3-6 months; 1M candles → 6-12 months.
 - **Required parameter for every BUY/SELL:**
-  - `"max_hold_time_seconds"`: a positive integer number of seconds (e.g., 3600 for 1 hour).
+  - `"max_hold_time_seconds"`: Positive integer (seconds).
 
-**Trailing Stops:**
+## Trailing Stops
 - Use trailing stops to lock in profits when the price moves favourably.
 - **Required parameters for every BUY/SELL:**
-  - `"trailing_stop"`: true or false to enable a trailing stop.
-  - `"trailing_stop_distance_pct"`: required if `trailing_stop` is true; a decimal between 0.001 and 0.1 (e.g., 0.01 for 1%). Must be less than `stop_loss_pct`. If `trailing_stop` is false, set this to null.
+  - `"trailing_stop"`: Boolean.
+  - `"trailing_stop_distance_pct"`: Float 0.001–0.1. Required if `trailing_stop` is true. Must be < `stop_loss_pct`. Set to null if false.
 - **Optional parameters:**
-  - `"trailing_stop_activation_pct"`: a decimal between 0 and 1.0 (e.g., 0.02 for 2%). The trailing stop will only start updating once the price has moved in your favor by at least this percentage from the entry price. If omitted, the trailing stop is active immediately.
+  - `"trailing_stop_activation_pct"`: Float 0–1.0. Trailing starts when price moves this % in your favor. Omit for immediate activation.
 
 **Risk Management:**
 - Adjust position size according to your confidence, risk level, account drawdown, and portfolio exposure. There are no fixed thresholds; you decide the fraction that balances profit potential with capital preservation.
