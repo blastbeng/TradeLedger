@@ -837,13 +837,15 @@ class TradingEngine:
                         countdown_str = f"{int(remaining_seconds)}s"
                     reason = "Market closed"
                     # Check if we already sent the market closed notification
-                    source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
-                    source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
-                    already_market_closed = (source == "market_closed")
+                    market_closed_raw = await asyncio.to_thread(self.redis.get, "trading:market_closed")
+                    already_market_closed = market_closed_raw is not None
 
                     # Set market closed flag and next open time
                     await asyncio.to_thread(self.redis.set, "trading:market_closed", "1")
                     await asyncio.to_thread(self.redis.set, "trading:market_next_open", clock.next_open.isoformat())
+
+                    source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
+                    source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
 
                     if source != "llm":
                         # Only overwrite pause keys if not already paused by LLM
