@@ -16,7 +16,7 @@ import pandas_market_calendars as mcal
 
 from src.config.settings import settings
 from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch
-from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session, get_bars_range, get_quotes
+from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session, get_bars_range, get_quotes, get_quotes_cached
 from src.indicators import compute_all_indicators
 
 logger = logging.getLogger(__name__)
@@ -438,6 +438,70 @@ class MarketDataManager:
             chunk_result = await self._get_quotes_async(chunk, timeout=timeout_per_chunk)
             result.update(chunk_result)
         return result
+
+    async def _get_all_position_tickers(self) -> Dict[str, Dict[str, Any]]:
+        """Fetch tickers for all open positions, batching missing ones into a single API call."""
+        engine = self.engine
+        engine._portfolio_exposure_cache = None
+        tickers: Dict[str, Dict[str, Any]] = {}
+        missing: List[str] = []
+        for sym in engine.positions:
+            missing.append(sym.split("/")[0])
+        if missing:
+            try:
+                raw = await self._get_quotes_batched(missing, timeout_per_chunk=45.0)
+                for sym in engine.positions:
+                    base = sym.split("/")[0]
+                    if base in raw:
+                        tickers[sym] = raw[base]
+            except Exception as e:
+                logger.warning(f"Batch quote fetch failed for positions: {e}")
+        return tickers
+
+    def _get_all_position_tickers_sync(self) -> Dict[str, Dict[str, Any]]:
+        """Fetch tickers for all open positions synchronously, batching missing ones.
+
+        Uses get_quotes_cached (Redis/DB only, no network calls) to avoid
+        blocking the default asyncio thread pool with slow yfinance requests.
+        """
+        engine = self.engine
+        engine._portfolio_exposure_cache = None
+        tickers: Dict[str, Dict[str, Any]] = {}
+        missing: List[str] = []
+        for sym in engine.positions:
+            missing.append(sym.split("/")[0])
+        if missing:
+            try:
+                raw = get_quotes_cached(missing)
+                for sym in engine.positions:
+                    base = sym.split("/")[0]
+                    if base in raw:
+                        tickers[sym] = raw[base]
+            except Exception as e:
+                logger.warning(f"Sync batch quote fetch failed for positions: {e}")
+        return tickers
+
+    def _get_tickers_for_symbols_sync(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch latest quotes for a list of symbols synchronously, batching missing ones.
+
+        Uses get_quotes_cached (Redis/DB only, no network calls) to avoid
+        blocking the default asyncio thread pool with slow yfinance requests.
+        """
+        engine = self.engine
+        tickers: Dict[str, Dict[str, Any]] = {}
+        missing: List[str] = []
+        for sym in symbols:
+            missing.append(sym.split("/")[0])
+        if missing:
+            try:
+                raw = get_quotes_cached(missing)
+                for sym in symbols:
+                    base = sym.split("/")[0]
+                    if base in raw:
+                        tickers[sym] = raw[base]
+            except Exception as e:
+                logger.warning(f"Sync batch quote fetch failed: {e}")
+        return tickers
 
     async def _backfill_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, max_candles: int = None, ignore_existing: bool = False, force: bool = False, quiet: bool = False) -> int:
         """Fetch and store all missing OHLCV candles between start_ms and end_ms.

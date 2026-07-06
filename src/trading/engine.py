@@ -338,21 +338,7 @@ class TradingEngine:
 
     async def _get_all_position_tickers(self) -> Dict[str, Dict[str, Any]]:
         """Fetch tickers for all open positions, batching missing ones into a single API call."""
-        self._portfolio_exposure_cache = None
-        tickers: Dict[str, Dict[str, Any]] = {}
-        missing: List[str] = []
-        for sym in self.positions:
-            missing.append(sym.split("/")[0])
-        if missing:
-            try:
-                raw = await self._get_quotes_batched(missing, timeout_per_chunk=45.0)
-                for sym in self.positions:
-                    base = sym.split("/")[0]
-                    if base in raw:
-                        tickers[sym] = raw[base]
-            except Exception as e:
-                logger.warning(f"Batch quote fetch failed for positions: {e}")
-        return tickers
+        return await self._market_data_manager._get_all_position_tickers()
 
     def _get_all_position_tickers_sync(self) -> Dict[str, Dict[str, Any]]:
         """Fetch tickers for all open positions synchronously, batching missing ones.
@@ -360,21 +346,7 @@ class TradingEngine:
         Uses get_quotes_cached (Redis/DB only, no network calls) to avoid
         blocking the default asyncio thread pool with slow yfinance requests.
         """
-        self._portfolio_exposure_cache = None
-        tickers: Dict[str, Dict[str, Any]] = {}
-        missing: List[str] = []
-        for sym in self.positions:
-            missing.append(sym.split("/")[0])
-        if missing:
-            try:
-                raw = get_quotes_cached(missing)
-                for sym in self.positions:
-                    base = sym.split("/")[0]
-                    if base in raw:
-                        tickers[sym] = raw[base]
-            except Exception as e:
-                logger.warning(f"Sync batch quote fetch failed for positions: {e}")
-        return tickers
+        return self._market_data_manager._get_all_position_tickers_sync()
 
     async def _get_cached_balance(self, ttl: float = 30.0) -> Dict[str, float]:
         """Return cached balance, refreshing if older than ttl seconds."""
@@ -2587,20 +2559,7 @@ class TradingEngine:
         Uses get_quotes_cached (Redis/DB only, no network calls) to avoid
         blocking the default asyncio thread pool with slow yfinance requests.
         """
-        tickers: Dict[str, Dict[str, Any]] = {}
-        missing: List[str] = []
-        for sym in symbols:
-            missing.append(sym.split("/")[0])
-        if missing:
-            try:
-                raw = get_quotes_cached(missing)
-                for sym in symbols:
-                    base = sym.split("/")[0]
-                    if base in raw:
-                        tickers[sym] = raw[base]
-            except Exception as e:
-                logger.warning(f"Sync batch quote fetch failed: {e}")
-        return tickers
+        return self._market_data_manager._get_tickers_for_symbols_sync(symbols)
 
     async def _run_backtest_variant(
         self,
