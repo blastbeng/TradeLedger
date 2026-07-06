@@ -570,6 +570,30 @@ class Settings(BaseSettings):
         Settings.parse_temperature_range(v)  # raises ValueError if invalid
         return v
 
+    # Weak model (minor tasks: summarization, etc.) - used to save tokens on mind/actuator models
+    LLM_WEAK_PROVIDER: str = ""  # empty = use global LLM_PROVIDER
+
+    # Per-role OpenAI settings for weak model (empty or None = use global OPENAI_*)
+    OPENAI_WEAK_MODEL: Optional[str] = None
+    OPENAI_WEAK_API_KEY: Optional[str] = None
+    OPENAI_WEAK_BASE_URL: Optional[str] = None
+
+    # Per-role Ollama settings for weak model (empty or None = use global OLLAMA_*)
+    OLLAMA_WEAK_MODEL: Optional[str] = None
+    OLLAMA_WEAK_BASE_URL: Optional[str] = None
+    OLLAMA_WEAK_API_KEY: Optional[str] = None
+
+    # Per-role temperature override for weak model
+    LLM_WEAK_TEMPERATURE: Optional[str] = None
+
+    @field_validator("LLM_WEAK_TEMPERATURE")
+    @classmethod
+    def validate_weak_temperature(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v.strip() == "":
+            return None
+        Settings.parse_temperature_range(v)  # raises ValueError if invalid
+        return v
+
     # Threshold for choosing the "mind" model tier over "actuator".
     # Represents the minimum normalized weighted complexity score (0.0 to 1.0)
     # required to trigger the "mind" model. Lower values = more frequent use
