@@ -17,6 +17,24 @@ from src.news.fetcher import test_rss_feeds
 from src.utils.task_supervisor import TaskSupervisor
 
 
+import logging.handlers
+import json as _json
+from datetime import datetime, timezone
+
+
+class JsonFormatter(logging.Formatter):
+    """Formats log records as JSON strings for structured logging."""
+    def format(self, record):
+        log_entry = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        return _json.dumps(log_entry)
+
 class HealthEndpointFilter(logging.Filter):
     """Suppress uvicorn access logs for /health."""
     def filter(self, record):
@@ -28,8 +46,12 @@ class HealthEndpointFilter(logging.Filter):
 
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+
+# Apply JSON formatter to the console output
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(JsonFormatter())
+logging.getLogger().addHandler(_console_handler)
 
 # Suppress httpx INFO logs (HTTP request/response lines) unless LOG_LEVEL is DEBUG
 if settings.LOG_LEVEL.upper() != "DEBUG":
@@ -41,10 +63,6 @@ else:
 logging.getLogger("urllib3").setLevel(logging.ERROR)
 
 # --- Redis log handler for the web dashboard ---
-import logging.handlers
-import json as _json
-from datetime import datetime, timezone
-
 class RedisLogHandler(logging.Handler):
     """Push log records to a Redis list for the web dashboard.
 
@@ -69,7 +87,7 @@ class RedisLogHandler(logging.Handler):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "level": record.levelname,
                 "logger": record.name,
-                "message": self.format(record),
+                "message": record.getMessage(),
             }
             # Non-blocking put: if the queue is full, drop the entry
             try:
@@ -96,9 +114,6 @@ class RedisLogHandler(logging.Handler):
 
 # Create and attach the handler
 redis_log_handler = RedisLogHandler(max_entries=200)
-# Use a simple format: time - logger - level - message
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-redis_log_handler.setFormatter(formatter)
 # Guard against double-addition (e.g., if module is re-imported)
 _root_logger = logging.getLogger()
 if not any(isinstance(h, RedisLogHandler) for h in _root_logger.handlers):
