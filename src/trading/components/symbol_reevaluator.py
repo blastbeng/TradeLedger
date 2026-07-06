@@ -139,7 +139,7 @@ class SymbolReevaluator:
                 logger.info(f"Triggering immediate news fetch for newly selected symbol {sym}")
                 asyncio.create_task(engine._fetch_and_store_news_for_symbol(sym))
 
-    def cleanup_stale_state_entries(self):
+    async def cleanup_stale_state_entries(self):
         """Remove stale entries from engine state dicts and base-symbol caches.
 
         Called at the end of each re-evaluation cycle to prune entries for
@@ -2457,7 +2457,7 @@ class SymbolReevaluator:
             await asyncio.to_thread(engine.redis.expire, "trading:last_triggered_reeval", 7200)
 
         # --- Cleanup stale entries from engine state dicts and caches ---
-        self.cleanup_stale_state_entries()
+        await self.cleanup_stale_state_entries()
 
         engine._state_dirty = True
         logger.info("Re-evaluation complete: %d symbols selected.", len(engine.current_symbols))
