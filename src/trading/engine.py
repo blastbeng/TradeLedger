@@ -1746,19 +1746,19 @@ class TradingEngine:
 
                     # Base interval proportional to timeframe
                     if tf in ("1h",):
-                        tf_base_interval = 900  # 15 minutes
+                        tf_base_interval = settings.EVAL_INTERVAL_1H
                     elif tf in ("1d",):
-                        tf_base_interval = 1800 # 30 minutes
+                        tf_base_interval = settings.EVAL_INTERVAL_1D
                     elif tf in ("1w",):
-                        tf_base_interval = 3600 # 1 hour
+                        tf_base_interval = settings.EVAL_INTERVAL_1W
                     elif tf in ("1M",):
-                        tf_base_interval = 86400 # 1 day
+                        tf_base_interval = settings.EVAL_INTERVAL_1M
                     elif tf in ("3M",):
-                        tf_base_interval = 172800 # 2 days
+                        tf_base_interval = settings.EVAL_INTERVAL_3M
                     elif tf in ("6M", "1Y"):
-                        tf_base_interval = 604800 # 1 week
+                        tf_base_interval = settings.EVAL_INTERVAL_6M_1Y
                     else:
-                        tf_base_interval = 3600 # 1 hour default
+                        tf_base_interval = settings.EVAL_INTERVAL_DEFAULT
 
                     # Adjust based on market conditions
                     if is_active_period or is_highly_active:

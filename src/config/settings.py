@@ -316,6 +316,15 @@ class Settings(BaseSettings):
     # 1 means evaluate every candle period (e.g., 1w → every week, 1M → every month).
     STRATEGY_INTERVAL_MULTIPLIER: int = 1
 
+    # Evaluation intervals per timeframe (seconds)
+    EVAL_INTERVAL_1H: int = 900       # 15 minutes
+    EVAL_INTERVAL_1D: int = 1800      # 30 minutes
+    EVAL_INTERVAL_1W: int = 3600      # 1 hour
+    EVAL_INTERVAL_1M: int = 86400     # 1 day
+    EVAL_INTERVAL_3M: int = 172800    # 2 days
+    EVAL_INTERVAL_6M_1Y: int = 604800 # 1 week
+    EVAL_INTERVAL_DEFAULT: int = 3600 # 1 hour default
+
     # Maximum interval (seconds) to skip LLM evaluation before forcing a re-evaluation
     MAX_SKIP_INTERVAL_SECONDS: int = 604800  # 7 days
 
