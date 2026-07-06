@@ -7,6 +7,7 @@ import random
 import pandas_market_calendars as mcal
 import re
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone, timedelta
@@ -130,6 +131,7 @@ class TradingEngine:
         self._queued_orders_lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
         self._recent_signals_lock = asyncio.Lock()
+        self._trade_history_lock = threading.Lock()
         self._state_save_pending = False
         self._state_dirty: bool = False
         # --- Extracted components ---
@@ -1388,7 +1390,9 @@ class TradingEngine:
         from datetime import datetime, timezone
         today = datetime.now(timezone.utc).date()
         total = 0.0
-        for trade in self.trade_history:
+        with self._trade_history_lock:
+            trades_snapshot = list(self.trade_history)
+        for trade in trades_snapshot:
             if trade.get("side") != "sell":
                 continue
             ts = trade.get("timestamp", 0)
@@ -1400,6 +1404,10 @@ class TradingEngine:
 
     def _compute_performance_metrics(self) -> Dict[str, Any]:
         """Analyze trade history to produce per-symbol and per-strategy performance summaries."""
+        with self._trade_history_lock:
+            trades_snapshot = list(self.trade_history)
+            version = self._trade_history_version
+            realized_pnl_offset = self._realized_pnl_offset
         return self._position_manager.compute_performance_metrics()
 
     def _compute_trade_pattern_analysis(self) -> Dict[str, Any]:
@@ -1442,17 +1450,18 @@ class TradingEngine:
 
     def _append_trade(self, trade: Dict[str, Any]):
         """Append a trade to history and prune old entries to bound memory usage."""
-        self._trade_history_version += 1
-        self.trade_history.append(trade)
-        if len(self.trade_history) > settings.MAX_TRADES_IN_MEMORY:
-            # Accumulate realized P&L of pruned trades so the equity curve
-            # in _compute_performance_metrics remains accurate.
-            pruned = self.trade_history[:-settings.MAX_TRADES_IN_MEMORY]
-            for t in pruned:
-                if t.get("side") == "sell":
-                    self._realized_pnl_offset += t.get("realized_pnl", 0.0)
-            # Keep only the most recent trades
-            self.trade_history = self.trade_history[-settings.MAX_TRADES_IN_MEMORY:]
+        with self._trade_history_lock:
+            self._trade_history_version += 1
+            self.trade_history.append(trade)
+            if len(self.trade_history) > settings.MAX_TRADES_IN_MEMORY:
+                # Accumulate realized P&L of pruned trades so the equity curve
+                # in _compute_performance_metrics remains accurate.
+                pruned = self.trade_history[:-settings.MAX_TRADES_IN_MEMORY]
+                for t in pruned:
+                    if t.get("side") == "sell":
+                        self._realized_pnl_offset += t.get("realized_pnl", 0.0)
+                # Keep only the most recent trades
+                self.trade_history = self.trade_history[-settings.MAX_TRADES_IN_MEMORY:]
 
     def _load_state(self):
         """Load current symbols, positions, trade history, and initial balance from SQLite."""
