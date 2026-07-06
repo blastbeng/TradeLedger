@@ -413,7 +413,7 @@ class SignalProcessor:
             raw = await asyncio.to_thread(engine.redis.get, "trading:regime_bb_expansion_width")
             if raw:
                 bb_expansion_width = float(raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         if (
