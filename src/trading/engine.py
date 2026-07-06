@@ -259,16 +259,19 @@ class TradingEngine:
         self._portfolio_exposure_cache = None
         self._perf_cache = None
         self._trade_pattern_cache = None
+        self.last_loss_time = {}
+        self.cooldown_durations = {}
+        self._global_risk_multiplier = None
+        self._symbol_first_seen = {}
+        self._market_breadth = None
+        self._perf_cache_trade_count = -1
+        self._trade_pattern_cache_trade_count = -1
+        self._trade_history_version = 0
+        self._realized_pnl_offset = 0.0
+        self.trade_history = []
 
-        # Reset DB data
-        # In notify mode, preserve manual trade history
-        if settings.TRADING_MODE == "notify":
-            await asyncio.to_thread(reset_paper_trading_data, keep_trade_history=True)
-            # Reload trade history from DB so we don't lose manual trades
-            self.trade_history = await asyncio.to_thread(get_all_trades)
-        else:
-            self.trade_history = []
-            await asyncio.to_thread(reset_paper_trading_data, keep_trade_history=False)
+        # Reset DB data (unconditionally clear all trade data for both modes)
+        await asyncio.to_thread(reset_paper_trading_data, keep_trade_history=False)
 
         # Re-initialize paper trader with new balance
         self.trader = PaperTrader()
