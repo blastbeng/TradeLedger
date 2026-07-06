@@ -2462,20 +2462,7 @@ class TradingEngine:
 
     def _get_session_info(self) -> dict:
         """Return current Italian market session info using Europe/Rome timezone."""
-        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
-        weekday = now_rome.weekday()
-        hour = now_rome.hour + now_rome.minute / 60.0
-        open_hour = settings.MARKET_OPEN_HOUR + settings.MARKET_OPEN_MINUTE / 60.0
-        close_hour = settings.MARKET_CLOSE_HOUR + settings.MARKET_CLOSE_MINUTE / 60.0
-        if weekday >= 5:
-            session = "Closed (weekend)"
-        elif hour < open_hour:
-            session = "Closed (pre-open)"
-        elif hour < close_hour:
-            session = "Regular"
-        else:
-            session = "Closed (after hours)"
-        return {"utc_hour": datetime.now(timezone.utc).hour, "session": session}
+        return self._market_data_manager._get_session_info()
 
     def _default_limit_price(
         self, symbol: str, action: str, ticker: Dict[str, Any], atr: Optional[float] = None

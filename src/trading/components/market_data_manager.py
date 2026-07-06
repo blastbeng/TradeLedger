@@ -185,6 +185,23 @@ class MarketDataManager:
         return clock
 
 
+    def _get_session_info(self) -> dict:
+        """Return current Italian market session info using Europe/Rome timezone."""
+        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
+        weekday = now_rome.weekday()
+        hour = now_rome.hour + now_rome.minute / 60.0
+        open_hour = settings.MARKET_OPEN_HOUR + settings.MARKET_OPEN_MINUTE / 60.0
+        close_hour = settings.MARKET_CLOSE_HOUR + settings.MARKET_CLOSE_MINUTE / 60.0
+        if weekday >= 5:
+            session = "Closed (weekend)"
+        elif hour < open_hour:
+            session = "Closed (pre-open)"
+        elif hour < close_hour:
+            session = "Regular"
+        else:
+            session = "Closed (after hours)"
+        return {"utc_hour": datetime.now(timezone.utc).hour, "session": session}
+
     async def get_stock_name(self, symbol: str) -> str:
         """Return the human-readable company name for a symbol, cached in Redis.
 
