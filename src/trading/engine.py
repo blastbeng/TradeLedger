@@ -2191,20 +2191,6 @@ class TradingEngine:
             fear_greed=fear_greed, conflicting_signals=conflicting_signals,
         )
 
-    def _get_effective_temperature(self, model_type: str, complexity: float) -> float:
-        """Return the temperature to use for a given model_type and complexity score (0-1)."""
-        from src.config.settings import Settings
-        raw = settings.LLM_MIND_TEMPERATURE if model_type == "mind" else settings.LLM_ACTUATOR_TEMPERATURE
-        parsed = Settings.parse_temperature_range(raw)
-        if parsed is None:
-            # Fall back to global LLM_TEMPERATURE
-            return settings.LLM_TEMPERATURE
-        lo, hi = parsed
-        if lo == hi:
-            return lo
-        # Map complexity 0→lo, 1→hi
-        return lo + (hi - lo) * complexity
-
     def _update_last_eval_snapshot(self, symbol: str, price: float, rsi: Optional[float], macd_hist: Optional[float]):
         self._last_eval_snapshot[symbol] = {
             "timestamp": time.time(),

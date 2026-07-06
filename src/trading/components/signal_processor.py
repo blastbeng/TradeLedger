@@ -3227,6 +3227,20 @@ class SignalProcessor:
         total = tech_score + conflict_score + market_score + portfolio_score + critical_score + candidate_score + legacy_score
         return min(1.0, total)
 
+    def _get_effective_temperature(self, model_type: str, complexity: float) -> float:
+        """Return the temperature to use for a given model_type and complexity score (0-1)."""
+        from src.config.settings import Settings
+        raw = settings.LLM_MIND_TEMPERATURE if model_type == "mind" else settings.LLM_ACTUATOR_TEMPERATURE
+        parsed = Settings.parse_temperature_range(raw)
+        if parsed is None:
+            # Fall back to global LLM_TEMPERATURE
+            return settings.LLM_TEMPERATURE
+        lo, hi = parsed
+        if lo == hi:
+            return lo
+        # Map complexity 0→lo, 1→hi
+        return lo + (hi - lo) * complexity
+
     def compute_model_tier_and_temperature(
         self,
         atr: Optional[float],
@@ -3350,7 +3364,7 @@ class SignalProcessor:
             current_price=current_price,
             conflicting_signals=_conflicting,
         )
-        effective_temp = engine._get_effective_temperature(strategy_model_type, strategy_complexity)
+        effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity)
 
         return strategy_model_type, effective_temp
 
@@ -3493,7 +3507,7 @@ class SignalProcessor:
                 conflicting_signals=False,
                 is_critical=False,
             )
-            effective_temp = engine._get_effective_temperature("actuator", pause_resume_complexity)
+            effective_temp = self._get_effective_temperature("actuator", pause_resume_complexity)
 
             try:
                 pause_result = await asyncio.wait_for(

@@ -1170,7 +1170,7 @@ class SymbolReevaluator:
             conflicting_signals=False,
             is_critical=False,
         )
-        effective_temp = engine._get_effective_temperature("mind", symbol_selection_complexity)
+        effective_temp = engine._signal_processor._get_effective_temperature("mind", symbol_selection_complexity)
 
         return trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp
 
