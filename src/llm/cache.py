@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 def get_cached_llm_response(
     prompt: str,
     system_prompt: str = "",
-    ttl: int = 300,
+    ttl: int = 1800,
     market_hash: str = None,
     model_type: str = "actuator",
     temperature: Optional[float] = None,
@@ -21,7 +21,7 @@ def get_cached_llm_response(
     If market_hash is provided, the cache key is based on that hash
     (representing the market snapshot). Otherwise, the key is based on
     the prompt and system prompt.
-    ttl: time-to-live in seconds (default 5 minutes).
+    ttl: time-to-live in seconds (default 30 minutes).
     model_type: "mind" for complex reasoning, "actuator" for fast time‑critical decisions.
 
     When the primary provider is "ollama" and the call fails, automatically
