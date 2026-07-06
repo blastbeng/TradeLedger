@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 _get_quotes_lock = threading.Lock()
+_get_quotes_done = threading.Event()
 
 # Dedicated thread pool for yf.download with a hard timeout wrapper.
 # This prevents yf.download from hanging threads indefinitely when
@@ -1467,18 +1468,25 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     if not symbols:
         return {}
 
-    # Try to acquire the lock with a timeout to prevent indefinite blocking
-    # when a previous yf.download call hangs and never releases the lock.
-    if not _get_quotes_lock.acquire(timeout=5):
-        logger.warning(
-            "get_quotes: could not acquire lock within 5s (previous call may be hung). "
-            "Falling back to cached/DB quotes only."
-        )
+    # If a fetch is already in progress, wait for it to complete (up to 5s).
+    # This allows concurrent callers to benefit from the ongoing fetch
+    # instead of immediately falling back to stale cache.
+    if _get_quotes_lock.locked():
+        _get_quotes_done.wait(timeout=5)
         return get_quotes_cached(symbols)
+
+    # Try to acquire the lock to start a new fetch
+    if not _get_quotes_lock.acquire(timeout=0.1):
+        # Another thread just started a fetch, wait for it
+        _get_quotes_done.wait(timeout=5)
+        return get_quotes_cached(symbols)
+
     try:
+        _get_quotes_done.clear()
         return _get_quotes_impl(symbols)
     finally:
         _get_quotes_lock.release()
+        _get_quotes_done.set()
 
 
 def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
