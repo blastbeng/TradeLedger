@@ -885,6 +885,10 @@ class TradingEngine:
                 is_market_closed_flag = market_closed_raw is not None
                 if is_market_closed_flag and not is_open:
                     now_ts = time.time()
+                    # Fetch pause source to customize the "opening soon" message
+                    source_raw = await asyncio.to_thread(self.redis.get, "trading:pause_source")
+                    source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
+
                     # Recompute remaining seconds from the live clock (or fallback)
                     if clock is not None:
                         remaining_seconds = (clock.next_open - datetime.now(timezone.utc)).total_seconds()
@@ -926,7 +930,10 @@ class TradingEngine:
                     # "Opening soon" alert when less than 5 minutes remain
                     if 0 < remaining_seconds <= 900 and not self._market_opening_soon_notified:
                         minutes_left = int(remaining_seconds // 60)
-                        soon_msg = f"⏰ Market opens in ~{minutes_left} minute(s) – trading will resume automatically."
+                        if source == "llm":
+                            soon_msg = f"⏰ Market opens in ~{minutes_left} minute(s) – trading will remain paused (LLM pause active)."
+                        else:
+                            soon_msg = f"⏰ Market opens in ~{minutes_left} minute(s) – trading will resume automatically."
                         if self.notifier:
                             await self.notifier.send_notification(
                                 soon_msg,
