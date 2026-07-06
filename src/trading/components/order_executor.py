@@ -1462,6 +1462,27 @@ class OrderExecutor:
             quotes = await engine._get_quotes_async([base], timeout=45.0)
             ticker = quotes.get(base)
             price = ticker['last']
+            # --- Stale quote guard: skip SELL if the price is too old ---
+            tf = timeframe or (pos.get("timeframe") if pos else None)
+            if tf and await engine._is_quote_too_stale(ticker, tf):
+                age_seconds = (time.time() * 1000 - ticker.get("last_update", 0)) / 1000
+                logger.warning(
+                    f"Skipping SELL {symbol}: quote is {age_seconds:.0f}s old "
+                    f"(threshold scaled for timeframe {tf}). "
+                    f"Stale prices lead to incorrect realized P&L and suboptimal exit prices."
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"⚠️ Skipping SELL {display_symbol}: quote data is {age_seconds / 60:.0f} min old. "
+                        f"Waiting for fresher data.",
+                        summary={
+                            "symbol": symbol,
+                            "action": "SKIP",
+                            "reason": "Stale quote data",
+                            "age_seconds": round(age_seconds, 1),
+                        }
+                    )
+                return
             # Fetch minimum order size from asset info
             try:
                 asset = await engine._get_asset_info(symbol)
