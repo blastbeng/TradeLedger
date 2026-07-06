@@ -1108,7 +1108,7 @@ def _discover_financedatabase_tickers() -> List[str]:
 
         logger.info(f"Discovered {len(base_symbols)} tickers from FinanceDatabase for {country}")
         return base_symbols
-    except (ImportError, RuntimeError, ValueError, AttributeError, OSError) as e:
+    except (ImportError, RuntimeError, ValueError, AttributeError, OSError, TypeError) as e:
         logger.warning(f"FinanceDatabase ticker discovery failed: {e}")
         return []
 
@@ -1139,7 +1139,7 @@ def discover_italian_ucits_etfs() -> List[str]:
         # Try to filter by country first, fallback to all if unsupported
         try:
             df = etfs.select(country="Italy")
-        except (RuntimeError, ValueError, AttributeError):
+        except (RuntimeError, ValueError, AttributeError, TypeError):
             df = etfs.select()
 
         if df is None or df.empty:
