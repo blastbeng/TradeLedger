@@ -928,7 +928,18 @@ class PositionManager:
                         continue
 
             if maturity_dt is None:
-                logger.debug(f"Could not parse maturity date '{maturity_str}' for BTP {symbol}")
+                logger.warning(f"Could not parse maturity date '{maturity_str}' for BTP {symbol}")
+                if engine.notifier:
+                    stock_name = await engine._get_stock_name(symbol)
+                    display_symbol = engine._format_symbol_display(symbol, stock_name, None)
+                    await engine.notifier.send_notification(
+                        f"⚠️ Could not parse maturity date '{maturity_str}' for BTP {display_symbol}. Manual check required.",
+                        summary={
+                            "symbol": symbol,
+                            "action": "WARNING",
+                            "reason": "Unparseable maturity date",
+                        }
+                    )
                 continue
             if now_dt < maturity_dt:
                 continue
