@@ -220,22 +220,35 @@ class TradingEngine:
 
     async def _initialize_clients(self):
         """Initialize clients and load persisted state (non‑blocking)."""
-        self.trader = PaperTrader()
-        logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
-        self._load_state()
-        self._position_manager.ensure_cost_basis()
-        # Initialize _cycle_spent from any queued buy orders loaded from persisted
-        # state so capital is reserved immediately at startup, before the first
-        # re-evaluation cycle runs (which would otherwise leave _cycle_spent at 0.0
-        # and allow over-allocation of capital already reserved by stale orders).
-        queued_buy_total = sum(
-            q.get('amount', 0.0) for q in self.queued_orders
-            if q.get('side') == 'buy'
-        )
-        async with self._cycle_spent_lock:
-            self._cycle_spent = queued_buy_total
-        if queued_buy_total > 0:
-            logger.info(f"Initialized _cycle_spent={queued_buy_total:.2f} from {sum(1 for q in self.queued_orders if q.get('side') == 'buy')} queued buy orders.")
+        # Check if PAPER_INITIAL_BALANCE changed since last run
+        state = await asyncio.to_thread(load_trading_state)
+        persisted_balance = state.get("paper_initial_balance")
+        if persisted_balance is not None and persisted_balance != settings.PAPER_INITIAL_BALANCE:
+            logger.info(
+                f"PAPER_INITIAL_BALANCE changed from {persisted_balance} to {settings.PAPER_INITIAL_BALANCE}. "
+                "Resetting paper trading state."
+            )
+            await self.reset_paper_trading_state()
+        else:
+            self.trader = PaperTrader()
+            logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
+            self._load_state()
+            self._position_manager.ensure_cost_basis()
+            # Initialize _cycle_spent from any queued buy orders loaded from persisted
+            # state so capital is reserved immediately at startup, before the first
+            # re-evaluation cycle runs (which would otherwise leave _cycle_spent at 0.0
+            # and allow over-allocation of capital already reserved by stale orders).
+            queued_buy_total = sum(
+                q.get('amount', 0.0) for q in self.queued_orders
+                if q.get('side') == 'buy'
+            )
+            async with self._cycle_spent_lock:
+                self._cycle_spent = queued_buy_total
+            if queued_buy_total > 0:
+                logger.info(f"Initialized _cycle_spent={queued_buy_total:.2f} from {sum(1 for q in self.queued_orders if q.get('side') == 'buy')} queued buy orders.")
+
+        # Persist the current PAPER_INITIAL_BALANCE so we can detect changes on next startup
+        await asyncio.to_thread(save_trading_state, "paper_initial_balance", settings.PAPER_INITIAL_BALANCE)
 
     async def reset_paper_trading_state(self):
         """Reset paper trading state when PAPER_INITIAL_BALANCE changes."""
