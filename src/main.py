@@ -171,6 +171,13 @@ async def main():
     # Start the web server immediately so the dashboard can connect
     # Customize uvicorn logging: keep internal logs at LOG_LEVEL, but make access logs DEBUG
     log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    # Replace Uvicorn's default formatters with our JSON formatter
+    log_config["formatters"]["default"] = {
+        "()": "src.main.JsonFormatter",
+    }
+    log_config["formatters"]["access"] = {
+        "()": "src.main.JsonFormatter",
+    }
     log_config["loggers"]["uvicorn.access"]["level"] = "DEBUG"
     log_config["loggers"]["uvicorn"]["level"] = settings.LOG_LEVEL.upper()
 
