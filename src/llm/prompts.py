@@ -1220,29 +1220,28 @@ Maximum symbols to trade: {max_symbols}
     base_symbol = symbol
     quote_currency = base_currency
     if min_order_amount is not None or min_order_cost is not None:
-        prompt += f"\nMinimum order size for {symbol}:"
+        prompt += f"\nMin order size for {symbol}:"
         if min_order_amount is not None:
             prompt += f" {min_order_amount} {base_symbol}"
         if min_order_cost is not None:
             prompt += f" (or {min_order_cost} {quote_currency} cost)"
         prompt += (
-            ". Your position_size_fraction must result in an order that meets both the minimum amount "
-            "and the minimum cost. Use the current price to convert between amount and cost.\n"
+            ". Your `position_size_fraction` must meet both minimums. Use current price to convert.\n"
         )
     if assigned_timeframe:
-        prompt += f"\nAssigned trading timeframe for this stock: {assigned_timeframe}. Base your decision PRIMARILY on the OHLCV data for this timeframe.\n"
+        prompt += f"\nAssigned timeframe: {assigned_timeframe}. Base your decision PRIMARILY on this timeframe's OHLCV data.\n"
     if market_regime:
-        prompt += f"\nMarket regime: {market_regime}\n"
+        prompt += f"Market regime: {market_regime}\n"
 
     if session_info:
-        prompt += f"\nCurrent UTC hour: {session_info['utc_hour']} ({session_info['session']} session)\n"
+        prompt += f"Current UTC hour: {session_info['utc_hour']} ({session_info['session']} session)\n"
     if minutes_to_market_close is not None:
         if minutes_to_market_close > 0:
-            prompt += f"  Minutes until market close (5:30 PM Rome): {minutes_to_market_close}\n"
+            prompt += f"  Minutes to market close (5:30 PM Rome): {minutes_to_market_close}\n"
         else:
             prompt += "  Market is currently closed.\n"
     if current_strategy_interval_seconds is not None:
-        prompt += f"  Current strategy evaluation interval for this symbol: {current_strategy_interval_seconds}s\n"
+        prompt += f"  Strategy eval interval: {current_strategy_interval_seconds}s\n"
 
     # --- Volatility, order book imbalance, and position P&L context ---
     if atr is not None:
