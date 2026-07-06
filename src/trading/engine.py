@@ -79,7 +79,7 @@ class TradingEngine:
         self._exchange_semaphore = asyncio.Semaphore(10)  # max 10 concurrent API calls
         self._news_semaphore = asyncio.Semaphore(5)  # max 5 concurrent news fetches
         self._indicator_semaphore = asyncio.Semaphore(4)  # limit concurrent indicator computations
-        self._backtest_semaphore = asyncio.Semaphore(4)  # limit concurrent backtest variants
+        self._backtest_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_BACKTESTS)  # limit concurrent backtest variants
         self._download_semaphore = asyncio.Semaphore(5)  # max 5 concurrent background OHLCV backfills
 
         # Dedicated thread pool for database writes – prevents write contention

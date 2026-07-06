@@ -426,6 +426,16 @@ class Settings(BaseSettings):
             raise ValueError("MAX_BACKTEST_VARIANTS must be between 1 and 50")
         return v
 
+    # Maximum number of concurrent backtest variants to run in parallel
+    MAX_CONCURRENT_BACKTESTS: int = 8
+
+    @field_validator("MAX_CONCURRENT_BACKTESTS")
+    @classmethod
+    def validate_max_concurrent_backtests(cls, v: int) -> int:
+        if v < 1 or v > 32:
+            raise ValueError("MAX_CONCURRENT_BACKTESTS must be between 1 and 32")
+        return v
+
     @field_validator("OHLCV_TIMEFRAMES")
     @classmethod
     def validate_ohlcv_timeframes(cls, v: list[str]) -> list[str]:
