@@ -68,6 +68,13 @@ class TelegramBot:
             markup = reply_markup if i == len(chunks) - 1 else None
             await update.message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup)
 
+    @staticmethod
+    def _split_text(text: str, max_len: int = 4000) -> List[str]:
+        """Split text into chunks of max_len to avoid Telegram's 4096 char limit."""
+        if len(text) <= max_len:
+            return [text]
+        return [text[i:i+max_len] for i in range(0, len(text), max_len)]
+
     def _register_handlers(self):
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler("menu", self.cmd_menu))
