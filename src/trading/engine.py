@@ -1822,10 +1822,7 @@ class TradingEngine:
         while self._running:
             was_available = is_redis_available()
             loop = asyncio.get_running_loop()
-            try:
-                await loop.run_in_executor(self._db_executor, check_redis_connection)
-            except Exception as e:
-                logger.error(f"Redis health check failed: {e}")
+            await loop.run_in_executor(self._db_executor, check_redis_connection)
             is_available = is_redis_available()
             if was_available and not is_available:
                 logger.critical("Redis connection lost. Degrading to no-cache mode.")
