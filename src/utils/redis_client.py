@@ -65,4 +65,4 @@ def check_redis_connection() -> bool:
     except (redis.ConnectionError, redis.TimeoutError) as e:
         logger.critical("Redis connection failed: %s", e)
         set_redis_available(False)
-        raise
+        return False
