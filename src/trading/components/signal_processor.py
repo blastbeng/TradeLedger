@@ -70,7 +70,7 @@ class SignalProcessor:
             raw = await asyncio.to_thread(engine.redis.get, "trading:min_viable_trade_amount")
             if raw:
                 min_viable_amount = float(raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         _flags = await self.read_position_trigger_flags(symbol, symbol_entry)
