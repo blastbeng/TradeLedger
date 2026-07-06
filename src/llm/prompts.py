@@ -1437,8 +1437,7 @@ Maximum symbols to trade: {max_symbols}
             )
         prompt += (
             "**Step 1: Propose Multiple Backtest Variants**\n"
-            "Based on the indicators and statistical summaries above, propose **multiple** sets of strategy parameters "
-            "for backtesting. Each set is a \"backtest variant\" — a complete set of trading parameters "
+            "Propose **multiple** sets of strategy parameters for backtesting. Each set is a \"backtest variant\" — a complete set of trading parameters "
             "(stop_loss_pct, take_profit_pct, max_hold_time_seconds, trailing_stop, position_size_fraction, etc.).\n"
             "**Backtest Entry Logic (REQUIRED):** You MUST include a `backtest_entry_config` object in every backtest variant. If omitted, the backtester will NOT run and will return an error.\n"
             "The `backtest_entry_config` object supports these fields (all optional — defaults shown):\n"
