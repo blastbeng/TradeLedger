@@ -2489,7 +2489,7 @@ class SignalProcessor:
                 llm_provider = retry_result["provider"]
                 llm_model = retry_result["model"]
             # Update snapshot after a real LLM call
-            engine._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist)
+            self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist)
             engine._force_eval.pop(symbol, None)
         except asyncio.TimeoutError:
             logger.warning(f"LLM Step 1a (analysis) timed out for {symbol}.")
@@ -2565,6 +2565,14 @@ class SignalProcessor:
             _skip_backtest = False
 
         return signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest
+
+    def _update_last_eval_snapshot(self, symbol: str, price: float, rsi: Optional[float], macd_hist: Optional[float]):
+        self.engine._last_eval_snapshot[symbol] = {
+            "timestamp": time.time(),
+            "price": price,
+            "rsi": rsi,
+            "macd_hist": macd_hist,
+        }
 
     async def process_post_llm_decision(
         self,

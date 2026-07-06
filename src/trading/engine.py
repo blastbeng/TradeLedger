@@ -2191,14 +2191,6 @@ class TradingEngine:
             fear_greed=fear_greed, conflicting_signals=conflicting_signals,
         )
 
-    def _update_last_eval_snapshot(self, symbol: str, price: float, rsi: Optional[float], macd_hist: Optional[float]):
-        self._last_eval_snapshot[symbol] = {
-            "timestamp": time.time(),
-            "price": price,
-            "rsi": rsi,
-            "macd_hist": macd_hist,
-        }
-
     async def _get_global_risk_multiplier(self) -> Optional[float]:
         """Return the global risk multiplier, falling back to persisted value if Redis key expired."""
         raw = await asyncio.to_thread(self.redis.get, "trading:global_risk_multiplier")
