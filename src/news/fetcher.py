@@ -108,6 +108,10 @@ _rate_limiter: Optional[RateLimiter] = None
 
 # Sources that have returned a permanent error and should be skipped for the rest of the run.
 _permanently_disabled_sources: set = set()
+# RSS feeds that have returned a permanent error and should be skipped for the rest of the run.
+_permanently_disabled_feeds: set = set()
+_feed_fail_counts: Dict[str, int] = {}
+_FEED_MAX_FAILURES = 3
 
 
 def _get_rate_limiter() -> RateLimiter:
@@ -140,6 +144,15 @@ def _get_enabled_sources() -> List[str]:
         sources.append("rss")
     logger.debug(f"News sources auto-enabled: {sources}")
     return sources
+
+
+def _handle_feed_failure(feed_url: str):
+    """Track RSS feed failures and permanently disable feeds that fail too many times."""
+    _feed_fail_counts[feed_url] = _feed_fail_counts.get(feed_url, 0) + 1
+    if _feed_fail_counts[feed_url] >= _FEED_MAX_FAILURES:
+        if feed_url not in _permanently_disabled_feeds:
+            logger.warning(f"Permanently disabling RSS feed {feed_url} after {_FEED_MAX_FAILURES} failures.")
+            _permanently_disabled_feeds.add(feed_url)
 
 
 def _analyze_sentiment(text: str) -> Dict[str, Any]:
@@ -887,6 +900,8 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
     _cleanup_rss_cache()
     articles = []
     for feed_url in settings.RSS_FEEDS:
+        if feed_url in _permanently_disabled_feeds:
+            continue
         try:
             # Check cache first
             with _rss_cache_lock:
@@ -966,6 +981,7 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
                     "sentiment": sentiment,
                 })
         except httpx.HTTPStatusError as e:
+            _handle_feed_failure(feed_url)
             if e.response.status_code == 404:
                 logger.warning(f"RSS feed not found (404): {feed_url}")
             elif e.response.status_code == 403:
@@ -973,6 +989,7 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
             else:
                 logger.warning(f"RSS fetch failed for {feed_url}: {e}")
         except Exception as e:
+            _handle_feed_failure(feed_url)
             logger.warning(f"RSS fetch failed for {feed_url}: {e}")
     logger.debug(f"RSS total articles for {symbol}: {len(articles)}")
     return articles
@@ -1095,6 +1112,8 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache
         limiter = _get_rate_limiter()
 
         for feed_url in settings.RSS_FEEDS:
+            if feed_url in _permanently_disabled_feeds:
+                continue
             try:
                 # Use the existing RSS cache to avoid redundant HTTP requests
                 with _rss_cache_lock:
@@ -1135,6 +1154,7 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache
                     if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
                         break
             except Exception as e:
+                _handle_feed_failure(feed_url)
                 logger.debug(f"Ticker discovery from RSS feed {feed_url} failed: {e}")
             if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
                 break
