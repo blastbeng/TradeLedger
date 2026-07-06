@@ -38,17 +38,37 @@ def get_cached_llm_response(
     # Determine effective provider and model for the primary choice
     if model_type == "mind":
         provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
+    elif model_type == "weak":
+        provider = settings.LLM_WEAK_PROVIDER or settings.LLM_PROVIDER
     else:
         provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
 
     if provider == "openai":
-        model = (settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL) if model_type == "mind" else (settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL)
-        base_url = (settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL) if model_type == "mind" else (settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL)
-        api_key = (settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY) if model_type == "mind" else (settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY)
+        if model_type == "mind":
+            model = settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL
+            base_url = settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL
+            api_key = settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY
+        elif model_type == "weak":
+            model = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
+            base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
+            api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
+        else:
+            model = settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL
+            base_url = settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL
+            api_key = settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY
     else:  # ollama
-        model = (settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL) if model_type == "mind" else (settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL)
-        base_url = (settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL) if model_type == "mind" else (settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL)
-        api_key = (settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY) if model_type == "mind" else (settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY)
+        if model_type == "mind":
+            model = settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL
+            base_url = settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL
+            api_key = settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY
+        elif model_type == "weak":
+            model = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
+            base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
+            api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
+        else:
+            model = settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL
+            base_url = settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL
+            api_key = settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY
 
     # Round temperature to 1 decimal place for cache key to improve cache hit rate
     # when temperature is dynamically computed based on complexity.
@@ -109,9 +129,18 @@ def get_cached_llm_response(
 
         if provider == "ollama":
             # --- Fallback to OpenAI-compatible provider ---
-            fallback_model = settings.OPENAI_MIND_MODEL if model_type == "mind" else settings.OPENAI_ACTUATOR_MODEL
-            fallback_base_url = (settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL) if model_type == "mind" else (settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL)
-            fallback_api_key = (settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY) if model_type == "mind" else (settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY)
+            if model_type == "mind":
+                fallback_model = settings.OPENAI_MIND_MODEL
+                fallback_base_url = settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL
+                fallback_api_key = settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY
+            elif model_type == "weak":
+                fallback_model = settings.OPENAI_WEAK_MODEL
+                fallback_base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
+                fallback_api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
+            else:
+                fallback_model = settings.OPENAI_ACTUATOR_MODEL
+                fallback_base_url = settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL
+                fallback_api_key = settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY
 
             if fallback_api_key or fallback_base_url:
                 logger.warning(
@@ -140,9 +169,18 @@ def get_cached_llm_response(
                 raise
         elif provider == "openai":
             # --- Fallback to Ollama provider ---
-            fallback_model = settings.OLLAMA_MIND_MODEL if model_type == "mind" else settings.OLLAMA_ACTUATOR_MODEL
-            fallback_base_url = (settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL) if model_type == "mind" else (settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL)
-            fallback_api_key = (settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY) if model_type == "mind" else (settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY)
+            if model_type == "mind":
+                fallback_model = settings.OLLAMA_MIND_MODEL
+                fallback_base_url = settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL
+                fallback_api_key = settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY
+            elif model_type == "weak":
+                fallback_model = settings.OLLAMA_WEAK_MODEL
+                fallback_base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
+                fallback_api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
+            else:
+                fallback_model = settings.OLLAMA_ACTUATOR_MODEL
+                fallback_base_url = settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL
+                fallback_api_key = settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY
 
             if fallback_base_url:
                 logger.warning(
