@@ -2010,9 +2010,21 @@ def build_final_decision_prompt(
         variant_params = bt_result.get("variant_params", {})
         bt_summary = bt_result.get("summary", "No backtest summary available.")
         bt_stats = bt_result.get("stats", {})
+
+        # Explicitly highlight timeframe fallback if it occurred
+        fallback_warning = ""
+        actual_tf = bt_stats.get("actual_timeframe")
+        assigned_tf = bt_stats.get("assigned_timeframe")
+        if actual_tf and assigned_tf and actual_tf != assigned_tf:
+            fallback_warning = (
+                f"⚠️ TIMEFRAME FALLBACK: This backtest was run on {actual_tf} candles, NOT the assigned {assigned_tf} timeframe. "
+                f"Results may not accurately represent {assigned_tf} behavior — treat with caution.\n"
+            )
+
         backtest_sections.append(
             f"**Variant {i+1}:**\n"
             f"Parameters: {json.dumps(variant_params, indent=2)}\n"
+            f"{fallback_warning}"
             f"Summary: {bt_summary}\n"
             f"Full statistics: {json.dumps(bt_stats, indent=2)}\n"
         )
