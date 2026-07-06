@@ -1345,17 +1345,12 @@ Maximum symbols to trade: {max_symbols}
                 summary = _summarize_ohlcv(multi_tf_raw_candles[tf])
                 if summary:
                     tf_summaries.append(
-                        f"  [{tf}] change={summary['change_pct']}%, "
-                        f"high={summary['high']}, low={summary['low']}, "
-                        f"volume={summary['volume']}, candles={summary['candle_count']}"
+                        f"  [{tf}] chg={summary['change_pct']}%, H={summary['high']}, L={summary['low']}, "
+                        f"vol={summary['volume']}, candles={summary['candle_count']}"
                     )
         if tf_summaries:
-            prompt += "\nMulti-timeframe OHLCV summary (price change %, high, low, volume, candle count):\n"
-            prompt += "\n".join(tf_summaries) + "\n"
-            prompt += (
-                "Use these summaries to assess momentum and trend across timeframes. "
-                "You MUST always align your trading decision with the long-term trend direction.\n"
-            )
+            prompt += "\nMulti-timeframe OHLCV summary:\n" + "\n".join(tf_summaries) + "\n"
+            prompt += "Use these to assess momentum/trend across timeframes. Align your decision with the long-term trend.\n"
     if multi_tf_indicators:
         ind_lines = []
         for tf in settings.OHLCV_TIMEFRAMES:
@@ -1373,32 +1368,23 @@ Maximum symbols to trade: {max_symbols}
                     ind_compact['bb_l'] = round(ind['bb_lower'], 4)
                 if ind.get('ema_9') is not None:
                     ind_compact['ema9'] = round(ind['ema_9'], 4)
-                    if ind.get('ema_21') is not None:
-                        ind_compact['ema21'] = round(ind['ema_21'], 4)
+                    if ind.get('ema_21') is not None: ind_compact['ema21'] = round(ind['ema_21'], 4)
                 if ind.get('stochastic_k') is not None:
                     ind_compact['stoch_k'] = round(ind['stochastic_k'], 2)
-                    if ind.get('stochastic_d') is not None:
-                        ind_compact['stoch_d'] = round(ind['stochastic_d'], 2)
+                    if ind.get('stochastic_d') is not None: ind_compact['stoch_d'] = round(ind['stochastic_d'], 2)
                 if ind.get('adx') is not None:
                     ind_compact['adx'] = round(ind['adx'], 2)
-                    if ind.get('plus_di') is not None:
-                        ind_compact['+di'] = round(ind['plus_di'], 2)
-                    if ind.get('minus_di') is not None:
-                        ind_compact['-di'] = round(ind['minus_di'], 2)
+                    if ind.get('plus_di') is not None: ind_compact['+di'] = round(ind['plus_di'], 2)
+                    if ind.get('minus_di') is not None: ind_compact['-di'] = round(ind['minus_di'], 2)
                 if ind.get('obv') is not None: ind_compact['obv'] = round(ind['obv'], 2)
                 if ind.get('mfi') is not None: ind_compact['mfi'] = round(ind['mfi'], 2)
                 if ind.get('cci') is not None: ind_compact['cci'] = round(ind['cci'], 2)
                 if ind.get('williams_r') is not None: ind_compact['wr'] = round(ind['williams_r'], 2)
                 if ind.get('ichimoku') is not None:
                     ich = ind['ichimoku']
-                    ind_compact['ich'] = {
-                        "t": round(ich['tenkan_sen'], 4),
-                        "k": round(ich['kijun_sen'], 4),
-                        "sa": round(ich['senkou_span_a'], 4),
-                        "sb": round(ich['senkou_span_b'], 4),
-                        "cb": round(ich['cloud_bottom'], 4),
-                        "ct": round(ich['cloud_top'], 4),
-                    }
+                    ind_compact['ich'] = {"t": round(ich['tenkan_sen'], 4), "k": round(ich['kijun_sen'], 4),
+                                          "sa": round(ich['senkou_span_a'], 4), "sb": round(ich['senkou_span_b'], 4),
+                                          "cb": round(ich['cloud_bottom'], 4), "ct": round(ich['cloud_top'], 4)}
                 if ind.get('donchian_channels') is not None:
                     dc = ind['donchian_channels']
                     ind_compact['dc'] = {"u": round(dc['upper'], 4), "m": round(dc['middle'], 4), "l": round(dc['lower'], 4)}
@@ -1408,28 +1394,21 @@ Maximum symbols to trade: {max_symbols}
                     kc = ind['keltner_channels']
                     ind_compact['kc'] = {"u": round(kc['upper'], 6), "m": round(kc['middle'], 6), "l": round(kc['lower'], 6)}
                 
-                if not ind_compact:
-                    continue
+
+                if not ind_compact: continue
                 ind_lines.append(f"[{tf}] {json.dumps(ind_compact)}")
         if ind_lines:
-            prompt += "\nComputed technical indicators per timeframe:\n"
-            prompt += "\n".join(ind_lines) + "\n"
+            prompt += "\nComputed indicators per timeframe:\n" + "\n".join(ind_lines) + "\n"
     elif raw_candles:
         summary = _summarize_ohlcv(raw_candles)
         if summary:
             prompt += (
-                f"\nOHLCV summary for {assigned_timeframe} timeframe: "
-                f"change={summary['change_pct']}%, high={summary['high']}, low={summary['low']}, "
-                f"volume={summary['volume']}, candles={summary['candle_count']}\n"
+                f"\nOHLCV summary ({assigned_timeframe}): chg={summary['change_pct']}%, H={summary['high']}, "
+                f"L={summary['low']}, vol={summary['volume']}, candles={summary['candle_count']}\n"
             )
-            # Only claim indicators are available if at least one key indicator is present
             has_indicators = any(v is not None for v in [rsi, macd, bb_upper, ema_9])
             if has_indicators:
-                prompt += (
-                    "The technical indicators (RSI, MACD, Bollinger Bands, EMA) have already been computed for you from this data. "
-                    "Use them together with the summary to time entries and exits. "
-                    "Explain in your reasoning how the indicators support your decision.\n"
-                )
+                prompt += "Indicators (RSI, MACD, BB, EMA) are pre-computed. Use them to time entries/exits and explain in reasoning.\n"
     if historical_ohlcv:
         hist_summary = _summarize_ohlcv(historical_ohlcv)
         if hist_summary:
