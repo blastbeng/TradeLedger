@@ -578,7 +578,7 @@ class SignalProcessor:
                                         f"\n⚠️ **STALE INDICATORS:** Indicators for {symbol} on {tf} timeframe "
                                         f"are stale and could not be recomputed. Use with caution.\n"
                                     )
-                            except Exception as e:
+                            except (ValueError, TypeError, IndexError, ZeroDivisionError) as e:
                                 logger.warning(f"Failed to recompute stale indicators for {symbol} {tf}: {e}")
                                 stale_indicators_warning += (
                                     f"\n⚠️ **STALE INDICATORS:** Indicators for {symbol} on {tf} timeframe "
