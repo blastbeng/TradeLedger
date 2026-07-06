@@ -330,6 +330,16 @@ def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List[Dict[
     # Limit per symbol
     unique = unique[:settings.NEWS_MAX_ARTICLES_PER_SYMBOL]
 
+    # Summarize articles using the weak model to save tokens for the main LLM
+    try:
+        from src.llm.summarizer import summarize_text
+        for article in unique:
+            original_summary = article.get("summary", "")
+            if original_summary:
+                article["summary"] = summarize_text(original_summary, context="news", max_length=150)
+    except Exception as e:
+        logger.warning(f"Failed to summarize news articles for {base_symbol}: {e}")
+
     # Cache
     try:
         redis_client.set(cache_key, json.dumps(unique), ex=settings.NEWS_CACHE_TTL_SECONDS)
