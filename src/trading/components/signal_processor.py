@@ -350,7 +350,8 @@ class SignalProcessor:
                 is_critical=is_critical,
             ):
                 logger.info(f"Skipping LLM for {symbol}: market unchanged, no strong signals.")
-                engine._force_eval.pop(symbol, None)
+                async with engine._eval_state_lock:
+                    engine._force_eval.pop(symbol, None)
                 return
 
             strategy_model_type, effective_temp = self.compute_model_tier_and_temperature(
@@ -1443,7 +1444,8 @@ class SignalProcessor:
                 from src.strategies.base import Signal
                 signal = Signal(action="SELL", confidence=1.0, reasoning="Max symbol tenure reached")
                 await engine._execute_signal(symbol, signal, exit_reason="max_tenure")
-                engine._force_eval.pop(symbol, None)
+                async with engine._eval_state_lock:
+                    engine._force_eval.pop(symbol, None)
                 return None
 
         # --- Cooldown after a losing trade (LLM-defined) ---
@@ -1458,7 +1460,8 @@ class SignalProcessor:
                         logger.info(
                             f"Skipping {symbol}: cooldown active ({remaining:.0f}s remaining after loss)"
                         )
-                        engine._force_eval.pop(symbol, None)
+                        async with engine._eval_state_lock:
+                            engine._force_eval.pop(symbol, None)
                         return None
 
         # Skip if there is already a queued order for this symbol
@@ -1466,7 +1469,8 @@ class SignalProcessor:
             has_queued = any(q['symbol'] == symbol for q in engine.queued_orders)
         if has_queued:
             logger.info(f"Skipping {symbol}: order already queued.")
-            engine._force_eval.pop(symbol, None)
+            async with engine._eval_state_lock:
+                engine._force_eval.pop(symbol, None)
             return None
 
         # --- Read position trigger flags ---
@@ -1587,7 +1591,8 @@ class SignalProcessor:
                     await asyncio.to_thread(engine.redis.setex, stale_notify_key, 3600, str(time.time()))
                 except Exception:
                     pass
-            engine._force_eval.pop(symbol, None)
+            async with engine._eval_state_lock:
+                engine._force_eval.pop(symbol, None)
             return True
 
         # If we have an open position, we must continue evaluating it for SELL signals
@@ -1682,7 +1687,8 @@ class SignalProcessor:
             except Exception:
                 pass
 
-        engine._force_eval.pop(symbol, None)
+        async with engine._eval_state_lock:
+            engine._force_eval.pop(symbol, None)
         return True
 
     async def handle_triggered_flags(
@@ -2492,7 +2498,8 @@ class SignalProcessor:
                 llm_model = retry_result["model"]
             # Update snapshot after a real LLM call
             self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist)
-            engine._force_eval.pop(symbol, None)
+            async with engine._eval_state_lock:
+                engine._force_eval.pop(symbol, None)
         except asyncio.TimeoutError:
             logger.warning(f"LLM Step 1a (analysis) timed out for {symbol}.")
             if is_critical and critical_reason is not None:
@@ -2509,11 +2516,13 @@ class SignalProcessor:
                 )
                 return None, None, None, True
             # Non-critical timeout: fall through to fallback HOLD
-            engine._force_eval.pop(symbol, None)
+            async with engine._eval_state_lock:
+                engine._force_eval.pop(symbol, None)
             # Fall through to fallback HOLD below
         except Exception as e:
             logger.error(f"LLM Step 1a failed for {symbol}: {e}")
-            engine._force_eval.pop(symbol, None)
+            async with engine._eval_state_lock:
+                engine._force_eval.pop(symbol, None)
             # Fall through to fallback HOLD below
 
         return analysis_result, llm_provider, llm_model, False
@@ -2535,7 +2544,8 @@ class SignalProcessor:
         engine = self.engine
         if analysis_result is None:
             logger.warning(f"Step 1a analysis failed for {symbol} after all retries. Using fallback HOLD.")
-            engine._force_eval.pop(symbol, None)
+            async with engine._eval_state_lock:
+                engine._force_eval.pop(symbol, None)
             # Create a fallback HOLD signal so the bot continues functioning
             preliminary_signal = self._create_fallback_hold_signal(
                 symbol, "LLM Step 1a analysis failed after retries", strategy_model_type
@@ -3748,7 +3758,9 @@ class SignalProcessor:
         """Return True if it's safe to skip the LLM call and just HOLD."""
         engine = self.engine
         # If a force evaluation was requested (entry signal detected), never skip
-        if engine._force_eval.get(symbol, False):
+        async with engine._eval_state_lock:
+            force_eval = engine._force_eval.get(symbol, False)
+        if force_eval:
             return False
         # Never skip critical situations (max hold, stop-loss, take-profit triggered)
         if is_critical:

@@ -213,6 +213,8 @@ class TradingEngine:
         self._force_eval_time: Dict[str, float] = {}
         # Per‑symbol state for crossover detection (stores last known indicator values)
         self._entry_signal_state: Dict[str, Dict[str, Any]] = {}
+        # Lock to protect _force_eval, _force_eval_time, _last_strategy_eval, and _strategy_intervals
+        self._eval_state_lock = asyncio.Lock()
 
     async def _initialize_clients(self):
         """Initialize clients and load persisted state (non‑blocking)."""
@@ -1601,8 +1603,9 @@ class TradingEngine:
 
                     # Use the dynamically computed tf_base_interval, but allow LLM to override per-symbol
                     default_interval = tf_base_interval
-                    interval = self._strategy_intervals.get(symbol, default_interval)
-                    last_eval = self._last_strategy_eval.get(symbol, 0)
+                    async with self._eval_state_lock:
+                        interval = self._strategy_intervals.get(symbol, default_interval)
+                        last_eval = self._last_strategy_eval.get(symbol, 0)
                     if now - last_eval >= interval:
                         # Check if trading is paused (skip BUY signals)
                         paused = await asyncio.to_thread(self.redis.get, "trading:paused")
@@ -1612,7 +1615,8 @@ class TradingEngine:
                                 self._process_symbol(symbol_entry, trading_paused=trading_paused),
                                 timeout=settings.LLM_TIMEOUT + 10  # slightly longer than the LLM timeout
                             )
-                            self._last_strategy_eval[symbol] = now
+                            async with self._eval_state_lock:
+                                self._last_strategy_eval[symbol] = now
                         except asyncio.TimeoutError:
                             logger.error(f"Timeout processing symbol {symbol_entry['symbol']} – skipping. Will retry on next loop iteration.")
                             if self.notifier:
@@ -1932,16 +1936,18 @@ class TradingEngine:
                     # the normal strategy interval.
                     # Use a short, dedicated cooldown so the bot reacts quickly to new signals
                     cooldown = settings.ENTRY_SIGNAL_COOLDOWN_SECONDS
-                    last_forced = self._force_eval_time.get(symbol, 0)
+                    async with self._eval_state_lock:
+                        last_forced = self._force_eval_time.get(symbol, 0)
                     if time.time() - last_forced < cooldown:
                         continue
 
                     if await self._detect_entry_signal(symbol, tf):
                         logger.info(f"Entry signal detected for {symbol}, forcing LLM evaluation.")
-                        self._force_eval[symbol] = True
-                        self._force_eval_time[symbol] = time.time()
-                        # Clear last evaluation timestamp so the main loop picks it up immediately
-                        self._last_strategy_eval.pop(symbol, None)
+                        async with self._eval_state_lock:
+                            self._force_eval[symbol] = True
+                            self._force_eval_time[symbol] = time.time()
+                            # Clear last evaluation timestamp so the main loop picks it up immediately
+                            self._last_strategy_eval.pop(symbol, None)
             except Exception as e:
                 logger.error(f"Entry signal monitor error: {e}", exc_info=True)
             await asyncio.sleep(settings.ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS)

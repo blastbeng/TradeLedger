@@ -146,23 +146,24 @@ class SymbolReevaluator:
         engine = self.engine
         active_symbols = {entry["symbol"] for entry in engine.current_symbols}
         active_symbols.update(engine.positions.keys())
-        for state_dict in (
-            engine._force_eval,
-            engine._last_decisions,
-            engine._entry_signal_state,
-            engine._force_eval_time,
-            engine._last_strategy_eval,
-            engine._strategy_intervals,
-            engine._last_eval_snapshot,
-            engine.last_loss_time,
-            engine.cooldown_durations,
-            engine._pending_entries,
-        ):
-            stale_keys = [s for s in state_dict if s not in active_symbols]
-            for s in stale_keys:
-                state_dict.pop(s, None)
-            if stale_keys:
-                logger.debug(f"Cleaned {len(stale_keys)} stale entries from engine state dicts")
+        async with engine._eval_state_lock:
+            for state_dict in (
+                engine._force_eval,
+                engine._last_decisions,
+                engine._entry_signal_state,
+                engine._force_eval_time,
+                engine._last_strategy_eval,
+                engine._strategy_intervals,
+                engine._last_eval_snapshot,
+                engine.last_loss_time,
+                engine.cooldown_durations,
+                engine._pending_entries,
+            ):
+                stale_keys = [s for s in state_dict if s not in active_symbols]
+                for s in stale_keys:
+                    state_dict.pop(s, None)
+                if stale_keys:
+                    logger.debug(f"Cleaned {len(stale_keys)} stale entries from engine state dicts")
 
         active_bases = {s.split("/")[0] for s in active_symbols}
         for cache_dict in (
