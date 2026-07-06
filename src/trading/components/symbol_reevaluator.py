@@ -261,13 +261,13 @@ class SymbolReevaluator:
                     rsi_oversold = 20.0
                     rsi_overbought = 80.0
                     try:
-                        raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_oversold")
+                        raw = await engine.config_service.get_config("skip_eval_rsi_oversold")
                         if raw:
                             rsi_oversold = float(raw)
-                        raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_overbought")
+                        raw = await engine.config_service.get_config("skip_eval_rsi_overbought")
                         if raw:
                             rsi_overbought = float(raw)
-                    except Exception:
+                    except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                         pass
                     rsi = ind.get("rsi")
                     if rsi is not None and (rsi < rsi_oversold or rsi > rsi_overbought):
@@ -283,10 +283,10 @@ class SymbolReevaluator:
                         bb_width = (bb_upper - bb_lower) / bb_middle
                         bb_squeeze_width = 0.02
                         try:
-                            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_bb_squeeze_width")
+                            raw = await engine.config_service.get_config("regime_bb_squeeze_width")
                             if raw:
                                 bb_squeeze_width = float(raw)
-                        except Exception:
+                        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                             pass
                         if bb_width < bb_squeeze_width:
                             db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=1)
@@ -1711,10 +1711,10 @@ class SymbolReevaluator:
                         if pause_duration is None:
                             _min_pause = settings.MIN_LLM_PAUSE_DURATION
                             try:
-                                raw = await asyncio.to_thread(engine.redis.get, "trading:min_llm_pause_duration")
+                                raw = await engine.config_service.get_config("min_llm_pause_duration")
                                 if raw:
                                     _min_pause = int(raw)
-                            except Exception:
+                            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                                 pass
                             pause_duration = _min_pause
                             await asyncio.to_thread(
@@ -1737,10 +1737,10 @@ class SymbolReevaluator:
                             pause_duration_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_duration")
                             required_pause = settings.MIN_LLM_PAUSE_DURATION
                             try:
-                                raw = await asyncio.to_thread(engine.redis.get, "trading:min_llm_pause_duration")
+                                raw = await engine.config_service.get_config("min_llm_pause_duration")
                                 if raw:
                                     required_pause = int(raw)
-                            except Exception:
+                            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                                 pass
                             if pause_duration_raw:
                                 try:

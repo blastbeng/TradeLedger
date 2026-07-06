@@ -604,10 +604,10 @@ class TradingEngine:
                             # No LLM-set duration → resume after the LLM-decided minimum pause duration
                             default_max_pause = settings.MIN_LLM_PAUSE_DURATION
                             try:
-                                raw = await asyncio.to_thread(self.redis.get, "trading:min_llm_pause_duration")
+                                raw = await self.config_service.get_config("min_llm_pause_duration")
                                 if raw:
                                     default_max_pause = int(raw)
-                            except Exception:
+                            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                                 pass
                             if pause_start_raw is None:
                                 logger.warning(
