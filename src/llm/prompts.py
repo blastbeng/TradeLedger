@@ -1484,7 +1484,7 @@ Maximum symbols to trade: {max_symbols}
             for t in recent_trades
         ]
         prompt += f"\nRecent closed trades (last {len(recent_trades)}):\n{json.dumps(_recent_compact)}\n"
-        prompt += "Use these outcomes to adapt your strategy. If recent trades are losing, become more conservative.\n"
+        prompt += "If recent trades are losing, become more conservative.\n"
 
     # --- Past trades for this symbol ---
     if past_trades:
