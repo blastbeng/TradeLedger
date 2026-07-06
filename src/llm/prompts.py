@@ -1489,12 +1489,8 @@ Maximum symbols to trade: {max_symbols}
                     "Explain in your reasoning how the indicators support your decision.\n"
                 )
     if historical_ohlcv:
-        # Provide a statistical summary instead of raw candles to reduce prompt size
-        # and avoid "lost in the middle" syndrome. The Python backtester handles
-        # the deterministic validation independently.
         hist_summary = _summarize_ohlcv(historical_ohlcv)
         if hist_summary:
-            # Compute additional statistics for the last N candles
             closes = [c[4] for c in historical_ohlcv]
             volumes = [c[5] for c in historical_ohlcv]
             last_20 = closes[-20:] if len(closes) >= 20 else closes
@@ -1502,34 +1498,21 @@ Maximum symbols to trade: {max_symbols}
             max_close = max(last_20) if last_20 else 0
             min_close = min(last_20) if last_20 else 0
             avg_volume = sum(volumes[-20:]) / min(len(volumes), 20) if volumes else 0
-            # Recent momentum (last 5 candles)
             last_5_closes = closes[-5:] if len(closes) >= 5 else closes
-            if len(last_5_closes) >= 2 and last_5_closes[0] > 0:
-                recent_momentum_pct = ((last_5_closes[-1] - last_5_closes[0]) / last_5_closes[0]) * 100
-            else:
-                recent_momentum_pct = 0.0
+            recent_momentum_pct = ((last_5_closes[-1] - last_5_closes[0]) / last_5_closes[0]) * 100 if len(last_5_closes) >= 2 and last_5_closes[0] > 0 else 0.0
 
             prompt += (
-                f"\nHistorical OHLCV statistical summary (last {hist_summary['candle_count']} candles, "
-                f"{assigned_timeframe or 'default'} timeframe):\n"
-                f"  Overall change: {hist_summary['change_pct']:.2f}%\n"
-                f"  High: {hist_summary['high']:.4f}  Low: {hist_summary['low']:.4f}\n"
-                f"  Total volume: {hist_summary['volume']:.0f}\n"
-                f"  Last 20 candles — avg close: {avg_close:.4f}, max: {max_close:.4f}, min: {min_close:.4f}\n"
-                f"  Avg volume (last 20): {avg_volume:.0f}\n"
-                f"  Recent momentum (last 5 candles): {recent_momentum_pct:+.2f}%\n"
+                f"\nHistorical OHLCV summary ({hist_summary['candle_count']} candles, {assigned_timeframe or 'default'}):\n"
+                f"  Overall chg: {hist_summary['change_pct']:.2f}%, High: {hist_summary['high']:.4f}, Low: {hist_summary['low']:.4f}\n"
+                f"  Last 20 — avg close: {avg_close:.4f}, max: {max_close:.4f}, min: {min_close:.4f}, avg vol: {avg_volume:.0f}\n"
+                f"  Recent momentum (last 5): {recent_momentum_pct:+.2f}%\n"
             )
             prompt += (
-                f"\n**Available Historical Data for Backtest:** Up to {settings.OHLCV_RETENTION_DAYS} days "
-                f"({settings.OHLCV_RETENTION_DAYS // 30} months) of historical OHLCV data is available on the "
-                f"{assigned_timeframe or 'default'} timeframe. The statistical summary above covers "
-                f"{hist_summary['candle_count']} candles.\n"
-                "You MUST include `backtest_period_days` in your strategy parameters to tell the engine "
-                "how many days of history to use for the backtest. Choose a period relevant to your strategy:\n"
-                "- Long-term position (1w candles): 365–730 days\n"
-                "- Very long-term analysis (1M candles): 730 days (all available data)\n"
-                "- Medium-term swing (1d candles): 90–365 days\n"
-                f"If omitted, the engine defaults to {settings.OHLCV_RETENTION_DAYS} days (all available data).\n"
+                f"\n**Available Historical Data:** Up to {settings.OHLCV_RETENTION_DAYS} days "
+                f"({settings.OHLCV_RETENTION_DAYS // 30} months) on {assigned_timeframe or 'default'} timeframe.\n"
+                "You MUST include `backtest_period_days` in strategy parameters. Choose a relevant period:\n"
+                "- 1w candles: 365–730 days\n- 1M candles: 730 days (all available)\n- 1d candles: 90–365 days\n"
+                f"Default: {settings.OHLCV_RETENTION_DAYS} days.\n"
             )
         prompt += (
             "**Step 1: Propose Multiple Backtest Variants**\n"
