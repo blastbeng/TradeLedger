@@ -147,7 +147,7 @@ def _format_news_for_prompt(articles: list) -> str:
     return "\n".join(lines)
 
 
-def get_cached_news_summary(symbol: str, model_type: str = "actuator") -> dict:
+def get_cached_news_summary(symbol: str, model_type: str = "weak") -> dict:
     """Return a cached LLM-generated one‑sentence news summary for a symbol.
 
     Returns a dict with keys:
@@ -465,7 +465,13 @@ def build_stock_selection_prompt(
                 formatted = _format_news_for_prompt(articles)
                 news_lines.append(f"**{sym}**\n{formatted}")
         if news_lines:
-            news_section = "Recent news for all candidate stocks:\n\n" + "\n\n".join(news_lines)
+            raw_news = "Recent news for all candidate stocks:\n\n" + "\n\n".join(news_lines)
+            # Summarize the combined news section using the weak model to save tokens
+            try:
+                from src.llm.summarizer import summarize_text
+                news_section = summarize_text(raw_news, context="stock selection news", max_length=1000)
+            except Exception:
+                news_section = raw_news
 
     available_timeframes = [tf for tf in settings.OHLCV_TIMEFRAMES if tf in TIMEFRAME_MAP]
     prompt = f"""Current base currency: {base_currency}
@@ -1668,7 +1674,13 @@ Maximum symbols to trade: {max_symbols}
     if settings.NEWS_ENABLED:
         articles = get_news_for_symbol(symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
         if articles:
-            news_section = "Recent news articles for this stock:\n" + _format_news_for_prompt(articles)
+            raw_news = "Recent news articles for this stock:\n" + _format_news_for_prompt(articles)
+            # Summarize the news section using the weak model to save tokens
+            try:
+                from src.llm.summarizer import summarize_text
+                news_section = summarize_text(raw_news, context="strategy news", max_length=500)
+            except Exception:
+                news_section = raw_news
     if news_section:
         prompt += f"\n{news_section}\n"
 
