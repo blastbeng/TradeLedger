@@ -670,7 +670,13 @@ class SignalProcessor:
         if settings.OHLCV_TIMEFRAMES:
             async def _fetch_ohlcv_tf(tf):
                 try:
-                    db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
+                    if tf == assigned_tf:
+                        since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+                        tf_seconds = engine._timeframe_to_seconds(tf)
+                        hist_limit = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds) + 100
+                        db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, since_ms=since_ms, limit=hist_limit)
+                    else:
+                        db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
                     if db_candles:
                         return tf, [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                 except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
@@ -773,33 +779,20 @@ class SignalProcessor:
         raw_candles = multi_tf_raw_candles.get(assigned_tf)
 
         # Fetch historical OHLCV from DB for backtest analysis
-        historical_ohlcv = None
-        try:
-            since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
-            hist_limit = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds) + 100
-            db_candles = await asyncio.to_thread(
-                get_ohlcv, symbol, assigned_tf, since_ms=since_ms, limit=hist_limit
-            )
-            if db_candles:
-                historical_ohlcv = [
-                    [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                    for c in db_candles
-                ]
-                if len(historical_ohlcv) >= 2:
-                    interval_ms = engine._timeframe_to_ms(assigned_tf)
-                    timestamps = [c[0] for c in historical_ohlcv]
-                    has_gap = False
-                    for i in range(len(timestamps) - 1):
-                        if timestamps[i+1] - timestamps[i] > interval_ms * 1.5:
-                            has_gap = True
-                            break
-                    if has_gap:
-                        logger.warning(
-                            f"Historical OHLCV for {symbol} {assigned_tf} contains gaps; "
-                            f"passing data to LLM anyway for backtesting."
-                        )
-        except Exception as e:
-            logger.warning(f"Failed to fetch historical OHLCV for {symbol} {assigned_tf}: {e}")
+        historical_ohlcv = ohlcv_data.get(assigned_tf)
+        if historical_ohlcv and len(historical_ohlcv) >= 2:
+            interval_ms = engine._timeframe_to_ms(assigned_tf)
+            timestamps = [c[0] for c in historical_ohlcv]
+            has_gap = False
+            for i in range(len(timestamps) - 1):
+                if timestamps[i+1] - timestamps[i] > interval_ms * 1.5:
+                    has_gap = True
+                    break
+            if has_gap:
+                logger.warning(
+                    f"Historical OHLCV for {symbol} {assigned_tf} contains gaps; "
+                    f"passing data to LLM anyway for backtesting."
+                )
 
         # Unrealized P&L for current position
         unrealized_pnl = None
