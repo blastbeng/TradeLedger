@@ -50,9 +50,10 @@ async def verify_auth(request: Request):
     return True
 
 app = FastAPI(title="Trade Ledger")
+public_router = APIRouter()
 http_router = APIRouter(dependencies=[Depends(verify_auth)])
 
-@http_router.post("/api/login")
+@public_router.post("/api/login")
 async def login(request: Request, response: Response, credentials: dict = Body(...)):
     """Authenticate the user and set a session cookie."""
     username = credentials.get("username", "")
@@ -68,7 +69,7 @@ async def login(request: Request, response: Response, credentials: dict = Body(.
     response.set_cookie(key="session_token", value=token, httponly=True, samesite="lax", max_age=86400)
     return {"status": "ok"}
 
-@http_router.post("/api/logout")
+@public_router.post("/api/logout")
 async def logout(request: Request, response: Response):
     """Clear the session cookie and invalidate the token."""
     token = request.cookies.get("session_token")
@@ -587,4 +588,5 @@ async def simulate_decision(symbol: str):
     engine = get_engine()
     return await engine.simulate_decision(symbol)
 
+app.include_router(public_router)
 app.include_router(http_router)
