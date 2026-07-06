@@ -9,7 +9,8 @@ import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Response, APIRouter, Body
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from collections import defaultdict, deque
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection
 from src.llm.prompts import get_cached_news_summary
@@ -17,6 +18,13 @@ from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
 from src.database import get_all_discovered_symbols
 from typing import Optional
 from pydantic import BaseModel
+
+# Rate limiting configuration
+RATE_LIMIT_REQUESTS = 100  # max requests per window
+RATE_LIMIT_WINDOW = 60    # window size in seconds
+
+# In-memory store for rate limiting: {ip: deque([timestamps])}
+_rate_limit_store = defaultdict(deque)
 
 async def _get_display_symbol(engine, symbol: str, timeframe: Optional[str] = None) -> str:
     """Return a formatted display string for the given symbol and timeframe."""
@@ -50,6 +58,23 @@ async def verify_auth(request: Request):
     return True
 
 app = FastAPI(title="Trade Ledger")
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+
+    # Remove timestamps older than the window
+    while _rate_limit_store[client_ip] and _rate_limit_store[client_ip][0] < now - RATE_LIMIT_WINDOW:
+        _rate_limit_store[client_ip].popleft()
+
+    if len(_rate_limit_store[client_ip]) >= RATE_LIMIT_REQUESTS:
+        return JSONResponse(status_code=429, content={"detail": "Too Many Requests"})
+
+    _rate_limit_store[client_ip].append(now)
+    response = await call_next(request)
+    return response
+
 public_router = APIRouter()
 http_router = APIRouter(dependencies=[Depends(verify_auth)])
 
