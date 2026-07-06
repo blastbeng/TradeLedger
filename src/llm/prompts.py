@@ -1250,56 +1250,41 @@ Maximum symbols to trade: {max_symbols}
         atr_pct = atr / current_price
         min_sl = min_stop_atr_mult * atr_pct
         prompt += (
-            f"\n**Current ATR%: {atr_pct:.4%}**. "
-            f"The validator enforces a minimum fixed stop-loss of {min_stop_atr_mult} × ATR% = {min_sl:.4%}. "
-            f"Your fixed stop_loss_pct must be at least this value.\n"
+            f"\n**Current ATR%: {atr_pct:.4%}**. Validator enforces min fixed stop-loss of "
+            f"{min_stop_atr_mult} × ATR% = {min_sl:.4%}. Your `stop_loss_pct` must be ≥ this value.\n"
         )
     if atr_percentile is not None:
-        prompt += f"ATR percentile (relative to last 100 observations): {atr_percentile:.1f}%\n"
+        prompt += f"ATR percentile (last 100 obs): {atr_percentile:.1f}%\n"
     if atr_multi_tf:
         prompt += f"ATR across timeframes: {json.dumps(atr_multi_tf)}\n"
     # --- Transaction cost break-even calculation ---
-    # Detect BTP bonds (ISIN format) to apply the correct fee structure.
     _is_btp = is_btp_isin(symbol)
     trade_value = min(per_symbol_budget, remaining_balance if remaining_balance is not None else per_symbol_budget)
     if trade_value > 0:
         if _is_btp:
-            # BTP fees: BTP_FEE_PERC with BTP_MIN_FEE, no Tobin tax, no fixed execution fee
-            btp_fee_perc = settings.BTP_FEE_PERC
-            btp_min_fee = settings.BTP_MIN_FEE
             if settings.BTP_IS_PRIMARY_ISSUANCE:
-                buy_fee = 0.0
-                sell_fee = 0.0
+                buy_fee = sell_fee = 0.0
             else:
-                buy_fee = max(btp_min_fee, trade_value * btp_fee_perc)
-                sell_fee = max(btp_min_fee, trade_value * btp_fee_perc)
+                buy_fee = max(settings.BTP_MIN_FEE, trade_value * settings.BTP_FEE_PERC)
+                sell_fee = max(settings.BTP_MIN_FEE, trade_value * settings.BTP_FEE_PERC)
             total_fees = buy_fee + sell_fee
             break_even_pct = total_fees / trade_value
             prompt += (
-                f"\n**Transaction Cost Break-Even (BTP Bond – Intesa Sanpaolo Investo):**\n"
-                f"For a trade size of ~{trade_value:.2f} {quote_currency}:\n"
-                f"  Estimated Buy Fee: {buy_fee:.2f} {quote_currency} (no Tobin tax)\n"
-                f"  Estimated Sell Fee: {sell_fee:.2f} {quote_currency}\n"
-                f"  Total Round-Trip Fees: {total_fees:.2f} {quote_currency} ({break_even_pct*100:.2f}% of trade value)\n"
-                f"**Your `take_profit_pct` MUST be strictly greater than {break_even_pct*100:.2f}% to be profitable.**\n"
-                f"BTP bonds have lower fees than stocks (no Tobin tax, no fixed execution fee).\n"
-                f"Set your `take_profit_pct` comfortably above this break-even percentage.\n"
+                f"\n**Transaction Cost Break-Even (BTP):**\n"
+                f"  Trade size: ~{trade_value:.2f} {quote_currency}\n"
+                f"  Total round-trip fees: {total_fees:.2f} {quote_currency} ({break_even_pct*100:.2f}%)\n"
+                f"  `take_profit_pct` MUST be > {break_even_pct*100:.2f}% to be profitable.\n"
             )
         else:
-            # Standard stock/ETF fees: max(STOCK_FEE_MIN, V*STOCK_FEE_PERC) + STOCK_FEE_FIXED + V*TOBIN_TAX_RATE (buy)
-            # max(STOCK_FEE_MIN, V*STOCK_FEE_PERC) + STOCK_FEE_FIXED (sell)
             buy_fee = max(settings.STOCK_FEE_MIN, trade_value * settings.STOCK_FEE_PERC) + settings.STOCK_FEE_FIXED + (trade_value * settings.TOBIN_TAX_RATE)
             sell_fee = max(settings.STOCK_FEE_MIN, trade_value * settings.STOCK_FEE_PERC) + settings.STOCK_FEE_FIXED
             total_fees = buy_fee + sell_fee
             break_even_pct = total_fees / trade_value
             prompt += (
-                f"\n**Transaction Cost Break-Even (Intesa Sanpaolo Investo):**\n"
-                f"For a trade size of ~{trade_value:.2f} {quote_currency}:\n"
-                f"  Estimated Buy Fee: {buy_fee:.2f} {quote_currency}\n"
-                f"  Estimated Sell Fee: {sell_fee:.2f} {quote_currency}\n"
-                f"  Total Round-Trip Fees: {total_fees:.2f} {quote_currency} ({break_even_pct*100:.2f}% of trade value)\n"
-                f"**Your `take_profit_pct` MUST be strictly greater than {break_even_pct*100:.2f}% to be profitable.**\n"
-                f"Set your `take_profit_pct` comfortably above this break-even percentage.\n"
+                f"\n**Transaction Cost Break-Even:**\n"
+                f"  Trade size: ~{trade_value:.2f} {quote_currency}\n"
+                f"  Total round-trip fees: {total_fees:.2f} {quote_currency} ({break_even_pct*100:.2f}%)\n"
+                f"  `take_profit_pct` MUST be > {break_even_pct*100:.2f}% to be profitable.\n"
             )
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
