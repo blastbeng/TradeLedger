@@ -70,10 +70,33 @@ class TelegramBot:
 
     @staticmethod
     def _split_text(text: str, max_len: int = 4000) -> List[str]:
-        """Split text into chunks of max_len to avoid Telegram's 4096 char limit."""
+        """Split text into chunks, trying to avoid breaking HTML tags."""
         if len(text) <= max_len:
             return [text]
-        return [text[i:i+max_len] for i in range(0, len(text), max_len)]
+
+        chunks = []
+        current_chunk = ""
+        lines = text.split('\n')
+        for line in lines:
+            if len(current_chunk) + len(line) + 1 > max_len:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                while len(line) > max_len:
+                    split_at = max_len
+                    # Avoid splitting inside an HTML tag
+                    if '<' in line[:max_len] and '>' not in line[:max_len]:
+                        split_at = line.rfind('<', 0, max_len)
+                    chunks.append(line[:split_at])
+                    line = line[split_at:]
+                current_chunk = line
+            else:
+                if current_chunk:
+                    current_chunk += "\n" + line
+                else:
+                    current_chunk = line
+        if current_chunk:
+            chunks.append(current_chunk)
+        return chunks
 
     def _register_handlers(self):
         self.app.add_handler(CommandHandler("start", self.cmd_start))
@@ -650,7 +673,6 @@ class TelegramBot:
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                 try:
                     news_data = await asyncio.to_thread(get_cached_news_summary, symbol)
-                    summary_text = html.escape(news_data["summary"])
                     summary_text = html.escape(news_data["summary"])
                     provider = news_data.get("provider", "")
                     model = news_data.get("model", "")
