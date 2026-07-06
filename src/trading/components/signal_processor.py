@@ -67,7 +67,7 @@ class SignalProcessor:
 
         min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:min_viable_trade_amount")
+            raw = await engine.config_service.get_config("min_viable_trade_amount")
             if raw:
                 min_viable_amount = float(raw)
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
@@ -395,22 +395,22 @@ class SignalProcessor:
         bb_squeeze_width = None
         bb_expansion_width = None
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_adx_strong")
+            raw = await engine.config_service.get_config("regime_adx_strong")
             if raw:
                 adx_strong = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_adx_moderate")
+            raw = await engine.config_service.get_config("regime_adx_moderate")
             if raw:
                 adx_moderate = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_volatility_high_pct")
+            raw = await engine.config_service.get_config("regime_volatility_high_pct")
             if raw:
                 vol_high_pct = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_volatility_low_pct")
+            raw = await engine.config_service.get_config("regime_volatility_low_pct")
             if raw:
                 vol_low_pct = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_bb_squeeze_width")
+            raw = await engine.config_service.get_config("regime_bb_squeeze_width")
             if raw:
                 bb_squeeze_width = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_bb_expansion_width")
+            raw = await engine.config_service.get_config("regime_bb_expansion_width")
             if raw:
                 bb_expansion_width = float(raw)
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
@@ -890,10 +890,10 @@ class SignalProcessor:
         max_port_exp = None
         max_port_risk = None
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_portfolio_exposure_pct")
+            raw = await engine.config_service.get_config("max_portfolio_exposure_pct")
             if raw:
                 max_port_exp = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_portfolio_stop_risk_pct")
+            raw = await engine.config_service.get_config("max_portfolio_stop_risk_pct")
             if raw:
                 max_port_risk = float(raw)
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
@@ -906,13 +906,13 @@ class SignalProcessor:
         min_hold_time_mult = 1.0
         global_min_rr = None
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:min_stop_loss_atr_mult")
+            raw = await engine.config_service.get_config("min_stop_loss_atr_mult")
             if raw:
                 min_stop_atr_mult = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:min_max_hold_time_mult")
+            raw = await engine.config_service.get_config("min_max_hold_time_mult")
             if raw:
                 min_hold_time_mult = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:min_risk_reward_ratio")
+            raw = await engine.config_service.get_config("min_risk_reward_ratio")
             if raw:
                 global_min_rr = float(raw)
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
@@ -1306,10 +1306,10 @@ class SignalProcessor:
         max_sl_reviews_prompt = settings.MAX_STOP_LOSS_REVIEWS
         max_tp_reviews_prompt = settings.MAX_TAKE_PROFIT_REVIEWS
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_stop_loss_reviews")
+            raw = await engine.config_service.get_config("max_stop_loss_reviews")
             if raw:
                 max_sl_reviews_prompt = int(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_take_profit_reviews")
+            raw = await engine.config_service.get_config("max_take_profit_reviews")
             if raw:
                 max_tp_reviews_prompt = int(raw)
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
@@ -1318,10 +1318,10 @@ class SignalProcessor:
         max_partial_tp_reviews_prompt = settings.MAX_PARTIAL_TP_REVIEWS
         max_dust_sweep_reviews_prompt = settings.MAX_DUST_SWEEP_REVIEWS
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_partial_tp_reviews")
+            raw = await engine.config_service.get_config("max_partial_tp_reviews")
             if raw:
                 max_partial_tp_reviews_prompt = int(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_dust_sweep_reviews")
+            raw = await engine.config_service.get_config("max_dust_sweep_reviews")
             if raw:
                 max_dust_sweep_reviews_prompt = int(raw)
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
@@ -1863,7 +1863,7 @@ class SignalProcessor:
 
         # --- Global confidence rejection threshold (set during stock selection) ---
         if validated.action == "BUY":
-            conf_rejection_raw = await asyncio.to_thread(engine.redis.get, "trading:confidence_rejection_threshold")
+            conf_rejection_raw = await engine.config_service.get_config("confidence_rejection_threshold")
             if conf_rejection_raw:
                 try:
                     conf_threshold = float(conf_rejection_raw)
@@ -1938,7 +1938,7 @@ class SignalProcessor:
         if not current_sector:
             return False
 
-        max_positions_per_sector_raw = await asyncio.to_thread(engine.redis.get, "trading:max_positions_per_sector")
+        max_positions_per_sector_raw = await engine.config_service.get_config("max_positions_per_sector")
         if max_positions_per_sector_raw:
             try:
                 max_positions_per_sector = int(max_positions_per_sector_raw)
@@ -3212,10 +3212,10 @@ class SignalProcessor:
             max_keep = settings.PAUSE_MAX_CONSECUTIVE_KEEP
             force_resume_mult = settings.PAUSE_FORCE_RESUME_RISK_MULTIPLIER
             try:
-                raw = await asyncio.to_thread(engine.redis.get, "trading:pause_max_consecutive_keep")
+                raw = await engine.config_service.get_config("pause_max_consecutive_keep")
                 if raw:
                     max_keep = int(raw)
-                raw = await asyncio.to_thread(engine.redis.get, "trading:pause_force_resume_risk_multiplier")
+                raw = await engine.config_service.get_config("pause_force_resume_risk_multiplier")
                 if raw:
                     force_resume_mult = float(raw)
             except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
@@ -3354,7 +3354,7 @@ class SignalProcessor:
                 await asyncio.to_thread(engine.redis.expire, fail_key, 3600)
                 _min_pause = settings.MIN_LLM_PAUSE_DURATION
                 try:
-                    raw = await asyncio.to_thread(engine.redis.get, "trading:min_llm_pause_duration")
+                    raw = await engine.config_service.get_config("min_llm_pause_duration")
                     if raw:
                         _min_pause = int(raw)
                 except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
@@ -3408,7 +3408,7 @@ class SignalProcessor:
                         llm_pause_time = float(llm_pause_time_raw)
                         _min_pause = settings.MIN_LLM_PAUSE_DURATION
                         try:
-                            raw = await asyncio.to_thread(engine.redis.get, "trading:min_llm_pause_duration")
+                            raw = await engine.config_service.get_config("min_llm_pause_duration")
                             if raw:
                                 _min_pause = int(raw)
                         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
@@ -3603,13 +3603,13 @@ class SignalProcessor:
         # configured them, so the skip logic is functional even before the
         # LLM provides values. The LLM can override these at any time via
         # its stock selection response.
-        skip_price_mult_raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_price_change_atr_mult")
+        skip_price_mult_raw = await engine.config_service.get_config("skip_eval_price_change_atr_mult")
         skip_price_mult = float(skip_price_mult_raw) if skip_price_mult_raw else 1.0
 
-        skip_rsi_raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_change")
+        skip_rsi_raw = await engine.config_service.get_config("skip_eval_rsi_change")
         skip_rsi = float(skip_rsi_raw) if skip_rsi_raw else 5.0
 
-        skip_macd_raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_macd_hist_change")
+        skip_macd_raw = await engine.config_service.get_config("skip_eval_macd_hist_change")
         skip_macd = float(skip_macd_raw) if skip_macd_raw else 0.0005
 
         # Price change since last evaluation
@@ -3643,10 +3643,10 @@ class SignalProcessor:
             rsi_oversold = None
             rsi_overbought = None
             try:
-                raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_oversold")
+                raw = await engine.config_service.get_config("skip_eval_rsi_oversold")
                 if raw:
                     rsi_oversold = float(raw)
-                raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_overbought")
+                raw = await engine.config_service.get_config("skip_eval_rsi_overbought")
                 if raw:
                     rsi_overbought = float(raw)
             except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
@@ -3818,16 +3818,16 @@ class SignalProcessor:
         adx_moderate = 25.0
         bb_squeeze_width = 0.02
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_oversold")
+            raw = await engine.config_service.get_config("skip_eval_rsi_oversold")
             if raw:
                 rsi_oversold = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_overbought")
+            raw = await engine.config_service.get_config("skip_eval_rsi_overbought")
             if raw:
                 rsi_overbought = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_adx_moderate")
+            raw = await engine.config_service.get_config("regime_adx_moderate")
             if raw:
                 adx_moderate = float(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:regime_bb_squeeze_width")
+            raw = await engine.config_service.get_config("regime_bb_squeeze_width")
             if raw:
                 bb_squeeze_width = float(raw)
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
@@ -4322,13 +4322,13 @@ class SignalProcessor:
         max_partial_tp_reviews = settings.MAX_PARTIAL_TP_REVIEWS
         max_dust_sweep_reviews = settings.MAX_DUST_SWEEP_REVIEWS
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_stop_loss_reviews")
+            raw = await engine.config_service.get_config("max_stop_loss_reviews")
             if raw: max_sl_reviews = int(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_take_profit_reviews")
+            raw = await engine.config_service.get_config("max_take_profit_reviews")
             if raw: max_tp_reviews = int(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_partial_tp_reviews")
+            raw = await engine.config_service.get_config("max_partial_tp_reviews")
             if raw: max_partial_tp_reviews = int(raw)
-            raw = await asyncio.to_thread(engine.redis.get, "trading:max_dust_sweep_reviews")
+            raw = await engine.config_service.get_config("max_dust_sweep_reviews")
             if raw: max_dust_sweep_reviews = int(raw)
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
@@ -4367,7 +4367,7 @@ class SignalProcessor:
 
         min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
         try:
-            raw = await asyncio.to_thread(engine.redis.get, "trading:min_viable_trade_amount")
+            raw = await engine.config_service.get_config("min_viable_trade_amount")
             if raw: min_viable_amount = float(raw)
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError): pass
 

@@ -66,6 +66,7 @@ from src.trading.components.signal_processor import SignalProcessor
 from src.trading.components.backtest_manager import BacktestManager
 from src.trading.components.market_data_manager import MarketDataManager, ClockInfo
 from src.trading.components.symbol_reevaluator import SymbolReevaluator
+from src.config.config_service import UnifiedConfigService
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ class TradingEngine:
         self.max_symbols = settings.MAX_SYMBOLS
         self.effective_max_symbols = self.max_symbols
         self.redis = get_redis_client()
+        self.config_service = UnifiedConfigService(self.redis)
         self._exchange_semaphore = asyncio.Semaphore(10)  # max 10 concurrent API calls
         self._news_semaphore = asyncio.Semaphore(5)  # max 5 concurrent news fetches
         self._indicator_semaphore = asyncio.Semaphore(4)  # limit concurrent indicator computations
