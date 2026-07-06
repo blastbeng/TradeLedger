@@ -3368,7 +3368,7 @@ class SignalProcessor:
                 llm_provider = pause_result["provider"]
                 llm_model = pause_result["model"]
                 decision = json.loads(response)
-            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+            except (asyncio.TimeoutError, ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
                 logger.warning(f"Pause/resume LLM call failed: {e}")
                 # Track consecutive failures in Redis
                 fail_key = "trading:pause:llm_fail_count"
@@ -3773,7 +3773,6 @@ class SignalProcessor:
             ]
             try:
                 ind = await asyncio.to_thread(compute_all_indicators, raw_candles)
-            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             except (ValueError, TypeError, IndexError, ZeroDivisionError) as e:
                 logger.debug(
                     f"Failed to compute indicators on-the-fly for {symbol} {timeframe}: {e}"
