@@ -815,7 +815,7 @@ class TradingEngine:
 
     async def _periodic_portfolio_rebalance(self):
         """Periodically trigger portfolio rebalance for long-term trading."""
-        if not getattr(settings, 'PORTFOLIO_REBALANCE_ENABLED', False):
+        if not settings.PORTFOLIO_REBALANCE_ENABLED:
             return
         await asyncio.sleep(3600)  # initial delay
         while self._running:
@@ -824,7 +824,7 @@ class TradingEngine:
                 self.trigger_portfolio_rebalance()
             except Exception as e:
                 logger.error(f"Periodic portfolio rebalance error: {e}", exc_info=True)
-            await asyncio.sleep(getattr(settings, 'PORTFOLIO_REBALANCE_INTERVAL_SECONDS', 7776000))  # default 90 days
+            await asyncio.sleep(settings.PORTFOLIO_REBALANCE_INTERVAL_SECONDS)
 
     async def _market_clock_monitor(self):
         """Periodically check market clock and pause/resume trading based on market open/close."""
