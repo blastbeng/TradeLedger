@@ -680,7 +680,7 @@ class SignalProcessor:
                     db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
                     if db_candles:
                         return tf, [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
-                except Exception as e:
+                except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                     logger.debug(f"DB OHLCV fetch failed for {symbol} {tf}: {e}")
                 return tf, None
             ohlcv_results = await asyncio.gather(*[_fetch_ohlcv_tf(tf) for tf in settings.OHLCV_TIMEFRAMES])
@@ -834,7 +834,7 @@ class SignalProcessor:
         try:
             asset = await engine._get_asset_info(symbol)
             min_order_amount = float(asset.min_order_size) if asset.min_order_size else None
-        except Exception:
+        except (ValueError, TypeError, AttributeError, ConnectionError, TimeoutError, OSError):
             min_order_amount = None
         current_price = ticker['last']
         if min_order_amount is not None and current_price:
@@ -858,7 +858,7 @@ class SignalProcessor:
         if settings.NEWS_ENABLED:
             try:
                 aggregate_sentiment = await engine._get_cached_sentiment(symbol)
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.info(f"Could not fetch aggregate sentiment for {symbol}: {e}")
 
         # Sentiment trend
@@ -886,7 +886,7 @@ class SignalProcessor:
             full_breadth_raw = await asyncio.to_thread(engine.redis.get, "market:breadth:full")
             if full_breadth_raw:
                 full_market_breadth = json.loads(full_breadth_raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
             pass
         session_info = engine._get_session_info()
 
@@ -915,7 +915,7 @@ class SignalProcessor:
             raw = await asyncio.to_thread(engine.redis.get, "trading:max_portfolio_stop_risk_pct")
             if raw:
                 max_port_risk = float(raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         partial_tp_executed_levels = engine.positions[symbol].get("partial_tp_levels_triggered", []) if symbol in engine.positions else []
@@ -934,7 +934,7 @@ class SignalProcessor:
             raw = await asyncio.to_thread(engine.redis.get, "trading:min_risk_reward_ratio")
             if raw:
                 global_min_rr = float(raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         return {
@@ -1334,7 +1334,7 @@ class SignalProcessor:
             raw = await asyncio.to_thread(engine.redis.get, "trading:max_take_profit_reviews")
             if raw:
                 max_tp_reviews_prompt = int(raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         max_partial_tp_reviews_prompt = settings.MAX_PARTIAL_TP_REVIEWS
@@ -1346,7 +1346,7 @@ class SignalProcessor:
             raw = await asyncio.to_thread(engine.redis.get, "trading:max_dust_sweep_reviews")
             if raw:
                 max_dust_sweep_reviews_prompt = int(raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         # Scale stop-loss review limit for long-term timeframes
@@ -1401,7 +1401,7 @@ class SignalProcessor:
                 if last_notify_raw:
                     if (time.time() - float(last_notify_raw)) < 3600:
                         should_notify = False
-            except Exception:
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
             if should_notify and engine.notifier:
                 await engine.notifier.send_notification(
@@ -1414,7 +1414,7 @@ class SignalProcessor:
                 )
                 try:
                     await asyncio.to_thread(engine.redis.setex, stale_notify_key, 3600, str(time.time()))
-                except Exception:
+                except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                     pass
             async with engine._eval_state_lock:
                 engine._force_eval.pop(symbol, None)
@@ -1463,7 +1463,7 @@ class SignalProcessor:
                 if ts is not None and (last_data_ts is None or ts > last_data_ts):
                     last_data_ts = ts
                     last_data_tf = tf
-            except Exception:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
                 pass
 
         if last_data_ts is not None:
@@ -1493,7 +1493,7 @@ class SignalProcessor:
             if last_notify_raw:
                 if (time.time() - float(last_notify_raw)) < 3600:
                     should_notify = False
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         if should_notify and engine.notifier:
@@ -1509,7 +1509,7 @@ class SignalProcessor:
             )
             try:
                 await asyncio.to_thread(engine.redis.setex, no_ohlcv_notify_key, 3600, str(time.time()))
-            except Exception:
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
 
         async with engine._eval_state_lock:
@@ -2026,7 +2026,7 @@ class SignalProcessor:
                     summary = summary_raw
                 if summary in ("No recent news.", "Could not generate summary."):
                     summary = ""
-            except Exception:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
                 pass  # fallback to no summary
 
             base = f"📰 (sentiment: {compound:+.2f}[{sentiment_label}], {total} articles)"
@@ -2344,7 +2344,7 @@ class SignalProcessor:
             async with engine._eval_state_lock:
                 engine._force_eval.pop(symbol, None)
             # Fall through to fallback HOLD below
-        except Exception as e:
+        except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
             logger.error(f"LLM Step 1a failed for {symbol}: {e}")
             async with engine._eval_state_lock:
                 engine._force_eval.pop(symbol, None)
@@ -2692,7 +2692,7 @@ class SignalProcessor:
                     "parameters": {},
                 },
             })
-        except Exception as e:
+        except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
             logger.error(f"LLM Step 1b failed for {symbol}: {e}. Using Step 1a analysis as fallback.")
             step1b_response = json.dumps({
                 "action": analysis_result.get("action", "HOLD"),
@@ -2728,7 +2728,7 @@ class SignalProcessor:
                 preliminary_strategy = create_strategy_from_llm(response2["response"])
                 llm_provider = response2["provider"]
                 llm_model = response2["model"]
-            except Exception as e2:
+            except (asyncio.TimeoutError, ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e2:
                 logger.error(f"LLM Step 1b response still invalid after retry for {symbol}: {e2}")
                 preliminary_strategy = LLMStrategy(self._create_fallback_hold_signal(
                     symbol, "Failed to parse LLM Step 1b response after retry", strategy_model_type
@@ -3240,7 +3240,7 @@ class SignalProcessor:
                 raw = await asyncio.to_thread(engine.redis.get, "trading:pause_force_resume_risk_multiplier")
                 if raw:
                     force_resume_mult = float(raw)
-            except Exception:
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
 
             # Gather minimal market context
@@ -3249,7 +3249,7 @@ class SignalProcessor:
                 tickers_map = await engine._get_quotes_async([settings.BENCHMARK_SYMBOL], timeout=45.0)
                 benchmark_ticker = tickers_map.get(settings.BENCHMARK_SYMBOL)
                 benchmark_price = benchmark_ticker.get("last") if benchmark_ticker else None
-            except Exception:
+            except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, KeyError):
                 pass
 
             # Market breadth from Redis (already computed by background task)
@@ -3258,7 +3258,7 @@ class SignalProcessor:
                 raw = await asyncio.to_thread(engine.redis.get, "market:breadth:full")
                 if raw:
                     full_market_breadth = json.loads(raw)
-            except Exception:
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
                 pass
             market_breadth = getattr(engine, '_market_breadth', None)
 
@@ -3368,7 +3368,7 @@ class SignalProcessor:
                 llm_provider = pause_result["provider"]
                 llm_model = pause_result["model"]
                 decision = json.loads(response)
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Pause/resume LLM call failed: {e}")
                 # Track consecutive failures in Redis
                 fail_key = "trading:pause:llm_fail_count"
@@ -3379,7 +3379,7 @@ class SignalProcessor:
                     raw = await asyncio.to_thread(engine.redis.get, "trading:min_llm_pause_duration")
                     if raw:
                         _min_pause = int(raw)
-                except Exception:
+                except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                     pass
                 if engine.notifier:
                     await engine.notifier.send_notification(
@@ -3433,7 +3433,7 @@ class SignalProcessor:
                             raw = await asyncio.to_thread(engine.redis.get, "trading:min_llm_pause_duration")
                             if raw:
                                 _min_pause = int(raw)
-                        except Exception:
+                        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                             pass
                         if time.time() - llm_pause_time < _min_pause:
                             remaining = _min_pause - (time.time() - llm_pause_time)
@@ -3671,7 +3671,7 @@ class SignalProcessor:
                 raw = await asyncio.to_thread(engine.redis.get, "trading:skip_eval_rsi_overbought")
                 if raw:
                     rsi_overbought = float(raw)
-            except Exception:
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
             if (
                 rsi is not None
@@ -3719,7 +3719,7 @@ class SignalProcessor:
                 cached_ratio = await asyncio.to_thread(engine.redis.get, ratio_cache_key)
                 if cached_ratio is not None:
                     return round(float(cached_ratio), 3)
-            except Exception:
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
 
         redis_key = f"volume_trend:ema:{symbol}"
@@ -3743,7 +3743,7 @@ class SignalProcessor:
                 if cache_ttl > 0:
                     await asyncio.to_thread(engine.redis.setex, ratio_cache_key, cache_ttl, "1.0")
                 return 1.0
-        except Exception as e:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError) as e:
             logger.info(f"Volume trend computation failed for {symbol}: {e}")
             return None
 
@@ -3773,7 +3773,8 @@ class SignalProcessor:
             ]
             try:
                 ind = await asyncio.to_thread(compute_all_indicators, raw_candles)
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+            except (ValueError, TypeError, IndexError, ZeroDivisionError) as e:
                 logger.debug(
                     f"Failed to compute indicators on-the-fly for {symbol} {timeframe}: {e}"
                 )
@@ -3852,7 +3853,7 @@ class SignalProcessor:
             raw = await asyncio.to_thread(engine.redis.get, "trading:regime_bb_squeeze_width")
             if raw:
                 bb_squeeze_width = float(raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         prev_close = prev.get("close")
@@ -4007,7 +4008,7 @@ class SignalProcessor:
             try:
                 tickers_map = await engine._get_quotes_async([symbol.split("/")[0]], timeout=45.0)
                 ticker = tickers_map.get(symbol.split("/")[0])
-            except Exception:
+            except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, KeyError):
                 return False
             current_price = ticker.get("last", 0) if ticker else 0
             return current_price > 0 and current_price <= target_price
@@ -4168,7 +4169,7 @@ class SignalProcessor:
                 timeout=settings.LLM_TIMEOUT
             )
             step1a_response = step1a_result["response"]
-        except Exception as e:
+        except (asyncio.TimeoutError, ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
             return None, None, None, {"error": f"LLM Step 1a call failed: {e}"}
 
         analysis = self._parse_analysis_response(step1a_response)
@@ -4217,7 +4218,7 @@ class SignalProcessor:
                 timeout=settings.LLM_TIMEOUT
             )
             step1b_response = step1b_result["response"]
-        except Exception as e:
+        except (asyncio.TimeoutError, ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
             return None, None, None, {"error": f"LLM Step 1b call failed: {e}"}
 
         try:
@@ -4350,7 +4351,7 @@ class SignalProcessor:
             if raw: max_partial_tp_reviews = int(raw)
             raw = await asyncio.to_thread(engine.redis.get, "trading:max_dust_sweep_reviews")
             if raw: max_dust_sweep_reviews = int(raw)
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         if tf_seconds >= settings.LONG_TERM_TF_SECONDS:
@@ -4389,7 +4390,7 @@ class SignalProcessor:
         try:
             raw = await asyncio.to_thread(engine.redis.get, "trading:min_viable_trade_amount")
             if raw: min_viable_amount = float(raw)
-        except: pass
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError): pass
 
         remaining = max(0.0, base_balance - engine._cycle_spent)
 
