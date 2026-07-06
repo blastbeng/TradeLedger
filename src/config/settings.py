@@ -888,7 +888,23 @@ class Settings(BaseSettings):
         - PAPER_INITIAL_BALANCE — only used at first initialization
         """
         new_settings = self.__class__()
+        new_settings.validate_llm_settings()
+
+        # Fields that are NOT safe to reload at runtime
+        unsafe_fields = {
+            "DATABASE_BACKEND",
+            "DATABASE_PATH",
+            "REDIS_HOST",
+            "REDIS_PORT",
+            "REDIS_DB",
+            "WEB_HOST",
+            "WEB_PORT",
+            "PAPER_INITIAL_BALANCE",
+        }
+
         for field_name in self.model_fields:
+            if field_name in unsafe_fields:
+                continue
             setattr(self, field_name, getattr(new_settings, field_name))
 
     class Config:
