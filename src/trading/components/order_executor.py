@@ -1102,7 +1102,6 @@ class OrderExecutor:
                             "adjusted_amount": amount,
                         }
                     )
-        except Exception as e:
         except (AttributeError, TypeError, ValueError, RuntimeError) as e:
             logger.warning(f"Could not verify/adjust min order size for {symbol}: {e}")
 
@@ -1499,7 +1498,6 @@ class OrderExecutor:
                         }
                     )
                 return
-        except Exception as e:
         except (AttributeError, TypeError, ValueError, RuntimeError, KeyError) as e:
             logger.warning(f"Could not verify min sell size for {symbol}: {e}")
 
@@ -2116,7 +2114,6 @@ class OrderExecutor:
             base = queued["symbol"].split("/")[0]
             quotes = await engine._get_quotes_async([base], timeout=45.0)
             ticker = quotes.get(base)
-        except (AttributeError, TypeError, ValueError):
         except (KeyError, RuntimeError, ConnectionError, ValueError):
             return False
         if not ticker or ticker.get("last") is None:
@@ -3251,7 +3248,7 @@ class OrderExecutor:
         if oco_pair_id:
             try:
                 await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
-            except (AttributeError, TypeError, ValueError):
+            except (RuntimeError, ValueError, ConnectionError):
                 pass
             async with engine._queued_orders_lock:
                 engine.queued_orders = [q for q in engine.queued_orders if q.get("order_id") != oco_pair_id]
