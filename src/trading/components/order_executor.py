@@ -1762,7 +1762,7 @@ class OrderExecutor:
                     }
                     try:
                         await engine._place_exit_orders(symbol, _dummy_signal, _exit_prices, engine.positions[symbol].get("timeframe"))
-                    except Exception as _e:
+                    except (TypeError, ValueError, RuntimeError, AttributeError) as _e:
                         logger.warning(f"Failed to place replacement exit orders after partial sell for {symbol}: {_e}")
             else:
                 # Full sell: remove position
