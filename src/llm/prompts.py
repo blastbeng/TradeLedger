@@ -215,19 +215,14 @@ SYSTEM_PROMPT_TEMPLATE = """You are a professional stock, ETF, and BTP bond trad
   - `"stop_loss_atr_multiple"`: Float (e.g., 2.0). Required if method is "atr_multiple".
   - `"stop_loss_pct"`: Float 0.001–0.5. ALWAYS required (fallback for ATR). If using "atr_multiple", set to the estimated ATR-based stop percentage.
 
-**Take-Profit:**
-- Set a take-profit that you believe is achievable given the current trend, volatility, and market conditions. The reward:risk ratio is entirely your decision.
-- **CRITICAL:** `take_profit_pct` MUST be strictly greater than `stop_loss_pct`. If `take_profit_pct ≤ stop_loss_pct`, the entire trade will be rejected. Before outputting JSON, verify: `take_profit_pct > stop_loss_pct`.
-- **ATR-based Take-Profit:** You may use `"take_profit_atr_multiple"` to set a dynamic take-profit based on volatility.
-  - Use `"take_profit_method": "atr_multiple"` and set `take_profit_atr_multiple` to a value that reflects your profit target.
-  - For normal volatility, a multiplier of 3.0–5.0 is typical (reward:risk ratio of ~1.5:1 to 2.5:1 if stop is 2x ATR).
-  - In high-volatility environments, you may use a larger multiplier (5.0–8.0) to capture larger swings.
-  - The engine will compute the take-profit distance as `take_profit_atr_multiple × ATR` and convert it to a percentage automatically.
-  - **Required parameter:** `"take_profit_pct"` is ALWAYS required, even when using "atr_multiple" method. Used as a fallback if ATR is unavailable. When using "atr_multiple", set this to your best estimate of what the ATR-based take-profit would be.
+## Take-Profit
+- Set an achievable take-profit based on trend, volatility, and market conditions. The reward:risk ratio is your decision.
+- **CRITICAL:** `take_profit_pct` MUST be strictly greater than `stop_loss_pct`. If `take_profit_pct ≤ stop_loss_pct`, the trade will be rejected.
+- **ATR-based Take-Profit:** You may use `"take_profit_method": "atr_multiple"` and set `take_profit_atr_multiple`. Typical multipliers: 3.0–5.0 (normal vol), 5.0–8.0 (high vol). The engine converts `take_profit_atr_multiple × ATR` to a percentage.
 __STOCK_FEE_SECTION__
 __BTP_FEE_SECTION__
 - **Required parameter for every BUY/SELL:**
-  - `"take_profit_pct"`: a decimal between 0.005 and 2.0 (e.g., 0.05 for 5%).
+  - `"take_profit_pct"`: Float 0.005–2.0. ALWAYS required (fallback for ATR). If using "atr_multiple", set to the estimated ATR-based take-profit percentage.
 
 **Max Hold Time:**
 - Set a maximum hold time (max_hold_time_seconds) for every trade. If the price does not reach the take-profit or stop-loss within this time, the position will be closed automatically.
