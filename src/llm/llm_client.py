@@ -50,20 +50,20 @@ def _get_ollama_response(prompt: str, system_prompt: str = "", model: str = None
                     response.raise_for_status()
                     return response.json()
 
-            future = llamacpp_executor.submit(_do_request, priority=0)
-            data = future.result(timeout=httpx_timeout.read + 10.0)
-                
-                # Validate response structure
-                if "message" not in data or "content" not in data["message"]:
-                    logger.error(
-                        "Ollama response missing 'message.content' key. Full response: %s",
-                        json.dumps(data)[:2000]
-                    )
-                    raise RuntimeError(f"Ollama API returned unexpected format: missing 'message.content'. Response: {str(data)[:500]}")
-                
-                content = data["message"]["content"]
-                logger.info("LLM response (ollama): %.500s...", content)
-                return content
+            future = llamacpp_executor.submit(_do_request, priority=0)                                                                                                                                                                                                             
+            data = future.result(timeout=httpx_timeout.read + 10.0)                                                                                                                                                                                                                
+                                                                                                                                                                                                                                                                                   
+            # Validate response structure                                                                                                                                                                                                                                          
+            if "message" not in data or "content" not in data["message"]:                                                                                                                                                                                                          
+                logger.error(                                                                                                                                                                                                                                                      
+                    "Ollama response missing 'message.content' key. Full response: %s",                                                                                                                                                                                            
+                    json.dumps(data)[:2000]                                                                                                                                                                                                                                        
+                )                                                                                                                                                                                                                                                                  
+                raise RuntimeError(f"Ollama API returned unexpected format: missing 'message.content'. Response: {str(data)[:500]}")                                                                                                                                               
+                                                                                                                                                                                                                                                                                   
+            content = data["message"]["content"]                                                                                                                                                                                                                                   
+            logger.info("LLM response (ollama): %.500s...", content)                                                                                                                                                                                                               
+            return content
         except httpx.HTTPStatusError as e:
             if e.response.status_code not in (429, 500, 502, 503, 504):
                 logger.error(
@@ -132,20 +132,20 @@ def _get_openai_response(prompt: str, system_prompt: str = "", model: str = None
                     response.raise_for_status()
                     return response.json()
 
-            future = llamacpp_executor.submit(_do_request, priority=0)
-            data = future.result(timeout=httpx_timeout.read + 10.0)
-                
-                # Validate response structure
-                if "choices" not in data or not data["choices"]:
-                    logger.error(
-                        "OpenAI response missing 'choices' key. Full response: %s",
-                        json.dumps(data)[:2000]
-                    )
-                    raise RuntimeError(f"OpenAI API returned unexpected format: missing 'choices'. Response: {str(data)[:500]}")
-                
-                content = data["choices"][0]["message"]["content"]
-                logger.info("LLM response (openai): %.500s...", content)
-                return content
+            future = llamacpp_executor.submit(_do_request, priority=0)                                                                                                                                                                                                             
+            data = future.result(timeout=httpx_timeout.read + 10.0)                                                                                                                                                                                                                
+                                                                                                                                                                                                                                                                                   
+            # Validate response structure                                                                                                                                                                                                                                          
+            if "choices" not in data or not data["choices"]:                                                                                                                                                                                                                       
+                logger.error(                                                                                                                                                                                                                                                      
+                    "OpenAI response missing 'choices' key. Full response: %s",                                                                                                                                                                                                    
+                    json.dumps(data)[:2000]                                                                                                                                                                                                                                        
+                )                                                                                                                                                                                                                                                                  
+                raise RuntimeError(f"OpenAI API returned unexpected format: missing 'choices'. Response: {str(data)[:500]}")                                                                                                                                                       
+                                                                                                                                                                                                                                                                                   
+            content = data["choices"][0]["message"]["content"]                                                                                                                                                                                                                     
+            logger.info("LLM response (openai): %.500s...", content)                                                                                                                                                                                                               
+            return content
         except httpx.HTTPStatusError as e:
             # Log the full response body for non-retryable errors (especially 400)
             if e.response.status_code not in (429, 500, 502, 503, 504):
