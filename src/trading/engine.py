@@ -2478,14 +2478,6 @@ class TradingEngine:
         self._pending_entries.pop(symbol, None)
         self._state_dirty = True
 
-    def _get_tickers_for_symbols_sync(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
-        """Fetch latest quotes for a list of symbols synchronously, batching missing ones.
-
-        Uses get_quotes_cached (Redis/DB only, no network calls) to avoid
-        blocking the default asyncio thread pool with slow yfinance requests.
-        """
-        return self._market_data_manager._get_tickers_for_symbols_sync(symbols)
-
     async def _run_backtest_variant(
         self,
         symbol: str,

@@ -153,7 +153,7 @@ class PositionManager:
                 queued_sell_symbols.append(q['symbol'])
 
         if queued_sell_symbols:
-            sell_tickers = await asyncio.to_thread(engine._get_tickers_for_symbols_sync, queued_sell_symbols)
+            sell_tickers = await asyncio.to_thread(engine._market_data_manager._get_tickers_for_symbols_sync, queued_sell_symbols)
         else:
             sell_tickers = {}
         for q in engine.queued_orders:
