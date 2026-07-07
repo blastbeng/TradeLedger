@@ -1845,10 +1845,6 @@ class TradingEngine:
             )
         return unique
 
-    async def _fetch_symbol_market_data(self, symbol: str, assigned_tf: str) -> Optional[Dict[str, Any]]:
-        """Fetch all raw market data for a symbol: ticker, fundamentals, balance, OHLCV, and multi-TF indicators."""
-        return await self._signal_processor.fetch_symbol_market_data(symbol, assigned_tf)
-
     async def _process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False):
         """Fetch market data, get LLM strategy, validate, and execute."""
         await self._signal_processor.process_symbol(symbol_entry, trading_paused)
