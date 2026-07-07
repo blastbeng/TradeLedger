@@ -189,7 +189,7 @@ async def status():
 @http_router.get("/api/trades")
 async def trades(limit: int = 0):
     engine = get_engine()
-    open_trades = await engine.get_open_trades()
+    open_trades = await engine.event_bus.request("get_open_trades")
     for t in open_trades:
         t["display_symbol"] = await _get_display_symbol(engine, t["symbol"], t.get("timeframe"))
     return {"trades": open_trades}

@@ -316,7 +316,7 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         try:
-            open_trades = await self.engine.get_open_trades()
+            open_trades = await self.engine.event_bus.request("get_open_trades")
         except Exception as e:
             logger.error(f"Failed to get open trades: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve open trades.", reply_markup=self.keyboard)
@@ -780,7 +780,7 @@ class TelegramBot:
             return
 
         try:
-            open_trades = await asyncio.to_thread(self.engine.get_open_trades)
+            open_trades = await self.engine.event_bus.request("get_open_trades")
         except Exception as e:
             logger.error(f"Failed to get open trades: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve open trades.", reply_markup=self.keyboard)
