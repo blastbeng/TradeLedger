@@ -2071,13 +2071,9 @@ class TradingEngine:
         self._pending_entries.pop(symbol, None)
         self._state_dirty = True
 
-    async def _prepare_simulation_data(self, symbol: str) -> Dict[str, Any]:
-        """Fetch all necessary data and build the strategy prompt for simulation."""
-        return await self._signal_processor.prepare_simulation_data(symbol)
-
     async def simulate_backtest(self, symbol: str) -> Dict[str, Any]:
         """Simulate Step 1a (analysis), Step 1b (variants), and run backtest without executing trades."""
-        data = await self._prepare_simulation_data(symbol)
+        data = await self._signal_processor.prepare_simulation_data(symbol)
         if "error" in data:
             return data
 
@@ -2111,7 +2107,7 @@ class TradingEngine:
 
     async def simulate_decision(self, symbol: str) -> Dict[str, Any]:
         """Simulate Step 1a (analysis), Step 1b (variants), and Step 2 (final decision) without executing trades."""
-        data = await self._prepare_simulation_data(symbol)
+        data = await self._signal_processor.prepare_simulation_data(symbol)
         if "error" in data:
             return data
 
