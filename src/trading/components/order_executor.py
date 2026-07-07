@@ -1180,7 +1180,7 @@ class OrderExecutor:
 
         # Fetch current price early for position sizing and stop calculations
         base = symbol.split("/")[0]
-        quotes = await engine._get_quotes_async([base], timeout=45.0)
+        quotes = await engine._market_data_manager._get_quotes_async([base], timeout=45.0)
         ticker = quotes.get(base)
         current_price = ticker['last'] if ticker else None
         if current_price is None or current_price <= 0:
@@ -1502,7 +1502,7 @@ class OrderExecutor:
         # Check minimum sell size
         ticker = None
         try:
-            quotes = await engine._get_quotes_async([base], timeout=45.0)
+            quotes = await engine._market_data_manager._get_quotes_async([base], timeout=45.0)
             ticker = quotes.get(base)
             price = ticker['last']
             # --- Stale quote guard: skip SELL if the price is too old ---
@@ -2175,7 +2175,7 @@ class OrderExecutor:
         # Fetch current price
         try:
             base = queued["symbol"].split("/")[0]
-            quotes = await engine._get_quotes_async([base], timeout=45.0)
+            quotes = await engine._market_data_manager._get_quotes_async([base], timeout=45.0)
             ticker = quotes.get(base)
         except (KeyError, RuntimeError, ConnectionError, ValueError):
             return False
@@ -2796,7 +2796,7 @@ class OrderExecutor:
 
         try:
             base = symbol.split("/")[0]
-            quotes = await engine._get_quotes_async([base], timeout=45.0)
+            quotes = await engine._market_data_manager._get_quotes_async([base], timeout=45.0)
             ticker = quotes.get(base)
             price = ticker["last"]
         except (KeyError, RuntimeError, ConnectionError, ValueError) as e:

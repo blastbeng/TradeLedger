@@ -333,7 +333,7 @@ class TelegramBot:
         batch_quotes = {}
         if all_price_symbols:
             try:
-                batch_quotes = await self.engine._get_quotes_async(list(all_price_symbols), timeout=15.0)
+                batch_quotes = await self.engine._market_data_manager._get_quotes_async(list(all_price_symbols), timeout=15.0)
             except Exception as e:
                 logger.warning(f"Batch quote fetch failed for trades: {e}")
 

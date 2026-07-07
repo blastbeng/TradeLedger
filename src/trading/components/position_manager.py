@@ -1111,7 +1111,7 @@ class PositionManager:
                 # External sell detected
                 sold_amount = recorded_amount - actual_balance
                 try:
-                    tickers_map = await engine._get_quotes_async([symbol.split("/")[0]], timeout=45.0)
+                    tickers_map = await engine._market_data_manager._get_quotes_async([symbol.split("/")[0]], timeout=45.0)
                     ticker = tickers_map.get(symbol.split("/")[0])
                     current_price = ticker['last'] if ticker else pos.get("price", 0.0)
                 except Exception:

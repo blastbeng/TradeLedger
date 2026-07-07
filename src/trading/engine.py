@@ -441,11 +441,6 @@ class TradingEngine:
         self._balance_cache_time = now
         return balance
 
-    async def _get_quotes_async(self, symbols: List[str], timeout: float = 45.0) -> Dict[str, Dict[str, Any]]:
-        """Fetch quotes using the dedicated quote thread pool with a timeout.
-        This prevents slow yfinance calls from blocking the default asyncio thread pool."""
-        return await self._market_data_manager._get_quotes_async(symbols, timeout)
-
     async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 45.0, chunk_size: int = 50) -> Dict[str, Dict[str, Any]]:
         """Fetch quotes for a large list of symbols in batches to avoid yfinance timeouts.
 

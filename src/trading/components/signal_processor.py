@@ -748,7 +748,7 @@ class SignalProcessor:
 
         # --- Fetch ticker ---
         async with engine._exchange_semaphore:
-            quotes = await engine._get_quotes_async([base_symbol], timeout=45.0)
+            quotes = await engine._market_data_manager._get_quotes_async([base_symbol], timeout=45.0)
             ticker = quotes.get(base_symbol)
         if ticker is None:
             return None
@@ -3151,7 +3151,7 @@ class SignalProcessor:
             # Gather minimal market context
             benchmark_price = None
             try:
-                tickers_map = await engine._get_quotes_async([settings.BENCHMARK_SYMBOL], timeout=45.0)
+                tickers_map = await engine._market_data_manager._get_quotes_async([settings.BENCHMARK_SYMBOL], timeout=45.0)
                 benchmark_ticker = tickers_map.get(settings.BENCHMARK_SYMBOL)
                 benchmark_price = benchmark_ticker.get("last") if benchmark_ticker else None
             except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, KeyError):
@@ -3912,7 +3912,7 @@ class SignalProcessor:
         if etype == "limit_price":
             target_price = condition["price"]
             try:
-                tickers_map = await engine._get_quotes_async([symbol.split("/")[0]], timeout=45.0)
+                tickers_map = await engine._market_data_manager._get_quotes_async([symbol.split("/")[0]], timeout=45.0)
                 ticker = tickers_map.get(symbol.split("/")[0])
             except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, KeyError):
                 return False
