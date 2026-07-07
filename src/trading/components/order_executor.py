@@ -737,6 +737,7 @@ class OrderExecutor:
             # Notify user
             if engine.notifier:
                 stock_name = await engine._get_stock_name(queued["symbol"])
+                stock_name = await self.engine._market_data_manager.get_stock_name(queued["symbol"])
                 display_symbol = engine._format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
                 await engine.notifier.send_notification(
                     f"🔗 OCO pair {oco_pair_id} cancelled for {display_symbol} (other order filled).",

@@ -1018,7 +1018,7 @@ class TradingEngine:
 
         try:
             from src.news.fetcher import fetch_news_for_symbol
-            stock_name = await self._get_stock_name(symbol)
+            stock_name = await self._market_data_manager.get_stock_name(symbol)
             loop = asyncio.get_running_loop()
             articles = await fetch_news_for_symbol(symbol, stock_name)
             if articles:
@@ -1136,7 +1136,7 @@ class TradingEngine:
                 for sym in symbols_to_refresh:
                     try:
                         async with self._news_semaphore:
-                            stock_name = await self._get_stock_name(sym)
+                            stock_name = await self._market_data_manager.get_stock_name(sym)
                             articles = await fetch_news_for_symbol(sym, stock_name)
                             if articles:
                                 base_symbol = sym.split("/")[0] if "/" in sym else sym
