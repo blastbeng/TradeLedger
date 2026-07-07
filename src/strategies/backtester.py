@@ -557,7 +557,7 @@ def backtest_strategy(
                         else:
                             actual_tp_fill = candle[1] if candle[1] >= tp_target else tp_target * (1 - effective_slippage)
                             partial_gross = (actual_tp_fill - entry_price) / entry_price * lvl_frac
-                        _fee_base = trade_amount if _psim else (trade_value or 10000.0)
+                        _fee_base = trade_amount if _psim else (config.trade_value or 10000.0)
                         if config.fee_model == "intesa" and _fee_base > 0:
                             entry_fee_pct = 0.0
                             if not entry_fee_charged:
@@ -685,7 +685,7 @@ def backtest_strategy(
                 cash += pt["pnl_currency"]
             if remaining_fraction > 0 and trades:
                 cash += trades[-1]["pnl_currency"]
-            total_pnl_currency = cash - initial_balance
+            total_pnl_currency = cash - config.initial_balance
 
         # Move to the next candle after the exit
         # Apply cooldown if the trade was a loss
