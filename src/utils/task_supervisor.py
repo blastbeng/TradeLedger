@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from typing import Callable, Awaitable, Optional
+import time
+from typing import Callable, Awaitable, Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,9 @@ class TaskSupervisor:
         self._task: Optional[asyncio.Task] = None
         self._restart_count = 0
         self._running = True
+        self.last_failure_time: Optional[float] = None
+        self.last_exception: Optional[str] = None
+        self.is_healthy: bool = True
 
     async def run(self):
         while self._running:
@@ -45,8 +49,11 @@ class TaskSupervisor:
             except Exception as e:
                 logger.error(f"Task {self.name} failed: {e}", exc_info=True)
                 self._restart_count += 1
+                self.last_failure_time = time.time()
+                self.last_exception = str(e)
                 if self._restart_count > self.max_restarts:
                     logger.critical(f"Task {self.name} exceeded max_restarts ({self.max_restarts}). Aborting supervisor.")
+                    self.is_healthy = False
                     raise
                 logger.info(f"Restarting task {self.name} in {self.restart_delay}s (attempt {self._restart_count}/{self.max_restarts})")
                 await asyncio.sleep(self.restart_delay)
@@ -55,3 +62,15 @@ class TaskSupervisor:
         self._running = False
         if self._task and not self._task.done():
             self._task.cancel()
+
+    def get_health(self) -> Dict[str, Any]:
+        """Returns the current health and status of the supervised task."""
+        return {
+            "name": self.name,
+            "running": self._running,
+            "is_healthy": self.is_healthy,
+            "restart_count": self._restart_count,
+            "max_restarts": self.max_restarts,
+            "last_failure_time": self.last_failure_time,
+            "last_exception": self.last_exception,
+        }

@@ -257,6 +257,20 @@ async def main():
         telegram_supervisor = TaskSupervisor(telegram_bot.start, name="TelegramBot.start", max_restarts=10, restart_delay=10.0)
         telegram_task = asyncio.create_task(telegram_supervisor.run(), name="supervisor:TelegramBot.start")
 
+    supervisors = [engine_supervisor]
+    if telegram_supervisor:
+        supervisors.append(telegram_supervisor)
+
+    async def monitor_supervisor_health(sups, interval=60.0):
+        while True:
+            await asyncio.sleep(interval)
+            for sup in sups:
+                health = sup.get_health()
+                if not health["is_healthy"] or health["restart_count"] > 0:
+                    logging.warning(f"Task supervisor health alert: {health}")
+
+    health_monitor_task = asyncio.create_task(monitor_supervisor_health(supervisors))
+
     # Graceful shutdown handling
     shutdown_event = asyncio.Event()
 
@@ -275,6 +289,12 @@ async def main():
     # Wait for shutdown signal
     await shutdown_event.wait()
     logging.info("Shutting down...")
+
+    health_monitor_task.cancel()
+    try:
+        await health_monitor_task
+    except asyncio.CancelledError:
+        pass
 
     # Stop the engine
     await engine.stop()
