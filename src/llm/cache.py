@@ -27,6 +27,7 @@ def get_cached_llm_response(
     temperature: Optional[float] = None,
     symbol: Optional[str] = None,
     prompt_category: str = "default",
+    bypass_semantic_cache: bool = False,
 ) -> Optional[dict]:
     """
     Get an LLM response, using Redis cache to avoid duplicate calls.
@@ -139,10 +140,10 @@ def get_cached_llm_response(
     logger.debug("LLM cache miss: model_type=%s, system_prompt=%.200s..., prompt=%.500s...", model_type, system_prompt, prompt)
     # --- Semantic Cache Check ---
     _semantic_cache = get_semantic_cache_client()
-    if _semantic_cache.enabled and not market_hash:
+    if _semantic_cache.enabled and not bypass_semantic_cache:
         semantic_hit = None
         try:
-            future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol, model_type, settings.LLM_CACHE_VERSION, prompt_category)
+            future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol, model_type, settings.LLM_CACHE_VERSION, prompt_category, market_hash)
             try:
                 semantic_hit = future.result(timeout=120.0)
             except FuturesTimeoutError:
@@ -303,24 +304,28 @@ def get_cached_llm_response(
     except Exception as e:
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
     # --- Semantic Cache Store ---
-    if _semantic_cache.enabled and not market_hash:
-        future = _semantic_cache_add_executor.submit(
-            _semantic_cache.add,
-            prompt,
-            response_text,
-            symbol,
-            model_type,
-            settings.LLM_CACHE_VERSION,
-            prompt_category
-        )
+    if _semantic_cache.enabled and not bypass_semantic_cache:
+        # Never cache BUY/SELL decisions, as they depend on real-time market data
+        is_critical_decision = ('"action": "BUY"' in response_text or '"action": "SELL"' in response_text)
+        if not is_critical_decision:
+            future = _semantic_cache_add_executor.submit(
+                _semantic_cache.add,
+                prompt,
+                response_text,
+                symbol,
+                model_type,
+                settings.LLM_CACHE_VERSION,
+                prompt_category,
+                market_hash
+            )
 
-        def _log_add_exception(fut):
-            try:
-                fut.result()
-            except Exception as e:
-                logger.error(f"Semantic cache add failed: {e}", exc_info=True)
+            def _log_add_exception(fut):
+                try:
+                    fut.result()
+                except Exception as e:
+                    logger.error(f"Semantic cache add failed: {e}", exc_info=True)
 
-        future.add_done_callback(_log_add_exception)
+            future.add_done_callback(_log_add_exception)
     return {
         "response": response_text,
         "provider": used_provider,

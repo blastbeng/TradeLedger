@@ -233,11 +233,16 @@ class SemanticCacheClient:
             logger.warning(f"Semantic Cache: Failed to get embedding: {e}. Response body: {resp_text}", exc_info=True)
             return None
 
-    def query(self, prompt: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None, prompt_category: str = "default") -> Optional[str]:
+    def query(self, prompt: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None, prompt_category: str = "default", market_hash: Optional[str] = None) -> Optional[str]:
         """Queries the semantic cache for a matching prompt."""
         self._ensure_initialized()
         if not self.enabled or not self.collection_id:
             logger.debug("Semantic Cache: Skipping query (disabled or no collection).")
+            return None
+
+        # Never query cache for BTP ISINs, as each has unique characteristics
+        if symbol and is_btp_isin(symbol):
+            logger.debug("Semantic Cache: Skipping query for BTP ISIN.")
             return None
 
         generalized_prompt, ticker = generalize_prompt(prompt, symbol)
@@ -255,7 +260,8 @@ class SemanticCacheClient:
                 "$and": [
                     {"model_type": model_type},
                     {"cache_version": cache_version or ""},
-                    {"prompt_category": prompt_category}
+                    {"prompt_category": prompt_category},
+                    {"market_hash": market_hash or ""}
                 ]
             }
 
@@ -293,11 +299,16 @@ class SemanticCacheClient:
 
         return None
 
-    def add(self, prompt: str, response: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None, prompt_category: str = "default"):
+    def add(self, prompt: str, response: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None, prompt_category: str = "default", market_hash: Optional[str] = None):
         """Adds a prompt and its response to the semantic cache."""
         self._ensure_initialized()
         if not self.enabled or not self.collection_id:
             logger.debug("Semantic Cache: Skipping add (disabled or no collection).")
+            return
+
+        # Never cache BTP ISINs, as each has unique characteristics
+        if symbol and is_btp_isin(symbol):
+            logger.debug("Semantic Cache: Skipping add for BTP ISIN.")
             return
 
         generalized_prompt, ticker = generalize_prompt(prompt, symbol)
@@ -316,7 +327,8 @@ class SemanticCacheClient:
                 "cached_at": str(time.time()),
                 "model_type": model_type,
                 "cache_version": cache_version or "",
-                "prompt_category": prompt_category
+                "prompt_category": prompt_category,
+                "market_hash": market_hash or ""
             }
 
             # Use a deterministic ID to prevent duplicate entries for the same prompt
