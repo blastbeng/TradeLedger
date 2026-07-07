@@ -119,7 +119,7 @@ class SemanticCacheClient:
                 try:
                     resp = requests.post(
                         embedding_url,
-                        json={"model": self.embedding_model, "input": chunk},
+                        json={"model": self.embedding_model, "input": [chunk]},
                         timeout=120  # Increased timeout for RPi5
                     )
                     resp.raise_for_status()
