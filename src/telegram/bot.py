@@ -933,6 +933,14 @@ class TelegramBot:
 
     async def send_notification(self, message: str, summary: dict = None):
         """Send a notification to the stored chat ID and optionally log a summary."""
+        # Capture full stacktrace for error notifications if an exception is active.
+        # This must be done at the very start, before any try/except blocks in this
+        # method could overwrite sys.exc_info().
+        if summary and summary.get("action") == "ERROR" and "traceback" not in summary:
+            exc_info = sys.exc_info()
+            if exc_info[0] is not None:
+                summary["traceback"] = "".join(traceback.format_exception(*exc_info))
+
         chat_id = await asyncio.to_thread(get_telegram_chat_id)
         logger.info(f"send_notification called, chat_id={chat_id}, message={message[:50]}...")
         if not chat_id:
@@ -1031,11 +1039,6 @@ class TelegramBot:
 
         # --- Log summary to JSONL file (always, if enabled) ---
         if summary is not None and settings.NOTIFICATION_LOG_ENABLED:
-            # Capture full stacktrace for error notifications if an exception is active
-            if summary.get("action") == "ERROR":
-                exc_info = sys.exc_info()
-                if exc_info[0] is not None and "traceback" not in summary:
-                    summary["traceback"] = "".join(traceback.format_exception(*exc_info))
             data_dir = Path(settings.DATA_DIR)
             data_dir.mkdir(parents=True, exist_ok=True)
             log_path = data_dir / "notifications.jsonl"
