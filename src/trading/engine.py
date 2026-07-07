@@ -484,9 +484,6 @@ class TradingEngine:
             logger.warning(f"Failed to fetch sentiment for {base}: {e}")
             return None
 
-    async def _get_clock(self, ttl: float = 30.0) -> Optional[ClockInfo]:
-        return await self._market_data_manager.get_clock(ttl)
-
     async def stop(self):
         """Gracefully stop the engine and all background tasks."""
         logger.info("Stopping trading engine...")
@@ -817,7 +814,7 @@ class TradingEngine:
         await asyncio.sleep(5)  # initial delay
         while self._running:
             try:
-                clock = await self._get_clock()
+                clock = await self._market_data_manager.get_clock()
                 if clock is None:
                     await asyncio.sleep(30)
                     continue
@@ -1647,7 +1644,7 @@ class TradingEngine:
                 now = time.time()
 
                 # Compute active period status once per loop iteration
-                clock = await self._get_clock()
+                clock = await self._market_data_manager.get_clock()
                 is_active_period = False
                 if clock and clock.is_open:
                     now_rome = clock.timestamp
@@ -2480,7 +2477,7 @@ class TradingEngine:
 
     async def _is_market_open(self) -> bool:
         """Return True if the Italian market (Borsa Italiana) is currently open."""
-        clock = await self._get_clock()
+        clock = await self._market_data_manager.get_clock()
         if clock is None:
             # Fallback: if clock unavailable, assume closed to be safe
             return False

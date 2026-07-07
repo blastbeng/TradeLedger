@@ -225,7 +225,7 @@ class StatePersistence:
             market_time_str = None
             if source == "market_closed":
                 # Fetch the current clock to compute a live countdown and current market time
-                clock = await engine._get_clock()
+                clock = await engine._market_data_manager.get_clock()
 
                 market_time_str = None
                 if clock is not None:
