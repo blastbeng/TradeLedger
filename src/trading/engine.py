@@ -586,6 +586,74 @@ class TradingEngine:
                 pass
             self._reeval_trigger.clear()
 
+    async def _clear_pause_and_resume(self, reason: str, notification_msg: str, notification_summary: dict) -> None:
+        """Helper to clear pause keys, set resume cooldown, and notify."""
+        pause_keys = [
+            "trading:paused",
+            "trading:pause_source",
+            "trading:pause_start",
+            "trading:pause_duration",
+            "trading:pause_reason",
+            "trading:llm_pause_time",
+        ]
+        for key in pause_keys:
+            await asyncio.to_thread(self.redis.delete, key)
+        self._reeval_trigger.set()
+        await asyncio.to_thread(self.redis.set, "trading:last_auto_resume", str(time.time()))
+        await asyncio.to_thread(self.redis.setex, "trading:auto_resume_cooldown", 600, "1")
+        if self.notifier:
+            await self.notifier.send_notification(notification_msg, summary=notification_summary)
+
+    async def _handle_missing_pause_duration(self, pause_start_raw: Optional[bytes]) -> bool:
+        """Handle fallback when no pause_duration was set. Returns True if handled."""
+        default_max_pause = settings.MIN_LLM_PAUSE_DURATION
+        try:
+            raw = await self.config_service.get_config("min_llm_pause_duration")
+            if raw:
+                default_max_pause = int(raw)
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
+            pass
+
+        if pause_start_raw is None:
+            logger.warning("Pause has no duration and no start time; forcing auto-resume immediately.")
+            await self._clear_pause_and_resume(
+                "Fallback: no pause start time",
+                "⏰ Trading auto-resumed (pause had no duration and no start time).",
+                {"action": "RESUME", "reason": "Fallback: no pause start time"}
+            )
+            return True
+
+        try:
+            elapsed = time.time() - float(pause_start_raw)
+            if elapsed >= default_max_pause:
+                logger.warning("Pause has no duration; forcing auto‑resume after default fallback (2 hours).")
+                await self._clear_pause_and_resume(
+                    "Fallback pause timeout",
+                    "⏰ Trading auto‑resumed after maximum pause duration (no LLM‑set duration).",
+                    {"action": "RESUME", "reason": "Fallback pause timeout"}
+                )
+        except (ValueError, TypeError):
+            pass
+        return True
+
+    async def _handle_pause_duration_elapsed(self, pause_start_raw: bytes, pause_duration_raw: bytes) -> None:
+        """Check if the pause duration has elapsed and resume if so."""
+        try:
+            pause_start = float(pause_start_raw)
+            pause_duration = int(pause_duration_raw)
+            if time.time() - pause_start >= pause_duration:
+                logger.info("Pause duration elapsed – auto-resuming trading.")
+                stored_reason_raw = await asyncio.to_thread(self.redis.get, "trading:pause_reason")
+                stored_reason = stored_reason_raw.decode() if isinstance(stored_reason_raw, bytes) else (stored_reason_raw or "")
+                reason_text = f" (was paused: {stored_reason})" if stored_reason else ""
+                await self._clear_pause_and_resume(
+                    f"Pause duration elapsed{reason_text}",
+                    f"▶️ Trading auto-resumed after pause duration elapsed.{reason_text}",
+                    {"action": "RESUME", "reason": f"Pause duration elapsed{reason_text}"}
+                )
+        except (ValueError, TypeError):
+            pass  # ignore malformed values
+
     async def _periodic_pause_check(self):
         """Check and handle auto-resume from pause (only for LLM-initiated pauses)."""
         while self._running:
@@ -602,105 +670,16 @@ class TradingEngine:
                     if source and (source.decode() if isinstance(source, bytes) else source) == "llm":
                         pause_start_raw = await asyncio.to_thread(self.redis.get, "trading:pause_start")
                         pause_duration_raw = await asyncio.to_thread(self.redis.get, "trading:pause_duration")
+
                         # --- Fallback if no pause_duration was set ---
                         if not pause_duration_raw:
-                            # No LLM-set duration → resume after the LLM-decided minimum pause duration
-                            default_max_pause = settings.MIN_LLM_PAUSE_DURATION
-                            try:
-                                raw = await self.config_service.get_config("min_llm_pause_duration")
-                                if raw:
-                                    default_max_pause = int(raw)
-                            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
-                                pass
-                            if pause_start_raw is None:
-                                logger.warning(
-                                    "Pause has no duration and no start time; "
-                                    "forcing auto-resume immediately."
-                                )
-                                stored_reason_raw = await asyncio.to_thread(self.redis.get, "trading:pause_reason")
-                                stored_reason = stored_reason_raw.decode() if isinstance(stored_reason_raw, bytes) else (stored_reason_raw or "")
-                                pause_keys = [
-                                    "trading:paused",
-                                    "trading:pause_source",
-                                    "trading:pause_start",
-                                    "trading:pause_duration",
-                                    "trading:pause_reason",
-                                    "trading:llm_pause_time",
-                                ]
-                                for key in pause_keys:
-                                    await asyncio.to_thread(self.redis.delete, key)
-                                self._reeval_trigger.set()
-                                await asyncio.to_thread(self.redis.set, "trading:last_auto_resume", str(time.time()))
-                                await asyncio.to_thread(self.redis.setex, "trading:auto_resume_cooldown", 600, "1")
-                                if self.notifier:
-                                    await self.notifier.send_notification(
-                                        "⏰ Trading auto-resumed (pause had no duration and no start time).",
-                                        summary={"action": "RESUME", "reason": "Fallback: no pause start time"}
-                                    )
-                            else:
-                                try:
-                                    elapsed = time.time() - float(pause_start_raw)
-                                    if elapsed >= default_max_pause:
-                                        logger.warning(
-                                            "Pause has no duration; forcing auto‑resume after default fallback (2 hours)."
-                                        )
-                                        stored_reason_raw = await asyncio.to_thread(self.redis.get, "trading:pause_reason")
-                                        stored_reason = stored_reason_raw.decode() if isinstance(stored_reason_raw, bytes) else (stored_reason_raw or "")
-                                        pause_keys = [
-                                            "trading:paused",
-                                            "trading:pause_source",
-                                            "trading:pause_start",
-                                            "trading:pause_duration",
-                                            "trading:pause_reason",
-                                            "trading:llm_pause_time",
-                                        ]
-                                        for key in pause_keys:
-                                            await asyncio.to_thread(self.redis.delete, key)
-                                        self._reeval_trigger.set()
-                                        await asyncio.to_thread(self.redis.set, "trading:last_auto_resume", str(time.time()))
-                                        await asyncio.to_thread(self.redis.setex, "trading:auto_resume_cooldown", 600, "1")
-                                        if self.notifier:
-                                            await self.notifier.send_notification(
-                                                "⏰ Trading auto‑resumed after maximum pause duration (no LLM‑set duration).",
-                                                summary={"action": "RESUME", "reason": "Fallback pause timeout"}
-                                            )
-                                    else:
-                                        # still waiting, but we already know there is no duration, don't spam log
-                                        pass
-                                except (ValueError, TypeError):
-                                    pass
-                            await asyncio.sleep(30)
-                            continue   # skip the original duration logic, proceed to next loop iteration
+                            handled = await self._handle_missing_pause_duration(pause_start_raw)
+                            if handled:
+                                await asyncio.sleep(30)
+                                continue   # skip the original duration logic, proceed to next loop iteration
+
                         if pause_start_raw and pause_duration_raw:
-                            try:
-                                pause_start = float(pause_start_raw)
-                                pause_duration = int(pause_duration_raw)
-                                if time.time() - pause_start >= pause_duration:
-                                    logger.info("Pause duration elapsed – auto-resuming trading.")
-                                    stored_reason_raw = await asyncio.to_thread(self.redis.get, "trading:pause_reason")
-                                    stored_reason = stored_reason_raw.decode() if isinstance(stored_reason_raw, bytes) else (stored_reason_raw or "")
-                                    # Delete all pause keys
-                                    pause_keys = [
-                                        "trading:paused",
-                                        "trading:pause_source",
-                                        "trading:pause_start",
-                                        "trading:pause_duration",
-                                        "trading:pause_reason",
-                                        "trading:llm_pause_time",
-                                    ]
-                                    for key in pause_keys:
-                                        await asyncio.to_thread(self.redis.delete, key)
-                                    self._reeval_trigger.set()
-                                    await asyncio.to_thread(self.redis.set, "trading:last_auto_resume", str(time.time()))
-                                    await asyncio.to_thread(self.redis.setex, "trading:auto_resume_cooldown", 600, "1")
-                                    if self.notifier:
-                                        reason_text = f" (was paused: {stored_reason})" if stored_reason else ""
-                                        await self.notifier.send_notification(
-                                            f"▶️ Trading auto-resumed after pause duration elapsed.{reason_text}",
-                                            summary={"action": "RESUME", "reason": f"Pause duration elapsed{reason_text}"}
-                                        )
-                            except (ValueError, TypeError):
-                                pass  # ignore malformed values
+                            await self._handle_pause_duration_elapsed(pause_start_raw, pause_duration_raw)
             except Exception as e:
                 logger.error(f"Pause check error: {e}", exc_info=True)
             finally:
