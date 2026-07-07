@@ -37,7 +37,7 @@ class SymbolReevaluator:
 
     async def check_cooldown_and_reset(
         self, force: bool
-    ) -> Optional[Tuple[bool, bool, float]]:
+    ) -> Optional[Tuple[bool, bool, float, bool]]:
         """Check re-evaluation cooldown and reset per-cycle spending.
 
         Resets _cycle_spent from queued buy orders, checks the triggered
