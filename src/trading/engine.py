@@ -1996,35 +1996,6 @@ class TradingEngine:
             atr=atr,
         )
 
-    async def _should_skip_llm_eval(
-        self,
-        symbol: str,
-        current_price: float,
-        atr: Optional[float],
-        rsi: Optional[float],
-        macd_hist: Optional[float],
-        atr_percentile: Optional[float],
-        market_regime: str,
-        sentiment_trend_val: Optional[float],
-        timeframe_seconds: float,
-        has_position: bool,
-        is_critical: bool,
-    ) -> bool:
-        """Return True if it's safe to skip the LLM call and just HOLD."""
-        return await self._signal_processor.should_skip_llm_eval(
-            symbol=symbol,
-            current_price=current_price,
-            atr=atr,
-            rsi=rsi,
-            macd_hist=macd_hist,
-            atr_percentile=atr_percentile,
-            market_regime=market_regime,
-            sentiment_trend_val=sentiment_trend_val,
-            timeframe_seconds=timeframe_seconds,
-            has_position=has_position,
-            is_critical=is_critical,
-        )
-
     async def _monitor_entry_signals_loop(self):
         """Periodically check tracked symbols for favourable entry conditions.
         When a condition is met, force an immediate LLM evaluation."""
