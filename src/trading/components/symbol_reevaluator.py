@@ -238,7 +238,7 @@ class SymbolReevaluator:
                 plain_assets = await engine._market_data_manager.get_tradable_assets()
                 sample_pairs = [f"{sym}/{engine.base_currency}" for sym in plain_assets[:50]]
                 plain_sample = [s.split("/")[0] for s in sample_pairs]
-                quotes = await engine._get_quotes_batched(plain_sample, timeout_per_chunk=45.0)
+                quotes = await engine._market_data_manager._get_quotes_batched(plain_sample, timeout_per_chunk=45.0)
                 large_movers = sum(
                     1 for q in quotes.values()
                     if abs(q.get("percentage") or 0) > 5.0

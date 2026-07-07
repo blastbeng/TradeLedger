@@ -441,15 +441,6 @@ class TradingEngine:
         self._balance_cache_time = now
         return balance
 
-    async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 45.0, chunk_size: int = 50) -> Dict[str, Dict[str, Any]]:
-        """Fetch quotes for a large list of symbols in batches to avoid yfinance timeouts.
-
-        Splits symbols into chunks of ``chunk_size`` and fetches each chunk
-        sequentially.  ``get_quotes`` uses a global lock internally, so
-        concurrent calls would queue behind the lock and potentially time out.
-        """
-        return await self._market_data_manager._get_quotes_batched(symbols, timeout_per_chunk, chunk_size)
-
     async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Return aggregate news sentiment, cached for 60 seconds to reduce DB load."""
         base = symbol.split("/")[0] if "/" in symbol else symbol
@@ -1134,7 +1125,7 @@ class TradingEngine:
                     # (limit to 200 to avoid excessive API calls)
                     sample_for_vol = available_pairs[:200]
                     plain_sample = [s.split("/")[0] for s in sample_for_vol]
-                    raw_quotes = await self._get_quotes_batched(plain_sample, timeout_per_chunk=45.0)
+                    raw_quotes = await self._market_data_manager._get_quotes_batched(plain_sample, timeout_per_chunk=45.0)
                     tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_for_vol}
                     def _vol(sym):
                         t = tickers.get(sym, {})
@@ -1464,7 +1455,7 @@ class TradingEngine:
                 plain_assets = await self._market_data_manager.get_tradable_assets()
                 if plain_assets:
                     # Fetch quotes in batches to avoid yfinance timeouts on large symbol lists
-                    await self._get_quotes_batched(plain_assets, timeout_per_chunk=90.0)
+                    await self._market_data_manager._get_quotes_batched(plain_assets, timeout_per_chunk=90.0)
                     self._portfolio_exposure_cache = None
             except Exception as e:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
