@@ -1869,17 +1869,6 @@ class TradingEngine:
         """Log a manually executed trade in notify mode. Persists to DB and updates positions."""
         return await self._order_executor.log_manual_trade(ticker, side, quantity, money_spent, fee)
 
-    async def _process_native_exit_fill(
-        self,
-        symbol: str,
-        order_id: str,
-        order_obj: Any,
-        pos: Dict[str, Any],
-        exit_reason: str,
-    ):
-        """Process a filled native exit order (stop-loss or take-profit) inline."""
-        await self._order_executor.process_native_exit_fill(symbol, order_id, order_obj, pos, exit_reason)
-
     async def _execute_signal(self, symbol: str, signal, timeframe: str = None, exit_reason: str = None, atr: Optional[float] = None):
         """Execute a BUY or SELL signal."""
         await self._order_executor.execute_signal(
@@ -1988,71 +1977,6 @@ class TradingEngine:
         self._global_risk_multiplier = value
         await asyncio.to_thread(save_trading_state, "global_risk_multiplier", value)
 
-    def _compute_exit_order_prices(
-        self,
-        entry_price: float,
-        signal: Signal,
-        atr: Optional[float] = None,
-    ) -> Dict[str, Optional[float]]:
-        return self._order_executor.compute_exit_order_prices(entry_price, signal, atr)
-
-    async def _cancel_exit_orders(self, symbol: str):
-        """Cancel any native stop-loss and take-profit orders for a symbol."""
-        await self._order_executor.cancel_exit_orders(symbol)
-
-    async def _place_exit_orders(
-        self,
-        symbol: str,
-        signal: Signal,
-        exit_prices: Dict[str, Optional[float]],
-        timeframe: Optional[str] = None,
-    ):
-        """Place native stop-loss and take-profit orders for a position."""
-        await self._order_executor.place_exit_orders(symbol, signal, exit_prices, timeframe)
-
-    async def _replace_native_stop_order(
-        self,
-        symbol: str,
-        pos: Dict[str, Any],
-        old_stop_price: float,
-        new_stop_price: float,
-    ):
-        """Cancel the existing native stop order and place a new one with the updated stop price."""
-        await self._order_executor.replace_native_stop_order(symbol, pos, old_stop_price, new_stop_price)
-
-    async def _execute_partial_sell(
-        self,
-        symbol: str,
-        sell_amount: float,
-        level_label: str,
-        exit_reason: str,
-        ticker: Optional[Dict[str, Any]] = None,
-        atr: Optional[float] = None,
-        current_price: float = 0.0,
-        cleanup_callback=None,
-        extra_summary: Optional[Dict[str, Any]] = None,
-    ) -> bool:
-        """Execute a partial sell (used by partial take-profit single and multi-level)."""
-        return await self._order_executor.execute_partial_sell(
-            symbol, sell_amount, level_label, exit_reason, ticker, atr, current_price, cleanup_callback, extra_summary
-        )
-
-    async def _execute_partial_tp_single(
-        self, symbol: str, current_price: float, atr: Optional[float], ticker: Dict[str, Any]
-    ) -> None:
-        """Execute a single partial take-profit sell for a position."""
-        await self._order_executor.execute_partial_tp_single(symbol, current_price, atr, ticker)
-
-    async def _execute_partial_tp_level(
-        self, symbol: str, level_index: int, current_price: float, atr: Optional[float], ticker: Dict[str, Any]
-    ) -> None:
-        """Execute a partial take-profit sell for a specific level."""
-        await self._order_executor.execute_partial_tp_level(symbol, level_index, current_price, atr, ticker)
-
-    async def _sweep_dust(self, symbol: str):
-        """Sell any remaining dust balance of a symbol after a partial sell."""
-        await self._order_executor.sweep_dust(symbol)
-
     async def _process_queued_orders(self):
         """Periodically check queued limit orders in the simulator and process fills,
         including partial fills.
@@ -2075,14 +1999,6 @@ class TradingEngine:
             except Exception as e:
                 logger.error(f"Error processing queued orders: {e}", exc_info=True)
             await asyncio.sleep(15)  # check every 15 seconds for faster fill detection
-
-    async def _handle_queued_buy_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any]):
-        """Process a queued BUY limit order that has filled in the simulator."""
-        await self._order_executor.handle_queued_buy_fill(trade_dict, queued)
-
-    async def _handle_queued_sell_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any], partial: bool = False):
-        """Process a queued SELL limit order that has filled in the simulator."""
-        await self._order_executor.handle_queued_sell_fill(trade_dict, queued, partial)
 
     async def _cleanup_orphaned_orders(self):
         """Periodically cancel any open orders that are older than 10 minutes,
