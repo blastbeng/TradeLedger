@@ -834,6 +834,9 @@ class TradingEngine:
     async def _periodic_portfolio_rebalance(self):
         """Periodically trigger portfolio rebalance for long-term trading."""
         if not settings.PORTFOLIO_REBALANCE_ENABLED:
+            logger.info("Portfolio rebalance is disabled (PORTFOLIO_REBALANCE_ENABLED=False). Task sleeping.")
+            while self._running:
+                await asyncio.sleep(3600)
             return
         await asyncio.sleep(3600)  # initial delay
         while self._running:
@@ -1134,6 +1137,9 @@ class TradingEngine:
     async def _refresh_current_symbols_news_fast(self):
         """Fast news refresh loop – only for the symbols currently tracked by the engine."""
         if not settings.NEWS_ENABLED:
+            logger.info("News is disabled (NEWS_ENABLED=False). Fast news refresh task sleeping.")
+            while self._running:
+                await asyncio.sleep(3600)
             return
         # Fetch immediately on startup, then periodically
         while self._running:
@@ -1161,6 +1167,9 @@ class TradingEngine:
     async def _refresh_news_cache(self):
         """Periodically fetch news for tracked stocks/ETFs and top-volume stocks to keep cache warm."""
         if not settings.NEWS_ENABLED:
+            logger.info("News is disabled (NEWS_ENABLED=False). News cache refresh task sleeping.")
+            while self._running:
+                await asyncio.sleep(3600)
             return
         try:
             from src.news.fetcher import fetch_news_for_symbol
@@ -1453,6 +1462,9 @@ class TradingEngine:
     async def _download_all_news_loop(self):
         """Periodically pre‑fetch news for ALL tradable assets (stocks, ETFs, BTPs)."""
         if not settings.NEWS_ENABLED:
+            logger.info("News is disabled (NEWS_ENABLED=False). Full news download task sleeping.")
+            while self._running:
+                await asyncio.sleep(3600)
             return
         await asyncio.sleep(180)  # initial delay to let the engine settle
         while self._running:

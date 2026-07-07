@@ -33,7 +33,7 @@ class TaskSupervisor:
                 # If the supervisor is still running, we should restart it.
                 if not self._running:
                     break
-                logger.warning(f"Task {self.name} exited normally but supervisor is still running. Restarting in {self.restart_delay}s...")
+                logger.info(f"Task {self.name} exited normally but supervisor is still running. Restarting in {self.restart_delay}s...")
                 # Delay before restarting to avoid tight loops for tasks that
                 # exit immediately (e.g., when a feature is disabled).
                 await asyncio.sleep(self.restart_delay)
