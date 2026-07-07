@@ -2223,6 +2223,7 @@ class SignalProcessor:
                         system_prompt, 30,
                         model_type="actuator",
                         temperature=effective_temp,
+                        market_hash=market_hash,
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
@@ -2632,6 +2633,7 @@ class SignalProcessor:
                         30,
                         model_type="actuator",
                         temperature=effective_temp,
+                        market_hash=variants_market_hash,
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
@@ -3246,6 +3248,7 @@ class SignalProcessor:
                         get_cached_llm_response, compact_prompt(prompt), compact_prompt(build_system_prompt()), 120,
                         model_type="actuator",
                         temperature=effective_temp,
+                        market_hash=compute_market_hash({"pause_resume_prompt": prompt}),
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
