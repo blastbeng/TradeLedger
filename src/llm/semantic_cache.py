@@ -13,6 +13,12 @@ from src.utils.symbol_utils import is_btp_isin
 
 logger = logging.getLogger(__name__)
 
+_notifier = None
+
+def set_notifier(notifier):
+    global _notifier
+    _notifier = notifier
+
 class LlamaCppExecutor:
     """Serializes and prioritizes requests to a single-threaded llama.cpp server."""
     def __init__(self):
@@ -231,6 +237,18 @@ class SemanticCacheClient:
         except Exception as e:
             resp_text = getattr(resp, 'text', 'N/A')
             logger.warning(f"Semantic Cache: Failed to get embedding: {e}. Response body: {resp_text}", exc_info=True)
+            if _notifier:
+                try:
+                    import asyncio
+                    import threading
+                    def _run():
+                        try:
+                            asyncio.run(_notifier.send_notification("⚠️ Semantic Cache: Embedding server is down. Cache is bypassed."))
+                        except Exception:
+                            pass
+                    threading.Thread(target=_run, daemon=True).start()
+                except Exception:
+                    pass
             return None
 
     def query(self, prompt: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None, prompt_category: str = "default", market_hash: Optional[str] = None) -> Optional[str]:
@@ -413,10 +431,14 @@ class SemanticCacheClient:
             logger.warning(f"Semantic Cache: Cleanup failed: {e}", exc_info=True)
 
 _semantic_cache_client: Optional[SemanticCacheClient] = None
+_semantic_cache_lock = threading.Lock()
 
 def get_semantic_cache_client() -> SemanticCacheClient:
     """Return the singleton SemanticCacheClient, initializing lazily on first use."""
     global _semantic_cache_client
     if _semantic_cache_client is None:
-        _semantic_cache_client = SemanticCacheClient()
+        with _semantic_cache_lock:
+            # Double-check after acquiring lock
+            if _semantic_cache_client is None:
+                _semantic_cache_client = SemanticCacheClient()
     return _semantic_cache_client
