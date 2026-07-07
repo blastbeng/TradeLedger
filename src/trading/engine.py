@@ -1052,9 +1052,10 @@ class TradingEngine:
         age_seconds = (time.time() * 1000 - last_update) / 1000
         # Scale the threshold by the timeframe: longer timeframes allow staler quotes.
         # Use at least the configured max staleness (1 hour), or 10% of the timeframe,
-        # whichever is greater (capped at 1 day for very long timeframes).
+        # whichever is greater (capped at 6 hours for very long timeframes to avoid
+        # trading on excessively stale prices).
         tf_seconds = self._timeframe_to_seconds(timeframe)
-        scaled_threshold = max(settings.QUOTE_MAX_STALENESS_SECONDS, min(tf_seconds * 0.1, 86400))
+        scaled_threshold = max(settings.QUOTE_MAX_STALENESS_SECONDS, min(tf_seconds * 0.1, 21600))
         return age_seconds > scaled_threshold
 
     async def _fetch_vix(self) -> Optional[float]:
