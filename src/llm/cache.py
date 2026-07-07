@@ -136,7 +136,6 @@ def get_cached_llm_response(
             "Prompt size (~%d tokens) exceeds context window limit (%d). Truncating...",
             prompt_tokens, MAX_TOKENS
         )
-        max_chars = MAX_TOKENS * 4
         keep_start = 2000
         keep_end = 4000
         if len(prompt) > keep_start + keep_end:
