@@ -51,6 +51,16 @@ llamacpp_executor = LlamaCppExecutor()
 # Regex to find tickers ending with .MI (or other configured suffixes)
 TICKER_REGEX = re.compile(r'\b((?:[A-Z0-9]{1,6}(?:\.[A-Z]{1,3})?)|(?:IT[A-Z0-9]{10}))\b')
 
+# Common financial, technical, and indicator terms to exclude from ticker matching
+EXCLUDED_TERMS = {
+    "MACD", "RSI", "ADX", "EMA", "OBV", "MFI", "CCI", "SAR", "SMA", "WMA", "VWAP", "ATR", "ROC",
+    "BUY", "SELL", "HOLD", "LONG", "SHORT", "STOP", "LIMIT", "MARKET",
+    "EUR", "USD", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD",
+    "BTP", "ETF", "BOT", "CTD", "YTD", "Q1", "Q2", "Q3", "Q4", "H1", "H2",
+    "PE", "EPS", "ROI", "ROE", "ROA", "GDP", "CPI", "FED", "ECB", "IPO",
+    "API", "JSON", "XML", "HTTP", "URL", "ID", "UUID", "TICKER"
+}
+
 def generalize_prompt(prompt: str, symbol: Optional[str] = None) -> Tuple[str, Optional[str]]:
     """
     Replaces specific stock tickers in the prompt with a generic [TICKER] placeholder.
@@ -70,13 +80,16 @@ def generalize_prompt(prompt: str, symbol: Optional[str] = None) -> Tuple[str, O
 
     # Fallback to regex if no symbol provided or not found
     matches = TICKER_REGEX.findall(prompt)
-    unique_tickers = set(matches)
+
+    # Filter out common indicator abbreviations, currencies, and other non-ticker terms
+    valid_tickers = [m for m in matches if m not in EXCLUDED_TERMS]
+    unique_tickers = set(valid_tickers)
 
     # Do not generalize if there are multiple different tickers (e.g., "ENI vs ENEL")
     if len(unique_tickers) != 1:
         return prompt, None
 
-    ticker = matches[0]
+    ticker = valid_tickers[0]
     if is_btp_isin(ticker):
         return prompt, None
 
