@@ -9,6 +9,9 @@ from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+# Global lock to serialize all requests to llama.cpp (which only supports 1 concurrent request)
+llamacpp_lock = threading.Lock()
+
 # Regex to find tickers ending with .MI (or other configured suffixes)
 TICKER_REGEX = re.compile(r'\b((?:[A-Z0-9]{1,6}(?:\.[A-Z]{1,3})?)|(?:IT[A-Z0-9]{10}))\b')
 
@@ -47,8 +50,6 @@ def reconstruct_response(cached_response: str, current_ticker: str) -> str:
 
 class SemanticCacheClient:
     """Handles ChromaDB and embedding server interactions for semantic caching."""
-
-    _embedding_lock = threading.Lock()  # Serialize embedding requests
 
     def __init__(self):
         self.enabled = settings.SEMANTIC_CACHE_ENABLED
@@ -113,7 +114,7 @@ class SemanticCacheClient:
             return None
 
         all_embeddings = []
-        with self._embedding_lock:
+        with llamacpp_lock:
             for chunk in chunks:
                 logger.info(f"Semantic Cache: Generating embedding for chunk (len={len(chunk)}) at {embedding_url}...")
                 start_time = time.time()

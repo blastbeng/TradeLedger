@@ -6,6 +6,7 @@ from typing import Optional
 import httpx
 
 from src.config.settings import settings
+from src.llm.semantic_cache import llamacpp_lock
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +44,11 @@ def _get_ollama_response(prompt: str, system_prompt: str = "", model: str = None
                 write=10.0,
                 pool=5.0,
             )
-            with httpx.Client(timeout=httpx_timeout) as client:
-                response = client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                data = response.json()
+            with llamacpp_lock:
+                with httpx.Client(timeout=httpx_timeout) as client:
+                    response = client.post(url, json=payload, headers=headers)
+                    response.raise_for_status()
+                    data = response.json()
                 
                 # Validate response structure
                 if "message" not in data or "content" not in data["message"]:
@@ -121,10 +123,11 @@ def _get_openai_response(prompt: str, system_prompt: str = "", model: str = None
                 write=10.0,
                 pool=5.0,
             )
-            with httpx.Client(timeout=httpx_timeout) as client:
-                response = client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                data = response.json()
+            with llamacpp_lock:
+                with httpx.Client(timeout=httpx_timeout) as client:
+                    response = client.post(url, json=payload, headers=headers)
+                    response.raise_for_status()
+                    data = response.json()
                 
                 # Validate response structure
                 if "choices" not in data or not data["choices"]:
@@ -251,9 +254,10 @@ def check_llm_health() -> dict:
             else:
                 url = f"{base_url.rstrip('/')}/models"
 
-            with httpx.Client(timeout=10.0) as client:
-                response = client.get(url, headers=headers)
-                response.raise_for_status()
+            with llamacpp_lock:
+                with httpx.Client(timeout=10.0) as client:
+                    response = client.get(url, headers=headers)
+                    response.raise_for_status()
 
             results[role] = {
                 "status": "connected",
