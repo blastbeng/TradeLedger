@@ -143,7 +143,6 @@ class TradingEngine:
         self._state_dirty: bool = False
         # --- Extracted components ---
         self.event_bus.subscribe("remove_symbol_if_paused", self._remove_symbol_if_paused)
-        self.event_bus.subscribe("save_state", self._save_state)
         self._state_persistence = StatePersistence(self, self.event_bus)
         self._order_executor = OrderExecutor(self, self.event_bus)
         self._risk_manager = RiskManager(self, self.event_bus)
