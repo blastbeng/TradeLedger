@@ -105,8 +105,8 @@ class SemanticCacheClient:
         logger.info(f"Semantic Cache: get_embedding called for text (len={len(text)})")
 
         # Chunk the text to avoid hitting llama.cpp batch limits, then average embeddings.
-        # 1000 characters is roughly 250-400 tokens, safely under typical n_batch limits.
-        chunk_size = 1000
+        # 500 characters is roughly 125-200 tokens, safely under typical n_batch limits.
+        chunk_size = 500
         chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
         if not chunks:
