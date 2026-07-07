@@ -544,8 +544,6 @@ class RiskManager:
                                         ind_ts = ind.get("_indicator_timestamp")
                                         atr_is_stale = False
                                         if ind_ts is not None:
-                                            # Compare against the latest candle timestamp
-                                            # from the database instead of wall-clock time
                                             latest_candle_ts = await asyncio.to_thread(
                                                 get_latest_ohlcv_timestamp, symbol, tf
                                             )
@@ -558,14 +556,6 @@ class RiskManager:
                                                         f"gap={latest_candle_ts - ind_ts}ms > {2 * tf_ms}ms). "
                                                         f"Falling back to fixed-percentage trailing stop."
                                                     )
-                                                    atr_is_stale = True
-                                            else:
-                                                # Fallback to wall-clock check if no candles available
-                                                tf_secs = engine._timeframe_to_seconds(tf)
-                                                max_age_secs = min(tf_secs * 2, 86400)
-                                                age_secs = (time.time() * 1000 - ind_ts) / 1000
-                                                effective_age = max(0, age_secs - tf_secs)
-                                                if effective_age > max_age_secs:
                                                     atr_is_stale = True
                                         async with engine._positions_lock:
                                             if not atr_is_stale:
