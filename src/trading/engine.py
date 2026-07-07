@@ -253,7 +253,7 @@ class TradingEngine:
         else:
             self.trader = PaperTrader()
             logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
-            self._load_state()
+            self._state_persistence.load_state()
             self._position_manager.ensure_cost_basis()
             # Initialize _cycle_spent from any queued buy orders loaded from persisted
             # state so capital is reserved immediately at startup, before the first
@@ -1527,10 +1527,6 @@ class TradingEngine:
                         self._realized_pnl_offset += t.get("realized_pnl", 0.0)
                 # Keep only the most recent trades
                 self.trade_history = self.trade_history[-settings.MAX_TRADES_IN_MEMORY:]
-
-    def _load_state(self):
-        """Load current symbols, positions, trade history, and initial balance from SQLite."""
-        self._state_persistence.load_state()
 
     async def _save_state(self, force: bool = False):
         """Persist current symbols, positions, and trade history to SQLite."""
