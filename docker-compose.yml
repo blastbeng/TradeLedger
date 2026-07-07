@@ -60,13 +60,14 @@ services:
       - PGID=1000
       - TZ=Europe/Rome
       - IS_PERSISTENT=TRUE
+      - CHROMA_PORT=9010
     ports:
-      - 8002:8000
+      - 9010:9010
     volumes:
       - ./chroma/data:/chroma/chroma/
     restart: no
     healthcheck:
-      test: [ "CMD-SHELL", "timeout 10s bash -c ':> /dev/tcp/127.17.0.1/8000' || exit 1" ]
+      test: [ "CMD-SHELL", "timeout 10s bash -c ':> /dev/tcp/127.17.0.1/9010' || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 5
