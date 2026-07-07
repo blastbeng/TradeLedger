@@ -77,7 +77,7 @@ class SemanticCacheClient:
         logger.info(f"Semantic Cache: Initializing ChromaDB collection at {collection_url}")
         try:
             # Check if collection exists
-            resp = requests.get(collection_url, timeout=5)
+            resp = requests.get(collection_url, timeout=300)
             if resp.status_code == 200:
                 self.collection_id = resp.json().get("id")
                 logger.info(f"Semantic Cache: Found existing collection with ID: {self.collection_id}")
@@ -87,7 +87,7 @@ class SemanticCacheClient:
                 resp = requests.post(
                     base_url,
                     json={"name": self.collection_name, "metadata": {"hnsw:space": "cosine"}},
-                    timeout=5
+                    timeout=300
                 )
                 resp.raise_for_status()
                 self.collection_id = resp.json().get("id")
@@ -178,7 +178,7 @@ class SemanticCacheClient:
             resp = requests.post(
                 query_url,
                 json={"query_embeddings": [embedding], "n_results": 1},
-                timeout=10
+                timeout=300
             )
             logger.debug(f"Semantic Cache: ChromaDB query response status: {resp.status_code}")
             resp.raise_for_status()
@@ -237,7 +237,7 @@ class SemanticCacheClient:
                     "metadatas": [metadata],
                     "ids": [item_id]
                 },
-                timeout=10
+                timeout=300
             )
             logger.debug(f"Semantic Cache: ChromaDB add response status: {resp.status_code}")
             resp.raise_for_status()
@@ -255,7 +255,7 @@ class SemanticCacheClient:
             resp = requests.post(
                 f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/get",
                 json={"include": ["metadatas", "ids"]},
-                timeout=10
+                timeout=300
             )
             resp.raise_for_status()
             data = resp.json()
@@ -270,7 +270,7 @@ class SemanticCacheClient:
                 resp = requests.post(
                     f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/delete",
                     json={"ids": ids_to_delete},
-                    timeout=10
+                    timeout=300
                 )
                 resp.raise_for_status()
                 logger.info(f"Semantic Cache: Cleaned up {len(ids_to_delete)} expired entries.")
