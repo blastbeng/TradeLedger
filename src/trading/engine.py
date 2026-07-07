@@ -1785,14 +1785,6 @@ class TradingEngine:
         """When trading is paused, ask the LLM whether to resume (lightweight)."""
         await self._signal_processor.check_pause_resume_decision()
 
-    async def _compute_multi_tf_indicators(
-        self, symbol: str, ohlcv_data: Dict[str, List[List]], assigned_tf: str
-    ) -> Dict[str, Any]:
-        """Batch-fetch indicators from DB and extract assigned-timeframe values."""
-        return await self._signal_processor.compute_multi_tf_indicators(
-            symbol, ohlcv_data, assigned_tf
-        )
-
     async def _gather_prompt_context(
         self,
         symbol: str,
