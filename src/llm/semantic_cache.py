@@ -9,6 +9,8 @@ from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+llamacpp_lock = threading.Lock()
+
 # Regex to find tickers ending with .MI (or other configured suffixes)
 TICKER_REGEX = re.compile(r'\b((?:[A-Z0-9]{1,6}(?:\.[A-Z]{1,3})?)|(?:IT[A-Z0-9]{10}))\b')
 
