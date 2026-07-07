@@ -984,7 +984,7 @@ class SignalProcessor:
                 full_market_breadth = json.loads(full_breadth_raw)
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
             pass
-        session_info = engine._get_session_info()
+        session_info = engine._market_data_manager._get_session_info()
 
         # Compute minutes until market close
         now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))

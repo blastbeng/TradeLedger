@@ -1052,7 +1052,7 @@ class SymbolReevaluator:
                 if event:
                     symbol_events[sym] = event
 
-        session_info = engine._get_session_info()
+        session_info = engine._market_data_manager._get_session_info()
 
         # Market breadth: percentage of candidate stocks with positive 24h change
         positive_count = sum(1 for sym in sample_pairs if (tickers.get(sym, {}).get('percentage') or 0) > 0)

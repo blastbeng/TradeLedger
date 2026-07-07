@@ -2526,10 +2526,6 @@ class TradingEngine:
         """Return True if the market is currently open."""
         return await self._is_market_open()
 
-    def _get_session_info(self) -> dict:
-        """Return current Italian market session info using Europe/Rome timezone."""
-        return self._market_data_manager._get_session_info()
-
     async def _remove_symbol_if_paused(self, symbol: str):
         """Clear pending entries for a symbol. Symbols are kept in current_symbols even when paused
         so the bot continues to generate and notify signals."""
