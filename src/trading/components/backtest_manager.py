@@ -130,45 +130,14 @@ class BacktestManager:
                 f"Rely on LLM analysis, fundamentals, and multi-timeframe indicators instead."
             )
 
-        # --- Fallback to shorter timeframes when the assigned timeframe has too few candles ---
-        MIN_BACKTEST_CANDLES = 20
-        backtest_fallback_note = ""
-        actual_bt_tf = assigned_tf
+        # --- Skip backtesting if the assigned timeframe has too few candles ---
+        MIN_BACKTEST_CANDLES = 50
         if bt_candles is None or len(bt_candles) < MIN_BACKTEST_CANDLES:
-            if assigned_tf in settings.OHLCV_TIMEFRAMES:
-                tf_idx = settings.OHLCV_TIMEFRAMES.index(assigned_tf)
-                for shorter_tf in settings.OHLCV_TIMEFRAMES[tf_idx + 1:]:
-                    shorter_tf_secs = engine._timeframe_to_seconds(shorter_tf)
-                    try:
-                        if bt_period_days is not None:
-                            fb_since_ms = int(time.time() * 1000) - bt_period_days * 24 * 60 * 60 * 1000
-                            fb_limit = int((bt_period_days * 86400) / shorter_tf_secs) + 100
-                            fb_db_candles = await asyncio.to_thread(
-                                get_ohlcv, symbol, shorter_tf, since_ms=fb_since_ms, limit=fb_limit
-                            )
-                        else:
-                            fb_db_candles = await asyncio.to_thread(
-                                get_ohlcv, symbol, shorter_tf, limit=500
-                            )
-                        if fb_db_candles and len(fb_db_candles) >= MIN_BACKTEST_CANDLES:
-                            bt_candles = [
-                                [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                                for c in fb_db_candles
-                            ]
-                            backtest_fallback_note = (
-                                f" ⚠️ FALLBACK WARNING: Backtest was run on {shorter_tf} candles, NOT {assigned_tf}. "
-                                f"The assigned {assigned_tf} timeframe had insufficient candles (< {MIN_BACKTEST_CANDLES}) "
-                                f"with {settings.OHLCV_RETENTION_DAYS} days retention. "
-                                f"Results from {shorter_tf} may not accurately represent {assigned_tf} behavior — treat with caution."
-                            )
-                            actual_bt_tf = shorter_tf
-                            logger.info(
-                                f"Backtest fallback for {symbol}: assigned_tf={assigned_tf} had insufficient candles, "
-                                f"using {shorter_tf} ({len(bt_candles)} candles)."
-                            )
-                            break
-                    except Exception as e:
-                        logger.debug(f"Backtest fallback to {shorter_tf} failed for {symbol}: {e}")
+            return None, (
+                f"Insufficient data for backtest for {assigned_tf} (need ≥{MIN_BACKTEST_CANDLES} candles, "
+                f"got {len(bt_candles) if bt_candles else 0} with {settings.OHLCV_RETENTION_DAYS} days retention). "
+                f"Rely on LLM analysis, fundamentals, and multi-timeframe indicators instead."
+            )
 
         bt_position_fraction = bt_params.get("position_size_fraction", 1.0 / engine.effective_max_symbols if engine.effective_max_symbols > 0 else 1.0)
         bt_trade_value = base_balance * bt_position_fraction
@@ -279,12 +248,10 @@ class BacktestManager:
                 candles=bt_candles,
                 config=bt_config,
             )
-            backtest_stats["actual_timeframe"] = actual_bt_tf
+            backtest_stats["actual_timeframe"] = assigned_tf
             backtest_stats["assigned_timeframe"] = assigned_tf
             bt_entry_config_used = bt_entry_config is not None and isinstance(bt_entry_config, dict) and len(bt_entry_config) > 0
             bt_summary = format_backtest_summary(backtest_stats, entry_config_used=bt_entry_config_used)
-            if backtest_fallback_note:
-                bt_summary += backtest_fallback_note
 
             if len(bt_candles) >= settings.WALK_FORWARD_CANDLE_THRESHOLD:
                 wf_stats = await asyncio.to_thread(
@@ -296,8 +263,6 @@ class BacktestManager:
                 bt_summary = bt_summary + "\n" + format_walk_forward_summary(wf_stats)
 
             return backtest_stats, bt_summary
-        if backtest_fallback_note:
-            return None, f"Insufficient data for backtest (need ≥{MIN_BACKTEST_CANDLES} candles).{backtest_fallback_note}"
         return None, f"Insufficient data for backtest for {assigned_tf} (need ≥{MIN_BACKTEST_CANDLES} candles with {settings.OHLCV_RETENTION_DAYS} days retention)."
 
     async def _run_backtest_variant(
