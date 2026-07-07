@@ -948,9 +948,9 @@ class TelegramBot:
         elif verbosity == "none":
             should_send = False
         elif verbosity == "errors_only":
-            should_send = (action == "ERROR")
+            should_send = (action == "ERROR" or not action)
         elif verbosity == "trades_only":
-            should_send = (action in ("BUY", "SELL"))
+            should_send = (action in ("BUY", "SELL") or not action)
         else:
             should_send = False
 
