@@ -243,7 +243,7 @@ class SemanticCacheClient:
 
         return averaged_embedding
 
-    def query(self, prompt: str, symbol: Optional[str] = None) -> Optional[str]:
+    def query(self, prompt: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None) -> Optional[str]:
         """Queries the semantic cache for a matching prompt."""
         self._ensure_initialized()
         if not self.enabled or not self.collection_id:
@@ -260,9 +260,21 @@ class SemanticCacheClient:
         try:
             query_url = f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/query"
             logger.debug(f"Semantic Cache: Querying ChromaDB at {query_url}...")
+
+            where_clause = {
+                "$and": [
+                    {"model_type": model_type},
+                    {"cache_version": cache_version or ""}
+                ]
+            }
+
             resp = requests.post(
                 query_url,
-                json={"query_embeddings": [embedding], "n_results": 1},
+                json={
+                    "query_embeddings": [embedding], 
+                    "n_results": 1,
+                    "where": where_clause
+                },
                 timeout=10
             )
             logger.debug(f"Semantic Cache: ChromaDB query response status: {resp.status_code}")
@@ -289,7 +301,7 @@ class SemanticCacheClient:
 
         return None
 
-    def add(self, prompt: str, response: str, symbol: Optional[str] = None):
+    def add(self, prompt: str, response: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None):
         """Adds a prompt and its response to the semantic cache."""
         self._ensure_initialized()
         if not self.enabled or not self.collection_id:
@@ -309,7 +321,9 @@ class SemanticCacheClient:
             metadata = {
                 "ticker": ticker or "",
                 "original_prompt": prompt,
-                "cached_at": str(time.time())
+                "cached_at": str(time.time()),
+                "model_type": model_type,
+                "cache_version": cache_version or ""
             }
             item_id = str(uuid.uuid4())
             add_url = f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/add"

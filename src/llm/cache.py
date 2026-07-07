@@ -141,7 +141,7 @@ def get_cached_llm_response(
     if _semantic_cache.enabled and not market_hash:
         semantic_hit = None
         try:
-            future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol)
+            future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol, model_type, settings.LLM_CACHE_VERSION)
             try:
                 semantic_hit = future.result(timeout=120.0)
             except FuturesTimeoutError:
@@ -307,7 +307,9 @@ def get_cached_llm_response(
             _semantic_cache.add,
             prompt,
             response_text,
-            symbol
+            symbol,
+            model_type,
+            settings.LLM_CACHE_VERSION
         )
     return {
         "response": response_text,
