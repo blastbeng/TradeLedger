@@ -13,6 +13,7 @@ from src.config.settings import settings
 from src.database import insert_position_pnl_snapshot, get_indicators, get_latest_ohlcv_timestamp, get_ohlcv
 from src.strategies.base import Signal
 from src.utils.symbol_utils import is_btp_isin
+from src.utils.redis_client import is_redis_available
 
 logger = logging.getLogger(__name__)
 
@@ -72,50 +73,53 @@ class RiskManager:
             return
 
         # --- Portfolio-level drawdown circuit breaker ---
-        try:
-            with engine._trade_history_lock:
-                trades_snapshot = list(engine.trade_history)
-            equity_dd = engine._position_manager.compute_equity_and_drawdown(trades_snapshot)
-            drawdown_pct = equity_dd.get("drawdown_pct", 0.0)
+        if not is_redis_available():
+            logger.warning("Redis unavailable, skipping portfolio drawdown circuit breaker check.")
+        else:
+            try:
+                with engine._trade_history_lock:
+                    trades_snapshot = list(engine.trade_history)
+                equity_dd = engine._position_manager.compute_equity_and_drawdown(trades_snapshot)
+                drawdown_pct = equity_dd.get("drawdown_pct", 0.0)
 
-            paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
-            source_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
-            source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
+                paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
+                source_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
+                source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
 
-            if drawdown_pct >= settings.PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT:
-                if not paused or source != "portfolio_drawdown":
-                    logger.warning(
-                        f"Portfolio drawdown circuit breaker triggered: "
-                        f"{drawdown_pct:.2%} >= {settings.PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT:.2%}. Pausing trading."
-                    )
-                    await asyncio.to_thread(engine.redis.set, "trading:paused", "1")
-                    await asyncio.to_thread(engine.redis.set, "trading:pause_source", "portfolio_drawdown")
-                    await asyncio.to_thread(engine.redis.set, "trading:pause_reason", f"Portfolio drawdown {drawdown_pct:.2%} exceeded circuit breaker threshold")
+                if drawdown_pct >= settings.PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT:
+                    if not paused or source != "portfolio_drawdown":
+                        logger.warning(
+                            f"Portfolio drawdown circuit breaker triggered: "
+                            f"{drawdown_pct:.2%} >= {settings.PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT:.2%}. Pausing trading."
+                        )
+                        await asyncio.to_thread(engine.redis.set, "trading:paused", "1")
+                        await asyncio.to_thread(engine.redis.set, "trading:pause_source", "portfolio_drawdown")
+                        await asyncio.to_thread(engine.redis.set, "trading:pause_reason", f"Portfolio drawdown {drawdown_pct:.2%} exceeded circuit breaker threshold")
+                        if engine.notifier:
+                            await engine.notifier.send_notification(
+                                f"🛑 Portfolio drawdown circuit breaker triggered ({drawdown_pct:.2%}). Trading paused.",
+                                summary={"action": "PAUSE", "reason": "Portfolio drawdown circuit breaker"}
+                            )
+                elif source == "portfolio_drawdown" and paused:
+                    # Drawdown recovered, resume trading
+                    logger.info(f"Portfolio drawdown recovered to {drawdown_pct:.2%}. Resuming trading.")
+                    pause_keys = [
+                        "trading:paused",
+                        "trading:pause_source",
+                        "trading:pause_start",
+                        "trading:pause_duration",
+                        "trading:pause_reason",
+                        "trading:llm_pause_time",
+                    ]
+                    for key in pause_keys:
+                        await asyncio.to_thread(engine.redis.delete, key)
                     if engine.notifier:
                         await engine.notifier.send_notification(
-                            f"🛑 Portfolio drawdown circuit breaker triggered ({drawdown_pct:.2%}). Trading paused.",
-                            summary={"action": "PAUSE", "reason": "Portfolio drawdown circuit breaker"}
+                            "▶️ Portfolio drawdown recovered, trading resumed.",
+                            summary={"action": "RESUME", "reason": "Portfolio drawdown recovered"}
                         )
-            elif source == "portfolio_drawdown" and paused:
-                # Drawdown recovered, resume trading
-                logger.info(f"Portfolio drawdown recovered to {drawdown_pct:.2%}. Resuming trading.")
-                pause_keys = [
-                    "trading:paused",
-                    "trading:pause_source",
-                    "trading:pause_start",
-                    "trading:pause_duration",
-                    "trading:pause_reason",
-                    "trading:llm_pause_time",
-                ]
-                for key in pause_keys:
-                    await asyncio.to_thread(engine.redis.delete, key)
-                if engine.notifier:
-                    await engine.notifier.send_notification(
-                        "▶️ Portfolio drawdown recovered, trading resumed.",
-                        summary={"action": "RESUME", "reason": "Portfolio drawdown recovered"}
-                    )
-        except Exception as e:
-            logger.error(f"Failed to compute portfolio drawdown for circuit breaker: {e}")
+            except Exception as e:
+                logger.error(f"Failed to compute portfolio drawdown for circuit breaker: {e}")
 
         # Read LLM-decided review limits from Redis once (before the per-position loop)
         _review_limits = await self.read_review_limits()
