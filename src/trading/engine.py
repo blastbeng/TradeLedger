@@ -1245,19 +1245,6 @@ class TradingEngine:
             display += f" ({timeframe})"
         return display
 
-    async def _backfill_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, max_candles: int = None, ignore_existing: bool = False, force: bool = False, quiet: bool = False) -> int:
-        """Fetch and store all missing OHLCV candles between start_ms and end_ms.
-        Returns the number of candles inserted."""
-        return await self._market_data_manager._backfill_ohlcv(symbol, timeframe, start_ms, end_ms, max_candles, ignore_existing, force, quiet)
-
-    async def _fill_gaps(self, symbol: str, timeframe: str):
-        """Detect and fill gaps in stored OHLCV data for a symbol/timeframe."""
-        await self._market_data_manager._fill_gaps(symbol, timeframe)
-
-    async def _backfill_new_symbol(self, symbol: str, timeframe: str):
-        """Immediately backfill 30 days of OHLCV data for a newly selected symbol (assigned timeframe only)."""
-        await self._market_data_manager._backfill_new_symbol(symbol, timeframe)
-
     async def _download_symbol_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, quiet: bool = False, force: bool = False) -> None:
         """Download OHLCV, fill gaps, and compute/store indicators for a single symbol/timeframe."""
         await self._market_data_manager._download_symbol_ohlcv(symbol, timeframe, start_ms, end_ms, quiet, force)
