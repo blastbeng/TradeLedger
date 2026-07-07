@@ -2,6 +2,7 @@ import re
 import logging
 import requests
 import uuid
+import threading
 from typing import Tuple, Optional, List
 from src.config.settings import settings
 
@@ -54,6 +55,7 @@ class SemanticCacheClient:
         self.collection_name = settings.CHROMADB_COLLECTION_NAME
         self.distance_threshold = settings.SEMANTIC_CACHE_DISTANCE_THRESHOLD
         self.collection_id = None
+        self._embedding_lock = threading.Lock()  # Serialize embedding requests
 
         if self.enabled:
             self._init_collection()
@@ -82,17 +84,20 @@ class SemanticCacheClient:
 
     def get_embedding(self, text: str) -> Optional[List[float]]:
         """Generates an embedding for the given text using the llama.cpp server."""
-        try:
-            resp = requests.post(
-                f"{self.embedding_url}/embeddings",
-                json={"model": self.embedding_model, "input": text},
-                timeout=60  # Increased timeout for RPi5
-            )
-            resp.raise_for_status()
-            return resp.json()["data"][0]["embedding"]
-        except Exception as e:
-            logger.warning(f"Semantic Cache: Failed to get embedding: {e}.")
-            return None
+        # Use a lock to ensure only one embedding request is processed at a time
+        # (RPi5 has limited resources and concurrent requests may cause timeouts)
+        with self._embedding_lock:
+            try:
+                resp = requests.post(
+                    f"{self.embedding_url}/embeddings",
+                    json={"model": self.embedding_model, "input": text},
+                    timeout=120  # Increased timeout for RPi5
+                )
+                resp.raise_for_status()
+                return resp.json()["data"][0]["embedding"]
+            except Exception as e:
+                logger.warning(f"Semantic Cache: Failed to get embedding: {e}.")
+                return None
 
     def query(self, prompt: str, symbol: Optional[str] = None) -> Optional[str]:
         """Queries the semantic cache for a matching prompt."""
