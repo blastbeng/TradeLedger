@@ -374,7 +374,7 @@ class RiskManager:
         news_threshold = pos.get("news_sentiment_exit_threshold")
         if news_threshold is not None and settings.NEWS_ENABLED:
             pos_tf = pos.get("timeframe")
-            if pos_tf and engine._timeframe_to_seconds(pos_tf) >= 604_800:
+            if pos_tf and engine._timeframe_to_seconds(pos_tf) >= settings.NEWS_SENTIMENT_EXIT_TF_SECONDS:
                 logger.debug(
                     f"Skipping news sentiment exit for {symbol}: "
                     f"long-term timeframe ({pos_tf}) ignores short-term sentiment."

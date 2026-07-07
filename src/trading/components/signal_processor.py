@@ -2599,17 +2599,17 @@ class SignalProcessor:
         # === Critical factors (weight 2.0) ===
         if rsi is not None and macd_hist is not None:
             max_score += 2.0
-            if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
+            if (rsi < settings.MODEL_TIER_RSI_EXTREME and macd_hist < 0) or (rsi > (100 - settings.MODEL_TIER_RSI_EXTREME) and macd_hist > 0):
                 score += 2.0
 
         if all(v is not None for v in (ema_9, ema_21, adx, plus_di, minus_di)):
             max_score += 2.0
-            if (ema_9 > ema_21) != (plus_di > minus_di) and adx > 25:
+            if (ema_9 > ema_21) != (plus_di > minus_di) and adx > settings.MODEL_TIER_ADX_STRONG:
                 score += 2.0
 
         if drawdown_pct is not None:
             max_score += 2.0
-            if drawdown_pct > 10:
+            if drawdown_pct > settings.MODEL_TIER_DRAWDOWN_PCT:
                 score += 2.0
 
         if symbol_event is not None:
@@ -2618,13 +2618,13 @@ class SignalProcessor:
                 score += 2.0
 
         max_score += 2.0
-        if consecutive_losses >= 3:
+        if consecutive_losses >= settings.MODEL_TIER_CONSECUTIVE_LOSSES:
             score += 2.0
 
         # === Significant factors (weight 1.5) ===
         if atr_percentile is not None:
             max_score += 1.5
-            if atr_percentile > 80 or atr_percentile < 20:
+            if atr_percentile > settings.MODEL_TIER_ATR_PERCENTILE_HIGH or atr_percentile < settings.MODEL_TIER_ATR_PERCENTILE_LOW:
                 score += 1.5
 
         if market_regime:
@@ -2634,23 +2634,23 @@ class SignalProcessor:
 
         if sentiment_trend_val is not None:
             max_score += 1.5
-            if abs(sentiment_trend_val) > 0.2:
+            if abs(sentiment_trend_val) > settings.MODEL_TIER_SENTIMENT_TREND_MAG:
                 score += 1.5
 
         if all(v is not None for v in (bb_upper, bb_lower, bb_middle)) and bb_middle > 0:
             max_score += 1.5
             bb_width = (bb_upper - bb_lower) / bb_middle
-            if bb_width < 0.02 or bb_width > 0.08:
+            if bb_width < settings.MODEL_TIER_BB_WIDTH_SQUEEZE or bb_width > settings.MODEL_TIER_BB_WIDTH_EXPANSION:
                 score += 1.5
 
         if portfolio_exposure_pct is not None:
             max_score += 1.5
-            if portfolio_exposure_pct > 70:
+            if portfolio_exposure_pct > settings.MODEL_TIER_PORTFOLIO_EXPOSURE_HIGH:
                 score += 1.5
 
         if portfolio_stop_risk_pct is not None:
             max_score += 1.5
-            if portfolio_stop_risk_pct > 8:
+            if portfolio_stop_risk_pct > settings.MODEL_TIER_PORTFOLIO_STOP_RISK_HIGH:
                 score += 1.5
 
         if unrealized_pnl is not None:
@@ -2661,39 +2661,39 @@ class SignalProcessor:
         if market_breadth is not None:
             max_score += 1.5
             pos_pct = market_breadth.get("positive_pct", 50)
-            if pos_pct > 80 or pos_pct < 20:
+            if pos_pct > settings.MODEL_TIER_MARKET_BREADTH_EXTREME or pos_pct < (100 - settings.MODEL_TIER_MARKET_BREADTH_EXTREME):
                 score += 1.5
 
         if full_market_breadth is not None:
             max_score += 1.5
             pos_pct = full_market_breadth.get("positive_pct", 50)
-            if pos_pct > 80 or pos_pct < 20:
+            if pos_pct > settings.MODEL_TIER_MARKET_BREADTH_EXTREME or pos_pct < (100 - settings.MODEL_TIER_MARKET_BREADTH_EXTREME):
                 score += 1.5
 
         # === Standard factors (weight 1.0) ===
         if macd is not None and macd_signal is not None and macd != 0:
             max_score += 1.0
-            if abs(macd - macd_signal) < 0.0001 * abs(macd):
+            if abs(macd - macd_signal) < settings.MODEL_TIER_MACD_HIST_CHANGE * abs(macd):
                 score += 1.0
 
         if stochastic_k is not None:
             max_score += 1.0
-            if stochastic_k < 20 or stochastic_k > 80:
+            if stochastic_k < settings.MODEL_TIER_STOCH_EXTREME or stochastic_k > (100 - settings.MODEL_TIER_STOCH_EXTREME):
                 score += 1.0
 
         if mfi is not None:
             max_score += 1.0
-            if mfi < 20 or mfi > 80:
+            if mfi < settings.MODEL_TIER_MFI_EXTREME or mfi > (100 - settings.MODEL_TIER_MFI_EXTREME):
                 score += 1.0
 
         if cci is not None:
             max_score += 1.0
-            if cci < -100 or cci > 100:
+            if cci < -settings.MODEL_TIER_CCI_EXTREME or cci > settings.MODEL_TIER_CCI_EXTREME:
                 score += 1.0
 
         if williams_r is not None:
             max_score += 1.0
-            if williams_r < -80 or williams_r > -20:
+            if williams_r < -(100 - settings.MODEL_TIER_WILLIAMS_R_EXTREME) or williams_r > -settings.MODEL_TIER_WILLIAMS_R_EXTREME:
                 score += 1.0
 
         if ichimoku is not None and current_price is not None:
@@ -2706,14 +2706,14 @@ class SignalProcessor:
 
         if volume_trend is not None:
             max_score += 1.0
-            if volume_trend > 3.0:
+            if volume_trend > settings.MODEL_TIER_VOLUME_TREND_HIGH:
                 score += 1.0
 
         if fundamentals is not None:
             pe = fundamentals.get("pe_ratio")
             if pe is not None:
                 max_score += 1.0
-                if pe > 50 or pe < 0:
+                if pe > settings.MODEL_TIER_PE_HIGH or pe < 0:
                     score += 1.0
             margins = fundamentals.get("profit_margins")
             if margins is not None:
@@ -2782,22 +2782,22 @@ class SignalProcessor:
 
         # === Category 1: Technical indicator extremes (max 0.25) ===
         tech_score = 0.0
-        if rsi is not None and (rsi < 30 or rsi > 70):
+        if rsi is not None and (rsi < settings.MODEL_TIER_RSI_EXTREME or rsi > (100 - settings.MODEL_TIER_RSI_EXTREME)):
             tech_score = max(tech_score, 0.15)
-        if stochastic_k is not None and (stochastic_k < 20 or stochastic_k > 80):
+        if stochastic_k is not None and (stochastic_k < settings.MODEL_TIER_STOCH_EXTREME or stochastic_k > (100 - settings.MODEL_TIER_STOCH_EXTREME)):
             tech_score = max(tech_score, 0.12)
-        if mfi is not None and (mfi < 20 or mfi > 80):
+        if mfi is not None and (mfi < settings.MODEL_TIER_MFI_EXTREME or mfi > (100 - settings.MODEL_TIER_MFI_EXTREME)):
             tech_score = max(tech_score, 0.12)
-        if cci is not None and (cci < -100 or cci > 100):
+        if cci is not None and (cci < -settings.MODEL_TIER_CCI_EXTREME or cci > settings.MODEL_TIER_CCI_EXTREME):
             tech_score = max(tech_score, 0.12)
-        if williams_r is not None and (williams_r < -80 or williams_r > -20):
+        if williams_r is not None and (williams_r < -(100 - settings.MODEL_TIER_WILLIAMS_R_EXTREME) or williams_r > -settings.MODEL_TIER_WILLIAMS_R_EXTREME):
             tech_score = max(tech_score, 0.12)
         if macd is not None and macd_signal is not None and macd != 0:
-            if abs(macd - macd_signal) < 0.0001 * abs(macd):
+            if abs(macd - macd_signal) < settings.MODEL_TIER_MACD_HIST_CHANGE * abs(macd):
                 tech_score = max(tech_score, 0.10)
         if bb_upper is not None and bb_lower is not None and bb_middle is not None and bb_middle > 0:
             bb_width = (bb_upper - bb_lower) / bb_middle
-            if bb_width < 0.02 or bb_width > 0.08:
+            if bb_width < settings.MODEL_TIER_BB_WIDTH_SQUEEZE or bb_width > settings.MODEL_TIER_BB_WIDTH_EXPANSION:
                 tech_score = max(tech_score, 0.15)
         if ichimoku is not None and current_price is not None:
             cloud_top = ichimoku.get("cloud_top")
@@ -2809,46 +2809,46 @@ class SignalProcessor:
         # === Category 2: Conflicting signals (max 0.20) ===
         conflict_score = 0.0
         if rsi is not None and macd_hist is not None:
-            if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
+            if (rsi < settings.MODEL_TIER_RSI_EXTREME and macd_hist < 0) or (rsi > (100 - settings.MODEL_TIER_RSI_EXTREME) and macd_hist > 0):
                 conflict_score = max(conflict_score, 0.20)
         if ema_9 is not None and ema_21 is not None and adx is not None and plus_di is not None and minus_di is not None:
             ema_bullish = ema_9 > ema_21
             di_bullish = plus_di > minus_di
-            if ema_bullish != di_bullish and adx > 25:
+            if ema_bullish != di_bullish and adx > settings.MODEL_TIER_ADX_STRONG:
                 conflict_score = max(conflict_score, 0.15)
         if conflicting_signals:
             conflict_score = max(conflict_score, 0.10)
 
         # === Category 3: Market context (max 0.20) ===
         market_score = 0.0
-        if volatility_percentile is not None and (volatility_percentile > 80 or volatility_percentile < 20):
+        if volatility_percentile is not None and (volatility_percentile > settings.MODEL_TIER_ATR_PERCENTILE_HIGH or volatility_percentile < settings.MODEL_TIER_ATR_PERCENTILE_LOW):
             market_score = max(market_score, 0.15)
         if market_regime and any(kw in market_regime for kw in ("high volatility", "squeeze", "expansion", "ranging")):
             market_score = max(market_score, 0.12)
         if market_breadth:
             pos_pct = market_breadth.get("positive_pct", 50)
-            if pos_pct > 80 or pos_pct < 20:
+            if pos_pct > settings.MODEL_TIER_MARKET_BREADTH_EXTREME or pos_pct < (100 - settings.MODEL_TIER_MARKET_BREADTH_EXTREME):
                 market_score = max(market_score, 0.12)
         if full_market_breadth:
             pos_pct = full_market_breadth.get("positive_pct", 50)
-            if pos_pct > 80 or pos_pct < 20:
+            if pos_pct > settings.MODEL_TIER_MARKET_BREADTH_EXTREME or pos_pct < (100 - settings.MODEL_TIER_MARKET_BREADTH_EXTREME):
                 market_score = max(market_score, 0.10)
-        if sentiment_trend_magnitude is not None and sentiment_trend_magnitude > 0.2:
+        if sentiment_trend_magnitude is not None and sentiment_trend_magnitude > settings.MODEL_TIER_SENTIMENT_TREND_MAG:
             market_score = max(market_score, 0.12)
-        if volume_trend is not None and volume_trend > 3.0:
+        if volume_trend is not None and volume_trend > settings.MODEL_TIER_VOLUME_TREND_HIGH:
             market_score = max(market_score, 0.10)
 
         # === Category 4: Portfolio stress (max 0.15) ===
         portfolio_score = 0.0
-        if portfolio_exposure_pct is not None and portfolio_exposure_pct > 70:
+        if portfolio_exposure_pct is not None and portfolio_exposure_pct > settings.MODEL_TIER_PORTFOLIO_EXPOSURE_HIGH:
             portfolio_score = max(portfolio_score, 0.15)
-        if portfolio_stop_risk_pct is not None and portfolio_stop_risk_pct > 8:
+        if portfolio_stop_risk_pct is not None and portfolio_stop_risk_pct > settings.MODEL_TIER_PORTFOLIO_STOP_RISK_HIGH:
             portfolio_score = max(portfolio_score, 0.15)
-        if drawdown_pct is not None and drawdown_pct > 10:
+        if drawdown_pct is not None and drawdown_pct > settings.MODEL_TIER_DRAWDOWN_PCT:
             portfolio_score = max(portfolio_score, 0.15)
         if unrealized_pnl is not None and unrealized_pnl < 0:
             portfolio_score = max(portfolio_score, 0.10)
-        if consecutive_losses >= 3:
+        if consecutive_losses >= settings.MODEL_TIER_CONSECUTIVE_LOSSES:
             portfolio_score = max(portfolio_score, 0.12)
 
         # === Category 5: Critical & events (max 0.15) ===
@@ -2859,7 +2859,7 @@ class SignalProcessor:
             critical_score = max(critical_score, 0.10)
         if fundamentals is not None:
             pe = fundamentals.get("pe_ratio")
-            if pe is not None and (pe > 50 or pe < 0):
+            if pe is not None and (pe > settings.MODEL_TIER_PE_HIGH or pe < 0):
                 critical_score = max(critical_score, 0.08)
             margins = fundamentals.get("profit_margins")
             if margins is not None and margins < 0:
@@ -3716,7 +3716,7 @@ class SignalProcessor:
             if (prev_macd_val is not None and macd_val is not None
                     and prev_macd_val <= 0 and macd_val > 0
                     and _atr is not None and _atr > 0
-                    and abs(macd_val) > 0.05 * _atr):
+                    and abs(macd_val) > settings.ENTRY_SIGNAL_MACD_ATR_MULT * _atr):
                 return True
 
             # 6. EMA golden cross (valid for long timeframes — major trend shift)

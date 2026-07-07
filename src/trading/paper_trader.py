@@ -232,7 +232,7 @@ class PaperTrader:
             # Use the most recent completed candle's volume
             vol = candles[-2]["volume"] if len(candles) >= 2 else candles[-1]["volume"]
             # Assume we can fill up to 10% of the last minute's volume
-            return vol * 0.1
+            return vol * settings.PARTIAL_FILL_VOLUME_CAP_PCT
         except Exception as e:
             logger.warning(f"Failed to fetch volume for partial fill check for {symbol}: {e}")
             return None

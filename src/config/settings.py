@@ -859,6 +859,39 @@ class Settings(BaseSettings):
     WEB_USERNAME: Optional[str] = None
     WEB_PASSWORD: Optional[str] = None
 
+    # Entry signal MACD magnitude threshold as a multiple of ATR
+    ENTRY_SIGNAL_MACD_ATR_MULT: float = 0.05
+
+    # News sentiment exit timeframe threshold (seconds) - long-term timeframes ignore short-term sentiment
+    NEWS_SENTIMENT_EXIT_TF_SECONDS: int = 604_800  # 1 week
+
+    # Walk-forward backtest candle threshold
+    WALK_FORWARD_CANDLE_THRESHOLD: int = 100
+
+    # Partial fill volume cap (fraction of last minute's volume)
+    PARTIAL_FILL_VOLUME_CAP_PCT: float = 0.1
+
+    # Model tier scoring thresholds
+    MODEL_TIER_RSI_EXTREME: float = 30.0
+    MODEL_TIER_ADX_STRONG: float = 25.0
+    MODEL_TIER_DRAWDOWN_PCT: float = 10.0
+    MODEL_TIER_ATR_PERCENTILE_HIGH: float = 80.0
+    MODEL_TIER_ATR_PERCENTILE_LOW: float = 20.0
+    MODEL_TIER_BB_WIDTH_SQUEEZE: float = 0.02
+    MODEL_TIER_BB_WIDTH_EXPANSION: float = 0.08
+    MODEL_TIER_PORTFOLIO_EXPOSURE_HIGH: float = 70.0
+    MODEL_TIER_PORTFOLIO_STOP_RISK_HIGH: float = 8.0
+    MODEL_TIER_SENTIMENT_TREND_MAG: float = 0.2
+    MODEL_TIER_VOLUME_TREND_HIGH: float = 3.0
+    MODEL_TIER_CONSECUTIVE_LOSSES: int = 3
+    MODEL_TIER_PE_HIGH: float = 50.0
+    MODEL_TIER_STOCH_EXTREME: float = 20.0
+    MODEL_TIER_MFI_EXTREME: float = 20.0
+    MODEL_TIER_CCI_EXTREME: float = 100.0
+    MODEL_TIER_WILLIAMS_R_EXTREME: float = 20.0
+    MODEL_TIER_MARKET_BREADTH_EXTREME: float = 80.0
+    MODEL_TIER_MACD_HIST_CHANGE: float = 0.0001
+
     # Logging
     LOG_LEVEL: str = "INFO"
 

@@ -285,7 +285,7 @@ class BacktestManager:
             if backtest_fallback_note:
                 bt_summary += backtest_fallback_note
 
-            if len(bt_candles) >= 100:
+            if len(bt_candles) >= settings.WALK_FORWARD_CANDLE_THRESHOLD:
                 wf_stats = await asyncio.to_thread(
                     walk_forward_backtest,
                     candles=bt_candles,
