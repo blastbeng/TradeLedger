@@ -3034,52 +3034,19 @@ class SignalProcessor:
     ) -> Tuple[str, float]:
         """Compute the strategy model type and effective temperature.
 
+        Uses compute_prompt_complexity for both model tier selection and
+        temperature, ensuring the actuator model is used for simple
+        situations and the mind model only when complexity warrants it.
+
         Returns (strategy_model_type, effective_temp).
         """
-        engine = self.engine
-
-        strategy_model_type = self.choose_model_tier(
-            atr=atr,
-            atr_percentile=atr_percentile,
-            rsi=rsi,
-            macd=macd,
-            macd_signal=macd_signal,
-            macd_hist=macd_hist,
-            bb_upper=bb_upper,
-            bb_middle=bb_middle,
-            bb_lower=bb_lower,
-            ema_9=ema_9,
-            ema_21=ema_21,
-            stochastic_k=stochastic_k,
-            adx=adx,
-            plus_di=plus_di,
-            minus_di=minus_di,
-            mfi=mfi,
-            cci=cci,
-            williams_r=williams_r,
-            ichimoku=ichimoku,
-            market_regime=market_regime,
-            market_breadth=market_breadth,
-            full_market_breadth=full_market_breadth,
-            sentiment_trend_val=sentiment_trend_val,
-            volume_trend=volume_trend_val,
-            unrealized_pnl=unrealized_pnl,
-            drawdown_pct=drawdown_pct,
-            portfolio_exposure_pct=portfolio_exposure_pct,
-            portfolio_stop_risk_pct=portfolio_stop_risk_pct,
-            is_critical=is_critical,
-            trading_paused=trading_paused,
-            symbol_event=symbol_event,
-            fundamentals=fundamentals,
-            consecutive_losses=consecutive_losses,
-            current_price=current_price,
-        )
-
-        # Compute prompt complexity for temperature selection
+        # Compute conflicting signals flag
         _conflicting = False
         if rsi is not None and macd_hist is not None:
             if (rsi < settings.MODEL_TIER_RSI_EXTREME and macd_hist < 0) or (rsi > (100 - settings.MODEL_TIER_RSI_EXTREME) and macd_hist > 0):
                 _conflicting = True
+
+        # Compute prompt complexity (used for both model tier and temperature)
         strategy_complexity = self.compute_prompt_complexity(
             num_candidates=num_candidates,
             volatility_percentile=atr_percentile,
@@ -3117,6 +3084,14 @@ class SignalProcessor:
             current_price=current_price,
             conflicting_signals=_conflicting,
         )
+
+        # Determine model tier: critical situations always use "mind",
+        # otherwise use "mind" only when complexity exceeds the threshold
+        if is_critical:
+            strategy_model_type = "mind"
+        else:
+            strategy_model_type = "mind" if strategy_complexity >= settings.LLM_MIND_MODEL_THRESHOLD else "actuator"
+
         effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity)
 
         return strategy_model_type, effective_temp
