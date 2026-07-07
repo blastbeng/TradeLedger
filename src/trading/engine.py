@@ -317,7 +317,7 @@ class TradingEngine:
 
         # Save the fresh state
         self._state_dirty = True
-        await self._save_state(force=True)
+        await self._state_persistence.save_state(force=True)
 
         # Persist the new PAPER_INITIAL_BALANCE so we don't reset again on next restart
         await asyncio.to_thread(save_trading_state, "paper_initial_balance", settings.PAPER_INITIAL_BALANCE)
@@ -1059,7 +1059,7 @@ class TradingEngine:
                     risk_interval = settings.RISK_CHECK_INTERVAL_SECONDS
                 await asyncio.sleep(risk_interval)
                 await self._risk_manager.check_risk_management()
-                await self._save_state()
+                await self._state_persistence.save_state()
                 self._state_dirty = True
             except Exception as e:
                 logger.error(f"Risk management loop error: {e}", exc_info=True)
@@ -1524,10 +1524,6 @@ class TradingEngine:
                 # Keep only the most recent trades
                 self.trade_history = self.trade_history[-settings.MAX_TRADES_IN_MEMORY:]
 
-    async def _save_state(self, force: bool = False):
-        """Persist current symbols, positions, and trade history to SQLite."""
-        await self._state_persistence.save_state(force=force)
-
     def _log_task_exception(self, task: asyncio.Task) -> None:
         """Log exceptions from background tasks to prevent silent failures."""
         try:
@@ -1721,7 +1717,7 @@ class TradingEngine:
 
                 # Save state periodically (every 5 minutes) when dirty
                 if now - self._last_state_save > 300 and self._state_dirty:
-                    await self._save_state()
+                    await self._state_persistence.save_state()
                     self._last_state_save = now
                     self._state_dirty = False
 
