@@ -1824,10 +1824,6 @@ class TradingEngine:
         """Return the current trading pause status, reason, remaining duration, and a formatted countdown."""
         return await self._state_persistence.get_pause_status()
 
-    async def get_risk_metrics(self) -> Dict[str, Any]:
-        """Return current risk/exposure metrics."""
-        return await self.event_bus.request("get_risk_metrics")
-
     async def sell_all_positions(self):
         """Sell all open positions at market price."""
         await self._order_executor.sell_all_positions()

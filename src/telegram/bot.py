@@ -598,7 +598,7 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         try:
-            metrics = await self.engine.get_risk_metrics()
+            metrics = await self.engine.event_bus.request("get_risk_metrics")
         except Exception as e:
             logger.error(f"Failed to get risk metrics: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve risk metrics.", reply_markup=self.keyboard)

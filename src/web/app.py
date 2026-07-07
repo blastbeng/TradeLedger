@@ -228,7 +228,7 @@ async def market_status_api():
 @http_router.get("/api/risk")
 async def risk():
     engine = get_engine()
-    return await engine.get_risk_metrics()
+    return await engine.event_bus.request("get_risk_metrics")
 
 @http_router.get("/api/news")
 async def news():
