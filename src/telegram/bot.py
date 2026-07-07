@@ -42,10 +42,10 @@ class TelegramBot:
             [
                 [KeyboardButton("📊 Status"), KeyboardButton("📈 Trades")],
                 [KeyboardButton("💰 Profit"), KeyboardButton("🚀 Performance")],
-                [KeyboardButton("⚠️ Risk"), KeyboardButton("📰 News")],
+                [KeyboardButton("⚠️ Risk"), KeyboardButton("📡 Signals")],
+                [KeyboardButton("📰 News"), KeyboardButton("🔄 Re-eval")],
                 [KeyboardButton("⏸️ Pause"), KeyboardButton("▶️ Resume")],
-                [KeyboardButton("🔄 Re-eval"), KeyboardButton("💸 Sell All")],
-                [KeyboardButton("⬇️ Backfill"), KeyboardButton("📡 Signals")],
+                [KeyboardButton("💸 Sell All"), KeyboardButton("⬇️ Backfill")],
             ],
             resize_keyboard=True,
         )
