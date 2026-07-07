@@ -855,6 +855,63 @@ class PositionManager:
         engine._portfolio_exposure_cache = None
         engine._state_dirty = True
 
+    async def _close_btp_at_par(self, symbol: str, entry: dict, pos: dict, exit_reason: str, note: str, log_reason: str):
+        """Helper to close a BTP position at par value (100.0) and record the trade."""
+        engine = self.engine
+        logger.info(f"Closing BTP {symbol} at par value. Reason: {log_reason}")
+        engine.current_symbols.remove(entry)
+        # Refund reserved cycle capital for any removed buy orders
+        async with engine._queued_orders_lock:
+            removed_buys = [q for q in engine.queued_orders if q['symbol'] == symbol and q['side'] == 'buy']
+            engine.queued_orders = [q for q in engine.queued_orders if q['symbol'] != symbol]
+        if removed_buys:
+            async with engine._cycle_spent_lock:
+                engine._cycle_spent = max(0.0, engine._cycle_spent - sum(q.get('amount', 0.0) for q in removed_buys))
+
+        await self.event_bus.publish("cancel_exit_orders", symbol)
+        async with engine._positions_lock:
+            engine.positions.pop(symbol, None)
+
+        par_value = 100.0
+        cost = pos["amount"] * par_value
+        from src.exchanges.fees import calculate_transaction_costs
+        costs = calculate_transaction_costs("SELL", par_value, pos["amount"], symbol=symbol)
+        fee_cost = costs["total_costs"]
+        cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
+        net_quote = cost - fee_cost
+        realized_pnl = net_quote - cost_basis
+        trade = {
+            "symbol": symbol,
+            "side": "sell",
+            "amount": pos["amount"],
+            "price": par_value,
+            "cost": cost,
+            "fee": {"cost": fee_cost, "currency": engine.base_currency},
+            "timestamp": time.time() * 1000,
+            "note": note,
+            "exit_reason": exit_reason,
+            "realized_pnl": realized_pnl,
+            "cost_basis": cost_basis,
+        }
+        engine._append_trade(trade)
+        await asyncio.to_thread(insert_trade, trade)
+        logger.info(f"Closed BTP {symbol}: {pos['amount']} at par value {par_value}.")
+        if engine.notifier:
+            stock_name = await engine._get_stock_name(symbol)
+            display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+            await engine.notifier.send_notification(
+                f"💰 BTP {display_symbol} closed at par value {par_value}. P&L: {realized_pnl:+.4f}",
+                summary={
+                    "symbol": symbol,
+                    "action": "SELL",
+                    "reason": log_reason,
+                    "price": par_value,
+                    "realized_pnl": realized_pnl,
+                    "exit_reason": exit_reason,
+                }
+            )
+        await self.event_bus.publish("remove_symbol_if_paused", symbol)
+
     async def reconcile_positions(self):
         """Detect and handle external changes: delisted symbols, externally sold positions."""
         engine = self.engine
@@ -939,73 +996,46 @@ class PositionManager:
 
             if maturity_dt is None:
                 logger.warning(f"Could not parse maturity date '{maturity_str}' for BTP {symbol}")
-                if engine.notifier:
-                    stock_name = await engine._get_stock_name(symbol)
-                    display_symbol = engine._format_symbol_display(symbol, stock_name, None)
-                    await engine.notifier.send_notification(
-                        f"⚠️ Could not parse maturity date '{maturity_str}' for BTP {display_symbol}. Manual check required.",
-                        summary={
-                            "symbol": symbol,
-                            "action": "WARNING",
-                            "reason": "Unparseable maturity date",
-                        }
-                    )
+                pos = engine.positions.get(symbol)
+                if pos:
+                    grace_period = 7 * 24 * 3600  # 7 days
+                    unparseable_since = pos.get("_unparseable_maturity_since")
+                    if unparseable_since is None:
+                        pos["_unparseable_maturity_since"] = time.time()
+                        if engine.notifier:
+                            stock_name = await engine._get_stock_name(symbol)
+                            display_symbol = engine._format_symbol_display(symbol, stock_name, None)
+                            await engine.notifier.send_notification(
+                                f"⚠️ Could not parse maturity date '{maturity_str}' for BTP {display_symbol}. Manual check required. Will auto-close at par in 7 days.",
+                                summary={
+                                    "symbol": symbol,
+                                    "action": "WARNING",
+                                    "reason": "Unparseable maturity date",
+                                }
+                            )
+                        continue
+                    elif time.time() - unparseable_since > grace_period:
+                        await self._close_btp_at_par(symbol, entry, pos, "btp_unparseable_maturity", "btp_unparseable_maturity", "Unparseable maturity date grace period expired")
+                        continue
+                else:
+                    if engine.notifier:
+                        stock_name = await engine._get_stock_name(symbol)
+                        display_symbol = engine._format_symbol_display(symbol, stock_name, None)
+                        await engine.notifier.send_notification(
+                            f"⚠️ Could not parse maturity date '{maturity_str}' for BTP {display_symbol}. No open position found.",
+                            summary={
+                                "symbol": symbol,
+                                "action": "WARNING",
+                                "reason": "Unparseable maturity date",
+                            }
+                        )
                 continue
             if now_dt < maturity_dt:
                 continue
             # BTP has matured – close at par value
-            logger.info(f"BTP {symbol} has matured (maturity: {maturity_str}). Closing at par value.")
-            engine.current_symbols.remove(entry)
-            # Refund reserved cycle capital for any removed buy orders
-            async with engine._queued_orders_lock:
-                removed_buys = [q for q in engine.queued_orders if q['symbol'] == symbol and q['side'] == 'buy']
-                engine.queued_orders = [q for q in engine.queued_orders if q['symbol'] != symbol]
-            if removed_buys:
-                async with engine._cycle_spent_lock:
-                    engine._cycle_spent = max(0.0, engine._cycle_spent - sum(q.get('amount', 0.0) for q in removed_buys))
-            if symbol in engine.positions:
-                await self.event_bus.publish("cancel_exit_orders", symbol)
-                async with engine._positions_lock:
-                    pos = engine.positions.pop(symbol)
-                par_value = 100.0;
-                cost = pos["amount"] * par_value
-                from src.exchanges.fees import calculate_transaction_costs
-                costs = calculate_transaction_costs("SELL", par_value, pos["amount"], symbol=symbol)
-                fee_cost = costs["total_costs"]
-                cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
-                net_quote = cost - fee_cost
-                realized_pnl = net_quote - cost_basis
-                trade = {
-                    "symbol": symbol,
-                    "side": "sell",
-                    "amount": pos["amount"],
-                    "price": par_value,
-                    "cost": cost,
-                    "fee": {"cost": fee_cost, "currency": engine.base_currency},
-                    "timestamp": time.time() * 1000,
-                    "note": "btp_matured",
-                    "exit_reason": "btp_matured",
-                    "realized_pnl": realized_pnl,
-                    "cost_basis": cost_basis,
-                }
-                engine._append_trade(trade)
-                await asyncio.to_thread(insert_trade, trade)
-                logger.info(f"Matured BTP {symbol}: closed {pos['amount']} at par value {par_value}.")
-                if engine.notifier:
-                    stock_name = await engine._get_stock_name(symbol)
-                    display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
-                    await engine.notifier.send_notification(
-                        f"💰 BTP {display_symbol} matured – closed at par value {par_value}. P&L: {realized_pnl:+.4f}",
-                        summary={
-                            "symbol": symbol,
-                            "action": "SELL",
-                            "reason": "BTP matured",
-                            "price": par_value,
-                            "realized_pnl": realized_pnl,
-                            "exit_reason": "btp_matured",
-                        }
-                    )
-                await self.event_bus.publish("remove_symbol_if_paused", symbol)
+            pos = engine.positions.get(symbol)
+            if pos:
+                await self._close_btp_at_par(symbol, entry, pos, "btp_matured", "btp_matured", "BTP matured")
 
         for entry in list(engine.current_symbols):
             symbol = entry["symbol"]
