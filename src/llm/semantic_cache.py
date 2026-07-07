@@ -1,6 +1,9 @@
 import re
 import logging
-from typing import Tuple, Optional
+import requests
+import uuid
+from typing import Tuple, Optional, List
+from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +36,6 @@ def reconstruct_response(cached_response: str, current_ticker: str, original_pro
 
     # Replace the placeholder with the current ticker
     return cached_response.replace("[TICKER]", current_ticker)
-
-import requests
-import uuid
-from typing import Optional, List
-from src.config.settings import settings
 
 class SemanticCacheClient:
     """Handles ChromaDB and embedding server interactions for semantic caching."""
