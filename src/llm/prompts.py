@@ -380,8 +380,6 @@ def build_system_prompt() -> str:
     prompt = prompt.replace("__BTP_FEE_SECTION__", _compute_btp_fee_text())
     return prompt
 
-SYSTEM_PROMPT = build_system_prompt()
-
 
 def build_stock_selection_prompt(
     available_symbols: List[str],
