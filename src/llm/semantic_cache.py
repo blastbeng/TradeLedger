@@ -4,12 +4,48 @@ import requests
 import uuid
 import threading
 import time
+import queue
+from concurrent.futures import Future
 from typing import Tuple, Optional, List
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-llamacpp_lock = threading.Lock()
+class LlamaCppExecutor:
+    """Serializes and prioritizes requests to a single-threaded llama.cpp server."""
+    def __init__(self):
+        self._queue = queue.PriorityQueue()
+        self._seq = 0
+        self._seq_lock = threading.Lock()
+        self._worker = threading.Thread(target=self._run, daemon=True, name="llamacpp-worker")
+        self._worker.start()
+
+    def _run(self):
+        while True:
+            task = self._queue.get()
+            if task is None:
+                break
+            priority, seq, future, func, args, kwargs = task
+            try:
+                result = func(*args, **kwargs)
+                if future:
+                    future.set_result(result)
+            except Exception as e:
+                if future:
+                    future.set_exception(e)
+            finally:
+                self._queue.task_done()
+
+    def submit(self, func, *args, priority=10, **kwargs):
+        """Submit a task. Lower priority numbers run first."""
+        with self._seq_lock:
+            seq = self._seq
+            self._seq += 1
+        future = Future()
+        self._queue.put((priority, seq, future, func, args, kwargs))
+        return future
+
+llamacpp_executor = LlamaCppExecutor()
 
 # Regex to find tickers ending with .MI (or other configured suffixes)
 TICKER_REGEX = re.compile(r'\b((?:[A-Z0-9]{1,6}(?:\.[A-Z]{1,3})?)|(?:IT[A-Z0-9]{10}))\b')
@@ -98,7 +134,7 @@ class SemanticCacheClient:
             self._init_failed = True
             self._initialized = False  # allow retry
 
-    def get_embedding(self, text: str) -> Optional[List[float]]:
+    def get_embedding(self, text: str, timeout: int = 120) -> Optional[List[float]]:
         """Generates an embedding for the given text using the llama.cpp server."""
         embedding_url = f"{self.embedding_url}/embeddings"
         logger.info(f"Semantic Cache: get_embedding called for text (len={len(text)})")
@@ -122,17 +158,23 @@ class SemanticCacheClient:
                     logger.warning("Semantic Cache: EMBEDDING_MODEL_NAME is not set. Sending request without model name.")
                     payload.pop("model", None)
                 logger.info(f"Semantic Cache: Embedding payload: {payload}")
-                resp = requests.post(
-                    embedding_url,
-                    json=payload,
-                    timeout=120  # Reduced to prevent blocking llamacpp_lock
-                )
+
+                def _do_request():
+                    return requests.post(
+                        embedding_url,
+                        json=payload,
+                        timeout=timeout
+                    )
+
+                future = llamacpp_executor.submit(_do_request, priority=10)
+                resp = future.result(timeout=timeout + 10)  # Wait slightly longer than HTTP timeout
+
                 logger.info(f"Semantic Cache: Embedding response status: {resp.status_code}, text: {resp.text[:500]}")
                 resp.raise_for_status()
                 all_embeddings.append(resp.json()["data"][0]["embedding"])
                 logger.info(f"Semantic Cache: Chunk embedded successfully in {time.time() - start_time:.2f}s.")
             except requests.exceptions.Timeout as e:
-                logger.error(f"Semantic Cache: Embedding request timed out after 120s: {e}", exc_info=True)
+                logger.error(f"Semantic Cache: Embedding request timed out after {timeout}s: {e}", exc_info=True)
                 return None
             except Exception as e:
                 resp_text = getattr(resp, 'text', 'N/A')
@@ -164,7 +206,7 @@ class SemanticCacheClient:
 
         generalized_prompt, ticker = generalize_prompt(prompt, symbol)
         logger.debug(f"Semantic Cache: Querying cache for prompt (ticker={ticker})...")
-        embedding = self.get_embedding(generalized_prompt)
+        embedding = self.get_embedding(generalized_prompt, timeout=5)
         if not embedding:
             logger.debug("Semantic Cache: No embedding generated, skipping query.")
             return None
@@ -210,7 +252,7 @@ class SemanticCacheClient:
 
         generalized_prompt, ticker = generalize_prompt(prompt, symbol)
         logger.debug(f"Semantic Cache: Adding to cache (ticker={ticker})...")
-        embedding = self.get_embedding(generalized_prompt)
+        embedding = self.get_embedding(generalized_prompt, timeout=5)
         if not embedding:
             return
 
