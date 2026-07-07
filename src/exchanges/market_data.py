@@ -427,7 +427,7 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
         # Save to DB with the base symbol (no suffix)
         try:
             save_country = settings.TARGET_COUNTRY if settings.COUNTRY_FILTER_STRICT else None
-            save_discovered_symbol(db_symbol, isin, None, "", country=save_country)
+            save_discovered_symbol(db_symbol, isin, "stock", "", country=save_country)
         except (RuntimeError, ValueError, OSError):
             pass
 
@@ -1501,7 +1501,7 @@ def get_tradable_assets() -> List[str]:
                 db_base = symbol
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
-                save_discovered_symbol(db_base, None, None, name or "", country=country)
+                save_discovered_symbol(db_base, None, "stock", name or "", country=country)
             except Exception:
                 pass
         elif name and not settings.COUNTRY_FILTER_STRICT:
@@ -1511,7 +1511,7 @@ def get_tradable_assets() -> List[str]:
                 db_base = symbol
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
-                save_discovered_symbol(db_base, None, None, name or "", country=None)
+                save_discovered_symbol(db_base, None, "stock", name or "", country=None)
             except (RuntimeError, ValueError, OSError):
                 pass
         if country is None:
