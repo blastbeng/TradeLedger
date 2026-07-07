@@ -85,6 +85,8 @@ class Settings(BaseSettings):
 
     # Max symbols to trade simultaneously
     MAX_SYMBOLS: int = 10
+    # Maximum number of simultaneously open positions
+    MAX_OPEN_POSITIONS: int = 10
 
     @field_validator("TRADING_MODE")
     @classmethod
@@ -98,6 +100,13 @@ class Settings(BaseSettings):
     def validate_max_symbols(cls, v: int) -> int:
         if v < 1:
             raise ValueError("MAX_SYMBOLS must be at least 1")
+        return v
+
+    @field_validator("MAX_OPEN_POSITIONS")
+    @classmethod
+    def validate_max_open_positions(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("MAX_OPEN_POSITIONS must be at least 1")
         return v
 
     # Minimum number of symbols the LLM must select (when not pausing).

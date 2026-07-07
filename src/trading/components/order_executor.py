@@ -1165,6 +1165,15 @@ class OrderExecutor:
         if paused:
             logger.info(f"Ignoring BUY {symbol}: trading is paused (safety check).")
             return
+        # Hard cap on total open positions
+        if symbol not in engine.positions and len(engine.positions) >= settings.MAX_OPEN_POSITIONS:
+            logger.info(f"Skipping BUY {symbol}: maximum open positions limit ({settings.MAX_OPEN_POSITIONS}) reached.")
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⚠️ Skipping BUY {display_symbol}: maximum open positions limit ({settings.MAX_OPEN_POSITIONS}) reached.",
+                    summary={"symbol": symbol, "action": "SKIP", "reason": "Max open positions limit reached"}
+                )
+            return
         # Extract known parameters from the LLM's strategy_params (if any)
         params = signal.strategy_params or {}
         fill_timeout = params.get("order_fill_timeout_seconds", settings.ORDER_FILL_TIMEOUT_SECONDS)
