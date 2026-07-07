@@ -95,7 +95,7 @@ class SemanticCacheClient:
                 resp.raise_for_status()
             self._init_failed = False
         except Exception as e:
-            logger.warning(f"Semantic Cache: Failed to initialize ChromaDB collection: {e}. Will retry on next call.")
+            logger.warning(f"Semantic Cache: Failed to initialize ChromaDB collection: {e}. Will retry on next call.", exc_info=True)
             self._init_failed = True
             self._initialized = False  # allow retry
 
@@ -126,10 +126,11 @@ class SemanticCacheClient:
                     all_embeddings.append(resp.json()["data"][0]["embedding"])
                     logger.debug(f"Semantic Cache: Chunk embedded successfully in {time.time() - start_time:.2f}s.")
                 except requests.exceptions.Timeout as e:
-                    logger.error(f"Semantic Cache: Embedding request timed out after 120s: {e}")
+                    logger.error(f"Semantic Cache: Embedding request timed out after 120s: {e}", exc_info=True)
                     return None
                 except Exception as e:
-                    logger.warning(f"Semantic Cache: Failed to get embedding for chunk: {e}.")
+                    resp_text = getattr(resp, 'text', 'N/A')
+                    logger.warning(f"Semantic Cache: Failed to get embedding for chunk: {e}. Response body: {resp_text}", exc_info=True)
                     return None
 
         if not all_embeddings:
@@ -190,7 +191,7 @@ class SemanticCacheClient:
             else:
                 logger.debug("Semantic Cache: Query returned no distances.")
         except Exception as e:
-            logger.warning(f"Semantic Cache: Failed to query ChromaDB: {e}.")
+            logger.warning(f"Semantic Cache: Failed to query ChromaDB: {e}.", exc_info=True)
 
         return None
 
@@ -233,7 +234,7 @@ class SemanticCacheClient:
             resp.raise_for_status()
             logger.info(f"Semantic Cache: Successfully added to ChromaDB with ID {item_id}.")
         except Exception as e:
-            logger.warning(f"Semantic Cache: Failed to add to ChromaDB: {e}.")
+            logger.warning(f"Semantic Cache: Failed to add to ChromaDB: {e}.", exc_info=True)
 
     def cleanup_expired(self, max_age_seconds: int = 86400):
         """Remove cache entries older than max_age_seconds."""
@@ -265,7 +266,7 @@ class SemanticCacheClient:
                 resp.raise_for_status()
                 logger.info(f"Semantic Cache: Cleaned up {len(ids_to_delete)} expired entries.")
         except Exception as e:
-            logger.warning(f"Semantic Cache: Cleanup failed: {e}")
+            logger.warning(f"Semantic Cache: Cleanup failed: {e}", exc_info=True)
 
 _semantic_cache_client: Optional[SemanticCacheClient] = None
 
