@@ -1051,10 +1051,16 @@ class TradingEngine:
                         pos_tf_secs = self._timeframe_to_seconds(pos_tf)
                         if min_tf_seconds is None or pos_tf_secs < min_tf_seconds:
                             min_tf_seconds = pos_tf_secs
-                if min_tf_seconds is not None and min_tf_seconds >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
-                    # Cap at 1 hour (3600s) to ensure stop-loss/take-profit triggers
-                    # are checked frequently enough even for very long timeframes (1Y/5Y).
-                    risk_interval = max(3600, min(3600, int(min_tf_seconds * 0.01)))
+                if min_tf_seconds is not None:
+                    if min_tf_seconds >= 31_536_000:  # >= 1 year
+                        # Use the dedicated very long timeframe interval (e.g., 4 hours)
+                        risk_interval = settings.RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS
+                    elif min_tf_seconds >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
+                        # Cap at 1 hour (3600s) to ensure stop-loss/take-profit triggers
+                        # are checked frequently enough even for very long timeframes.
+                        risk_interval = max(3600, min(3600, int(min_tf_seconds * 0.01)))
+                    else:
+                        risk_interval = settings.RISK_CHECK_INTERVAL_SECONDS
                 else:
                     risk_interval = settings.RISK_CHECK_INTERVAL_SECONDS
                 await asyncio.sleep(risk_interval)
