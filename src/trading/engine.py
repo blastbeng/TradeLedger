@@ -1748,7 +1748,7 @@ class TradingEngine:
         while self._running:
             try:
                 if await self._is_market_open():
-                    await self._check_pause_resume_decision()
+                    await self._signal_processor.check_pause_resume_decision()
             except Exception as e:
                 logger.error(f"Pause/resume check error: {e}", exc_info=True)
             await asyncio.sleep(1800)  # every 30 minutes
@@ -1776,10 +1776,6 @@ class TradingEngine:
                         summary={"action": "INFO", "reason": "Redis connection restored"}
                     )
             await asyncio.sleep(60)
-
-    async def _check_pause_resume_decision(self):
-        """When trading is paused, ask the LLM whether to resume (lightweight)."""
-        await self._signal_processor.check_pause_resume_decision()
 
     async def _gather_prompt_context(
         self,
