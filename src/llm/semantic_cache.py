@@ -64,13 +64,13 @@ class SemanticCacheClient:
         """Initializes or retrieves the ChromaDB collection."""
         try:
             # Check if collection exists
-            resp = requests.get(f"{self.chromadb_host}/api/v1/collections/{self.collection_name}", timeout=5)
+            resp = requests.get(f"{self.chromadb_host}/api/v2/collections/{self.collection_name}", timeout=5)
             if resp.status_code == 200:
                 self.collection_id = resp.json().get("id")
             elif resp.status_code == 404:
                 # Create collection with cosine distance
                 resp = requests.post(
-                    f"{self.chromadb_host}/api/v1/collections",
+                    f"{self.chromadb_host}/api/v2/collections",
                     json={"name": self.collection_name, "metadata": {"hnsw:space": "cosine"}},
                     timeout=5
                 )
@@ -111,7 +111,7 @@ class SemanticCacheClient:
 
         try:
             resp = requests.post(
-                f"{self.chromadb_host}/api/v1/collections/{self.collection_id}/query",
+                f"{self.chromadb_host}/api/v2/collections/{self.collection_id}/query",
                 json={"query_embeddings": [embedding], "n_results": 1},
                 timeout=10
             )
@@ -153,7 +153,7 @@ class SemanticCacheClient:
             }
             item_id = str(uuid.uuid4())
             resp = requests.post(
-                f"{self.chromadb_host}/api/v1/collections/{self.collection_id}/add",
+                f"{self.chromadb_host}/api/v2/collections/{self.collection_id}/add",
                 json={
                     "embeddings": [embedding],
                     "documents": [generalized_response],  # Store the generalized response
