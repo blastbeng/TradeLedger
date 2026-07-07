@@ -48,6 +48,8 @@ def reconstruct_response(cached_response: str, current_ticker: str) -> str:
 class SemanticCacheClient:
     """Handles ChromaDB and embedding server interactions for semantic caching."""
 
+    _embedding_lock = threading.Lock()  # Serialize embedding requests
+
     def __init__(self):
         self.enabled = settings.SEMANTIC_CACHE_ENABLED
         self.embedding_url = settings.EMBEDDING_MODEL_BASE_URL
@@ -56,7 +58,6 @@ class SemanticCacheClient:
         self.collection_name = settings.CHROMADB_COLLECTION_NAME
         self.distance_threshold = settings.SEMANTIC_CACHE_DISTANCE_THRESHOLD
         self.collection_id = None
-        self._embedding_lock = threading.Lock()  # Serialize embedding requests
         self._initialized = False
         self._init_failed = False
 
