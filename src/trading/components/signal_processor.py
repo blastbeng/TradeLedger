@@ -411,7 +411,7 @@ class SignalProcessor:
                 has_position=has_position, strategy_model_type=strategy_model_type, effective_temp=effective_temp,
                 market_snapshot=ctx["market_snapshot"], historical_backtest_results=ctx["historical_backtest_results"],
             )
-            signal, combined_bt_summary, llm_provider, llm_model = await engine._run_backtest_and_final_decision(
+            signal, combined_bt_summary, llm_provider, llm_model = await engine._backtest_manager.run_backtest_and_final_decision(
                 symbol=symbol, assigned_tf=assigned_tf, tf_seconds=tf_seconds, current_price=ctx["current_price"],
                 atr=ctx["atr"], historical_ohlcv=ctx["historical_ohlcv"], raw_candles=ctx["raw_candles"],
                 base_balance=ctx["base_balance"], is_btp=ctx["is_btp"], trading_paused=False,

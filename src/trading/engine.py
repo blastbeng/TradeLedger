@@ -1845,43 +1845,6 @@ class TradingEngine:
             )
         return unique
 
-    async def _run_backtest_and_final_decision(
-        self,
-        symbol: str,
-        assigned_tf: str,
-        tf_seconds: int,
-        current_price: float,
-        atr: Optional[float],
-        historical_ohlcv: Optional[List[List]],
-        raw_candles: Optional[List[List]],
-        base_balance: float,
-        is_btp: bool,
-        trading_paused: bool,
-        strategy_model_type: str,
-        effective_temp: float,
-        preliminary_signal: Signal,
-        display_symbol: str,
-        ticker: Dict[str, Any],
-    ) -> Tuple[Signal, str, Optional[str], Optional[str]]:
-        """Run backtests and the Step 2 LLM call to produce the final signal."""
-        return await self._backtest_manager.run_backtest_and_final_decision(
-            symbol=symbol,
-            assigned_tf=assigned_tf,
-            tf_seconds=tf_seconds,
-            current_price=current_price,
-            atr=atr,
-            historical_ohlcv=historical_ohlcv,
-            raw_candles=raw_candles,
-            base_balance=base_balance,
-            is_btp=is_btp,
-            trading_paused=trading_paused,
-            strategy_model_type=strategy_model_type,
-            effective_temp=effective_temp,
-            preliminary_signal=preliminary_signal,
-            display_symbol=display_symbol,
-            ticker=ticker,
-        )
-
     async def _fetch_symbol_market_data(self, symbol: str, assigned_tf: str) -> Optional[Dict[str, Any]]:
         """Fetch all raw market data for a symbol: ticker, fundamentals, balance, OHLCV, and multi-TF indicators."""
         return await self._signal_processor.fetch_symbol_market_data(symbol, assigned_tf)
