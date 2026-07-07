@@ -539,25 +539,52 @@ def compute_bollinger_bands(
 def compute_all_indicators(
     candles: List[List],
     config: Optional[Dict[str, Any]] = None,
+    requested_indicators: Optional[set] = None,
 ) -> Dict[str, Any]:
     """
     Compute all technical indicators for a list of OHLCV candles.
     candles: list of [timestamp, open, high, low, close, volume]
     config: optional dict with custom periods (e.g., {'rsi_period': 14, ...})
+    requested_indicators: optional set of indicator keys to compute; if None, all are computed.
     Returns a dict with keys like 'atr', 'rsi', 'macd', etc.
     Missing indicators are set to None.
     """
     if config is None:
         config = {}
 
+    # Define key groups for selective computation
+    _KEY_GROUPS = {
+        'atr': {'atr'},
+        'rsi': {'rsi'},
+        'macd': {'macd', 'macd_signal', 'macd_hist'},
+        'bb': {'bb_upper', 'bb_middle', 'bb_lower'},
+        'ema': {'ema_9', 'ema_21'},
+        'stochastic': {'stochastic_k', 'stochastic_d'},
+        'adx': {'adx', 'plus_di', 'minus_di'},
+        'obv': {'obv'},
+        'mfi': {'mfi'},
+        'cci': {'cci'},
+        'williams_r': {'williams_r'},
+        'ichimoku': {'ichimoku'},
+        'donchian': {'donchian_channels'},
+        'parabolic_sar': {'parabolic_sar'},
+        'keltner': {'keltner_channels'},
+    }
+
+    def _needed(group: str) -> bool:
+        if requested_indicators is None:
+            return True
+        return bool(requested_indicators & _KEY_GROUPS[group])
+
     ind = {}
     if len(candles) < 2:
         return ind
 
     # ATR — fall back to simple average True Range for long timeframes with few candles
-    ind['atr'] = compute_atr(candles)
-    if ind['atr'] is None and len(candles) >= 2:
-        ind['atr'] = _compute_simple_atr(candles)
+    if _needed('atr'):
+        ind['atr'] = compute_atr(candles)
+        if ind['atr'] is None and len(candles) >= 2:
+            ind['atr'] = _compute_simple_atr(candles)
 
     rsi_period = config.get('rsi_period', 14)
     macd_fast = config.get('macd_fast', 12)
@@ -585,77 +612,77 @@ def compute_all_indicators(
     volumes = [c[5] for c in candles]
 
     # RSI (needs rsi_period + 1)
-    if len(candles) >= rsi_period + 1:
+    if _needed('rsi') and len(candles) >= rsi_period + 1:
         ind['rsi'] = compute_rsi(closes, period=rsi_period)
 
     # MACD (needs macd_slow + macd_signal_period)
-    if len(candles) >= macd_slow + macd_signal_period:
+    if _needed('macd') and len(candles) >= macd_slow + macd_signal_period:
         macd_val, macd_sig, macd_hist = compute_macd(closes, fast=macd_fast, slow=macd_slow, signal=macd_signal_period)
         ind['macd'] = macd_val
         ind['macd_signal'] = macd_sig
         ind['macd_hist'] = macd_hist
 
     # Bollinger Bands (needs bb_period)
-    if len(candles) >= bb_period:
+    if _needed('bb') and len(candles) >= bb_period:
         bb_upper, bb_middle, bb_lower = compute_bollinger_bands(closes, period=bb_period, std_dev=bb_std)
         ind['bb_upper'] = bb_upper
         ind['bb_middle'] = bb_middle
         ind['bb_lower'] = bb_lower
 
     # EMA (compute what we can; ema_slow needs ema_slow candles, ema_fast needs ema_fast)
-    if len(candles) >= ema_fast:
+    if _needed('ema') and len(candles) >= ema_fast:
         ema_9_list = compute_ema(closes, ema_fast)
         last_ema_9 = ema_9_list[-1] if ema_9_list else None
         ind['ema_9'] = last_ema_9 if last_ema_9 is not None and not np.isnan(last_ema_9) else None
-    if len(candles) >= ema_slow:
+    if _needed('ema') and len(candles) >= ema_slow:
         ema_21_list = compute_ema(closes, ema_slow)
         last_ema_21 = ema_21_list[-1] if ema_21_list else None
         ind['ema_21'] = last_ema_21 if last_ema_21 is not None and not np.isnan(last_ema_21) else None
 
     # Stochastic (needs stoch_k_period + stoch_d_period - 1)
     min_stoch = stoch_k_period + stoch_d_period - 1
-    if len(candles) >= min_stoch:
+    if _needed('stochastic') and len(candles) >= min_stoch:
         stoch_k, stoch_d = compute_stochastic(highs, lows, closes, period=stoch_k_period, smooth_k=stoch_d_period)
         ind['stochastic_k'] = stoch_k
         ind['stochastic_d'] = stoch_d
 
     # ADX (needs adx_period + 1)
-    if len(candles) >= adx_period + 1:
+    if _needed('adx') and len(candles) >= adx_period + 1:
         adx_val, plus_di, minus_di = compute_adx(highs, lows, closes, period=adx_period)
         ind['adx'] = adx_val
         ind['plus_di'] = plus_di
         ind['minus_di'] = minus_di
 
     # OBV (needs 2)
-    if len(candles) >= 2:
+    if _needed('obv') and len(candles) >= 2:
         ind['obv'] = compute_obv(closes, volumes)
 
     # MFI (needs mfi_period + 1)
-    if len(candles) >= mfi_period + 1:
+    if _needed('mfi') and len(candles) >= mfi_period + 1:
         ind['mfi'] = compute_mfi(highs, lows, closes, volumes, period=mfi_period)
 
     # CCI (needs cci_period)
-    if len(candles) >= cci_period:
+    if _needed('cci') and len(candles) >= cci_period:
         ind['cci'] = compute_cci(highs, lows, closes, period=cci_period)
 
     # Williams %R (needs willr_period)
-    if len(candles) >= willr_period:
+    if _needed('williams_r') and len(candles) >= willr_period:
         ind['williams_r'] = compute_williams_r(highs, lows, closes, period=willr_period)
 
     # Ichimoku (needs ichimoku_senkou_b — the most data-hungry indicator)
-    if len(candles) >= ichimoku_senkou_b:
+    if _needed('ichimoku') and len(candles) >= ichimoku_senkou_b:
         ind['ichimoku'] = compute_ichimoku(highs, lows, closes, tenkan_period=ichimoku_tenkan, kijun_period=ichimoku_kijun, senkou_b_period=ichimoku_senkou_b)
 
     # Donchian Channels (needs donchian_period)
-    if len(candles) >= donchian_period:
+    if _needed('donchian') and len(candles) >= donchian_period:
         ind['donchian_channels'] = compute_donchian_channels(highs, lows, period=donchian_period)
 
     # Parabolic SAR (needs 2)
-    if len(candles) >= 2:
+    if _needed('parabolic_sar') and len(candles) >= 2:
         ind['parabolic_sar'] = compute_parabolic_sar(highs, lows)
 
     # Keltner Channels (needs bb_period, depends on EMA + ATR)
-    if len(candles) >= bb_period:
+    if _needed('keltner') and len(candles) >= bb_period:
         ind['keltner_channels'] = compute_keltner_channels(closes, highs, lows, period=bb_period)
 
     return ind

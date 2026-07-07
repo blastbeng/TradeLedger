@@ -214,6 +214,8 @@ class TradingEngine:
         self._balance_cache_time: float = 0.0
         self._portfolio_exposure_cache: Optional[Dict[str, float]] = None
         self._portfolio_exposure_cache_time: float = 0.0
+        self._position_tickers_cache: Optional[Dict[str, Dict[str, Any]]] = None
+        self._position_tickers_cache_time: float = 0.0
         self._sentiment_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, sentiment_dict)
         self.queued_orders: List[Dict[str, Any]] = []
         # Force immediate LLM evaluation when an entry signal is detected
@@ -292,6 +294,8 @@ class TradingEngine:
         self._balance_cache_time = 0.0
         self._portfolio_exposure_cache = None
         self._portfolio_exposure_cache_time = 0.0
+        self._position_tickers_cache = None
+        self._position_tickers_cache_time = 0.0
         self._perf_cache = None
         self._perf_cache_time = 0.0
         self._perf_cache_trade_count = -1
@@ -439,6 +443,16 @@ class TradingEngine:
         self._balance_cache = balance
         self._balance_cache_time = now
         return balance
+
+    async def _get_cached_position_tickers(self, ttl: float = 30.0) -> Dict[str, Dict[str, Any]]:
+        """Return cached position tickers, refreshing if older than ttl seconds."""
+        now = time.time()
+        if self._position_tickers_cache is not None and (now - self._position_tickers_cache_time) < ttl:
+            return self._position_tickers_cache
+        tickers = await self._market_data_manager._get_all_position_tickers()
+        self._position_tickers_cache = tickers
+        self._position_tickers_cache_time = now
+        return tickers
 
     async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Return aggregate news sentiment, cached for 60 seconds to reduce DB load."""
@@ -679,7 +693,7 @@ class TradingEngine:
 
                 available_pairs = stock_pairs + etf_pairs + btp_pairs
                 if available_pairs:
-                    MAX_BREADTH_SAMPLE = 500
+                    MAX_BREADTH_SAMPLE = 200
                     if len(available_pairs) <= MAX_BREADTH_SAMPLE:
                         # Universe is small enough — use everything
                         breadth_pairs = available_pairs
