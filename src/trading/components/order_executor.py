@@ -620,7 +620,7 @@ class OrderExecutor:
             f"Position remains unprotected until next risk cycle."
         )
         if self.engine.notifier:
-            stock_name = await self.engine._get_stock_name(symbol)
+            stock_name = await self.engine._market_data_manager.get_stock_name(symbol)
             display_symbol = self.engine._format_symbol_display(symbol, stock_name, timeframe)
             await self.engine.notifier.send_notification(
                 f"⚠️ Failed to place replacement exit orders for {display_symbol} after {max_retries} attempts. Position unprotected!",
@@ -736,7 +736,6 @@ class OrderExecutor:
                     )
             # Notify user
             if engine.notifier:
-                stock_name = await engine._get_stock_name(queued["symbol"])
                 stock_name = await self.engine._market_data_manager.get_stock_name(queued["symbol"])
                 display_symbol = engine._format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
                 await engine.notifier.send_notification(
@@ -2235,7 +2234,6 @@ class OrderExecutor:
                 pos.pop("take_profit_order_id", None)
             # Notify user
             if engine.notifier:
-                stock_name = await engine._get_stock_name(queued["symbol"])
                 display_symbol = engine._format_symbol_display(
                     queued["symbol"], stock_name, queued.get("timeframe")
                 )
@@ -2395,7 +2393,6 @@ class OrderExecutor:
                 pos.pop("stop_loss_order_id", None)
                 pos.pop("take_profit_order_id", None)
             if engine.notifier:
-                stock_name = await engine._get_stock_name(queued["symbol"])
                 display_symbol = engine._format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
                 await engine.notifier.send_notification(
                     f"🔗 OCO pair {oco_pair_id} cancelled for {display_symbol} (main order {status}).",
@@ -2600,7 +2597,7 @@ class OrderExecutor:
             except (TypeError, ValueError, RuntimeError, AttributeError) as e:
                 logger.error(f"Failed to place exit orders after queued buy fill for {symbol}: {e}")
                 if engine.notifier:
-                    stock_name = await engine._get_stock_name(symbol)
+                    stock_name = await engine._market_data_manager.get_stock_name(symbol)
                     display_symbol = engine._format_symbol_display(symbol, stock_name, queued.get('timeframe'))
                     await engine.notifier.send_notification(
                         f"⚠️ Exit order placement failed for {display_symbol} after queued fill: {e}",
@@ -3255,7 +3252,7 @@ class OrderExecutor:
                 f"Old stop order {old_order_id} remains active at the previous price."
             )
             if engine.notifier:
-                stock_name = await engine._get_stock_name(symbol)
+                stock_name = await engine._market_data_manager.get_stock_name(symbol)
                 display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
                 await engine.notifier.send_notification(
                     f"⚠️ Stop order replacement failed for {display_symbol}: old stop order kept active.",
