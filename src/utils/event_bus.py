@@ -27,3 +27,16 @@ class EventBus:
                     callback(*args, **kwargs)
             except Exception as e:
                 logger.error(f"Event handler error for '{event_name}': {e}", exc_info=True)
+
+    async def request(self, event_name: str, *args, **kwargs):
+        """Send a command/query via the event bus and return the result of the first subscriber."""
+        if event_name not in self._subscribers or not self._subscribers[event_name]:
+            return None
+        callback = self._subscribers[event_name][0]
+        try:
+            if asyncio.iscoroutinefunction(callback):
+                return await callback(*args, **kwargs)
+            return callback(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Event handler error for '{event_name}': {e}", exc_info=True)
+            return None
