@@ -1689,6 +1689,11 @@ class TradingEngine:
 
                 await asyncio.sleep(settings.ENGINE_LOOP_INTERVAL_SECONDS)
 
+                # If re-evaluation is running, skip this cycle to avoid
+                # race conditions with _cycle_spent reset and concurrent budget calculations.
+                if self._reevaluate_running:
+                    continue
+
                 # Process any symbol whose evaluation interval has elapsed
                 now = time.time()
 
