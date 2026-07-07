@@ -101,6 +101,14 @@ class SemanticCacheClient:
 
     def get_embedding(self, text: str) -> Optional[List[float]]:
         """Generates an embedding for the given text using the llama.cpp server."""
+        # Truncate text to avoid hitting llama.cpp context/batch limits.
+        # 2000 characters is roughly 500-800 tokens, well within a 2048 context window
+        # and fast to process on the RPi5.
+        max_chars = 2000
+        if len(text) > max_chars:
+            logger.debug(f"Semantic Cache: Truncating text from {len(text)} to {max_chars} chars for embedding.")
+            text = text[:max_chars]
+
         embedding_url = f"{self.embedding_url}/embeddings"
         logger.debug(f"Semantic Cache: Generating embedding for text (len={len(text)}) at {embedding_url} using model {self.embedding_model}...")
         # Use a lock to ensure only one embedding request is processed at a time
