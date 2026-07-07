@@ -417,6 +417,7 @@ class SignalProcessor:
                 base_balance=ctx["base_balance"], is_btp=ctx["is_btp"], trading_paused=False,
                 strategy_model_type=strategy_model_type, effective_temp=effective_temp,
                 preliminary_signal=preliminary_signal, display_symbol=display_symbol, ticker=ctx["ticker"],
+                market_hash=ctx["market_hash"],
             )
 
         return {"signal": signal, "llm_provider": llm_provider, "llm_model": llm_model}

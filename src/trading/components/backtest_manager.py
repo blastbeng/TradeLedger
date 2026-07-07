@@ -431,6 +431,7 @@ class BacktestManager:
         effective_temp: float,
         llm_provider: Optional[str],
         llm_model: Optional[str],
+        market_hash: str = None,
     ) -> Tuple[Signal, Optional[str], Optional[str]]:
         """Run the Step 2 LLM call and carry over execution-critical fields.
 
@@ -482,6 +483,7 @@ class BacktestManager:
                     model_type=strategy_model_type,
                     temperature=effective_temp,
                     symbol=symbol,
+                    market_hash=market_hash,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -509,6 +511,7 @@ class BacktestManager:
                             model_type="actuator",
                             temperature=effective_temp,
                             symbol=symbol,
+                            market_hash=market_hash,
                         ),
                         timeout=settings.LLM_TIMEOUT
                     )
@@ -618,6 +621,7 @@ class BacktestManager:
         preliminary_signal: Signal,
         display_symbol: str,
         ticker: Dict[str, Any],
+        market_hash: str = None,
     ) -> Tuple[Signal, str, Optional[str], Optional[str]]:
         """Run backtests and the Step 2 LLM call to produce the final signal.
 
@@ -675,6 +679,7 @@ class BacktestManager:
                 effective_temp=effective_temp,
                 llm_provider=llm_provider,
                 llm_model=llm_model,
+                market_hash=market_hash,
             )
         else:
             # For SELL or HOLD, no backtest needed, use preliminary decision
@@ -743,6 +748,7 @@ class BacktestManager:
                     model_type=model_type,
                     temperature=temperature,
                     symbol=symbol,
+                    market_hash=data.get("market_hash"),
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -775,6 +781,7 @@ class BacktestManager:
                         model_type="actuator",
                         temperature=temperature,
                         symbol=symbol,
+                        market_hash=data.get("market_hash"),
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )

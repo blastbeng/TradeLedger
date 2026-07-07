@@ -138,7 +138,7 @@ def get_cached_llm_response(
     logger.debug("LLM cache miss: model_type=%s, system_prompt=%.200s..., prompt=%.500s...", model_type, system_prompt, prompt)
     # --- Semantic Cache Check ---
     _semantic_cache = get_semantic_cache_client()
-    if _semantic_cache.enabled:
+    if _semantic_cache.enabled and not market_hash:
         semantic_hit = None
         try:
             future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol)
@@ -302,7 +302,7 @@ def get_cached_llm_response(
     except Exception as e:
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
     # --- Semantic Cache Store ---
-    if _semantic_cache.enabled:
+    if _semantic_cache.enabled and not market_hash:
         _semantic_cache_add_executor.submit(
             _semantic_cache.add,
             prompt,
