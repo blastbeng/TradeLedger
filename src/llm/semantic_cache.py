@@ -56,7 +56,7 @@ class LlamaCppExecutor:
 llamacpp_executor = LlamaCppExecutor()
 
 # Regex to find tickers ending with .MI (or other configured suffixes)
-TICKER_REGEX = re.compile(r'\b((?:[A-Z0-9]{1,6}(?:\.[A-Z]{1,3})?)|(?:IT[A-Z0-9]{10}))\b')
+TICKER_REGEX = re.compile(r'\b((?:[A-Z0-9]{1,6}\.MI)|(?:IT[A-Z0-9]{10}))\b')
 
 # Common financial, technical, and indicator terms to exclude from ticker matching
 EXCLUDED_TERMS = {
@@ -251,7 +251,7 @@ class SemanticCacheClient:
                     pass
             return None
 
-    def query(self, prompt: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None, prompt_category: str = "default", market_hash: Optional[str] = None) -> Optional[str]:
+    def query(self, prompt: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None, prompt_category: str = "default") -> Optional[str]:
         """Queries the semantic cache for a matching prompt."""
         self._ensure_initialized()
         if not self.enabled or not self.collection_id:
@@ -278,8 +278,7 @@ class SemanticCacheClient:
                 "$and": [
                     {"model_type": model_type},
                     {"cache_version": cache_version or ""},
-                    {"prompt_category": prompt_category},
-                    {"market_hash": market_hash or ""}
+                    {"prompt_category": prompt_category}
                 ]
             }
 
@@ -317,7 +316,7 @@ class SemanticCacheClient:
 
         return None
 
-    def add(self, prompt: str, response: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None, prompt_category: str = "default", market_hash: Optional[str] = None):
+    def add(self, prompt: str, response: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None, prompt_category: str = "default"):
         """Adds a prompt and its response to the semantic cache."""
         self._ensure_initialized()
         if not self.enabled or not self.collection_id:
@@ -345,12 +344,11 @@ class SemanticCacheClient:
                 "cached_at": time.time(),
                 "model_type": model_type,
                 "cache_version": cache_version or "",
-                "prompt_category": prompt_category,
-                "market_hash": market_hash or ""
+                "prompt_category": prompt_category
             }
 
             # Use a deterministic ID to prevent duplicate entries for the same prompt
-            id_source = f"{generalized_prompt}:{model_type}:{cache_version or ''}"
+            id_source = f"{generalized_prompt}:{model_type}:{cache_version or ''}:{prompt_category}"
             item_id = hashlib.sha256(id_source.encode()).hexdigest()
 
             # Use upsert to add or update the entry if it already exists

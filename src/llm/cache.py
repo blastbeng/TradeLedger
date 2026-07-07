@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Optional
 from src.config.settings import settings
@@ -17,6 +18,21 @@ _semantic_cache_add_executor = ThreadPoolExecutor(max_workers=2, thread_name_pre
 def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
     return len(text) // 4
+
+def _extract_action_from_response(response_text: str) -> Optional[str]:
+    """Attempt to parse the LLM response as JSON and return the uppercase action, if any."""
+    try:
+        # Extract JSON from a markdown code block if present
+        match = re.search(r'```(?:json)?\s*(.*?)\s*```', response_text, re.DOTALL)
+        json_str = match.group(1) if match else response_text
+        data = json.loads(json_str)
+        if isinstance(data, dict):
+            action = data.get("action")
+            if isinstance(action, str):
+                return action.strip().upper()
+    except Exception:
+        pass
+    return None
 
 def get_cached_llm_response(
     prompt: str,
@@ -147,7 +163,7 @@ def get_cached_llm_response(
     if _semantic_cache.enabled and not bypass_semantic_cache and prompt_category != "strategy" and not market_hash:
         semantic_hit = None
         try:
-            future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol, model_type, settings.LLM_CACHE_VERSION, prompt_category, market_hash)
+            future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol, model_type, settings.LLM_CACHE_VERSION, prompt_category)
             try:
                 semantic_hit = future.result(timeout=120.0)
             except FuturesTimeoutError:
@@ -309,9 +325,14 @@ def get_cached_llm_response(
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
     # --- Semantic Cache Store ---
     if _semantic_cache.enabled and not bypass_semantic_cache and prompt_category != "strategy" and not market_hash:
-        # Never cache BUY/SELL decisions, as they depend on real-time market data
-        is_critical_decision = ('"action": "BUY"' in response_text or '"action": "SELL"' in response_text)
-        if not is_critical_decision:
+        # Never cache BUY/SELL decisions, as they depend on real-time market data.
+        # Parse the response as JSON to reliably detect the action field.
+        action = _extract_action_from_response(response_text)
+        if action is None:
+            logger.debug("Semantic cache: Could not parse JSON action from response, skipping cache add.")
+        elif action in ("BUY", "SELL"):
+            logger.debug("Semantic cache: Critical decision (%s) detected, skipping cache add.", action)
+        else:
             future = _semantic_cache_add_executor.submit(
                 _semantic_cache.add,
                 prompt,
@@ -319,8 +340,7 @@ def get_cached_llm_response(
                 symbol,
                 model_type,
                 settings.LLM_CACHE_VERSION,
-                prompt_category,
-                market_hash
+                prompt_category
             )
 
             def _log_add_exception(fut):
