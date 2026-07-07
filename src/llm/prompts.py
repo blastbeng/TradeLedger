@@ -1072,6 +1072,7 @@ class StrategyPromptData:
     symbol_event: Optional[Dict[str, Any]] = None
     queued_orders: Optional[List[Dict[str, Any]]] = None
     fundamentals: Optional[Dict[str, Any]] = None
+    aggregate_sentiment: Optional[Dict[str, Any]] = None
     vwap: Optional[float] = None
     daily_pivot_points: Optional[Dict[str, float]] = None
     min_hold_time_mult: float = 1.0
