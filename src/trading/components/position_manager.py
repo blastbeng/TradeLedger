@@ -916,12 +916,12 @@ class PositionManager:
         """Detect and handle external changes: delisted symbols, externally sold positions."""
         engine = self.engine
         # --- Delisted stocks ---
-        plain_assets = await engine._get_tradable_assets()
+        plain_assets = await engine._market_data_manager.get_tradable_assets()
         available_pairs = [f"{sym}/{engine.base_currency}" for sym in plain_assets]
         # Include BTP bonds and ETFs so they are not removed during reconciliation
         btp_bonds = await engine._market_data_manager.get_btp_bonds()
         available_pairs += [f"{b['isin']}/{engine.base_currency}" for b in btp_bonds]
-        etf_symbols = await engine._get_etf_symbols()
+        etf_symbols = await engine._market_data_manager.get_etf_symbols()
         available_pairs += [f"{sym}/{engine.base_currency}" for sym in etf_symbols]
 
         # Build BTP maturity map for maturity checking
