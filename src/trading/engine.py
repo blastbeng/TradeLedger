@@ -1816,10 +1816,6 @@ class TradingEngine:
             )
         return unique
 
-    async def get_profit_summary(self) -> Dict[str, Any]:
-        """Return profit/loss summary including queued orders."""
-        return await self.event_bus.request("get_profit_summary")
-
     async def get_performance_summary(self) -> Dict[str, Any]:
         """Return performance summary grouped by symbol and timeframe from trade_history table."""
         return await asyncio.to_thread(get_performance)

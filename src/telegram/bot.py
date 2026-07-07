@@ -820,7 +820,7 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         try:
-            summary = await self.engine.get_profit_summary()
+            summary = await self.engine.event_bus.request("get_profit_summary")
             base_currency = summary.get('base_currency', '')
             pnl = summary['total_pnl']
             pnl_pct = summary['pnl_percent']
