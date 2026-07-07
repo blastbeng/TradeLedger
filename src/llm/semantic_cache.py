@@ -102,6 +102,7 @@ class SemanticCacheClient:
     def get_embedding(self, text: str) -> Optional[List[float]]:
         """Generates an embedding for the given text using the llama.cpp server."""
         embedding_url = f"{self.embedding_url}/embeddings"
+        logger.info(f"Semantic Cache: get_embedding called for text (len={len(text)})")
 
         # Chunk the text to avoid hitting llama.cpp batch limits, then average embeddings.
         # 1000 characters is roughly 250-400 tokens, safely under typical n_batch limits.
@@ -114,18 +115,24 @@ class SemanticCacheClient:
         all_embeddings = []
         with self._embedding_lock:
             for chunk in chunks:
-                logger.debug(f"Semantic Cache: Generating embedding for chunk (len={len(chunk)}) at {embedding_url}...")
+                logger.info(f"Semantic Cache: Generating embedding for chunk (len={len(chunk)}) at {embedding_url}...")
                 start_time = time.time()
                 resp = None
                 try:
+                    payload = {"model": self.embedding_model, "input": [chunk]}
+                    if not self.embedding_model:
+                        logger.warning("Semantic Cache: EMBEDDING_MODEL_NAME is not set. Sending request without model name.")
+                        payload.pop("model", None)
+                    logger.info(f"Semantic Cache: Embedding payload: {payload}")
                     resp = requests.post(
                         embedding_url,
-                        json={"model": self.embedding_model, "input": [chunk]},
+                        json=payload,
                         timeout=120  # Increased timeout for RPi5
                     )
+                    logger.info(f"Semantic Cache: Embedding response status: {resp.status_code}, text: {resp.text[:500]}")
                     resp.raise_for_status()
                     all_embeddings.append(resp.json()["data"][0]["embedding"])
-                    logger.debug(f"Semantic Cache: Chunk embedded successfully in {time.time() - start_time:.2f}s.")
+                    logger.info(f"Semantic Cache: Chunk embedded successfully in {time.time() - start_time:.2f}s.")
                 except requests.exceptions.Timeout as e:
                     logger.error(f"Semantic Cache: Embedding request timed out after 120s: {e}", exc_info=True)
                     return None
