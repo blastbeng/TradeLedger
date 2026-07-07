@@ -817,7 +817,7 @@ class OrderExecutor:
         engine = self.engine
 
         # --- Consolidated position sizing: single hard ceiling from all caps ---
-        pos_tickers = await engine._get_all_position_tickers()
+        pos_tickers = await engine._market_data_manager._get_all_position_tickers()
 
         # Compute current portfolio state once
         total_value = quote_balance

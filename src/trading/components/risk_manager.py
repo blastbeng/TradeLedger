@@ -32,7 +32,7 @@ class RiskManager:
         engine = self.engine
         if not engine.positions:
             return
-        pos_tickers = await engine._get_all_position_tickers_sync()
+        pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
         now_ms = int(time.time() * 1000)
         for symbol, pos in engine.positions.items():
             try:

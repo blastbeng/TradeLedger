@@ -124,7 +124,7 @@ class PositionManager:
             }
 
         open_value = 0.0
-        pos_tickers = await asyncio.to_thread(engine._get_all_position_tickers_sync)
+        pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
         for sym, pos in engine.positions.items():
             try:
                 t = pos_tickers.get(sym)
@@ -228,7 +228,7 @@ class PositionManager:
         exposure = 0.0
         position_exposures = []
         total_stop_risk = 0.0
-        pos_tickers = await asyncio.to_thread(engine._get_all_position_tickers_sync)
+        pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
         for sym, pos in engine.positions.items():
             try:
                 t = pos_tickers.get(sym)
@@ -304,7 +304,7 @@ class PositionManager:
         """Return current open positions as trade-like dicts with unrealized P&L."""
         engine = self.engine
         open_trades = []
-        pos_tickers = await asyncio.to_thread(engine._get_all_position_tickers_sync)
+        pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
         for symbol, pos in engine.positions.items():
             # Skip invalid positions (zero amount or zero price)
             if pos.get("amount", 0) <= 0 or pos.get("price", 0) <= 0:
@@ -360,7 +360,7 @@ class PositionManager:
         current_realized_equity = equity_series[-1] if equity_series else engine.initial_balance
         unrealized_pnl = 0.0
         try:
-            pos_tickers = engine._get_all_position_tickers_sync()
+            pos_tickers = engine._market_data_manager._get_all_position_tickers_sync()
             for sym, pos in engine.positions.items():
                 t = pos_tickers.get(sym)
                 if t and t.get('last'):

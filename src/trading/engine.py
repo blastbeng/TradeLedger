@@ -431,14 +431,6 @@ class TradingEngine:
         except Exception as e:
             logger.error(f"Force download error: {e}", exc_info=True)
 
-    def _get_all_position_tickers_sync(self) -> Dict[str, Dict[str, Any]]:
-        """Fetch tickers for all open positions synchronously, batching missing ones.
-
-        Uses get_quotes_cached (Redis/DB only, no network calls) to avoid
-        blocking the default asyncio thread pool with slow yfinance requests.
-        """
-        return self._market_data_manager._get_all_position_tickers_sync()
-
     async def _get_cached_balance(self, ttl: float = 30.0) -> Dict[str, float]:
         """Return cached balance, refreshing if older than ttl seconds."""
         now = time.time()
