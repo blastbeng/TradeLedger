@@ -1710,7 +1710,7 @@ class TradingEngine:
                             sym = entry["symbol"]
                             try:
                                 await asyncio.wait_for(
-                                    self._process_symbol(entry, trading_paused=trading_paused),
+                                    self._signal_processor.process_symbol(entry, trading_paused=trading_paused),
                                     timeout=settings.LLM_TIMEOUT + 10
                                 )
                                 async with self._eval_state_lock:
@@ -1844,10 +1844,6 @@ class TradingEngine:
                 f"(removed {len(variants) - len(unique)} duplicate(s))"
             )
         return unique
-
-    async def _process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False):
-        """Fetch market data, get LLM strategy, validate, and execute."""
-        await self._signal_processor.process_symbol(symbol_entry, trading_paused)
 
     async def get_profit_summary(self) -> Dict[str, Any]:
         """Return profit/loss summary including queued orders."""
