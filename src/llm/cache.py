@@ -7,6 +7,10 @@ from src.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
+def estimate_tokens(text: str) -> int:
+    """Rough estimate of token count (1 token ~ 4 chars)."""
+    return len(text) // 4
+
 def get_cached_llm_response(
     prompt: str,
     system_prompt: str = "",
@@ -124,6 +128,23 @@ def get_cached_llm_response(
         logger.warning(f"Redis cache get failed: {e}. Proceeding without cache.")
 
     logger.debug("LLM cache miss: model_type=%s, system_prompt=%.200s..., prompt=%.500s...", model_type, system_prompt, prompt)
+    # Context window management: hard limit at 1,000,000 tokens
+    MAX_TOKENS = 1_000_000
+    prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+    if prompt_tokens > MAX_TOKENS:
+        logger.warning(
+            "Prompt size (~%d tokens) exceeds context window limit (%d). Truncating...",
+            prompt_tokens, MAX_TOKENS
+        )
+        max_chars = MAX_TOKENS * 4
+        keep_start = 2000
+        keep_end = 4000
+        if len(prompt) > keep_start + keep_end:
+            prompt = (
+                prompt[:keep_start] +
+                "\n... [TRUNCATED DUE TO CONTEXT WINDOW LIMIT] ...\n" +
+                prompt[-keep_end:]
+            )
     # --- Primary call ---
     response_text = None
     used_provider = provider

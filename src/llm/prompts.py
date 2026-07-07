@@ -413,6 +413,14 @@ def build_stock_selection_prompt(
     min_viable_trade_amount: float = 0.0,
 ) -> str:
     """Build a prompt to ask the LLM which stocks/ETFs to trade."""
+    # Trim large lists to prevent context window overflow
+    if available_symbols and len(available_symbols) > 100:
+        available_symbols = available_symbols[:100]
+    if current_symbols and len(current_symbols) > 100:
+        current_symbols = current_symbols[:100]
+    if tickers:
+        # Keep only tickers for the (potentially trimmed) available symbols
+        tickers = {k: v for k, v in tickers.items() if k in available_symbols}
     # Summarize tickers and limits for the prompt
     # --- Batch-fetch sentiment for all symbols to avoid sequential DB queries ---
     batch_sentiment: Dict[str, Optional[Dict[str, Any]]] = {}
@@ -773,6 +781,9 @@ def build_final_selection_prompt(
     After evaluating candidates in chunks, this prompt presents the combined
     shortlist from all chunks and asks the LLM to make the final selection.
     """
+    # Trim large lists to prevent context window overflow
+    if chunk_results and len(chunk_results) > 50:
+        chunk_results = chunk_results[:50]
     # Build shortlist from all chunk results
     shortlist = []
     for i, chunk in enumerate(chunk_results):
@@ -1178,6 +1189,19 @@ def build_strategy_prompt(
     min_stop_atr_mult = data.min_stop_atr_mult
     min_viable_trade_amount = data.min_viable_trade_amount
     historical_backtest_results = data.historical_backtest_results
+    # Trim large lists to prevent context window overflow
+    if recent_trades and len(recent_trades) > 20:
+        recent_trades = recent_trades[-20:]
+    if past_trades and len(past_trades) > 20:
+        past_trades = past_trades[-20:]
+    if historical_backtest_results and len(historical_backtest_results) > 5:
+        historical_backtest_results = historical_backtest_results[-5:]
+    if multi_tf_raw_candles:
+        multi_tf_raw_candles = {tf: candles[-200:] for tf, candles in multi_tf_raw_candles.items()}
+    if raw_candles and len(raw_candles) > 500:
+        raw_candles = raw_candles[-500:]
+    if historical_ohlcv and len(historical_ohlcv) > 1000:
+        historical_ohlcv = historical_ohlcv[-1000:]
     current_price = ticker.get("last") if ticker else None
     if assigned_timeframe and assigned_timeframe not in TIMEFRAME_MAP:
         logger.warning(f"Assigned timeframe {assigned_timeframe} is not supported by yfinance. Falling back to default.")
