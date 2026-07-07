@@ -70,15 +70,17 @@ class SemanticCacheClient:
 
     def _init_collection(self):
         """Initializes or retrieves the ChromaDB collection. Retries on failure."""
+        base_url = f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections"
+        collection_url = f"{base_url}/{self.collection_name}"
         try:
             # Check if collection exists
-            resp = requests.get(f"{self.chromadb_host}/api/v2/collections/{self.collection_name}", timeout=5)
+            resp = requests.get(collection_url, timeout=5)
             if resp.status_code == 200:
                 self.collection_id = resp.json().get("id")
             elif resp.status_code == 404:
                 # Create collection with cosine distance
                 resp = requests.post(
-                    f"{self.chromadb_host}/api/v2/collections",
+                    base_url,
                     json={"name": self.collection_name, "metadata": {"hnsw:space": "cosine"}},
                     timeout=5
                 )
@@ -128,7 +130,7 @@ class SemanticCacheClient:
         try:
             logger.debug("Semantic Cache: Querying ChromaDB...")
             resp = requests.post(
-                f"{self.chromadb_host}/api/v2/collections/{self.collection_id}/query",
+                f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/query",
                 json={"query_embeddings": [embedding], "n_results": 1},
                 timeout=10
             )
@@ -177,7 +179,7 @@ class SemanticCacheClient:
             }
             item_id = str(uuid.uuid4())
             resp = requests.post(
-                f"{self.chromadb_host}/api/v2/collections/{self.collection_id}/add",
+                f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/add",
                 json={
                     "embeddings": [embedding],
                     "documents": [generalized_response],  # Store the generalized response
@@ -199,7 +201,7 @@ class SemanticCacheClient:
             # ChromaDB v2 API: get all entries with metadata, filter by age
             cutoff = time.time() - max_age_seconds
             resp = requests.get(
-                f"{self.chromadb_host}/api/v2/collections/{self.collection_id}/get",
+                f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/get",
                 json={"include": ["metadatas", "ids"]},
                 timeout=10
             )
@@ -212,7 +214,7 @@ class SemanticCacheClient:
                     ids_to_delete.append(data["ids"][i])
             if ids_to_delete:
                 resp = requests.post(
-                    f"{self.chromadb_host}/api/v2/collections/{self.collection_id}/delete",
+                    f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/delete",
                     json={"ids": ids_to_delete},
                     timeout=10
                 )
