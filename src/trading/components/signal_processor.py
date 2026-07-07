@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.database import get_latest_ohlcv_timestamp, get_ohlcv, get_indicators, get_backtest_results_for_symbol, get_indicators_for_symbols, get_aggregate_sentiment_from_db
+from src.database import get_latest_ohlcv_timestamp, get_ohlcv, get_indicators, get_backtest_results_for_symbol, get_indicators_for_symbols, get_aggregate_sentiment_from_db, insert_signal
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
 from src.indicators import compute_all_indicators, compute_ema, compute_vwap, compute_pivot_points
 from src.llm.cache import get_cached_llm_response, compute_market_hash
@@ -2132,36 +2132,33 @@ class SignalProcessor:
             _tp_str = f"{_sig_params.get('take_profit_pct', '?')}"
 
         # Record signal for the web dashboard
-        async with engine._recent_signals_lock:
-            engine.recent_signals.append({
-                "symbol": symbol,
-                "display_symbol": display_symbol,
-                "stock_name": stock_name,
-                "timeframe": assigned_tf,
-                "action": validated.action,
-                "confidence": validated.confidence,
-                "reasoning": validated.reasoning or "",
-                "strategy_type": signal.strategy_type,
-                "model_type": getattr(validated, 'model_type', None),
-                "llm_provider": llm_provider,
-                "llm_model": llm_model,
-                "trade_amount": round(_trade_amount, 2),
-                "base_currency": engine.base_currency,
-                "timestamp": time.time(),
-                "entry_condition": _entry_cond_str,
-                "stop_loss": _sl_str,
-                "take_profit": _tp_str,
-                "position_size_fraction": _sig_params.get("position_size_fraction"),
-                "trailing_stop": _sig_params.get("trailing_stop"),
-                "trailing_stop_distance_pct": _sig_params.get("trailing_stop_distance_pct"),
-                "max_hold_time_seconds": _sig_params.get("max_hold_time_seconds"),
-                "cooldown_after_loss_seconds": _sig_params.get("cooldown_after_loss_seconds"),
-                "order_type": signal.order_type,
-                "limit_price": _sig_params.get("limit_price"),
-            })
-            # Keep only the last 50 signals
-            if len(engine.recent_signals) > 50:
-                engine.recent_signals = engine.recent_signals[-50:]
+        signal_record = {
+            "symbol": symbol,
+            "display_symbol": display_symbol,
+            "stock_name": stock_name,
+            "timeframe": assigned_tf,
+            "action": validated.action,
+            "confidence": validated.confidence,
+            "reasoning": validated.reasoning or "",
+            "strategy_type": signal.strategy_type,
+            "model_type": getattr(validated, 'model_type', None),
+            "llm_provider": llm_provider,
+            "llm_model": llm_model,
+            "trade_amount": round(_trade_amount, 2),
+            "base_currency": engine.base_currency,
+            "timestamp": time.time(),
+            "entry_condition": _entry_cond_str,
+            "stop_loss": _sl_str,
+            "take_profit": _tp_str,
+            "position_size_fraction": _sig_params.get("position_size_fraction"),
+            "trailing_stop": _sig_params.get("trailing_stop"),
+            "trailing_stop_distance_pct": _sig_params.get("trailing_stop_distance_pct"),
+            "max_hold_time_seconds": _sig_params.get("max_hold_time_seconds"),
+            "cooldown_after_loss_seconds": _sig_params.get("cooldown_after_loss_seconds"),
+            "order_type": signal.order_type,
+            "limit_price": _sig_params.get("limit_price"),
+        }
+        await asyncio.to_thread(insert_signal, signal_record)
 
         if engine.notifier:
             emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⏸️"}.get(validated.action, "❓")

@@ -15,7 +15,7 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
-from src.database import get_all_discovered_symbols
+from src.database import get_all_discovered_symbols, get_signals
 from typing import Optional
 from pydantic import BaseModel
 
@@ -369,9 +369,11 @@ async def discovered_symbols_api():
     return [{"symbol": s.get("symbol"), "name": s.get("name", "")} for s in symbols]
 
 @http_router.get("/api/signals")
-async def signals(limit: int = 20):
-    engine = get_engine()
-    return await run_in_threadpool(engine.get_recent_signals, limit)
+async def signals(page: int = 1, limit: int = 5):
+    if page < 1:
+        page = 1
+    offset = (page - 1) * limit
+    return await run_in_threadpool(get_signals, limit, offset)
 
 @http_router.post("/api/reload")
 async def reload():

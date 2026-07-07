@@ -354,6 +354,36 @@ def _get_init_statements() -> List[str]:
             created_at {float_type} NOT NULL
         )
         """,
+        f"""
+        CREATE TABLE IF NOT EXISTS signals (
+            id {pk_type},
+            symbol TEXT NOT NULL,
+            display_symbol TEXT,
+            stock_name TEXT,
+            timeframe TEXT,
+            action TEXT NOT NULL,
+            confidence REAL,
+            reasoning TEXT,
+            strategy_type TEXT,
+            model_type TEXT,
+            llm_provider TEXT,
+            llm_model TEXT,
+            trade_amount REAL,
+            base_currency TEXT,
+            timestamp {bigint_type} NOT NULL,
+            entry_condition TEXT,
+            stop_loss TEXT,
+            take_profit TEXT,
+            position_size_fraction REAL,
+            trailing_stop INTEGER,
+            trailing_stop_distance_pct REAL,
+            max_hold_time_seconds REAL,
+            cooldown_after_loss_seconds REAL,
+            order_type TEXT,
+            limit_price REAL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp DESC)",
         "CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol ON backtest_results(symbol)",
         "CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol_tf_hash ON backtest_results(symbol, timeframe, params_hash, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_backtest_results_created_at ON backtest_results(created_at)",
@@ -1783,6 +1813,109 @@ def get_all_discovered_symbols() -> List[Dict[str, Any]]:
             }
             for row in rows
         ]
+    finally:
+        conn.close()
+
+@retry_on_db_lock()
+def insert_signal(signal: Dict[str, Any]):
+    """Insert a trading signal into the signals table."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            INSERT INTO signals (
+                symbol, display_symbol, stock_name, timeframe, action, confidence, reasoning,
+                strategy_type, model_type, llm_provider, llm_model, trade_amount, base_currency,
+                timestamp, entry_condition, stop_loss, take_profit, position_size_fraction,
+                trailing_stop, trailing_stop_distance_pct, max_hold_time_seconds,
+                cooldown_after_loss_seconds, order_type, limit_price
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+        )
+        conn.execute(sql, (
+            signal.get("symbol"),
+            signal.get("display_symbol"),
+            signal.get("stock_name"),
+            signal.get("timeframe"),
+            signal.get("action"),
+            signal.get("confidence"),
+            signal.get("reasoning"),
+            signal.get("strategy_type"),
+            signal.get("model_type"),
+            signal.get("llm_provider"),
+            signal.get("llm_model"),
+            signal.get("trade_amount"),
+            signal.get("base_currency"),
+            signal.get("timestamp"),
+            signal.get("entry_condition"),
+            signal.get("stop_loss"),
+            signal.get("take_profit"),
+            signal.get("position_size_fraction"),
+            1 if signal.get("trailing_stop") else 0,
+            signal.get("trailing_stop_distance_pct"),
+            signal.get("max_hold_time_seconds"),
+            signal.get("cooldown_after_loss_seconds"),
+            signal.get("order_type"),
+            signal.get("limit_price"),
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_signals(limit: int = 5, offset: int = 0) -> Dict[str, Any]:
+    """Retrieve paginated BUY/SELL signals in descending order by time."""
+    conn = get_connection()
+    try:
+        count_row = conn.execute(
+            "SELECT COUNT(*) as total FROM signals WHERE action IN ('BUY', 'SELL')"
+        ).fetchone()
+        total = count_row["total"] if count_row else 0
+
+        sql = _adapt_sql(
+            """
+            SELECT symbol, display_symbol, stock_name, timeframe, action, confidence, reasoning,
+                   strategy_type, model_type, llm_provider, llm_model, trade_amount, base_currency,
+                   timestamp, entry_condition, stop_loss, take_profit, position_size_fraction,
+                   trailing_stop, trailing_stop_distance_pct, max_hold_time_seconds,
+                   cooldown_after_loss_seconds, order_type, limit_price
+            FROM signals
+            WHERE action IN ('BUY', 'SELL')
+            ORDER BY timestamp DESC
+            LIMIT %s OFFSET %s
+            """
+        )
+        rows = conn.execute(sql, (limit, offset)).fetchall()
+
+        signals = []
+        for row in rows:
+            signals.append({
+                "symbol": row["symbol"],
+                "display_symbol": row["display_symbol"],
+                "stock_name": row["stock_name"],
+                "timeframe": row["timeframe"],
+                "action": row["action"],
+                "confidence": row["confidence"],
+                "reasoning": row["reasoning"],
+                "strategy_type": row["strategy_type"],
+                "model_type": row["model_type"],
+                "llm_provider": row["llm_provider"],
+                "llm_model": row["llm_model"],
+                "trade_amount": row["trade_amount"],
+                "base_currency": row["base_currency"],
+                "timestamp": row["timestamp"],
+                "entry_condition": row["entry_condition"],
+                "stop_loss": row["stop_loss"],
+                "take_profit": row["take_profit"],
+                "position_size_fraction": row["position_size_fraction"],
+                "trailing_stop": bool(row["trailing_stop"]),
+                "trailing_stop_distance_pct": row["trailing_stop_distance_pct"],
+                "max_hold_time_seconds": row["max_hold_time_seconds"],
+                "cooldown_after_loss_seconds": row["cooldown_after_loss_seconds"],
+                "order_type": row["order_type"],
+                "limit_price": row["limit_price"],
+            })
+        return {"signals": signals, "total": total}
     finally:
         conn.close()
 
