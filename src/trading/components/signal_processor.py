@@ -2358,8 +2358,7 @@ class SignalProcessor:
         engine = self.engine
         if analysis_result is None:
             logger.warning(f"Step 1a analysis failed for {symbol} after all retries. Using fallback HOLD.")
-            async with engine._eval_state_lock:
-                engine._force_eval.pop(symbol, None)
+            # Do NOT pop _force_eval; we want to retry on the next cycle.
             # Create a fallback HOLD signal so the bot continues functioning
             preliminary_signal = self._create_fallback_hold_signal(
                 symbol, "LLM Step 1a analysis failed after retries", strategy_model_type
