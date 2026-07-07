@@ -266,7 +266,7 @@ class MarketDataManager:
         if re.match(r'^IT[A-Z0-9]{10}$', base):
             # It's a BTP bond, try to get the name from the BTP cache (includes DB-merged BTPs)
             try:
-                btp_bonds = await engine._get_btp_bonds()
+                btp_bonds = await self.get_btp_bonds()
                 for b in btp_bonds:
                     if b["isin"] == base:
                         name = b.get("name") or base
@@ -284,7 +284,7 @@ class MarketDataManager:
 
             # If we got a name from the BTP cache, save it to DB for future lookups
             try:
-                btp_bonds = await engine._get_btp_bonds()
+                btp_bonds = await self.get_btp_bonds()
                 for b in btp_bonds:
                     if b["isin"] == base:
                         name = b.get("name") or base
