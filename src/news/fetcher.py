@@ -109,10 +109,12 @@ _rate_limiter: Optional[RateLimiter] = None
 
 # Sources that have returned a permanent error and should be skipped for the rest of the run.
 _permanently_disabled_sources: set = set()
-# RSS feeds that have returned a permanent error and should be skipped for the rest of the run.
-_permanently_disabled_feeds: set = set()
+# RSS feeds temporarily disabled after repeated consecutive failures.
+# Maps feed_url -> disabled_until_timestamp (epoch seconds)
+_disabled_feeds: Dict[str, float] = {}
 _feed_fail_counts: Dict[str, int] = {}
 _FEED_MAX_FAILURES = 3
+_FEED_DISABLE_COOLDOWN_SECONDS = 3600  # 1 hour
 
 
 def _get_rate_limiter() -> RateLimiter:
@@ -148,12 +150,29 @@ def _get_enabled_sources() -> List[str]:
 
 
 def _handle_feed_failure(feed_url: str):
-    """Track RSS feed failures and permanently disable feeds that fail too many times."""
+    """Track RSS feed failures and temporarily disable feeds after too many *consecutive* failures."""
     _feed_fail_counts[feed_url] = _feed_fail_counts.get(feed_url, 0) + 1
     if _feed_fail_counts[feed_url] >= _FEED_MAX_FAILURES:
-        if feed_url not in _permanently_disabled_feeds:
-            logger.warning(f"Permanently disabling RSS feed {feed_url} after {_FEED_MAX_FAILURES} failures.")
-            _permanently_disabled_feeds.add(feed_url)
+        if not _is_feed_disabled(feed_url):
+            logger.warning(
+                f"Temporarily disabling RSS feed {feed_url} after "
+                f"{_FEED_MAX_FAILURES} consecutive failures for "
+                f"{_FEED_DISABLE_COOLDOWN_SECONDS}s."
+            )
+            _disabled_feeds[feed_url] = time.time() + _FEED_DISABLE_COOLDOWN_SECONDS
+
+
+def _is_feed_disabled(feed_url: str) -> bool:
+    """Check if a feed is currently disabled, re-enabling it if the cooldown has expired."""
+    disabled_until = _disabled_feeds.get(feed_url)
+    if disabled_until is None:
+        return False
+    if time.time() > disabled_until:
+        del _disabled_feeds[feed_url]
+        _feed_fail_counts.pop(feed_url, None)
+        logger.info(f"Re-enabling RSS feed {feed_url} after cooldown period.")
+        return False
+    return True
 
 
 def _analyze_sentiment(text: str) -> Dict[str, Any]:
@@ -912,7 +931,7 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
     _cleanup_rss_cache()
     articles = []
     for feed_url in settings.RSS_FEEDS:
-        if feed_url in _permanently_disabled_feeds:
+        if _is_feed_disabled(feed_url):
             continue
         try:
             # Check cache first
@@ -951,6 +970,8 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
                             time.sleep(wait)
                         else:
                             raise
+                # Reset consecutive failure counter on success
+                _feed_fail_counts.pop(feed_url, None)
                 # Cache the successful response
                 with _rss_cache_lock:
                     _rss_cache[feed_url] = (time.time(), feed_content)
@@ -1124,7 +1145,7 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache
         limiter = _get_rate_limiter()
 
         for feed_url in settings.RSS_FEEDS:
-            if feed_url in _permanently_disabled_feeds:
+            if _is_feed_disabled(feed_url):
                 continue
             try:
                 # Use the existing RSS cache to avoid redundant HTTP requests
@@ -1150,6 +1171,8 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache
                     feed_content = resp.text
                     with _rss_cache_lock:
                         _rss_cache[feed_url] = (time.time(), feed_content)
+                # Reset consecutive failure counter on success
+                _feed_fail_counts.pop(feed_url, None)
 
                 feed = feedparser.parse(feed_content)
                 for entry in feed.entries:
