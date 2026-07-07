@@ -372,7 +372,7 @@ class TradingEngine:
             plain_assets = await self._market_data_manager.get_tradable_assets()
             stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
-            btp_bonds = await self._get_btp_bonds()
+            btp_bonds = await self._market_data_manager.get_btp_bonds()
             btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
             all_pairs = stock_pairs + btp_pairs
@@ -430,10 +430,6 @@ class TradingEngine:
             logger.info("Force download: complete for tracked symbols.")
         except Exception as e:
             logger.error(f"Force download error: {e}", exc_info=True)
-
-    async def _get_btp_bonds(self) -> List[Dict[str, Any]]:
-        """Return BTP bonds, cached for 30 minutes to reduce scraping calls."""
-        return await self._market_data_manager.get_btp_bonds()
 
     async def _get_etf_symbols(self) -> List[str]:
         """Return Italian UCITS ETF symbols, cached for 1 hour."""
@@ -706,7 +702,7 @@ class TradingEngine:
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in stock_assets]
                 etf_symbols = await self._get_etf_symbols()
                 etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
-                btp_bonds = await self._get_btp_bonds()
+                btp_bonds = await self._market_data_manager.get_btp_bonds()
                 btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
                 # Build strata: (pairs, label) for each asset type
@@ -1365,7 +1361,7 @@ class TradingEngine:
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
                 # 2. Get all BTP symbols
-                btp_bonds = await self._get_btp_bonds()
+                btp_bonds = await self._market_data_manager.get_btp_bonds()
                 btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
                 all_pairs = stock_pairs + btp_pairs
@@ -1453,7 +1449,7 @@ class TradingEngine:
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
                 # 2. Get all BTP symbols
-                btp_bonds = await self._get_btp_bonds()
+                btp_bonds = await self._market_data_manager.get_btp_bonds()
                 btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
                 all_pairs = stock_pairs + btp_pairs
