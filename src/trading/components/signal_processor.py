@@ -2297,6 +2297,20 @@ class SignalProcessor:
             "macd_hist": macd_hist,
         }
 
+    def _create_fallback_hold_signal(
+        self, symbol: str, reason: str, strategy_model_type: str
+    ) -> Signal:
+        """Create a fallback HOLD signal when LLM calls fail or return unparseable JSON."""
+        signal = Signal(
+            action="HOLD",
+            confidence=0.0,
+            reasoning=reason,
+        )
+        signal.model_type = strategy_model_type
+        signal.llm_provider = "fallback"
+        signal.llm_model = "default_hold"
+        return signal
+
     async def process_post_llm_decision(
         self,
         data: DecisionContext,
