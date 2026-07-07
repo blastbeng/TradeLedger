@@ -6,6 +6,7 @@ import hashlib
 import httpx
 import json
 import time
+import asyncio
 import feedparser
 from bs4 import BeautifulSoup
 from urllib.parse import quote
@@ -235,7 +236,7 @@ def _is_relevant(symbol: str, title: str, summary: str, name: Optional[str] = No
 # Public API
 # ---------------------------------------------------------------------------
 
-def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
+async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
     """
     Fetch news articles for a trading symbol from all enabled sources.
     Returns a list of dicts with keys:
@@ -303,33 +304,34 @@ def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List[Dict[
     if db_name and db_name != base_symbol and db_name != name:
         combined_query = f'{combined_query} OR "{db_name}"'
 
+    tasks = []
     for source in enabled:
-        source_start = time.time()
         if source == "newsapi":
-            articles.extend(_fetch_newsapi(combined_query, name=name))
+            tasks.append(asyncio.to_thread(_fetch_newsapi, combined_query, name))
         elif source == "twitter":
-            # Twitter: use cashtag for ticker, plain text for name
-            articles.extend(_fetch_twitter(base_symbol, use_cashtag=True, name=name))
+            tasks.append(asyncio.to_thread(_fetch_twitter, base_symbol, use_cashtag=True, name=name))
             if name and name != base_symbol:
-                articles.extend(_fetch_twitter(name, use_cashtag=False, name=name))
+                tasks.append(asyncio.to_thread(_fetch_twitter, name, use_cashtag=False, name=name))
         elif source == "reddit":
-            articles.extend(_fetch_reddit(combined_query, name=name))
+            tasks.append(asyncio.to_thread(_fetch_reddit, combined_query, name))
         elif source == "facebook":
-            articles.extend(_fetch_facebook(base_symbol, name=name))
+            tasks.append(asyncio.to_thread(_fetch_facebook, base_symbol, name))
         elif source == "youtube":
-            articles.extend(_fetch_youtube(combined_query, name=name))
+            tasks.append(asyncio.to_thread(_fetch_youtube, combined_query, name))
         elif source == "googlenews":
-            articles.extend(_fetch_googlenews(combined_query, name=name))
+            tasks.append(asyncio.to_thread(_fetch_googlenews, combined_query, name))
         elif source == "stocktwits":
-            # StockTwits only supports ticker symbols, not company names
-            articles.extend(_fetch_stocktwits(base_symbol, name=name))
+            tasks.append(asyncio.to_thread(_fetch_stocktwits, base_symbol, name))
         elif source == "rss":
-            # RSS: search for each term separately (feeds are scanned locally)
             for term in search_terms:
-                articles.extend(_fetch_rss(term, name=name))
-        source_time = time.time() - source_start
-        if source_time > 2.0:
-            logger.debug(f"Slow news source '{source}': {source_time:.2f}s")
+                tasks.append(asyncio.to_thread(_fetch_rss, term, name))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for res in results:
+        if isinstance(res, Exception):
+            logger.warning(f"News source fetch failed: {res}")
+        elif isinstance(res, list):
+            articles.extend(res)
 
     # Deduplicate by URL
     seen = set()
