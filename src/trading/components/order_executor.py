@@ -3012,8 +3012,8 @@ class OrderExecutor:
                         "take_profit_price": engine.positions[symbol].get("take_profit"),
                     }
                     await self._place_replacement_exit_orders_with_retry(
-                    symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe")
-                )
+                        symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe")
+                    )
 
             engine._append_trade(order)
             await asyncio.to_thread(insert_trade, order)
