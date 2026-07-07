@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
-from src.llm.semantic_cache import semantic_cache_client
+from src.llm.semantic_cache import get_semantic_cache_client
 
 logger = logging.getLogger(__name__)
 
@@ -131,9 +131,10 @@ def get_cached_llm_response(
 
     logger.debug("LLM cache miss: model_type=%s, system_prompt=%.200s..., prompt=%.500s...", model_type, system_prompt, prompt)
     # --- Semantic Cache Check ---
-    if semantic_cache_client.enabled:
+    _semantic_cache = get_semantic_cache_client()
+    if _semantic_cache.enabled:
         try:
-            semantic_hit = semantic_cache_client.query(prompt, symbol)
+            semantic_hit = _semantic_cache.query(prompt, symbol)
             if semantic_hit:
                 logger.info("Semantic cache hit for prompt: %.100s...", prompt[:100])
                 return {
@@ -287,9 +288,9 @@ def get_cached_llm_response(
     except Exception as e:
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
     # --- Semantic Cache Store ---
-    if semantic_cache_client.enabled:
+    if _semantic_cache.enabled:
         try:
-            semantic_cache_client.add(prompt, response_text, symbol)
+            _semantic_cache.add(prompt, response_text, symbol)
         except Exception as e:
             logger.warning(f"Semantic cache store failed, bypassing: {e}")
     return {

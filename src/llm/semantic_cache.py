@@ -3,13 +3,14 @@ import logging
 import requests
 import uuid
 import threading
+import time
 from typing import Tuple, Optional, List
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 # Regex to find tickers ending with .MI (or other configured suffixes)
-TICKER_REGEX = re.compile(r'\b([A-Z0-9]+\.MI)\b')
+TICKER_REGEX = re.compile(r'\b((?:[A-Z0-9]+\.MI)|(?:IT[A-Z0-9]{10}))\b')
 
 def generalize_prompt(prompt: str, symbol: Optional[str] = None) -> Tuple[str, Optional[str]]:
     """
@@ -33,7 +34,7 @@ def generalize_prompt(prompt: str, symbol: Optional[str] = None) -> Tuple[str, O
     generalized_prompt = prompt.replace(ticker, "[TICKER]")
     return generalized_prompt, ticker
 
-def reconstruct_response(cached_response: str, current_ticker: str, original_prompt: str) -> str:
+def reconstruct_response(cached_response: str, current_ticker: str) -> str:
     """
     Reconstructs the cached response by injecting the current ticker context
     back into the template.
@@ -56,12 +57,19 @@ class SemanticCacheClient:
         self.distance_threshold = settings.SEMANTIC_CACHE_DISTANCE_THRESHOLD
         self.collection_id = None
         self._embedding_lock = threading.Lock()  # Serialize embedding requests
+        self._initialized = False
+        self._init_failed = False
 
+    def _ensure_initialized(self):
+        """Lazily initialize the ChromaDB collection on first query/add."""
+        if self._initialized and not self._init_failed:
+            return
+        self._initialized = True
         if self.enabled:
             self._init_collection()
 
     def _init_collection(self):
-        """Initializes or retrieves the ChromaDB collection."""
+        """Initializes or retrieves the ChromaDB collection. Retries on failure."""
         try:
             # Check if collection exists
             resp = requests.get(f"{self.chromadb_host}/api/v2/collections/{self.collection_name}", timeout=5)
@@ -78,9 +86,11 @@ class SemanticCacheClient:
                 self.collection_id = resp.json().get("id")
             else:
                 resp.raise_for_status()
+            self._init_failed = False
         except Exception as e:
-            logger.warning(f"Semantic Cache: Failed to initialize ChromaDB collection: {e}. Disabling semantic cache.")
-            self.enabled = False
+            logger.warning(f"Semantic Cache: Failed to initialize ChromaDB collection: {e}. Will retry on next call.")
+            self._init_failed = True
+            self._initialized = False  # allow retry
 
     def get_embedding(self, text: str) -> Optional[List[float]]:
         """Generates an embedding for the given text using the llama.cpp server."""
@@ -103,6 +113,7 @@ class SemanticCacheClient:
 
     def query(self, prompt: str, symbol: Optional[str] = None) -> Optional[str]:
         """Queries the semantic cache for a matching prompt."""
+        self._ensure_initialized()
         if not self.enabled or not self.collection_id:
             logger.debug("Semantic Cache: Skipping query (disabled or no collection).")
             return None
@@ -132,7 +143,7 @@ class SemanticCacheClient:
                     metadata = data["metadatas"][0][0]
                     # Reconstruct response with current ticker if needed
                     if ticker and metadata.get("ticker"):
-                        return reconstruct_response(cached_response, ticker, prompt)
+                        return reconstruct_response(cached_response, ticker)
                     return cached_response
                 else:
                     logger.debug(f"Semantic Cache: Miss. Distance={distance:.4f} > {self.distance_threshold}")
@@ -143,6 +154,7 @@ class SemanticCacheClient:
 
     def add(self, prompt: str, response: str, symbol: Optional[str] = None):
         """Adds a prompt and its response to the semantic cache."""
+        self._ensure_initialized()
         if not self.enabled or not self.collection_id:
             logger.debug("Semantic Cache: Skipping add (disabled or no collection).")
             return
@@ -160,7 +172,8 @@ class SemanticCacheClient:
             metadata = {
                 "ticker": ticker or "",
                 "original_prompt": prompt,
-                "cached_response": generalized_response
+                "cached_response": generalized_response,
+                "cached_at": str(time.time())
             }
             item_id = str(uuid.uuid4())
             resp = requests.post(
@@ -178,5 +191,41 @@ class SemanticCacheClient:
         except Exception as e:
             logger.warning(f"Semantic Cache: Failed to add to ChromaDB: {e}.")
 
-# Singleton instance
-semantic_cache_client = SemanticCacheClient()
+    def cleanup_expired(self, max_age_seconds: int = 86400):
+        """Remove cache entries older than max_age_seconds."""
+        if not self.enabled or not self.collection_id:
+            return
+        try:
+            # ChromaDB v2 API: get all entries with metadata, filter by age
+            cutoff = time.time() - max_age_seconds
+            resp = requests.get(
+                f"{self.chromadb_host}/api/v2/collections/{self.collection_id}/get",
+                json={"include": ["metadatas", "ids"]},
+                timeout=10
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            ids_to_delete = []
+            for i, meta in enumerate(data.get("metadatas", [])):
+                ts = meta.get("cached_at")
+                if ts and float(ts) < cutoff:
+                    ids_to_delete.append(data["ids"][i])
+            if ids_to_delete:
+                resp = requests.post(
+                    f"{self.chromadb_host}/api/v2/collections/{self.collection_id}/delete",
+                    json={"ids": ids_to_delete},
+                    timeout=10
+                )
+                resp.raise_for_status()
+                logger.info(f"Semantic Cache: Cleaned up {len(ids_to_delete)} expired entries.")
+        except Exception as e:
+            logger.warning(f"Semantic Cache: Cleanup failed: {e}")
+
+_semantic_cache_client: Optional[SemanticCacheClient] = None
+
+def get_semantic_cache_client() -> SemanticCacheClient:
+    """Return the singleton SemanticCacheClient, initializing lazily on first use."""
+    global _semantic_cache_client
+    if _semantic_cache_client is None:
+        _semantic_cache_client = SemanticCacheClient()
+    return _semantic_cache_client
