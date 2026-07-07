@@ -1073,7 +1073,7 @@ class TradingEngine:
             from src.news.fetcher import fetch_news_for_symbol
             stock_name = await self._get_stock_name(symbol)
             loop = asyncio.get_running_loop()
-            articles = await loop.run_in_executor(self._download_executor, fetch_news_for_symbol, symbol, stock_name)
+            articles = await fetch_news_for_symbol(symbol, stock_name)
             if articles:
                 await loop.run_in_executor(self._db_executor, store_news_articles, base_symbol, articles)
             else:
@@ -1190,7 +1190,7 @@ class TradingEngine:
                     try:
                         async with self._news_semaphore:
                             stock_name = await self._get_stock_name(sym)
-                            articles = await asyncio.to_thread(fetch_news_for_symbol, sym, stock_name)
+                            articles = await fetch_news_for_symbol(sym, stock_name)
                             if articles:
                                 base_symbol = sym.split("/")[0] if "/" in sym else sym
                                 await asyncio.to_thread(store_news_articles, base_symbol, articles)
