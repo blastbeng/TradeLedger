@@ -2466,7 +2466,7 @@ class SymbolReevaluator:
         )
 
         perf = await engine.event_bus.request("compute_performance_metrics")
-        trade_pattern_analysis = await engine._compute_trade_pattern_analysis()
+        trade_pattern_analysis = await engine.event_bus.request("compute_trade_pattern_analysis")
 
         # --- Composite opportunity score and shortlist building ---
         composite_scores, shortlist = self.compute_composite_scores_and_shortlist(

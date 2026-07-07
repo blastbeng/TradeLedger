@@ -1496,11 +1496,6 @@ class TradingEngine:
                     total += trade.get("realized_pnl", 0.0)
         return total
 
-    async def _compute_trade_pattern_analysis(self) -> Dict[str, Any]:
-        """Analyze closed trades to identify which conditions, timeframes, and parameters
-        have historically led to wins vs losses. Cached and only recomputed when new trades arrive."""
-        return await self.event_bus.request("compute_trade_pattern_analysis")
-
     def _append_trade(self, trade: Dict[str, Any]):
         """Append a trade to history and prune old entries to bound memory usage."""
         with self._trade_history_lock:

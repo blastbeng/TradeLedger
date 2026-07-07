@@ -179,7 +179,7 @@ class SignalProcessor:
         per_symbol_budget = base_balance / engine.effective_max_symbols if engine.effective_max_symbols > 0 else 0.0
 
         perf = await engine.event_bus.request("compute_performance_metrics")
-        trade_pattern_analysis = await engine._compute_trade_pattern_analysis()
+        trade_pattern_analysis = await engine.event_bus.request("compute_trade_pattern_analysis")
 
         symbol_event = None
         if settings.NEWS_ENABLED and detect_upcoming_events is not None:
@@ -4305,7 +4305,7 @@ class SignalProcessor:
         remaining = max(0.0, base_balance - engine._cycle_spent)
 
         perf = await engine.event_bus.request("compute_performance_metrics")
-        trade_pattern_analysis = await engine._compute_trade_pattern_analysis()
+        trade_pattern_analysis = await engine.event_bus.request("compute_trade_pattern_analysis")
 
         symbol_event = None
         if settings.NEWS_ENABLED and detect_upcoming_events is not None:
