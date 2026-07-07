@@ -897,6 +897,7 @@ class SymbolReevaluator:
         sorted_by_composite: List[str],
         market_limits: Dict[str, Dict[str, float]],
         base_balance: float,
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
     ) -> None:
         """Enforce MIN_SYMBOLS setting, filling remaining slots from composite scores.
 
@@ -936,10 +937,18 @@ class SymbolReevaluator:
                     continue
                 if engine._is_excluded(sym, default_tf):
                     continue
+
+                # Check if OHLCV data is available for the symbol
+                sym_data = ohlcv_data.get(sym, {})
+                available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
+                if not available_tfs:
+                    continue
+                tf = default_tf if default_tf in available_tfs else available_tfs[0]
+
                 # Check if we can afford the minimum trade cost
                 min_cost = market_limits.get(sym, {}).get("min_cost", 0)
                 if base_balance >= min_cost:
-                    deduped.append({"symbol": sym, "timeframe": default_tf})
+                    deduped.append({"symbol": sym, "timeframe": tf})
                     existing_syms.add(sym)
                     filled += 1
             if filled > 0:
@@ -2287,6 +2296,7 @@ class SymbolReevaluator:
                     sorted_by_composite=sorted_by_composite,
                     market_limits=market_limits,
                     base_balance=base_balance,
+                    ohlcv_data=ohlcv_data,
                 )
 
                 # --- Store LLM-decided parameters to Redis ---
