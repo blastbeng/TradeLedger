@@ -8,6 +8,7 @@ import queue
 from concurrent.futures import Future
 from typing import Tuple, Optional, List
 from src.config.settings import settings
+from src.utils.symbol_utils import is_btp_isin
 
 logger = logging.getLogger(__name__)
 
@@ -56,19 +57,29 @@ def generalize_prompt(prompt: str, symbol: Optional[str] = None) -> Tuple[str, O
 
     Returns:
         A tuple containing (generalized_prompt, extracted_ticker).
-        If no ticker is found, extracted_ticker will be None.
+        If no ticker is found, or if it's a BTP/multi-ticker context, extracted_ticker will be None.
     """
+    # Never generalize BTP ISINs, as each has unique coupon/maturity/yield
+    if symbol and is_btp_isin(symbol):
+        return prompt, None
+
     # Prioritize the explicitly provided symbol if it exists in the prompt
     if symbol and symbol in prompt:
         generalized_prompt = prompt.replace(symbol, "[TICKER]")
         return generalized_prompt, symbol
 
     # Fallback to regex if no symbol provided or not found
-    match = TICKER_REGEX.search(prompt)
-    if not match:
+    matches = TICKER_REGEX.findall(prompt)
+    unique_tickers = set(matches)
+
+    # Do not generalize if there are multiple different tickers (e.g., "ENI vs ENEL")
+    if len(unique_tickers) != 1:
         return prompt, None
 
-    ticker = match.group(1)
+    ticker = matches[0]
+    if is_btp_isin(ticker):
+        return prompt, None
+
     generalized_prompt = prompt.replace(ticker, "[TICKER]")
     return generalized_prompt, ticker
 
@@ -78,6 +89,10 @@ def reconstruct_response(cached_response: str, current_ticker: str) -> str:
     back into the template.
     """
     if not current_ticker:
+        return cached_response
+
+    # Defense in depth: never reconstruct for BTP ISINs
+    if is_btp_isin(current_ticker):
         return cached_response
 
     # Replace the placeholder with the current ticker
