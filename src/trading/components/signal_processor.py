@@ -2982,7 +2982,7 @@ class SignalProcessor:
         # Compute prompt complexity for temperature selection
         _conflicting = False
         if rsi is not None and macd_hist is not None:
-            if (rsi < 30 and macd_hist < 0) or (rsi > 70 and macd_hist > 0):
+            if (rsi < settings.MODEL_TIER_RSI_EXTREME and macd_hist < 0) or (rsi > (100 - settings.MODEL_TIER_RSI_EXTREME) and macd_hist > 0):
                 _conflicting = True
         strategy_complexity = self.compute_prompt_complexity(
             num_candidates=num_candidates,
