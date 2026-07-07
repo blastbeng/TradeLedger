@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import threading
 from typing import Optional
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
@@ -289,10 +290,11 @@ def get_cached_llm_response(
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
     # --- Semantic Cache Store ---
     if _semantic_cache.enabled:
-        try:
-            _semantic_cache.add(prompt, response_text, symbol)
-        except Exception as e:
-            logger.warning(f"Semantic cache store failed, bypassing: {e}")
+        threading.Thread(
+            target=_semantic_cache.add,
+            args=(prompt, response_text, symbol),
+            daemon=True
+        ).start()
     return {
         "response": response_text,
         "provider": used_provider,

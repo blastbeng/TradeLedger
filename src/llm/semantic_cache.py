@@ -49,9 +49,6 @@ def reconstruct_response(cached_response: str, current_ticker: str) -> str:
 
 class SemanticCacheClient:
     """Handles ChromaDB and embedding server interactions for semantic caching."""
-
-    _embedding_lock = threading.Lock()  # Serialize embedding requests
-
     def __init__(self):
         self.enabled = settings.SEMANTIC_CACHE_ENABLED
         self.embedding_url = settings.EMBEDDING_MODEL_BASE_URL
@@ -115,7 +112,7 @@ class SemanticCacheClient:
             return None
 
         all_embeddings = []
-        with self._embedding_lock:
+        with llamacpp_lock:
             for chunk in chunks:
                 logger.info(f"Semantic Cache: Generating embedding for chunk (len={len(chunk)}) at {embedding_url}...")
                 start_time = time.time()
