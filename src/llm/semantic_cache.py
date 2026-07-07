@@ -9,9 +9,6 @@ from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# Global lock to serialize all requests to llama.cpp (which only supports 1 concurrent request)
-llamacpp_lock = threading.Lock()
-
 # Regex to find tickers ending with .MI (or other configured suffixes)
 TICKER_REGEX = re.compile(r'\b((?:[A-Z0-9]{1,6}(?:\.[A-Z]{1,3})?)|(?:IT[A-Z0-9]{10}))\b')
 
@@ -51,6 +48,8 @@ def reconstruct_response(cached_response: str, current_ticker: str) -> str:
 class SemanticCacheClient:
     """Handles ChromaDB and embedding server interactions for semantic caching."""
 
+    _embedding_lock = threading.Lock()  # Serialize embedding requests
+
     def __init__(self):
         self.enabled = settings.SEMANTIC_CACHE_ENABLED
         self.embedding_url = settings.EMBEDDING_MODEL_BASE_URL
@@ -77,7 +76,7 @@ class SemanticCacheClient:
         logger.info(f"Semantic Cache: Initializing ChromaDB collection at {collection_url}")
         try:
             # Check if collection exists
-            resp = requests.get(collection_url, timeout=300)
+            resp = requests.get(collection_url, timeout=5)
             if resp.status_code == 200:
                 self.collection_id = resp.json().get("id")
                 logger.info(f"Semantic Cache: Found existing collection with ID: {self.collection_id}")
@@ -87,7 +86,7 @@ class SemanticCacheClient:
                 resp = requests.post(
                     base_url,
                     json={"name": self.collection_name, "metadata": {"hnsw:space": "cosine"}},
-                    timeout=300
+                    timeout=5
                 )
                 resp.raise_for_status()
                 self.collection_id = resp.json().get("id")
@@ -114,7 +113,7 @@ class SemanticCacheClient:
             return None
 
         all_embeddings = []
-        with llamacpp_lock:
+        with self._embedding_lock:
             for chunk in chunks:
                 logger.info(f"Semantic Cache: Generating embedding for chunk (len={len(chunk)}) at {embedding_url}...")
                 start_time = time.time()
@@ -128,7 +127,7 @@ class SemanticCacheClient:
                     resp = requests.post(
                         embedding_url,
                         json=payload,
-                        timeout=300  # Increased timeout for RPi5
+                        timeout=120  # Increased timeout for RPi5
                     )
                     logger.info(f"Semantic Cache: Embedding response status: {resp.status_code}, text: {resp.text[:500]}")
                     resp.raise_for_status()
@@ -178,7 +177,7 @@ class SemanticCacheClient:
             resp = requests.post(
                 query_url,
                 json={"query_embeddings": [embedding], "n_results": 1},
-                timeout=300
+                timeout=10
             )
             logger.debug(f"Semantic Cache: ChromaDB query response status: {resp.status_code}")
             resp.raise_for_status()
@@ -237,7 +236,7 @@ class SemanticCacheClient:
                     "metadatas": [metadata],
                     "ids": [item_id]
                 },
-                timeout=300
+                timeout=10
             )
             logger.debug(f"Semantic Cache: ChromaDB add response status: {resp.status_code}")
             resp.raise_for_status()
@@ -255,7 +254,7 @@ class SemanticCacheClient:
             resp = requests.post(
                 f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/get",
                 json={"include": ["metadatas", "ids"]},
-                timeout=300
+                timeout=10
             )
             resp.raise_for_status()
             data = resp.json()
@@ -270,7 +269,7 @@ class SemanticCacheClient:
                 resp = requests.post(
                     f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/delete",
                     json={"ids": ids_to_delete},
-                    timeout=300
+                    timeout=10
                 )
                 resp.raise_for_status()
                 logger.info(f"Semantic Cache: Cleaned up {len(ids_to_delete)} expired entries.")
