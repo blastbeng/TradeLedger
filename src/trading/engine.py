@@ -104,6 +104,7 @@ class TradingEngine:
         self.current_symbols: List[Dict[str, str]] = []   # each dict: {"symbol": ..., "timeframe": ...}
         self.positions: Dict[str, Dict[str, Any]] = {}  # symbol -> position info
         self.trade_history: List[Dict[str, Any]] = []
+        self.recent_signals: List[Dict[str, Any]] = []
         self.initial_balance: float = 0.0
         self.last_loss_time: Dict[str, float] = {}  # symbol -> timestamp of last losing trade
         self.cooldown_durations: Dict[str, float] = {}  # symbol -> cooldown seconds set by LLM
@@ -299,6 +300,7 @@ class TradingEngine:
         self._trade_history_version = 0
         self._realized_pnl_offset = 0.0
         self.trade_history = []
+        self.recent_signals = []
         self.last_loss_time = {}
         self.cooldown_durations = {}
         self._global_risk_multiplier = None
