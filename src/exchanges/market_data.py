@@ -503,6 +503,13 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
         return None
 
 
+def _invalidate_borsa_token_cache(isin: str, market_code: str) -> None:
+    """Remove a cached Borsa Italiana token so it is re-fetched on next use."""
+    cache_key = f"{isin}-{market_code}"
+    with _borsa_token_cache_lock:
+        _borsa_token_cache.pop(cache_key, None)
+
+
 def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
     """Fetch the latest real-time quote from Borsa Italiana for an Italian stock or BTP.
 
@@ -545,8 +552,21 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
     try:
         with httpx.Client(proxy=_get_proxies(), timeout=10.0, follow_redirects=True) as client:
             url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/intraday?resolution=1MN"
-            response = client.get(url, headers=headers)
-            response.raise_for_status()
+            for attempt in range(2):
+                try:
+                    response = client.get(url, headers=headers)
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code in (401, 403) and attempt == 0:
+                        logger.debug(f"Borsa Italiana token expired for {symbol}, refreshing...")
+                        _invalidate_borsa_token_cache(isin, market_code)
+                        token = _get_borsa_italiana_token(isin, market_code)
+                        if not token:
+                            return None
+                        headers["authorization"] = f"Bearer {token}"
+                        continue
+                    raise
 
             try:
                 data = response.json()
@@ -646,17 +666,28 @@ def get_borsa_italiana_candles(
     try:
         with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
             if timeframe == "1d":
-                # For 1d, use the 1M history endpoint to get daily candles
                 url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=1M&adjustment=true&add-last-price=true"
                 logger.debug(f"Fetching 1d data from history endpoint: {url}")
-                response = client.get(url, headers=headers)
-                response.raise_for_status()
             else:
-                # For other timeframes, use the history endpoint with the correct period
                 period = BORSA_TIMEFRAME_MAP.get(timeframe)
                 url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period={period}&adjustment=true&add-last-price=true"
-                response = client.get(url, headers=headers)
-                response.raise_for_status()
+
+            for attempt in range(2):
+                try:
+                    response = client.get(url, headers=headers)
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code in (401, 403) and attempt == 0:
+                        logger.debug(f"Borsa Italiana token expired for {symbol}, refreshing...")
+                        _invalidate_borsa_token_cache(isin, market_code)
+                        token = _get_borsa_italiana_token(isin, market_code)
+                        if not token:
+                            logger.warning(f"Skipping Borsa Italiana download for {symbol} {timeframe}: no token found after refresh.")
+                            return None
+                        headers["authorization"] = f"Bearer {token}"
+                        continue
+                    raise
 
         # The API returns JSON wrapped in HTML <pre> tags
         text = response.text
