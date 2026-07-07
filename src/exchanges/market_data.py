@@ -238,7 +238,7 @@ def _get_yf_session():
                         # Record error to potentially invalidate session or trip circuit
                         _record_yf_error()
                         raise
-                    if response.status_code == 401:
+                    if response.status_code in (401, 403, 429):
                         _record_yf_error()
                     else:
                         _reset_yf_circuit()
