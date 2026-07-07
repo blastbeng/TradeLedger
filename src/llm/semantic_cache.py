@@ -127,7 +127,7 @@ class SemanticCacheClient:
                     resp = requests.post(
                         embedding_url,
                         json=payload,
-                        timeout=120  # Increased timeout for RPi5
+                        timeout=300  # Increased timeout for RPi5
                     )
                     logger.info(f"Semantic Cache: Embedding response status: {resp.status_code}, text: {resp.text[:500]}")
                     resp.raise_for_status()
