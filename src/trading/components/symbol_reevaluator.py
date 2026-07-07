@@ -235,7 +235,7 @@ class SymbolReevaluator:
         # 2. Unusually active market (many stocks with >5% daily change)
         if not should_trigger:
             try:
-                plain_assets = await engine._get_tradable_assets()
+                plain_assets = await engine._market_data_manager.get_tradable_assets()
                 sample_pairs = [f"{sym}/{engine.base_currency}" for sym in plain_assets[:50]]
                 plain_sample = [s.split("/")[0] for s in sample_pairs]
                 quotes = await engine._get_quotes_batched(plain_sample, timeout_per_chunk=45.0)
@@ -391,7 +391,7 @@ class SymbolReevaluator:
 
         logger.info("Re-evaluation step 2/12: Fetching tradable assets, BTPs, and ETFs...")
         old_symbols = list(engine.current_symbols)
-        plain_assets = await engine._get_tradable_assets()
+        plain_assets = await engine._market_data_manager.get_tradable_assets()
         stock_pairs = [f"{sym}/{engine.base_currency}" for sym in plain_assets]
 
         # Fetch BTP bonds

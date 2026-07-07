@@ -369,7 +369,7 @@ class TradingEngine:
         self._full_download_running = True
         logger.info("Force download: starting immediate OHLCV download for all assets...")
         try:
-            plain_assets = await self._get_tradable_assets()
+            plain_assets = await self._market_data_manager.get_tradable_assets()
             stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
             btp_bonds = await self._get_btp_bonds()
@@ -430,10 +430,6 @@ class TradingEngine:
             logger.info("Force download: complete for tracked symbols.")
         except Exception as e:
             logger.error(f"Force download error: {e}", exc_info=True)
-
-    async def _get_tradable_assets(self) -> List[str]:
-        """Return tradable assets, cached for 5 minutes to reduce API calls."""
-        return await self._market_data_manager.get_tradable_assets()
 
     async def _get_btp_bonds(self) -> List[Dict[str, Any]]:
         """Return BTP bonds, cached for 30 minutes to reduce scraping calls."""
@@ -706,7 +702,7 @@ class TradingEngine:
             self._full_breadth_running = True
             try:
                 # Fetch all asset types for stratified sampling
-                stock_assets = await self._get_tradable_assets()
+                stock_assets = await self._market_data_manager.get_tradable_assets()
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in stock_assets]
                 etf_symbols = await self._get_etf_symbols()
                 etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
@@ -1171,7 +1167,7 @@ class TradingEngine:
                 current_symbols = {entry["symbol"] for entry in self.current_symbols}
                 symbols_to_refresh = set()
                 try:
-                    plain_assets = await self._get_tradable_assets()
+                    plain_assets = await self._market_data_manager.get_tradable_assets()
                     available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
                     # Fetch tickers for a subset to determine top volume symbols
                     # (limit to 200 to avoid excessive API calls)
@@ -1365,7 +1361,7 @@ class TradingEngine:
             try:
                 logger.info("Starting full asset OHLCV download cycle...")
                 # 1. Get all stock + ETF symbols
-                plain_assets = await self._get_tradable_assets()
+                plain_assets = await self._market_data_manager.get_tradable_assets()
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
                 # 2. Get all BTP symbols
@@ -1453,7 +1449,7 @@ class TradingEngine:
             try:
                 logger.info("Starting full asset news download cycle...")
                 # 1. Get all stock + ETF symbols
-                plain_assets = await self._get_tradable_assets()
+                plain_assets = await self._market_data_manager.get_tradable_assets()
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
                 # 2. Get all BTP symbols
@@ -1504,7 +1500,7 @@ class TradingEngine:
                 # close prices (from market_data candles).  Skipping here
                 # prevents those fallback prices from being saved to the
                 # quotes table, leaving it stale when yfinance is down.
-                plain_assets = await self._get_tradable_assets()
+                plain_assets = await self._market_data_manager.get_tradable_assets()
                 if plain_assets:
                     # Fetch quotes in batches to avoid yfinance timeouts on large symbol lists
                     await self._get_quotes_batched(plain_assets, timeout_per_chunk=90.0)
@@ -1521,7 +1517,7 @@ class TradingEngine:
         await asyncio.sleep(120)  # initial delay
         while self._running:
             try:
-                plain_assets = await self._get_tradable_assets()
+                plain_assets = await self._market_data_manager.get_tradable_assets()
                 available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
                 if settings.NEWS_ENABLED and settings.NEWS_TICKER_DISCOVERY_ENABLED and discover_tickers_from_news is not None:
