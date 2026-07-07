@@ -8,6 +8,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -28,6 +29,56 @@ except ImportError:
     detect_upcoming_events = None
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DecisionContext:
+    symbol: str
+    display_symbol: str
+    stock_name: str
+    assigned_tf: str
+    tf_seconds: int
+    ticker: Dict[str, Any]
+    signal: Signal
+    llm_provider: str
+    llm_model: str
+    trading_paused: bool
+    base_balance: float
+    current_price: float
+    atr: Optional[float]
+    rsi: Optional[float]
+    macd: Optional[float]
+    macd_signal: Optional[float]
+    macd_hist: Optional[float]
+    bb_upper: Optional[float]
+    bb_middle: Optional[float]
+    bb_lower: Optional[float]
+    ema_9: Optional[float]
+    ema_21: Optional[float]
+    stochastic_k: Optional[float]
+    stochastic_d: Optional[float]
+    adx: Optional[float]
+    plus_di: Optional[float]
+    minus_di: Optional[float]
+    obv: Optional[float]
+    mfi: Optional[float]
+    cci: Optional[float]
+    williams_r: Optional[float]
+    ichimoku: Optional[Dict[str, Any]]
+    donchian_channels: Optional[Dict[str, Any]]
+    parabolic_sar: Optional[float]
+    keltner_channels: Optional[Dict[str, Any]]
+    aggregate_sentiment: Optional[Dict[str, Any]]
+    market_regime: str
+    min_stop_atr_mult: float
+    min_hold_time_mult: float
+    global_min_rr: Optional[float]
+    max_hold_expired: bool
+    stop_loss_triggered: bool
+    take_profit_triggered: bool
+    partial_tp_triggered: bool
+    dust_sweep_triggered: bool
+    strategy_model_type: str
 
 
 class SignalProcessor:
@@ -405,7 +456,7 @@ class SignalProcessor:
             llm_provider = llm_result["llm_provider"]
             llm_model = llm_result["llm_model"]
 
-            await self.process_post_llm_decision(
+            decision_data = DecisionContext(
                 symbol=symbol, display_symbol=display_symbol, stock_name=stock_name,
                 assigned_tf=assigned_tf, tf_seconds=tf_seconds, ticker=ctx["ticker"], signal=signal,
                 llm_provider=llm_provider, llm_model=llm_model, trading_paused=trading_paused,
@@ -423,6 +474,7 @@ class SignalProcessor:
                 partial_tp_triggered=_flags["partial_tp_triggered"], dust_sweep_triggered=_flags["dust_sweep_triggered"],
                 strategy_model_type=strategy_model_type,
             )
+            await self.process_post_llm_decision(decision_data)
         except Exception as e:
             logger.error(f"Error processing {symbol}: {e}", exc_info=True)
             if engine.notifier:
@@ -1912,58 +1964,22 @@ class SignalProcessor:
 
     async def log_and_notify_decision(
         self,
-        symbol: str,
-        display_symbol: str,
-        stock_name: str,
-        assigned_tf: str,
+        data: DecisionContext,
         validated: Signal,
-        signal: Signal,
-        llm_provider: str,
-        llm_model: str,
-        trading_paused: bool,
-        base_balance: float,
-        current_price: float,
-        # Indicators
-        rsi: Optional[float],
-        macd: Optional[float],
-        macd_signal: Optional[float],
-        macd_hist: Optional[float],
-        bb_upper: Optional[float],
-        bb_middle: Optional[float],
-        bb_lower: Optional[float],
-        ema_9: Optional[float],
-        ema_21: Optional[float],
-        stochastic_k: Optional[float],
-        stochastic_d: Optional[float],
-        adx: Optional[float],
-        plus_di: Optional[float],
-        minus_di: Optional[float],
-        atr: Optional[float],
-        obv: Optional[float],
-        mfi: Optional[float],
-        cci: Optional[float],
-        williams_r: Optional[float],
-        ichimoku: Optional[Dict[str, Any]],
-        donchian_channels: Optional[Dict[str, Any]],
-        parabolic_sar: Optional[float],
-        keltner_channels: Optional[Dict[str, Any]],
-        # Context
-        aggregate_sentiment: Optional[Dict[str, Any]],
-        market_regime: str,
         backtest_stats: Optional[Dict[str, Any]],
     ) -> None:
         """Log the decision, record it in recent_signals, and send notification."""
         engine = self.engine
 
-        logger.info(f"Decision for {symbol}: {validated.action} (confidence: {validated.confidence:.2f})")
+        logger.info(f"Decision for {data.symbol}: {validated.action} (confidence: {validated.confidence:.2f})")
 
         # Store the last decision for the next prompt cycle
-        params = signal.strategy_params
-        engine._last_decisions[symbol] = {
+        params = data.signal.strategy_params
+        engine._last_decisions[data.symbol] = {
             "action": validated.action,
             "confidence": validated.confidence,
             "reasoning": validated.reasoning[:300],
-            "strategy_type": signal.strategy_type,
+            "strategy_type": data.signal.strategy_type,
             "timestamp": time.time(),
             "stop_loss_pct": params.get("stop_loss_pct") if params else None,
             "take_profit_pct": params.get("take_profit_pct") if params else None,
@@ -1973,18 +1989,18 @@ class SignalProcessor:
         engine._state_dirty = True
 
         # Compute trade amount for display in the signals card
-        _params = signal.strategy_params or {}
+        _params = data.signal.strategy_params or {}
         _psf = _params.get("position_size_fraction")
         if validated.action == "BUY" and _psf is not None:
-            _trade_amount = base_balance * float(_psf)
-        elif validated.action == "SELL" and symbol in engine.positions:
-            _pos = engine.positions[symbol]
-            _trade_amount = _pos.get("amount", 0) * current_price
+            _trade_amount = data.base_balance * float(_psf)
+        elif validated.action == "SELL" and data.symbol in engine.positions:
+            _pos = engine.positions[data.symbol]
+            _trade_amount = _pos.get("amount", 0) * data.current_price
         else:
             _trade_amount = 0.0
 
         # Extract strategy parameters for the signal detail modal
-        _sig_params = signal.strategy_params or {}
+        _sig_params = data.signal.strategy_params or {}
         _entry_cond_str = None
         if validated.entry_condition:
             _ec = validated.entry_condition
@@ -2015,17 +2031,17 @@ class SignalProcessor:
 
         # Record signal for the web dashboard
         signal_record = {
-            "symbol": symbol,
-            "display_symbol": display_symbol,
-            "stock_name": stock_name,
-            "timeframe": assigned_tf,
+            "symbol": data.symbol,
+            "display_symbol": data.display_symbol,
+            "stock_name": data.stock_name,
+            "timeframe": data.assigned_tf,
             "action": validated.action,
             "confidence": validated.confidence,
             "reasoning": validated.reasoning or "",
-            "strategy_type": signal.strategy_type,
+            "strategy_type": data.signal.strategy_type,
             "model_type": getattr(validated, 'model_type', None),
-            "llm_provider": llm_provider,
-            "llm_model": llm_model,
+            "llm_provider": data.llm_provider,
+            "llm_model": data.llm_model,
             "trade_amount": round(_trade_amount, 2),
             "base_currency": engine.base_currency,
             "timestamp": time.time(),
@@ -2037,57 +2053,57 @@ class SignalProcessor:
             "trailing_stop_distance_pct": _sig_params.get("trailing_stop_distance_pct"),
             "max_hold_time_seconds": _sig_params.get("max_hold_time_seconds"),
             "cooldown_after_loss_seconds": _sig_params.get("cooldown_after_loss_seconds"),
-            "order_type": signal.order_type,
+            "order_type": data.signal.order_type,
             "limit_price": _sig_params.get("limit_price"),
         }
         await asyncio.to_thread(insert_signal, signal_record)
 
         if engine.notifier:
             emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⏸️"}.get(validated.action, "❓")
-            paused_tag = " (PAUSED)" if trading_paused and validated.action == "BUY" else ""
+            paused_tag = " (PAUSED)" if data.trading_paused and validated.action == "BUY" else ""
             # Build a short indicator summary
             ind_parts = []
-            if rsi is not None:
-                ind_parts.append(f"RSI={rsi:.1f}")
-            if macd is not None and macd_signal is not None:
-                ind_parts.append(f"MACD={macd:.4f}/{macd_signal:.4f}")
-                if macd_hist is not None:
-                    ind_parts.append(f"Hist={macd_hist:.4f}")
-            if bb_upper is not None:
-                ind_parts.append(f"BB={bb_lower:.2f}/{bb_middle:.2f}/{bb_upper:.2f}")
-            if ema_9 is not None and ema_21 is not None:
-                ind_parts.append(f"EMA9/21={ema_9:.2f}/{ema_21:.2f}")
-            if stochastic_k is not None:
-                ind_parts.append(f"StochK={stochastic_k:.1f}")
-                if stochastic_d is not None:
-                    ind_parts.append(f"StochD={stochastic_d:.1f}")
-            if adx is not None:
-                ind_parts.append(f"ADX={adx:.1f}")
-                if plus_di is not None and minus_di is not None:
-                    ind_parts.append(f"+DI={plus_di:.1f}/-DI={minus_di:.1f}")
-            if atr is not None:
-                ind_parts.append(f"ATR={atr:.4f}")
-            if obv is not None:
-                ind_parts.append(f"OBV={obv:.2f}")
-            if mfi is not None:
-                ind_parts.append(f"MFI={mfi:.2f}")
-            if cci is not None:
-                ind_parts.append(f"CCI={cci:.2f}")
-            if williams_r is not None:
-                ind_parts.append(f"WR={williams_r:.2f}")
-            if ichimoku is not None:
-                ind_parts.append(f"Ichi T={ichimoku['tenkan_sen']:.2f}/K={ichimoku['kijun_sen']:.2f}")
-                ind_parts.append(f"Cloud={ichimoku['cloud_bottom']:.2f}-{ichimoku['cloud_top']:.2f}")
-            if donchian_channels is not None:
-                ind_parts.append(f"Donch={donchian_channels['lower']:.2f}/{donchian_channels['middle']:.2f}/{donchian_channels['upper']:.2f}")
-            if parabolic_sar is not None:
-                ind_parts.append(f"SAR={parabolic_sar:.4f}")
-            if keltner_channels is not None:
-                ind_parts.append(f"Kelt={keltner_channels['lower']:.4f}/{keltner_channels['middle']:.4f}/{keltner_channels['upper']:.4f}")
+            if data.rsi is not None:
+                ind_parts.append(f"RSI={data.rsi:.1f}")
+            if data.macd is not None and data.macd_signal is not None:
+                ind_parts.append(f"MACD={data.macd:.4f}/{data.macd_signal:.4f}")
+                if data.macd_hist is not None:
+                    ind_parts.append(f"Hist={data.macd_hist:.4f}")
+            if data.bb_upper is not None:
+                ind_parts.append(f"BB={data.bb_lower:.2f}/{data.bb_middle:.2f}/{data.bb_upper:.2f}")
+            if data.ema_9 is not None and data.ema_21 is not None:
+                ind_parts.append(f"EMA9/21={data.ema_9:.2f}/{data.ema_21:.2f}")
+            if data.stochastic_k is not None:
+                ind_parts.append(f"StochK={data.stochastic_k:.1f}")
+                if data.stochastic_d is not None:
+                    ind_parts.append(f"StochD={data.stochastic_d:.1f}")
+            if data.adx is not None:
+                ind_parts.append(f"ADX={data.adx:.1f}")
+                if data.plus_di is not None and data.minus_di is not None:
+                    ind_parts.append(f"+DI={data.plus_di:.1f}/-DI={data.minus_di:.1f}")
+            if data.atr is not None:
+                ind_parts.append(f"ATR={data.atr:.4f}")
+            if data.obv is not None:
+                ind_parts.append(f"OBV={data.obv:.2f}")
+            if data.mfi is not None:
+                ind_parts.append(f"MFI={data.mfi:.2f}")
+            if data.cci is not None:
+                ind_parts.append(f"CCI={data.cci:.2f}")
+            if data.williams_r is not None:
+                ind_parts.append(f"WR={data.williams_r:.2f}")
+            if data.ichimoku is not None:
+                ind_parts.append(f"Ichi T={data.ichimoku['tenkan_sen']:.2f}/K={data.ichimoku['kijun_sen']:.2f}")
+                ind_parts.append(f"Cloud={data.ichimoku['cloud_bottom']:.2f}-{data.ichimoku['cloud_top']:.2f}")
+            if data.donchian_channels is not None:
+                ind_parts.append(f"Donch={data.donchian_channels['lower']:.2f}/{data.donchian_channels['middle']:.2f}/{data.donchian_channels['upper']:.2f}")
+            if data.parabolic_sar is not None:
+                ind_parts.append(f"SAR={data.parabolic_sar:.4f}")
+            if data.keltner_channels is not None:
+                ind_parts.append(f"Kelt={data.keltner_channels['lower']:.4f}/{data.keltner_channels['middle']:.4f}/{data.keltner_channels['upper']:.4f}")
             indicator_str = " | ".join(ind_parts) if ind_parts else "No indicators (insufficient OHLCV data)"
-            sentiment_str = await self._get_sentiment_str(symbol)
+            sentiment_str = await self._get_sentiment_str(data.symbol)
             reasoning_str = f" – {validated.reasoning}" if validated.reasoning else ""
-            msg = f"{emoji} {display_symbol}: {validated.action} (confidence: {validated.confidence:.2f}){reasoning_str}{paused_tag}"
+            msg = f"{emoji} {data.display_symbol}: {validated.action} (confidence: {validated.confidence:.2f}){reasoning_str}{paused_tag}"
             if sentiment_str:
                 msg += f"\n{sentiment_str}"
             if getattr(validated, 'backtest_summary', None):
@@ -2095,34 +2111,34 @@ class SignalProcessor:
             msg += f"\n📊 {indicator_str}"
             # Build summary dict for logging
             decision_summary = {
-                "symbol": symbol,
+                "symbol": data.symbol,
                 "action": validated.action,
                 "confidence": validated.confidence,
                 "reason": validated.reasoning[:200],
-                "sentiment": aggregate_sentiment,
+                "sentiment": data.aggregate_sentiment,
                 "indicators": {
-                    "rsi": rsi,
-                    "macd": macd,
-                    "macd_signal": macd_signal,
-                    "atr": atr,
-                    "adx": adx,
-                    "bb_upper": bb_upper,
-                    "bb_lower": bb_lower,
-                    "ema_9": ema_9,
-                    "ema_21": ema_21,
-                    "stochastic_k": stochastic_k,
-                    "mfi": mfi,
-                    "cci": cci,
-                    "williams_r": williams_r,
-                    "ichimoku": ichimoku,
-                    "donchian_channels": donchian_channels,
+                    "rsi": data.rsi,
+                    "macd": data.macd,
+                    "macd_signal": data.macd_signal,
+                    "atr": data.atr,
+                    "adx": data.adx,
+                    "bb_upper": data.bb_upper,
+                    "bb_lower": data.bb_lower,
+                    "ema_9": data.ema_9,
+                    "ema_21": data.ema_21,
+                    "stochastic_k": data.stochastic_k,
+                    "mfi": data.mfi,
+                    "cci": data.cci,
+                    "williams_r": data.williams_r,
+                    "ichimoku": data.ichimoku,
+                    "donchian_channels": data.donchian_channels,
                 },
                 "backtest": backtest_stats,
-                "strategy_type": signal.strategy_type,
-                "market_regime": market_regime,
+                "strategy_type": data.signal.strategy_type,
+                "market_regime": data.market_regime,
                 "model_type": getattr(validated, 'model_type', None),
-                "llm_provider": llm_provider,
-                "llm_model": llm_model,
+                "llm_provider": data.llm_provider,
+                "llm_model": data.llm_model,
             }
             await engine.notifier.send_notification(msg, summary=decision_summary)
 
@@ -2283,141 +2299,62 @@ class SignalProcessor:
 
     async def process_post_llm_decision(
         self,
-        symbol: str,
-        display_symbol: str,
-        stock_name: str,
-        assigned_tf: str,
-        tf_seconds: int,
-        ticker: Dict[str, Any],
-        signal: Signal,
-        llm_provider: str,
-        llm_model: str,
-        trading_paused: bool,
-        base_balance: float,
-        current_price: float,
-        atr: Optional[float],
-        rsi: Optional[float],
-        macd: Optional[float],
-        macd_signal: Optional[float],
-        macd_hist: Optional[float],
-        bb_upper: Optional[float],
-        bb_middle: Optional[float],
-        bb_lower: Optional[float],
-        ema_9: Optional[float],
-        ema_21: Optional[float],
-        stochastic_k: Optional[float],
-        stochastic_d: Optional[float],
-        adx: Optional[float],
-        plus_di: Optional[float],
-        minus_di: Optional[float],
-        obv: Optional[float],
-        mfi: Optional[float],
-        cci: Optional[float],
-        williams_r: Optional[float],
-        ichimoku: Optional[Dict[str, Any]],
-        donchian_channels: Optional[Dict[str, Any]],
-        parabolic_sar: Optional[float],
-        keltner_channels: Optional[Dict[str, Any]],
-        aggregate_sentiment: Optional[Dict[str, Any]],
-        market_regime: str,
-        min_stop_atr_mult: float,
-        min_hold_time_mult: float,
-        global_min_rr: Optional[float],
-        max_hold_expired: bool,
-        stop_loss_triggered: bool,
-        take_profit_triggered: bool,
-        partial_tp_triggered: bool,
-        dust_sweep_triggered: bool,
-        strategy_model_type: str,
+        data: DecisionContext,
     ) -> None:
         """Validate the LLM signal, log/notify, and execute if all checks pass."""
         engine = self.engine
 
         # Ensure llm_provider and llm_model are never None for notifications/signals
-        llm_provider = llm_provider or "fallback"
-        llm_model = llm_model or "default_hold"
+        llm_provider = data.llm_provider or "fallback"
+        llm_model = data.llm_model or "default_hold"
 
         validated = validate_signal(
-            signal,
-            atr=atr,
-            price=current_price,
-            timeframe_seconds=tf_seconds,
-            min_stop_atr_mult=min_stop_atr_mult,
-            min_hold_time_mult=min_hold_time_mult,
-            global_min_risk_reward_ratio=global_min_rr,
-            symbol=symbol,
+            data.signal,
+            atr=data.atr,
+            price=data.current_price,
+            timeframe_seconds=data.tf_seconds,
+            min_stop_atr_mult=data.min_stop_atr_mult,
+            min_hold_time_mult=data.min_hold_time_mult,
+            global_min_risk_reward_ratio=data.global_min_rr,
+            symbol=data.symbol,
         )
-        validated.model_type = getattr(signal, 'model_type', None)
-        validated.backtest_summary = getattr(signal, 'backtest_summary', None)
-        validated.backtest_stats = getattr(signal, 'backtest_stats', None)
+        validated.model_type = getattr(data.signal, 'model_type', None)
+        validated.backtest_summary = getattr(data.signal, 'backtest_summary', None)
+        validated.backtest_stats = getattr(data.signal, 'backtest_stats', None)
 
         # Clear _needs_risk_params flag if the LLM has now provided risk parameters
-        if symbol in engine.positions:
-            _pos = engine.positions[symbol]
+        if data.symbol in engine.positions:
+            _pos = engine.positions[data.symbol]
             if _pos.get("_needs_risk_params"):
                 if _pos.get("stop_loss") is not None and _pos.get("take_profit") is not None:
                     _pos.pop("_needs_risk_params", None)
                     _pos.pop("_needs_risk_params_attempts", None)
-                    logger.info(f"Risk parameters obtained for {symbol}; cleared _needs_risk_params flag.")
+                    logger.info(f"Risk parameters obtained for {data.symbol}; cleared _needs_risk_params flag.")
 
         await self.log_and_notify_decision(
-            symbol=symbol,
-            display_symbol=display_symbol,
-            stock_name=stock_name,
-            assigned_tf=assigned_tf,
+            data=data,
             validated=validated,
-            signal=signal,
-            llm_provider=llm_provider,
-            llm_model=llm_model,
-            trading_paused=trading_paused,
-            base_balance=base_balance,
-            current_price=current_price,
-            rsi=rsi,
-            macd=macd,
-            macd_signal=macd_signal,
-            macd_hist=macd_hist,
-            bb_upper=bb_upper,
-            bb_middle=bb_middle,
-            bb_lower=bb_lower,
-            ema_9=ema_9,
-            ema_21=ema_21,
-            stochastic_k=stochastic_k,
-            stochastic_d=stochastic_d,
-            adx=adx,
-            plus_di=plus_di,
-            minus_di=minus_di,
-            atr=atr,
-            obv=obv,
-            mfi=mfi,
-            cci=cci,
-            williams_r=williams_r,
-            ichimoku=ichimoku,
-            donchian_channels=donchian_channels,
-            parabolic_sar=parabolic_sar,
-            keltner_channels=keltner_channels,
-            aggregate_sentiment=aggregate_sentiment,
-            market_regime=market_regime,
             backtest_stats=getattr(validated, 'backtest_stats', None),
         )
 
-        params = signal.strategy_params or {}
+        params = data.signal.strategy_params or {}
 
         # --- Handle triggered position flags (max hold, stop loss, take profit, partial TP, dust sweep) ---
         if await self.handle_triggered_flags(
-            symbol=symbol,
-            display_symbol=display_symbol,
-            signal=signal,
+            symbol=data.symbol,
+            display_symbol=data.display_symbol,
+            signal=data.signal,
             validated=validated,
-            assigned_tf=assigned_tf,
-            current_price=current_price,
-            atr=atr,
-            ticker=ticker,
-            max_hold_expired=max_hold_expired,
-            stop_loss_triggered=stop_loss_triggered,
-            take_profit_triggered=take_profit_triggered,
-            partial_tp_triggered=partial_tp_triggered,
-            dust_sweep_triggered=dust_sweep_triggered,
-            strategy_model_type=strategy_model_type,
+            assigned_tf=data.assigned_tf,
+            current_price=data.current_price,
+            atr=data.atr,
+            ticker=data.ticker,
+            max_hold_expired=data.max_hold_expired,
+            stop_loss_triggered=data.stop_loss_triggered,
+            take_profit_triggered=data.take_profit_triggered,
+            partial_tp_triggered=data.partial_tp_triggered,
+            dust_sweep_triggered=data.dust_sweep_triggered,
+            strategy_model_type=data.strategy_model_type,
             llm_provider=llm_provider,
             llm_model=llm_model,
         ):
@@ -2425,41 +2362,41 @@ class SignalProcessor:
 
         # --- LLM‑controlled trade filters ---
         if await self.check_trade_filters(
-            symbol, display_symbol, validated, params
+            data.symbol, data.display_symbol, validated, params
         ):
             return
 
         # Apply any updated risk parameters from the LLM to the open position
-        if symbol in engine.positions and signal.strategy_params:
+        if data.symbol in engine.positions and data.signal.strategy_params:
             await self.event_bus.publish(
                 "update_position_params",
-                symbol,
-                signal.strategy_params,
-                signal.indicator_config,
-                assigned_tf,
-                current_price,
-                atr,
+                data.symbol,
+                data.signal.strategy_params,
+                data.signal.indicator_config,
+                data.assigned_tf,
+                data.current_price,
+                data.atr,
             )
 
         if validated.action != "HOLD":
             # --- Sector concentration limit check (only for BUY) ---
             if validated.action == "BUY":
                 if await self.check_sector_concentration(
-                    symbol, display_symbol, assigned_tf
+                    data.symbol, data.display_symbol, data.assigned_tf
                 ):
                     return
 
             if await self.handle_entry_condition(
-                symbol=symbol,
-                display_symbol=display_symbol,
+                symbol=data.symbol,
+                display_symbol=data.display_symbol,
                 validated=validated,
-                assigned_tf=assigned_tf,
-                tf_seconds=tf_seconds,
-                trading_paused=trading_paused,
+                assigned_tf=data.assigned_tf,
+                tf_seconds=data.tf_seconds,
+                trading_paused=data.trading_paused,
             ):
                 return
 
-            await self.event_bus.publish("execute_signal", symbol, validated, timeframe=assigned_tf, atr=atr)
+            await self.event_bus.publish("execute_signal", data.symbol, validated, timeframe=data.assigned_tf, atr=data.atr)
 
     async def run_step1b_llm_call(
         self,
