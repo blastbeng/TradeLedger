@@ -282,8 +282,9 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
 
     is_btp = bool(re.match(r'^IT[A-Z0-9]{10}$', base_symbol))
 
+    tasks = []
     if is_btp:
-        articles.extend(_fetch_banca_d_italia_btp_news(base_symbol, name))
+        tasks.append(asyncio.to_thread(_fetch_banca_d_italia_btp_news, base_symbol, name))
 
     enabled = _get_enabled_sources()
     logger.debug(f"Enabled news sources for {symbol}: {enabled}")
@@ -304,7 +305,6 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
     if db_name and db_name != base_symbol and db_name != name:
         combined_query = f'{combined_query} OR "{db_name}"'
 
-    tasks = []
     for source in enabled:
         if source == "newsapi":
             tasks.append(asyncio.to_thread(_fetch_newsapi, combined_query, name))
@@ -348,10 +348,20 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
     # Summarize articles using the weak model to save tokens for the main LLM
     try:
         from src.llm.summarizer import summarize_text
+        summarize_tasks = []
         for article in unique:
             original_summary = article.get("summary", "")
             if original_summary:
-                article["summary"] = summarize_text(original_summary, context="news", max_length=150)
+                summarize_tasks.append(asyncio.to_thread(summarize_text, original_summary, context="news", max_length=150))
+            else:
+                summarize_tasks.append(asyncio.to_thread(lambda: None))
+
+        summarized_results = await asyncio.gather(*summarize_tasks, return_exceptions=True)
+        for article, result in zip(unique, summarized_results):
+            if isinstance(result, Exception):
+                logger.warning(f"Failed to summarize article for {base_symbol}: {result}")
+            elif result is not None:
+                article["summary"] = result
     except Exception as e:
         logger.warning(f"Failed to summarize news articles for {base_symbol}: {e}")
 
