@@ -19,6 +19,7 @@ def get_cached_llm_response(
     market_hash: str = None,
     model_type: str = "actuator",
     temperature: Optional[float] = None,
+    symbol: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Get an LLM response, using Redis cache to avoid duplicate calls.
@@ -132,7 +133,7 @@ def get_cached_llm_response(
     # --- Semantic Cache Check ---
     if semantic_cache_client.enabled:
         try:
-            semantic_hit = semantic_cache_client.query(prompt)
+            semantic_hit = semantic_cache_client.query(prompt, symbol)
             if semantic_hit:
                 logger.info("Semantic cache hit for prompt: %.100s...", prompt[:100])
                 return {
@@ -286,7 +287,7 @@ def get_cached_llm_response(
     # --- Semantic Cache Store ---
     if semantic_cache_client.enabled:
         try:
-            semantic_cache_client.add(prompt, response_text)
+            semantic_cache_client.add(prompt, response_text, symbol)
         except Exception as e:
             logger.warning(f"Semantic cache store failed, bypassing: {e}")
     return {

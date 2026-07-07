@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 # Regex to find tickers ending with .MI (or other configured suffixes)
 TICKER_REGEX = re.compile(r'\b([A-Z0-9]+\.MI)\b')
 
-def generalize_prompt(prompt: str) -> Tuple[str, Optional[str]]:
+def generalize_prompt(prompt: str, symbol: Optional[str] = None) -> Tuple[str, Optional[str]]:
     """
     Replaces specific stock tickers in the prompt with a generic [TICKER] placeholder.
 
@@ -18,6 +18,12 @@ def generalize_prompt(prompt: str) -> Tuple[str, Optional[str]]:
         A tuple containing (generalized_prompt, extracted_ticker).
         If no ticker is found, extracted_ticker will be None.
     """
+    # Prioritize the explicitly provided symbol if it exists in the prompt
+    if symbol and symbol in prompt:
+        generalized_prompt = prompt.replace(symbol, "[TICKER]")
+        return generalized_prompt, symbol
+
+    # Fallback to regex if no symbol provided or not found
     match = TICKER_REGEX.search(prompt)
     if not match:
         return prompt, None
@@ -88,12 +94,12 @@ class SemanticCacheClient:
             logger.warning(f"Semantic Cache: Failed to get embedding: {e}.")
             return None
 
-    def query(self, prompt: str) -> Optional[str]:
+    def query(self, prompt: str, symbol: Optional[str] = None) -> Optional[str]:
         """Queries the semantic cache for a matching prompt."""
         if not self.enabled or not self.collection_id:
             return None
 
-        generalized_prompt, ticker = generalize_prompt(prompt)
+        generalized_prompt, ticker = generalize_prompt(prompt, symbol)
         embedding = self.get_embedding(generalized_prompt)
         if not embedding:
             return None
@@ -121,12 +127,12 @@ class SemanticCacheClient:
 
         return None
 
-    def add(self, prompt: str, response: str):
+    def add(self, prompt: str, response: str, symbol: Optional[str] = None):
         """Adds a prompt and its response to the semantic cache."""
         if not self.enabled or not self.collection_id:
             return
 
-        generalized_prompt, ticker = generalize_prompt(prompt)
+        generalized_prompt, ticker = generalize_prompt(prompt, symbol)
         embedding = self.get_embedding(generalized_prompt)
         if not embedding:
             return
