@@ -547,6 +547,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 engine = get_engine()
                 redis = get_redis_client()
 
+                # Re-check session token to handle expiration during active connection
+                if settings.WEB_USERNAME and settings.WEB_PASSWORD:
+                    token = websocket.cookies.get("session_token")
+                    if not token:
+                        await websocket.close(code=1008)  # Policy Violation
+                        break
+                    session = await asyncio.to_thread(redis.get, f"session:{token}")
+                    if not session:
+                        await websocket.close(code=1008)
+                        break
+
                 # --- Cached payload: share across all WebSocket clients ---
                 now = time.time()
                 global _ws_payload_cache, _ws_payload_cache_time
