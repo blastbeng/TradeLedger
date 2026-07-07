@@ -332,6 +332,8 @@ class TradingEngine:
     def set_notifier(self, notifier):
         """Attach a notification service (e.g., TelegramBot)."""
         self.notifier = notifier
+        from src.exchanges import market_data
+        market_data.set_notifier(notifier)
 
     def trigger_symbol_reevaluation(self, force: bool = False):
         """Signal the periodic reevaluate loop to run immediately."""

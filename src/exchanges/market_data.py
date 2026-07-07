@@ -26,6 +26,11 @@ from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close
 
 logger = logging.getLogger(__name__)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+_notifier = None
+
+def set_notifier(notifier):
+    global _notifier
+    _notifier = notifier
 
 _get_quotes_lock = threading.Lock()
 _get_quotes_done = threading.Event()
@@ -1391,6 +1396,16 @@ def get_tradable_assets() -> List[str]:
                     return db_only_list
         except (RuntimeError, ValueError, OSError) as e:
             logger.warning(f"Failed to recover symbols from DB: {e}")
+        if _notifier:
+            msg = "⚠️ Market Data Discovery Failure: All discovery sources (Wikipedia, FinanceDatabase, news feeds, DB) failed to return any tradable assets. The bot will idle."
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_notifier.send_notification(msg))
+            except RuntimeError:
+                try:
+                    asyncio.run(_notifier.send_notification(msg))
+                except Exception:
+                    pass
         return []
 
     # Save discovered symbols to DB.
