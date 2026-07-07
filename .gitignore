@@ -227,3 +227,6 @@ postgresql/data/*
 redis/*
 redis/data
 redis/data/*
+chroma/data
+chroma/data/*
+chroma/chromadb
