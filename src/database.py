@@ -1725,7 +1725,7 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
 
 @retry_on_db_lock()
-def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, name: str = "", maturity: Optional[str] = None, coupon: Optional[float] = None, country: Optional[str] = None):
+def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, name: Optional[str] = None, maturity: Optional[str] = None, coupon: Optional[float] = None, country: Optional[str] = None):
     """Insert or update a discovered symbol with its ISIN, maturity, and coupon.
 
     Uses COALESCE to preserve existing ISINs — if isin is None, the existing
@@ -1736,6 +1736,10 @@ def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, na
         isin = isin.strip()
         if isin == '-' or not isin:
             isin = None
+    if name is not None:
+        name = name.strip()
+        if not name:
+            name = None
     conn = get_connection()
     try:
         sql = _adapt_sql(
@@ -1744,7 +1748,7 @@ def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, na
             "ON CONFLICT (symbol) DO UPDATE SET "
             "isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
             "asset_type = COALESCE(NULLIF(EXCLUDED.asset_type, ''), discovered_symbols.asset_type), "
-            "name = COALESCE(NULLIF(EXCLUDED.name, ''), discovered_symbols.name), "
+            "name = COALESCE(NULLIF(EXCLUDED.name, ''), NULLIF(discovered_symbols.name, '')), "
             "maturity = COALESCE(EXCLUDED.maturity, discovered_symbols.maturity), "
             "coupon = COALESCE(EXCLUDED.coupon, discovered_symbols.coupon), "
             "country = COALESCE(EXCLUDED.country, discovered_symbols.country), "
@@ -1776,13 +1780,20 @@ def save_discovered_symbols_batch(symbols: List[Dict[str, Any]]):
                     s["isin"] = None
                 else:
                     s["isin"] = isin_val
+            name_val = s.get("name")
+            if name_val is not None:
+                name_val = name_val.strip()
+                if not name_val:
+                    s["name"] = None
+                else:
+                    s["name"] = name_val
         sql = _adapt_sql(
             "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, maturity, coupon, country, discovered_at) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "isin = COALESCE(EXCLUDED.isin, discovered_symbols.isin), "
             "asset_type = COALESCE(NULLIF(EXCLUDED.asset_type, ''), discovered_symbols.asset_type), "
-            "name = COALESCE(NULLIF(EXCLUDED.name, ''), discovered_symbols.name), "
+            "name = COALESCE(NULLIF(EXCLUDED.name, ''), NULLIF(discovered_symbols.name, '')), "
             "maturity = COALESCE(EXCLUDED.maturity, discovered_symbols.maturity), "
             "coupon = COALESCE(EXCLUDED.coupon, discovered_symbols.coupon), "
             "country = COALESCE(EXCLUDED.country, discovered_symbols.country), "

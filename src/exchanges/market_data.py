@@ -427,7 +427,7 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
         # Save to DB with the base symbol (no suffix)
         try:
             save_country = settings.TARGET_COUNTRY if settings.COUNTRY_FILTER_STRICT else None
-            save_discovered_symbol(db_symbol, isin, "stock", "", country=save_country)
+            save_discovered_symbol(db_symbol, isin, "stock", None, country=save_country)
         except (RuntimeError, ValueError, OSError):
             pass
 
@@ -1066,7 +1066,7 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
                             if re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", isin):
                                 try:
                                     from src.database import save_discovered_symbol
-                                    save_discovered_symbol(base, isin, "stock", "", country="italy")
+                                    save_discovered_symbol(base, isin, "stock", None, country="italy")
                                 except (RuntimeError, ValueError, OSError):
                                     pass
                 
@@ -1223,7 +1223,7 @@ def discover_italian_ucits_etfs() -> List[str]:
         try:
             from src.database import save_discovered_symbols_batch
             symbols_to_save = [
-                {"symbol": sym, "isin": None, "asset_type": "etf", "name": "", "country": "italy"}
+                {"symbol": sym, "isin": None, "asset_type": "etf", "name": None, "country": "italy"}
                 for sym in base_symbols
             ]
             if symbols_to_save:
@@ -1250,7 +1250,7 @@ def _save_discovered_assets_to_db(base_symbols: List[str], etf_symbols: List[str
             "symbol": base,
             "isin": None,
             "asset_type": asset_type,
-            "name": "",
+            "name": None,
             "country": None,
         })
     if not symbols_to_save:
@@ -1501,7 +1501,7 @@ def get_tradable_assets() -> List[str]:
                 db_base = symbol
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
-                save_discovered_symbol(db_base, None, "stock", name or "", country=country)
+                save_discovered_symbol(db_base, None, "stock", name or None, country=country)
             except Exception:
                 pass
         elif name and not settings.COUNTRY_FILTER_STRICT:
@@ -1511,7 +1511,7 @@ def get_tradable_assets() -> List[str]:
                 db_base = symbol
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
-                save_discovered_symbol(db_base, None, "stock", name or "", country=None)
+                save_discovered_symbol(db_base, None, "stock", name or None, country=None)
             except (RuntimeError, ValueError, OSError):
                 pass
         if country is None:
@@ -1547,7 +1547,7 @@ def get_tradable_assets() -> List[str]:
                     "symbol": base,
                     "isin": None,
                     "asset_type": asset_type,
-                    "name": "",
+                    "name": None,
                     "country": target_country,
                 })
             if symbols_to_save:
@@ -2442,7 +2442,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
         try:
             from src.database import save_discovered_symbols_batch
             symbols_to_save = [
-                {"symbol": b["isin"], "isin": b["isin"], "asset_type": "btp", "name": b.get("name", ""),
+                {"symbol": b["isin"], "isin": b["isin"], "asset_type": "btp", "name": b.get("name") or None,
                  "maturity": b.get("maturity"), "coupon": b.get("coupon"), "country": "italy"}
                 for b in bonds
             ]
