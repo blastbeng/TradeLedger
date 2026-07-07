@@ -8,6 +8,7 @@ back to the LLM or used as a hard validation gate.
 """
 
 import logging
+from dataclasses import dataclass, replace
 from typing import Dict, Any, Optional, List
 
 from src.indicators import compute_ema
@@ -99,53 +100,57 @@ def _detect_gaps(candles: List[List], tolerance_mult: float = 1.5) -> Optional[L
     return gaps if gaps else None
 
 
+@dataclass
+class BacktestConfig:
+    stop_loss_pct: float
+    take_profit_pct: float
+    max_hold_time_seconds: Optional[int] = None
+    trailing_stop: bool = False
+    trailing_stop_distance_pct: Optional[float] = None
+    trailing_stop_activation_pct: Optional[float] = None
+    partial_take_profit_levels: Optional[List[Dict]] = None
+    breakeven_activation_pct: Optional[float] = None
+    trailing_take_profit: bool = False
+    trailing_take_profit_distance_pct: Optional[float] = None
+    trailing_stop_atr_multiple: Optional[float] = None
+    atr_values: Optional[List[Optional[float]]] = None
+    stop_loss_atr_multiple: Optional[float] = None
+    take_profit_atr_multiple: Optional[float] = None
+    max_unrealized_loss_pct: Optional[float] = None
+    adx_values: Optional[List[Optional[float]]] = None
+    fee_rate: float = 0.0
+    fee_model: str = "flat"
+    trade_value: Optional[float] = None
+    is_btp: bool = False
+    max_trades: int = 200
+    cooldown_after_loss_seconds: Optional[int] = None
+    slippage_pct: float = 0.0
+    slippage_model: str = "fixed"
+    slippage_base_pct: float = 0.001
+    slippage_max_pct: float = 0.01
+    rsi_values: Optional[List[Optional[float]]] = None
+    max_rsi: float = 100.0
+    macd_hist_values: Optional[List[Optional[float]]] = None
+    backtest_entry_config: Optional[Dict[str, Any]] = None
+    simulate_position_sizing: bool = False
+    initial_balance: float = 10000.0
+    confidence: float = 0.5
+    confidence_sizing_weight: float = 0.0
+    global_risk_multiplier: float = 1.0
+    position_size_multiplier: float = 1.0
+    max_risk_per_trade_pct: Optional[float] = None
+    max_portfolio_risk_pct: Optional[float] = None
+    max_portfolio_exposure_pct: Optional[float] = None
+    max_portfolio_stop_risk_pct: Optional[float] = None
+    position_size_fraction: float = 0.1
+    direction: str = "long"
+    gap_tolerance_mult: float = 1.5
+    on_gaps: str = "warn"
+    _return_trades: bool = False
+
 def backtest_strategy(
     candles: List[List],
-    stop_loss_pct: float,
-    take_profit_pct: float,
-    max_hold_time_seconds: Optional[int] = None,
-    trailing_stop: bool = False,
-    trailing_stop_distance_pct: Optional[float] = None,
-    trailing_stop_activation_pct: Optional[float] = None,
-    partial_take_profit_levels: Optional[List[Dict]] = None,
-    breakeven_activation_pct: Optional[float] = None,
-    trailing_take_profit: bool = False,
-    trailing_take_profit_distance_pct: Optional[float] = None,
-    trailing_stop_atr_multiple: Optional[float] = None,
-    atr_values: Optional[List[Optional[float]]] = None,
-    stop_loss_atr_multiple: Optional[float] = None,
-    take_profit_atr_multiple: Optional[float] = None,
-    max_unrealized_loss_pct: Optional[float] = None,
-    adx_values: Optional[List[Optional[float]]] = None,
-    fee_rate: float = 0.0,
-    fee_model: str = "flat",
-    trade_value: Optional[float] = None,
-    is_btp: bool = False,
-    max_trades: int = 200,
-    cooldown_after_loss_seconds: Optional[int] = None,
-    slippage_pct: float = 0.0,
-    slippage_model: str = "fixed",
-    slippage_base_pct: float = 0.001,
-    slippage_max_pct: float = 0.01,
-    rsi_values: Optional[List[Optional[float]]] = None,
-    max_rsi: float = 100.0,
-    macd_hist_values: Optional[List[Optional[float]]] = None,
-    backtest_entry_config: Optional[Dict[str, Any]] = None,
-    simulate_position_sizing: bool = False,
-    initial_balance: float = 10000.0,
-    confidence: float = 0.5,
-    confidence_sizing_weight: float = 0.0,
-    global_risk_multiplier: float = 1.0,
-    position_size_multiplier: float = 1.0,
-    max_risk_per_trade_pct: Optional[float] = None,
-    max_portfolio_risk_pct: Optional[float] = None,
-    max_portfolio_exposure_pct: Optional[float] = None,
-    max_portfolio_stop_risk_pct: Optional[float] = None,
-    position_size_fraction: float = 0.1,
-    direction: str = "long",
-    gap_tolerance_mult: float = 1.5,
-    on_gaps: str = "warn",
-    _return_trades: bool = False,
+    config: BacktestConfig,
 ) -> Dict[str, Any]:
     """
     Backtest a long, short, or both-direction strategy on historical OHLCV candles.
@@ -173,24 +178,24 @@ def backtest_strategy(
     if not candles or len(candles) < settings.BACKTEST_MIN_CANDLES:
         return _empty_result()
 
-    if stop_loss_pct is None or stop_loss_pct <= 0:
-        stop_loss_pct = 0.02
-    if take_profit_pct is None or take_profit_pct <= 0:
-        take_profit_pct = 0.05
+    if config.stop_loss_pct is None or config.stop_loss_pct <= 0:
+        config.stop_loss_pct = 0.02
+    if config.take_profit_pct is None or config.take_profit_pct <= 0:
+        config.take_profit_pct = 0.05
 
-    if direction not in ("long", "short", "both"):
-        direction = "long"
+    if config.direction not in ("long", "short", "both"):
+        config.direction = "long"
 
-    if not backtest_entry_config:
+    if not config.backtest_entry_config:
         result = _empty_result()
         result["error"] = "backtest_entry_config is required — cannot default to entering every candle"
-        if _return_trades:
+        if config._return_trades:
             return [], result
         return result
 
     # --- Gap detection ---
     gap_warning = ""
-    detected_gaps = _detect_gaps(candles, gap_tolerance_mult)
+    detected_gaps = _detect_gaps(candles, config.gap_tolerance_mult)
     if detected_gaps:
         gap_count = len(detected_gaps)
         max_gap_ratio = max(g["gap_ratio"] for g in detected_gaps)
@@ -201,70 +206,22 @@ def backtest_strategy(
             f"triggers or missed take-profit events."
         )
         logger.warning(f"Backtest gap detection: {gap_warning}")
-        if on_gaps == "skip":
+        if config.on_gaps == "skip":
             result = _empty_result()
             result["error"] = gap_warning
             result["gap_warning"] = gap_warning
-            if _return_trades:
+            if config._return_trades:
                 return [], result
             return result
 
-    if direction == "both":
+    if config.direction == "both":
         long_trades, _ = backtest_strategy(
-            candles=candles, stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
-            max_hold_time_seconds=max_hold_time_seconds, trailing_stop=trailing_stop,
-            trailing_stop_distance_pct=trailing_stop_distance_pct,
-            trailing_stop_activation_pct=trailing_stop_activation_pct,
-            partial_take_profit_levels=partial_take_profit_levels,
-            breakeven_activation_pct=breakeven_activation_pct,
-            trailing_take_profit=trailing_take_profit,
-            trailing_take_profit_distance_pct=trailing_take_profit_distance_pct,
-            trailing_stop_atr_multiple=trailing_stop_atr_multiple,
-            atr_values=atr_values, stop_loss_atr_multiple=stop_loss_atr_multiple,
-            take_profit_atr_multiple=take_profit_atr_multiple,
-            max_unrealized_loss_pct=max_unrealized_loss_pct,
-            adx_values=adx_values, fee_rate=fee_rate, fee_model=fee_model,
-            trade_value=trade_value, is_btp=is_btp, max_trades=max_trades,
-            cooldown_after_loss_seconds=cooldown_after_loss_seconds,
-            slippage_pct=slippage_pct,
-            slippage_model=slippage_model,
-            slippage_base_pct=slippage_base_pct,
-            slippage_max_pct=slippage_max_pct,
-            rsi_values=rsi_values, max_rsi=max_rsi,
-            macd_hist_values=macd_hist_values,
-            backtest_entry_config=backtest_entry_config,
-            simulate_position_sizing=False,
-            direction="long", _return_trades=True,
-            gap_tolerance_mult=gap_tolerance_mult,
-            on_gaps=on_gaps,
+            candles=candles,
+            config=replace(config, simulate_position_sizing=False, direction="long", _return_trades=True),
         )
         short_trades, _ = backtest_strategy(
-            candles=candles, stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
-            max_hold_time_seconds=max_hold_time_seconds, trailing_stop=trailing_stop,
-            trailing_stop_distance_pct=trailing_stop_distance_pct,
-            trailing_stop_activation_pct=trailing_stop_activation_pct,
-            partial_take_profit_levels=partial_take_profit_levels,
-            breakeven_activation_pct=breakeven_activation_pct,
-            trailing_take_profit=trailing_take_profit,
-            trailing_take_profit_distance_pct=trailing_take_profit_distance_pct,
-            trailing_stop_atr_multiple=trailing_stop_atr_multiple,
-            atr_values=atr_values, stop_loss_atr_multiple=stop_loss_atr_multiple,
-            take_profit_atr_multiple=take_profit_atr_multiple,
-            max_unrealized_loss_pct=max_unrealized_loss_pct,
-            adx_values=adx_values, fee_rate=fee_rate, fee_model=fee_model,
-            trade_value=trade_value, is_btp=is_btp, max_trades=max_trades,
-            cooldown_after_loss_seconds=cooldown_after_loss_seconds,
-            slippage_pct=slippage_pct,
-            slippage_model=slippage_model,
-            slippage_base_pct=slippage_base_pct,
-            slippage_max_pct=slippage_max_pct,
-            rsi_values=rsi_values, max_rsi=max_rsi,
-            macd_hist_values=macd_hist_values,
-            backtest_entry_config=backtest_entry_config,
-            simulate_position_sizing=False,
-            direction="short", _return_trades=True,
-            gap_tolerance_mult=gap_tolerance_mult,
-            on_gaps=on_gaps,
+            candles=candles,
+            config=replace(config, simulate_position_sizing=False, direction="short", _return_trades=True),
         )
         all_trades = long_trades + short_trades
         buy_and_hold_pct = 0.0
@@ -278,21 +235,21 @@ def backtest_strategy(
         combined["gap_warning"] = gap_warning
         return combined
 
-    is_short = direction == "short"
+    is_short = config.direction == "short"
 
     # --- Position sizing simulation state ---
-    _psim = simulate_position_sizing and direction != "both"
-    cash = initial_balance if _psim else 0.0
+    _psim = config.simulate_position_sizing and config.direction != "both"
+    cash = config.initial_balance if _psim else 0.0
     total_pnl_currency = 0.0
 
     # Parse configurable entry logic
-    entry_ema_period = backtest_entry_config.get("ema_period", 0)
-    entry_ema_direction = backtest_entry_config.get("ema_direction", "above")
-    entry_min_adx = backtest_entry_config.get("min_adx", 0.0)
-    entry_max_rsi = backtest_entry_config.get("max_rsi", 100.0)
-    entry_min_rsi = backtest_entry_config.get("min_rsi", 0.0)
-    entry_macd_filter = backtest_entry_config.get("macd_filter", "none")
-    entry_logic = backtest_entry_config.get("logic", "and")
+    entry_ema_period = config.backtest_entry_config.get("ema_period", 0)
+    entry_ema_direction = config.backtest_entry_config.get("ema_direction", "above")
+    entry_min_adx = config.backtest_entry_config.get("min_adx", 0.0)
+    entry_max_rsi = config.backtest_entry_config.get("max_rsi", 100.0)
+    entry_min_rsi = config.backtest_entry_config.get("min_rsi", 0.0)
+    entry_macd_filter = config.backtest_entry_config.get("macd_filter", "none")
+    entry_logic = config.backtest_entry_config.get("logic", "and")
 
     trades = []
     i = 0
@@ -305,7 +262,7 @@ def backtest_strategy(
 
     # Pre-compute rolling average volume for dynamic slippage
     avg_volume_series: List[Optional[float]] = []
-    if slippage_model == "dynamic":
+    if config.slippage_model == "dynamic":
         vol_period = 20
         volumes = [c[5] for c in candles]
         for idx in range(len(candles)):
@@ -313,7 +270,7 @@ def backtest_strategy(
             window = volumes[start_idx:idx + 1]
             avg_volume_series.append(sum(window) / len(window) if window else None)
 
-    while i < len(candles) - 1 and len(trades) < max_trades:
+    while i < len(candles) - 1 and len(trades) < config.max_trades:
         # --- Configurable entry filters ---
         filter_results = []
 
@@ -328,33 +285,33 @@ def backtest_strategy(
                 filter_results.append(False)
 
         # ADX filter
-        if entry_min_adx > 0 and adx_values is not None:
-            if i < len(adx_values) and adx_values[i] is not None:
-                filter_results.append(adx_values[i] >= entry_min_adx)
+        if entry_min_adx > 0 and config.adx_values is not None:
+            if i < len(config.adx_values) and config.adx_values[i] is not None:
+                filter_results.append(config.adx_values[i] >= entry_min_adx)
             else:
                 filter_results.append(False)
 
         # RSI max filter (overbought)
-        if entry_max_rsi > 0 and rsi_values is not None:
-            if i < len(rsi_values) and rsi_values[i] is not None:
-                filter_results.append(rsi_values[i] <= entry_max_rsi)
+        if entry_max_rsi > 0 and config.rsi_values is not None:
+            if i < len(config.rsi_values) and config.rsi_values[i] is not None:
+                filter_results.append(config.rsi_values[i] <= entry_max_rsi)
             else:
                 filter_results.append(False)
 
         # RSI min filter (oversold)
-        if entry_min_rsi > 0 and rsi_values is not None:
-            if i < len(rsi_values) and rsi_values[i] is not None:
-                filter_results.append(rsi_values[i] >= entry_min_rsi)
+        if entry_min_rsi > 0 and config.rsi_values is not None:
+            if i < len(config.rsi_values) and config.rsi_values[i] is not None:
+                filter_results.append(config.rsi_values[i] >= entry_min_rsi)
             else:
                 filter_results.append(False)
 
         # MACD filter
-        if entry_macd_filter != "none" and macd_hist_values is not None:
-            if i < len(macd_hist_values) and macd_hist_values[i] is not None:
+        if entry_macd_filter != "none" and config.macd_hist_values is not None:
+            if i < len(config.macd_hist_values) and config.macd_hist_values[i] is not None:
                 if entry_macd_filter == "positive":
-                    filter_results.append(macd_hist_values[i] > 0)
+                    filter_results.append(config.macd_hist_values[i] > 0)
                 else:
-                    filter_results.append(macd_hist_values[i] < 0)
+                    filter_results.append(config.macd_hist_values[i] < 0)
             else:
                 filter_results.append(False)
 
@@ -372,13 +329,13 @@ def backtest_strategy(
         entry_ts = entry_candle[0]
 
         # Compute effective slippage for entry candle
-        if slippage_model == "dynamic" and avg_volume_series:
+        if config.slippage_model == "dynamic" and avg_volume_series:
             entry_slippage = _compute_dynamic_slippage(
-                i, candles, avg_volume_series, atr_values,
-                slippage_base_pct, slippage_max_pct,
+                i, candles, avg_volume_series, config.atr_values,
+                config.slippage_base_pct, config.slippage_max_pct,
             )
         else:
-            entry_slippage = slippage_pct
+            entry_slippage = config.slippage_pct
 
         if is_short:
             entry_price = entry_candle[4] * (1 - entry_slippage)
@@ -392,52 +349,52 @@ def backtest_strategy(
         # --- Compute position size for this trade ---
         if _psim:
             portfolio_value = cash
-            desired_amount = portfolio_value * position_size_fraction
-            if confidence_sizing_weight > 0 and confidence < 1.0:
-                confidence_mult = 1.0 - confidence_sizing_weight * (1.0 - confidence)
+            desired_amount = portfolio_value * config.position_size_fraction
+            if config.confidence_sizing_weight > 0 and config.confidence < 1.0:
+                confidence_mult = 1.0 - config.confidence_sizing_weight * (1.0 - config.confidence)
                 desired_amount *= confidence_mult
-            desired_amount *= global_risk_multiplier
-            desired_amount *= position_size_multiplier
+            desired_amount *= config.global_risk_multiplier
+            desired_amount *= config.position_size_multiplier
             hard_max = float('inf')
-            if max_risk_per_trade_pct is not None and stop_loss_pct > 0:
-                hard_max = min(hard_max, (portfolio_value * max_risk_per_trade_pct) / stop_loss_pct)
-            if max_portfolio_risk_pct is not None and stop_loss_pct > 0:
-                hard_max = min(hard_max, (portfolio_value * max_portfolio_risk_pct) / stop_loss_pct)
-            if max_portfolio_exposure_pct is not None:
-                hard_max = min(hard_max, portfolio_value * max_portfolio_exposure_pct)
-            if max_portfolio_stop_risk_pct is not None and stop_loss_pct > 0:
-                hard_max = min(hard_max, (portfolio_value * max_portfolio_stop_risk_pct) / stop_loss_pct)
+            if config.max_risk_per_trade_pct is not None and config.stop_loss_pct > 0:
+                hard_max = min(hard_max, (portfolio_value * config.max_risk_per_trade_pct) / config.stop_loss_pct)
+            if config.max_portfolio_risk_pct is not None and config.stop_loss_pct > 0:
+                hard_max = min(hard_max, (portfolio_value * config.max_portfolio_risk_pct) / config.stop_loss_pct)
+            if config.max_portfolio_exposure_pct is not None:
+                hard_max = min(hard_max, portfolio_value * config.max_portfolio_exposure_pct)
+            if config.max_portfolio_stop_risk_pct is not None and config.stop_loss_pct > 0:
+                hard_max = min(hard_max, (portfolio_value * config.max_portfolio_stop_risk_pct) / config.stop_loss_pct)
             hard_max = min(hard_max, cash)
             trade_amount = min(desired_amount, hard_max)
             if trade_amount <= 0:
                 i += 1
                 continue
         else:
-            trade_amount = trade_value or 10000.0
+            trade_amount = config.trade_value or 10000.0
 
         # Dynamic ATR-based stop-loss
-        if stop_loss_atr_multiple is not None and atr_values is not None and i < len(atr_values) and atr_values[i] is not None and atr_values[i] > 0:
+        if config.stop_loss_atr_multiple is not None and config.atr_values is not None and i < len(config.atr_values) and config.atr_values[i] is not None and config.atr_values[i] > 0:
             if is_short:
-                stop_loss_price = entry_price + (atr_values[i] * stop_loss_atr_multiple)
+                stop_loss_price = entry_price + (config.atr_values[i] * config.stop_loss_atr_multiple)
             else:
-                stop_loss_price = entry_price - (atr_values[i] * stop_loss_atr_multiple)
+                stop_loss_price = entry_price - (config.atr_values[i] * config.stop_loss_atr_multiple)
         else:
             if is_short:
-                stop_loss_price = entry_price * (1 + stop_loss_pct)
+                stop_loss_price = entry_price * (1 + config.stop_loss_pct)
             else:
-                stop_loss_price = entry_price * (1 - stop_loss_pct)
+                stop_loss_price = entry_price * (1 - config.stop_loss_pct)
 
         # Dynamic ATR-based take-profit
-        if take_profit_atr_multiple is not None and atr_values is not None and i < len(atr_values) and atr_values[i] is not None and atr_values[i] > 0:
+        if config.take_profit_atr_multiple is not None and config.atr_values is not None and i < len(config.atr_values) and config.atr_values[i] is not None and config.atr_values[i] > 0:
             if is_short:
-                take_profit_price = entry_price - (atr_values[i] * take_profit_atr_multiple)
+                take_profit_price = entry_price - (config.atr_values[i] * config.take_profit_atr_multiple)
             else:
-                take_profit_price = entry_price + (atr_values[i] * take_profit_atr_multiple)
+                take_profit_price = entry_price + (config.atr_values[i] * config.take_profit_atr_multiple)
         else:
             if is_short:
-                take_profit_price = entry_price * (1 - take_profit_pct)
+                take_profit_price = entry_price * (1 - config.take_profit_pct)
             else:
-                take_profit_price = entry_price * (1 + take_profit_pct)
+                take_profit_price = entry_price * (1 + config.take_profit_pct)
 
         # Trailing stop state
         if is_short:
@@ -466,18 +423,18 @@ def backtest_strategy(
             candle_close = candle[4]
 
             # Compute effective slippage for this candle
-            if slippage_model == "dynamic" and avg_volume_series:
+            if config.slippage_model == "dynamic" and avg_volume_series:
                 effective_slippage = _compute_dynamic_slippage(
-                    j, candles, avg_volume_series, atr_values,
-                    slippage_base_pct, slippage_max_pct,
+                    j, candles, avg_volume_series, config.atr_values,
+                    config.slippage_base_pct, config.slippage_max_pct,
                 )
             else:
-                effective_slippage = slippage_pct
+                effective_slippage = config.slippage_pct
 
             hold_time = (candle_ts - entry_ts) / 1000.0
 
             # Check max hold time
-            if max_hold_time_seconds is not None and hold_time >= max_hold_time_seconds:
+            if config.max_hold_time_seconds is not None and hold_time >= config.max_hold_time_seconds:
                 exit_price = candle_close
                 exit_ts = candle_ts
                 exit_reason = "max_hold"
@@ -485,9 +442,9 @@ def backtest_strategy(
                 break
 
             # Update trailing stop
-            if trailing_stop and (
-                trailing_stop_distance_pct is not None
-                or (trailing_stop_atr_multiple is not None and atr_values is not None)
+            if config.trailing_stop and (
+                config.trailing_stop_distance_pct is not None
+                or (config.trailing_stop_atr_multiple is not None and config.atr_values is not None)
             ):
                 if is_short:
                     if candle_low < lowest_price:
@@ -498,29 +455,29 @@ def backtest_strategy(
                         highest_price = candle_high
                     profit_pct = (highest_price - entry_price) / entry_price
 
-                if trailing_stop_activation_pct is not None:
-                    if profit_pct >= trailing_stop_activation_pct:
+                if config.trailing_stop_activation_pct is not None:
+                    if profit_pct >= config.trailing_stop_activation_pct:
                         trailing_activated = True
 
-                if trailing_activated or trailing_stop_activation_pct is None:
-                    if trailing_stop_atr_multiple is not None and atr_values is not None:
+                if trailing_activated or config.trailing_stop_activation_pct is None:
+                    if config.trailing_stop_atr_multiple is not None and config.atr_values is not None:
                         # ATR-based trailing stop (Chandelier Exit)
-                        if j < len(atr_values) and atr_values[j] is not None and atr_values[j] > 0:
+                        if j < len(config.atr_values) and config.atr_values[j] is not None and config.atr_values[j] > 0:
                             if is_short:
-                                new_ts = lowest_price + (atr_values[j] * trailing_stop_atr_multiple)
+                                new_ts = lowest_price + (config.atr_values[j] * config.trailing_stop_atr_multiple)
                                 if new_ts < trailing_stop_price:
                                     trailing_stop_price = new_ts
                             else:
-                                new_ts = highest_price - (atr_values[j] * trailing_stop_atr_multiple)
+                                new_ts = highest_price - (config.atr_values[j] * config.trailing_stop_atr_multiple)
                                 if new_ts > trailing_stop_price:
                                     trailing_stop_price = new_ts
-                    elif trailing_stop_distance_pct is not None:
+                    elif config.trailing_stop_distance_pct is not None:
                         if is_short:
-                            new_ts = lowest_price * (1 + trailing_stop_distance_pct)
+                            new_ts = lowest_price * (1 + config.trailing_stop_distance_pct)
                             if new_ts < trailing_stop_price:
                                 trailing_stop_price = new_ts
                         else:
-                            new_ts = highest_price * (1 - trailing_stop_distance_pct)
+                            new_ts = highest_price * (1 - config.trailing_stop_distance_pct)
                             if new_ts > trailing_stop_price:
                                 trailing_stop_price = new_ts
 
@@ -529,12 +486,12 @@ def backtest_strategy(
                 current_stop = stop_loss_price
 
             # --- Breakeven stop ---
-            if breakeven_activation_pct is not None and breakeven_activation_pct > 0:
+            if config.breakeven_activation_pct is not None and config.breakeven_activation_pct > 0:
                 if is_short:
                     profit_pct = (entry_price - candle_low) / entry_price
                 else:
                     profit_pct = (candle_high - entry_price) / entry_price
-                if profit_pct >= breakeven_activation_pct:
+                if profit_pct >= config.breakeven_activation_pct:
                     breakeven_stop = entry_price
                     if is_short:
                         if breakeven_stop < current_stop:
@@ -544,22 +501,22 @@ def backtest_strategy(
                             current_stop = breakeven_stop
 
             # --- Trailing take-profit ---
-            if trailing_take_profit and trailing_take_profit_distance_pct is not None:
+            if config.trailing_take_profit and config.trailing_take_profit_distance_pct is not None:
                 if is_short:
-                    new_tp = candle_low * (1 + trailing_take_profit_distance_pct)
+                    new_tp = candle_low * (1 + config.trailing_take_profit_distance_pct)
                     if new_tp < take_profit_price:
                         take_profit_price = new_tp
                 else:
-                    new_tp = candle_high * (1 - trailing_take_profit_distance_pct)
+                    new_tp = candle_high * (1 - config.trailing_take_profit_distance_pct)
                     if new_tp > take_profit_price:
                         take_profit_price = new_tp
 
             # --- Max unrealized loss (soft stop) ---
-            if max_unrealized_loss_pct is not None and max_unrealized_loss_pct > 0:
+            if config.max_unrealized_loss_pct is not None and config.max_unrealized_loss_pct > 0:
                 if is_short:
                     unrealized_high = (candle_high - entry_price) / entry_price
-                    if unrealized_high >= max_unrealized_loss_pct:
-                        target_exit = entry_price * (1 + max_unrealized_loss_pct)
+                    if unrealized_high >= config.max_unrealized_loss_pct:
+                        target_exit = entry_price * (1 + config.max_unrealized_loss_pct)
                         if candle[1] >= target_exit:
                             exit_price = candle[1]
                         else:
@@ -570,8 +527,8 @@ def backtest_strategy(
                         break
                 else:
                     unrealized_low = (candle_low - entry_price) / entry_price
-                    if unrealized_low <= -max_unrealized_loss_pct:
-                        target_exit = entry_price * (1 - max_unrealized_loss_pct)
+                    if unrealized_low <= -config.max_unrealized_loss_pct:
+                        target_exit = entry_price * (1 - config.max_unrealized_loss_pct)
                         # If the candle opens below the soft stop, the fill happens at the open price
                         if candle[1] <= target_exit:
                             exit_price = candle[1]
@@ -583,8 +540,8 @@ def backtest_strategy(
                         break
 
             # --- Partial take-profit levels ---
-            if partial_take_profit_levels:
-                for lvl_idx, level in enumerate(partial_take_profit_levels):
+            if config.partial_take_profit_levels:
+                for lvl_idx, level in enumerate(config.partial_take_profit_levels):
                     if lvl_idx in partial_tp_executed:
                         continue
                     lvl_pct = level.get("take_profit_pct", 0)
@@ -601,17 +558,17 @@ def backtest_strategy(
                             actual_tp_fill = candle[1] if candle[1] >= tp_target else tp_target * (1 - effective_slippage)
                             partial_gross = (actual_tp_fill - entry_price) / entry_price * lvl_frac
                         _fee_base = trade_amount if _psim else (trade_value or 10000.0)
-                        if fee_model == "intesa" and _fee_base > 0:
+                        if config.fee_model == "intesa" and _fee_base > 0:
                             entry_fee_pct = 0.0
                             if not entry_fee_charged:
-                                entry_fee_pct = _compute_intesa_fees(_fee_base, "buy", is_btp) / _fee_base
+                                entry_fee_pct = _compute_intesa_fees(_fee_base, "buy", config.is_btp) / _fee_base
                                 entry_fee_charged = True
                             partial_exit_value = _fee_base * lvl_frac * (actual_tp_fill / entry_price)
-                            partial_exit_fee_pct = _compute_intesa_fees(partial_exit_value, "sell", is_btp) / _fee_base
+                            partial_exit_fee_pct = _compute_intesa_fees(partial_exit_value, "sell", config.is_btp) / _fee_base
                             partial_net = partial_gross - entry_fee_pct - partial_exit_fee_pct
                         else:
                             partial_net = partial_gross - (
-                                entry_price * fee_rate + actual_tp_fill * fee_rate
+                                entry_price * config.fee_rate + actual_tp_fill * config.fee_rate
                             ) / entry_price * lvl_frac
                         remaining_fraction *= (1 - lvl_frac)
                         partial_tp_executed.add(lvl_idx)
@@ -688,22 +645,22 @@ def backtest_strategy(
 
         # Calculate final P&L (including fees), scaled by remaining_fraction
         if remaining_fraction > 0:
-            _fee_base = trade_amount if _psim else (trade_value or 10000.0)
-            if fee_model == "intesa" and _fee_base > 0:
+            _fee_base = trade_amount if _psim else (config.trade_value or 10000.0)
+            if config.fee_model == "intesa" and _fee_base > 0:
                 entry_fee_pct = 0.0
                 if not entry_fee_charged:
-                    entry_fee_pct = _compute_intesa_fees(_fee_base, "buy", is_btp) / _fee_base
+                    entry_fee_pct = _compute_intesa_fees(_fee_base, "buy", config.is_btp) / _fee_base
                     entry_fee_charged = True
                 exit_trade_value = _fee_base * remaining_fraction * (exit_price / entry_price)
-                exit_fee_pct = _compute_intesa_fees(exit_trade_value, "sell", is_btp) / _fee_base
+                exit_fee_pct = _compute_intesa_fees(exit_trade_value, "sell", config.is_btp) / _fee_base
                 if is_short:
                     gross_pnl_pct = (entry_price - exit_price) / entry_price * remaining_fraction
                 else:
                     gross_pnl_pct = (exit_price - entry_price) / entry_price * remaining_fraction
                 net_pnl_pct = gross_pnl_pct - entry_fee_pct - exit_fee_pct
             else:
-                entry_fee = entry_price * fee_rate
-                exit_fee = exit_price * fee_rate
+                entry_fee = entry_price * config.fee_rate
+                exit_fee = exit_price * config.fee_rate
                 if is_short:
                     gross_pnl_pct = (entry_price - exit_price) / entry_price * remaining_fraction
                 else:
@@ -734,8 +691,8 @@ def backtest_strategy(
         # Apply cooldown if the trade was a loss
         is_loss = trades[-1]["pnl_pct"] < 0 if trades else False
 
-        if is_loss and cooldown_after_loss_seconds is not None and cooldown_after_loss_seconds > 0:
-            cooldown_end_ts = exit_ts + cooldown_after_loss_seconds * 1000
+        if is_loss and config.cooldown_after_loss_seconds is not None and config.cooldown_after_loss_seconds > 0:
+            cooldown_end_ts = exit_ts + config.cooldown_after_loss_seconds * 1000
             next_i = exit_index + 1
             while next_i < len(candles) and candles[next_i][0] < cooldown_end_ts:
                 next_i += 1
@@ -749,20 +706,20 @@ def backtest_strategy(
         buy_and_hold_pct = (candles[-1][4] - candles[0][4]) / candles[0][4]
 
     if not trades:
-        if _return_trades:
+        if config._return_trades:
             return [], _empty_result()
         return _empty_result()
 
     stats = _compute_stats(
         trades,
         buy_and_hold_pct=buy_and_hold_pct,
-        initial_balance=initial_balance if _psim else 0.0,
+        initial_balance=config.initial_balance if _psim else 0.0,
         final_cash=cash if _psim else 0.0,
         total_pnl_currency=total_pnl_currency if _psim else 0.0,
         simulate_position_sizing=_psim,
     )
     stats["gap_warning"] = gap_warning
-    if _return_trades:
+    if config._return_trades:
         return trades, stats
     return stats
 
@@ -907,7 +864,7 @@ def format_backtest_summary(stats: Dict[str, Any], entry_config_used: bool = Tru
 def walk_forward_backtest(
     candles: List[List],
     num_windows: int = 5,
-    **backtest_kwargs,
+    config: Optional[BacktestConfig] = None,
 ) -> Dict[str, Any]:
     """Run walk-forward analysis by splitting candles into non-overlapping windows.
 
@@ -917,10 +874,8 @@ def walk_forward_backtest(
     if not candles or len(candles) < num_windows * 10:
         return {"insufficient_data": True, "per_window": [], "combined_stats": _empty_result()}
 
-    if backtest_kwargs.get("backtest_entry_config") is None:
+    if config is None or config.backtest_entry_config is None:
         return {"insufficient_data": True, "per_window": [], "combined_stats": _empty_result()}
-
-    backtest_kwargs.pop("_return_trades", None)
 
     window_size = len(candles) // num_windows
     per_window_stats = []
@@ -935,8 +890,7 @@ def walk_forward_backtest(
 
         result = backtest_strategy(
             candles=window_candles,
-            _return_trades=True,
-            **backtest_kwargs,
+            config=replace(config, _return_trades=True),
         )
         if isinstance(result, tuple):
             window_trades, window_stats = result

@@ -16,7 +16,7 @@ from src.exchanges.fees import calculate_transaction_costs
 from src.indicators import compute_atr_series, compute_adx_series, compute_rsi_series, compute_macd_series
 from src.llm.cache import get_cached_llm_response
 from src.llm.prompts import build_final_decision_prompt, compact_prompt, build_system_prompt
-from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary
+from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary, BacktestConfig
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm
 
@@ -228,7 +228,7 @@ class BacktestManager:
             pass
 
         if bt_candles and len(bt_candles) >= 20:
-            bt_kwargs = dict(
+            bt_config = BacktestConfig(
                 stop_loss_pct=bt_sl_pct,
                 take_profit_pct=bt_tp_pct,
                 stop_loss_atr_multiple=bt_sl_atr_mult,
@@ -276,7 +276,7 @@ class BacktestManager:
             backtest_stats = await asyncio.to_thread(
                 backtest_strategy,
                 candles=bt_candles,
-                **bt_kwargs,
+                config=bt_config,
             )
             backtest_stats["actual_timeframe"] = actual_bt_tf
             backtest_stats["assigned_timeframe"] = assigned_tf
@@ -290,7 +290,7 @@ class BacktestManager:
                     walk_forward_backtest,
                     candles=bt_candles,
                     num_windows=5,
-                    **bt_kwargs,
+                    config=bt_config,
                 )
                 bt_summary = bt_summary + "\n" + format_walk_forward_summary(wf_stats)
 
