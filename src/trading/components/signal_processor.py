@@ -216,6 +216,15 @@ class SignalProcessor:
             "per_symbol_budget": per_symbol_budget, "min_order_amount": _ctx["min_order_amount"],
             "min_order_cost": _ctx["min_order_cost"], "max_port_exp": _ctx["max_port_exp"], "max_port_risk": _ctx["max_port_risk"],
             "global_risk_mult": _ctx["global_risk_mult"], "historical_backtest_results": _ctx["historical_backtest_results"],
+            "sentiment_trend_val": _ctx["sentiment_trend_val"],
+            "volume_trend_val": _ctx["volume_trend_val"],
+            "unrealized_pnl": _ctx["unrealized_pnl"],
+            "drawdown_pct": perf.get("equity_curve", {}).get("drawdown_pct"),
+            "full_market_breadth": _ctx["full_market_breadth"],
+            "symbol_event": symbol_event,
+            "consecutive_losses": perf.get("equity_curve", {}).get("consecutive_losses", 0),
+            "atr_percentile": _ctx["atr_percentile"],
+            "fundamentals": symbol_data["fundamentals"],
         }
 
     async def _check_skip_and_model_tier(self, symbol: str, ctx: Dict[str, Any], flags: Dict[str, Any]) -> Optional[Tuple[str, float]]:
@@ -326,15 +335,6 @@ class SignalProcessor:
 
             ctx = await self._gather_and_build_prompt(symbol, symbol_entry, symbol_data, min_viable_amount, _flags)
             ctx["assigned_tf"] = assigned_tf
-            ctx["sentiment_trend_val"] = ctx.get("sentiment_trend_val") # ensure exists
-            ctx["volume_trend_val"] = ctx.get("volume_trend_val")
-            ctx["unrealized_pnl"] = ctx.get("unrealized_pnl")
-            ctx["drawdown_pct"] = ctx.get("drawdown_pct")
-            ctx["full_market_breadth"] = ctx.get("full_market_breadth")
-            ctx["symbol_event"] = ctx.get("symbol_event")
-            ctx["fundamentals"] = symbol_data.get("fundamentals")
-            ctx["consecutive_losses"] = ctx.get("consecutive_losses", 0)
-            ctx["atr_percentile"] = ctx.get("atr_percentile")
 
             model_tier = await self._check_skip_and_model_tier(symbol, ctx, _flags)
             if model_tier is None:
