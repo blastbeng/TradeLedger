@@ -1163,7 +1163,7 @@ Maximum symbols to trade: {max_symbols}
             f"Remaining available for this symbol: {remaining_balance:.2f} {base_currency}\n"
             "Your `position_size_fraction` must not exceed the remaining balance. If low, reduce fraction or HOLD.\n"
         )
-        max_possible_amount = min(per_symbol_budget, remaining_balance)
+        max_possible_amount = remaining_balance
         prompt += (
             f"Max amount allocatable to this trade: {max_possible_amount:.2f} {base_currency} "
             f"(the full remaining balance). You are NOT limited to the per-symbol budget. If setting `min_profit_per_trade`, "
