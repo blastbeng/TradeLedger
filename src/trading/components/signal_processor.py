@@ -2331,12 +2331,12 @@ class SignalProcessor:
                 return None, None, None, True
             # Non-critical timeout: fall through to fallback HOLD
             async with engine._eval_state_lock:
-                engine._force_eval.pop(symbol, None)
+                engine._force_eval[symbol] = True  # Force retry on next cycle
             # Fall through to fallback HOLD below
         except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
             logger.error(f"LLM Step 1a failed for {symbol}: {e}")
             async with engine._eval_state_lock:
-                engine._force_eval.pop(symbol, None)
+                engine._force_eval[symbol] = True  # Force retry on next cycle
             # Fall through to fallback HOLD below
 
         return analysis_result, llm_provider, llm_model, False
