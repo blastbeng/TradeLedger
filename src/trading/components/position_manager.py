@@ -251,7 +251,7 @@ class PositionManager:
         )
 
         # Drawdown from performance metrics
-        perf = await engine._compute_performance_metrics()
+        perf = await engine.event_bus.request("compute_performance_metrics")
         max_drawdown_pct = perf.get('equity_curve', {}).get('drawdown_pct', 0.0)
 
         # Trade statistics
