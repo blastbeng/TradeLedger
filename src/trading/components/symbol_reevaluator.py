@@ -2465,7 +2465,7 @@ class SymbolReevaluator:
             ohlcv_data, sorted_by_vol
         )
 
-        perf = await engine._compute_performance_metrics()
+        perf = await engine.event_bus.request("compute_performance_metrics")
         trade_pattern_analysis = await engine._compute_trade_pattern_analysis()
 
         # --- Composite opportunity score and shortlist building ---

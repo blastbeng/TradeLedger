@@ -178,7 +178,7 @@ class SignalProcessor:
         open_positions = [pos for pos in engine.positions.values() if pos.get("symbol") == symbol]
         per_symbol_budget = base_balance / engine.effective_max_symbols if engine.effective_max_symbols > 0 else 0.0
 
-        perf = await engine._compute_performance_metrics()
+        perf = await engine.event_bus.request("compute_performance_metrics")
         trade_pattern_analysis = await engine._compute_trade_pattern_analysis()
 
         symbol_event = None
@@ -3180,7 +3180,7 @@ class SignalProcessor:
                 keep_count = 0
 
             # Build a richer prompt with performance context
-            perf = await engine._compute_performance_metrics()
+            perf = await engine.event_bus.request("compute_performance_metrics")
             daily_pnl = perf["equity_curve"].get("daily_pnl", 0.0)
             total_pnl = perf["equity_curve"].get("total_pnl", 0.0)
             consecutive_losses = perf["equity_curve"].get("consecutive_losses", 0)
@@ -4304,7 +4304,7 @@ class SignalProcessor:
 
         remaining = max(0.0, base_balance - engine._cycle_spent)
 
-        perf = await engine._compute_performance_metrics()
+        perf = await engine.event_bus.request("compute_performance_metrics")
         trade_pattern_analysis = await engine._compute_trade_pattern_analysis()
 
         symbol_event = None
