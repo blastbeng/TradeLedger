@@ -406,6 +406,7 @@
                         <tbody></tbody>
                     </table>
                 </div>
+                <div id="signals-pagination" style="display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 12px;"></div>
             </div>
 
             <div class="card card-full">
@@ -1127,15 +1128,20 @@
             }
         }
 
-        async function fetchSignals() {
+        let currentSignalsPage = 1;
+        const signalsPerPage = 5;
+
+        async function fetchSignals(page = 1) {
+            currentSignalsPage = page;
             try {
-                const resp = await fetch('/api/signals?limit=50');
-                const signals = await resp.json();
+                const resp = await fetch(`/api/signals?page=${page}&limit=${signalsPerPage}`);
+                const data = await resp.json();
+                const signals = data.signals || [];
+                const total = data.total || 0;
                 const body = document.querySelector('#signals-table tbody');
                 body.innerHTML = '';
-                const filtered = (signals || []).filter(s => s.action === 'BUY' || s.action === 'SELL');
-                if (filtered.length > 0) {
-                    [...filtered].reverse().forEach(s => {
+                if (signals.length > 0) {
+                    signals.forEach(s => {
                         const row = body.insertRow();
                         row.style.cursor = 'pointer';
                         const time = new Date(s.timestamp * 1000).toLocaleString();
@@ -1179,7 +1185,6 @@
                             const amtStr = (s.trade_amount != null && s.trade_amount > 0)
                                 ? s.trade_amount.toFixed(2) + ' ' + cur : '—';
 
-                            // Parse display_symbol: "BASE[Name] (timeframe)" → ticker code + name
                             let tickerCode = s.symbol || '';
                             let tickerName = s.stock_name || '';
                             let tickerTf = s.timeframe || '';
@@ -1209,14 +1214,12 @@
                             bodyHtml += `<strong>Provider:</strong> ${s.llm_provider || '—'}\n`;
                             bodyHtml += `<strong>Model Name:</strong> ${s.llm_model || '—'}\n`;
 
-                            // Entry condition
                             if (s.entry_condition) {
                                 bodyHtml += `\n<strong>⏳ Entry Condition:</strong> ${s.entry_condition}\n`;
                             } else if (s.action === 'BUY') {
                                 bodyHtml += `\n<strong>⏳ Entry Condition:</strong> Execute immediately at market price\n`;
                             }
 
-                            // Strategy parameters
                             if (s.action === 'BUY' || s.action === 'SELL') {
                                 bodyHtml += `\n<strong>📋 Strategy Parameters:</strong>\n`;
                                 if (s.stop_loss) {
@@ -1264,7 +1267,6 @@
 
                             smBody.innerHTML = bodyHtml;
                             sm.style.display = 'flex';
-                            // Make ticker links clickable to open the chart modal
                             const _openChartFromSignal = () => {
                                 sm.style.display = 'none';
                                 openChart(s.symbol, tickerTf || '1d');
@@ -1282,6 +1284,31 @@
                     cell.textContent = '📭 No signals yet';
                     cell.style.textAlign = 'center';
                     cell.style.color = 'var(--text-secondary)';
+                }
+
+                // Render pagination controls
+                const paginationDiv = document.getElementById('signals-pagination');
+                paginationDiv.innerHTML = '';
+                const totalPages = Math.ceil(total / signalsPerPage);
+                if (totalPages > 1) {
+                    const prevBtn = document.createElement('button');
+                    prevBtn.textContent = '← Prev';
+                    prevBtn.style.cssText = 'background: var(--accent); color: #fff; border: none; padding: 4px 12px; border-radius: 6px; cursor: pointer;';
+                    prevBtn.disabled = page <= 1;
+                    prevBtn.onclick = () => fetchSignals(page - 1);
+                    paginationDiv.appendChild(prevBtn);
+
+                    const pageInfo = document.createElement('span');
+                    pageInfo.textContent = `Page ${page} of ${totalPages}`;
+                    pageInfo.style.color = 'var(--text-secondary)';
+                    paginationDiv.appendChild(pageInfo);
+
+                    const nextBtn = document.createElement('button');
+                    nextBtn.textContent = 'Next →';
+                    nextBtn.style.cssText = 'background: var(--accent); color: #fff; border: none; padding: 4px 12px; border-radius: 6px; cursor: pointer;';
+                    nextBtn.disabled = page >= totalPages;
+                    nextBtn.onclick = () => fetchSignals(page + 1);
+                    paginationDiv.appendChild(nextBtn);
                 }
             } catch (e) {
                 console.error('Failed to fetch signals', e);

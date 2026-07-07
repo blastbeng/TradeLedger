@@ -137,7 +137,6 @@ class TradingEngine:
         self._pending_entries_lock = asyncio.Lock()
         self._queued_orders_lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
-        self._recent_signals_lock = asyncio.Lock()
         self._trade_history_lock = threading.Lock()
         self._state_save_pending = False
         self._state_dirty: bool = False
@@ -164,7 +163,6 @@ class TradingEngine:
         self._last_state_save = 0
         self._last_eval_snapshot: Dict[str, Dict[str, float]] = {}  # symbol -> indicator snapshot
         self._last_decisions: Dict[str, Dict[str, Any]] = {}  # symbol -> last LLM decision
-        self.recent_signals: List[Dict[str, Any]] = []
         self._pending_entries: Dict[str, Dict[str, Any]] = {}  # symbol -> pending entry condition info
 
         # Re-entrancy guards for periodic tasks
@@ -288,7 +286,6 @@ class TradingEngine:
         self._entry_signal_state = {}
         self._last_decisions = {}
         self._last_eval_snapshot = {}
-        self.recent_signals = []
         self._cycle_spent = 0.0
         self._balance_cache = None
         self._balance_cache_time = 0.0
@@ -2069,10 +2066,6 @@ class TradingEngine:
     async def get_profit_summary(self) -> Dict[str, Any]:
         """Return profit/loss summary including queued orders."""
         return await self._position_manager.get_profit_summary()
-
-    def get_recent_signals(self, limit: int = 20) -> List[Dict[str, Any]]:
-        """Return the most recent LLM signals for the web dashboard."""
-        return self.recent_signals[-limit:]
 
     async def get_open_trades(self) -> List[Dict[str, Any]]:
         """Return current open positions as trade-like dicts with unrealized P&L."""
