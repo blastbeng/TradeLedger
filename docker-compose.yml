@@ -42,36 +42,10 @@ services:
         condition: service_healthy
       trade-ledger-redis-dummy:
         condition: service_healthy
-      trade-ledger-chroma:
-        condition: service_healthy
-      trade-ledger-llama-cpp-dummy:
-        condition: service_healthy
     volumes:
     #  - ./src:/app/src   # for development hot-reload (optional)
       - ./data:/app/data
       - ./.env:/app/.env:ro
-
-  
-  trade-ledger-chroma:
-    container_name: chroma
-    image: chromadb/chroma:1.5.9
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Europe/Rome
-      - IS_PERSISTENT=TRUE
-      - CHROMA_PORT=9010
-    ports:
-      - 9010:9010
-    volumes:
-      - ./chroma/data:/data
-    restart: no
-    healthcheck:
-      test: [ "CMD-SHELL", "timeout 10s bash -c ':> /dev/tcp/127.17.0.1/9010' || exit 1" ]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
 
   trade-ledger-redis-dummy:
     image: alpine
@@ -79,16 +53,6 @@ services:
     command: sh -c "until nc -z 192.168.1.13 6379; do echo 'Waiting for redis...'; sleep 2; done; echo 'Redis found!'; sleep infinity"
     healthcheck:
       test: ["CMD-SHELL", "nc -z 192.168.1.13 6379"]
-      interval: 30s
-      timeout: 5s
-      retries: 12
-
-  trade-ledger-llama-cpp-dummy:
-    image: alpine
-    container_name: trade-ledger-llama-cpp-dummy
-    command: sh -c "until nc -z 192.168.1.13 9292; do echo 'Waiting for llama.cpp...'; sleep 2; done; echo 'llama.cpp found!'; sleep infinity"
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z 192.168.1.13 9292"]
       interval: 30s
       timeout: 5s
       retries: 12
