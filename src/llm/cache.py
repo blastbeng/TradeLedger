@@ -140,7 +140,9 @@ def get_cached_llm_response(
     logger.debug("LLM cache miss: model_type=%s, system_prompt=%.200s..., prompt=%.500s...", model_type, system_prompt, prompt)
     # --- Semantic Cache Check ---
     _semantic_cache = get_semantic_cache_client()
-    if _semantic_cache.enabled and not bypass_semantic_cache:
+    # Bypass semantic cache for critical, time-sensitive prompt categories
+    # like "strategy" to avoid stale HOLD decisions missing BUY/SELL signals.
+    if _semantic_cache.enabled and not bypass_semantic_cache and prompt_category != "strategy":
         semantic_hit = None
         try:
             future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol, model_type, settings.LLM_CACHE_VERSION, prompt_category, market_hash)
@@ -304,7 +306,7 @@ def get_cached_llm_response(
     except Exception as e:
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
     # --- Semantic Cache Store ---
-    if _semantic_cache.enabled and not bypass_semantic_cache:
+    if _semantic_cache.enabled and not bypass_semantic_cache and prompt_category != "strategy":
         # Never cache BUY/SELL decisions, as they depend on real-time market data
         is_critical_decision = ('"action": "BUY"' in response_text or '"action": "SELL"' in response_text)
         if not is_critical_decision:
