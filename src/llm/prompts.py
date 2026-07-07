@@ -1166,7 +1166,7 @@ Maximum symbols to trade: {max_symbols}
         max_possible_amount = min(per_symbol_budget, remaining_balance)
         prompt += (
             f"Max amount allocatable to this trade: {max_possible_amount:.2f} {base_currency} "
-            f"(min of per-symbol budget and remaining balance). If setting `min_profit_per_trade`, "
+            f"(the full remaining balance). You are NOT limited to the per-symbol budget. If setting `min_profit_per_trade`, "
             f"ensure it is ≤ `max_possible_amount * take_profit_pct`.\n"
         )
     if global_risk_multiplier is not None and global_risk_multiplier < 1.0:
@@ -1256,7 +1256,9 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"ATR across timeframes: {json.dumps(atr_multi_tf)}\n"
     # --- Transaction cost break-even calculation ---
     _is_btp = is_btp_isin(symbol)
-    trade_value = min(per_symbol_budget, remaining_balance if remaining_balance is not None else per_symbol_budget)
+    # Use the full remaining balance (or total balance) for fee break-even calculation
+    # so the LLM understands it can use more than the per-symbol budget if needed.
+    trade_value = remaining_balance if remaining_balance is not None and remaining_balance > 0 else base_balance
     if trade_value > 0:
         if _is_btp:
             if settings.BTP_IS_PRIMARY_ISSUANCE:
@@ -1267,10 +1269,11 @@ Maximum symbols to trade: {max_symbols}
             total_fees = buy_fee + sell_fee
             break_even_pct = total_fees / trade_value
             prompt += (
-                f"\n**Transaction Cost Break-Even (BTP):**\n"
-                f"  Trade size: ~{trade_value:.2f} {quote_currency}\n"
+                f"\n**Transaction Cost Break-Even (BTP) — Example using full available balance:**\n"
+                f"  If you use the full available balance (~{trade_value:.2f} {quote_currency}) for this trade:\n"
                 f"  Total round-trip fees: {total_fees:.2f} {quote_currency} ({break_even_pct*100:.2f}%)\n"
                 f"  `take_profit_pct` MUST be > {break_even_pct*100:.2f}% to be profitable.\n"
+                f"  **You are NOT limited to the per-symbol budget.** You may use up to the full remaining balance for this single trade if your conviction is high.\n"
             )
         else:
             buy_fee = max(settings.STOCK_FEE_MIN, trade_value * settings.STOCK_FEE_PERC) + settings.STOCK_FEE_FIXED + (trade_value * settings.TOBIN_TAX_RATE)
@@ -1278,10 +1281,11 @@ Maximum symbols to trade: {max_symbols}
             total_fees = buy_fee + sell_fee
             break_even_pct = total_fees / trade_value
             prompt += (
-                f"\n**Transaction Cost Break-Even:**\n"
-                f"  Trade size: ~{trade_value:.2f} {quote_currency}\n"
+                f"\n**Transaction Cost Break-Even — Example using full available balance:**\n"
+                f"  If you use the full available balance (~{trade_value:.2f} {quote_currency}) for this trade:\n"
                 f"  Total round-trip fees: {total_fees:.2f} {quote_currency} ({break_even_pct*100:.2f}%)\n"
                 f"  `take_profit_pct` MUST be > {break_even_pct*100:.2f}% to be profitable.\n"
+                f"  **You are NOT limited to the per-symbol budget.** You may use up to the full remaining balance for this single trade if your conviction is high.\n"
             )
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
@@ -1862,7 +1866,8 @@ def build_backtest_variants_prompt(
 
     # Detect BTP for fee calculation
     _is_btp = is_btp_isin(symbol)
-    trade_value = min(per_symbol_budget, remaining_balance if remaining_balance is not None else per_symbol_budget)
+    # Use the full remaining balance (or total balance) for fee break-even calculation
+    trade_value = remaining_balance if remaining_balance is not None and remaining_balance > 0 else base_balance
 
     prompt = f"""**Step 1b: Parameter Selection & Backtest Variants**
 
@@ -1924,10 +1929,11 @@ Base currency: {base_currency}
         total_fees = buy_fee + sell_fee
         break_even_pct = total_fees / trade_value
         prompt += (
-            f"\n**Transaction Cost Break-Even:**\n"
-            f"  Trade size: ~{trade_value:.2f} {base_currency}\n"
+            f"\n**Transaction Cost Break-Even — Example using full available balance:**\n"
+            f"  If you use the full available balance (~{trade_value:.2f} {base_currency}) for this trade:\n"
             f"  Total round-trip fees: {total_fees:.2f} {base_currency} ({break_even_pct*100:.2f}%)\n"
             f"  Your take_profit_pct MUST be > {break_even_pct*100:.2f}% to be profitable.\n"
+            f"  **You are NOT limited to the per-symbol budget.** You may use up to the full remaining balance for this single trade if your conviction is high.\n"
         )
 
     if historical_backtest_results:
