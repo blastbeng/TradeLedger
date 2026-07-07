@@ -2167,6 +2167,24 @@ class SignalProcessor:
         llm_provider = None
         llm_model = None
 
+        # --- LLM circuit breaker: skip calls if too many consecutive failures ---
+        cb_active = False
+        try:
+            cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
+            if cb_raw:
+                cb_data = json.loads(cb_raw)
+                if time.time() < cb_data.get("active_until", 0):
+                    cb_active = True
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
+            pass
+
+        if cb_active:
+            logger.warning(f"LLM circuit breaker active for {symbol}, skipping LLM call.")
+            # Clear _force_eval to break the retry loop
+            async with engine._eval_state_lock:
+                engine._force_eval.pop(symbol, None)
+            return None, None, None, False
+
         try:
             step1a_result = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -2207,6 +2225,11 @@ class SignalProcessor:
                 analysis_result = self._parse_analysis_response(retry_result["response"])
                 llm_provider = retry_result["provider"]
                 llm_model = retry_result["model"]
+            # Reset consecutive LLM failure counter on success
+            try:
+                await asyncio.to_thread(engine.redis.delete, "llm:consecutive_failures")
+            except (ConnectionError, TimeoutError, OSError):
+                pass
             # Update snapshot after a real LLM call
             self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist)
             async with engine._eval_state_lock:
@@ -2230,11 +2253,13 @@ class SignalProcessor:
             # Non-critical timeout: fall through to fallback HOLD
             async with engine._eval_state_lock:
                 engine._force_eval[symbol] = True  # Force retry on next cycle
+            await self._increment_llm_failures()
             # Fall through to fallback HOLD below
         except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
             logger.error(f"LLM Step 1a failed for {symbol}: {e}")
             async with engine._eval_state_lock:
                 engine._force_eval[symbol] = True  # Force retry on next cycle
+            await self._increment_llm_failures()
             # Fall through to fallback HOLD below
 
         return analysis_result, llm_provider, llm_model, False
@@ -2256,7 +2281,20 @@ class SignalProcessor:
         engine = self.engine
         if analysis_result is None:
             logger.warning(f"Step 1a analysis failed for {symbol} after all retries. Using fallback HOLD.")
-            # Do NOT pop _force_eval; we want to retry on the next cycle.
+            # Check if circuit breaker is active; if so, clear _force_eval to break retry loop
+            cb_active = False
+            try:
+                cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
+                if cb_raw:
+                    cb_data = json.loads(cb_raw)
+                    if time.time() < cb_data.get("active_until", 0):
+                        cb_active = True
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
+                pass
+            if cb_active:
+                async with engine._eval_state_lock:
+                    engine._force_eval.pop(symbol, None)
+            # Otherwise, keep _force_eval set to retry on the next cycle.
             # Create a fallback HOLD signal so the bot continues functioning
             preliminary_signal = self._create_fallback_hold_signal(
                 symbol, "LLM Step 1a analysis failed after retries", strategy_model_type
@@ -2296,6 +2334,48 @@ class SignalProcessor:
             "rsi": rsi,
             "macd_hist": macd_hist,
         }
+
+    async def _increment_llm_failures(self) -> None:
+        """Increment the global LLM failure counter and activate circuit breaker if threshold reached."""
+        engine = self.engine
+        try:
+            fail_count = await asyncio.to_thread(engine.redis.incr, "llm:consecutive_failures")
+            await asyncio.to_thread(engine.redis.expire, "llm:consecutive_failures", 3600)
+
+            # Read threshold and cooldown from config with defaults
+            cb_threshold = 5
+            cb_cooldown = 300
+            try:
+                raw = await engine.config_service.get_config("llm_circuit_breaker_threshold")
+                if raw:
+                    cb_threshold = int(raw)
+                raw = await engine.config_service.get_config("llm_circuit_breaker_cooldown_seconds")
+                if raw:
+                    cb_cooldown = int(raw)
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
+                pass
+
+            if fail_count >= cb_threshold:
+                cb_data = json.dumps({
+                    "active_until": time.time() + cb_cooldown,
+                    "fail_count": fail_count,
+                })
+                await asyncio.to_thread(engine.redis.setex, "llm:circuit_breaker", cb_cooldown, cb_data)
+                logger.warning(
+                    f"LLM circuit breaker activated after {fail_count} consecutive failures. "
+                    f"Cooldown: {cb_cooldown}s."
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"🔌 LLM circuit breaker activated after {fail_count} consecutive failures. "
+                        f"LLM calls will be skipped for {cb_cooldown}s.",
+                        summary={
+                            "action": "CIRCUIT_BREAKER",
+                            "reason": f"Consecutive LLM failures: {fail_count}",
+                        }
+                    )
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.debug(f"Could not increment LLM failure counter: {e}")
 
     def _create_fallback_hold_signal(
         self, symbol: str, reason: str, strategy_model_type: str
