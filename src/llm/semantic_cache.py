@@ -92,9 +92,14 @@ class SemanticCacheClient:
         self.chromadb_host = settings.CHROMADB_HOST
         self.collection_name = settings.CHROMADB_COLLECTION_NAME
         self.distance_threshold = settings.SEMANTIC_CACHE_DISTANCE_THRESHOLD
+        self.max_entries = getattr(settings, 'SEMANTIC_CACHE_MAX_ENTRIES', 10000)
         self.collection_id = None
         self._initialized = False
         self._init_failed = False
+
+        # Start background cleanup thread
+        self._cleanup_thread = threading.Thread(target=self._periodic_cleanup, daemon=True, name="semantic-cache-cleanup")
+        self._cleanup_thread.start()
 
     def _ensure_initialized(self):
         """Lazily initialize the ChromaDB collection on first query/add."""
@@ -133,6 +138,19 @@ class SemanticCacheClient:
             logger.warning(f"Semantic Cache: Failed to initialize ChromaDB collection: {e}. Will retry on next call.", exc_info=True)
             self._init_failed = True
             self._initialized = False  # allow retry
+
+    def _periodic_cleanup(self):
+        """Periodically cleans up expired and excess cache entries."""
+        while True:
+            # Wait 1 hour between cleanup cycles
+            time.sleep(3600)
+            try:
+                self._ensure_initialized()
+                if not self.enabled or not self.collection_id:
+                    continue
+                self.cleanup_expired()
+            except Exception as e:
+                logger.warning(f"Semantic Cache: Periodic cleanup failed: {e}", exc_info=True)
 
     def get_embedding(self, text: str, timeout: int = 300, priority: int = 10) -> Optional[List[float]]:
         """Generates an embedding for the given text using the llama.cpp server."""
@@ -285,7 +303,7 @@ class SemanticCacheClient:
             logger.warning(f"Semantic Cache: Failed to add to ChromaDB: {e}.", exc_info=True)
 
     def cleanup_expired(self, max_age_seconds: int = 86400):
-        """Remove cache entries older than max_age_seconds."""
+        """Remove cache entries older than max_age_seconds and enforce max size limit."""
         if not self.enabled or not self.collection_id:
             return
         try:
@@ -300,19 +318,45 @@ class SemanticCacheClient:
             data = resp.json()
             ids_to_delete = []
             metadatas = data.get("metadatas", [])
+            ids = data.get("ids", [])
             logger.debug(f"Semantic Cache: Retrieved {len(metadatas)} entries for cleanup check.")
+
+            # 1. Find expired entries
             for i, meta in enumerate(metadatas):
                 ts = meta.get("cached_at")
                 if ts and float(ts) < cutoff:
-                    ids_to_delete.append(data["ids"][i])
+                    ids_to_delete.append(ids[i])
+
+            # 2. Enforce max size limit by finding oldest entries if over limit
+            if len(metadatas) > self.max_entries:
+                logger.info(f"Semantic Cache: Collection size {len(metadatas)} exceeds max {self.max_entries}. Pruning oldest entries.")
+                # Create list of (timestamp, id) for entries not already marked for deletion
+                remaining_entries = []
+                for i, meta in enumerate(metadatas):
+                    if ids[i] not in ids_to_delete:
+                        ts = meta.get("cached_at")
+                        if ts:
+                            remaining_entries.append((float(ts), ids[i]))
+
+                # Sort by timestamp ascending (oldest first)
+                remaining_entries.sort(key=lambda x: x[0])
+
+                # Calculate how many to delete to get under the limit
+                num_to_prune = len(remaining_entries) - self.max_entries
+                if num_to_prune > 0:
+                    for i in range(num_to_prune):
+                        ids_to_delete.append(remaining_entries[i][1])
+
             if ids_to_delete:
+                # Deduplicate ids
+                ids_to_delete = list(set(ids_to_delete))
                 resp = requests.post(
                     f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/delete",
                     json={"ids": ids_to_delete},
                     timeout=10
                 )
                 resp.raise_for_status()
-                logger.info(f"Semantic Cache: Cleaned up {len(ids_to_delete)} expired entries.")
+                logger.info(f"Semantic Cache: Cleaned up {len(ids_to_delete)} expired/excess entries.")
         except Exception as e:
             logger.warning(f"Semantic Cache: Cleanup failed: {e}", exc_info=True)
 
