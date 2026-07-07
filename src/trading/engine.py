@@ -522,7 +522,8 @@ class TradingEngine:
                 is_forced = self._force_reeval or self._reeval_pending_force
                 self._force_reeval = False
                 self._reeval_pending_force = False
-                await self._reevaluate_symbols(force=is_forced)
+                async with self._symbol_reeval_lock:
+                    await self._symbol_reevaluator.reevaluate_symbols_impl(force=is_forced)
                 elapsed = time.time() - reeval_start_time
                 logger.info(f"Symbol re-evaluation complete (took {elapsed:.1f}s).")
             except Exception as e:
@@ -1720,10 +1721,6 @@ class TradingEngine:
                 logger.error(f"Engine loop error: {e}", exc_info=True)
                 await asyncio.sleep(5)
 
-    async def _reevaluate_symbols(self, force: bool = False):
-        """Use LLM to select which symbols to trade."""
-        async with self._symbol_reeval_lock:
-            return await self._symbol_reevaluator.reevaluate_symbols_impl(force=force)
 
     async def _periodic_pause_resume_check(self):
         """Periodically ask the LLM whether to resume trading when paused."""
