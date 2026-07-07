@@ -89,9 +89,9 @@ def get_cached_llm_response(
         else:
             temperature = settings.LLM_TEMPERATURE
 
-    # Round temperature to 1 decimal place for cache key to improve cache hit rate
+    # Round temperature to the nearest 0.5 for cache key to improve cache hit rate
     # when temperature is dynamically computed based on complexity.
-    cache_temp = round(temperature, 1) if temperature is not None else None
+    cache_temp = round(temperature * 2) / 2 if temperature is not None else None
 
     # Determine effective timeout: use shorter timeout for actuator calls
     if model_type == "actuator":
