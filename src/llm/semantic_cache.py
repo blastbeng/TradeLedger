@@ -132,17 +132,20 @@ class SemanticCacheClient:
             return
 
         try:
+            # Generalize the response by replacing the ticker with [TICKER]
+            generalized_response = response.replace(ticker, "[TICKER]") if ticker else response
+
             metadata = {
                 "ticker": ticker or "",
                 "original_prompt": prompt,
-                "cached_response": response
+                "cached_response": generalized_response
             }
             item_id = str(uuid.uuid4())
             resp = requests.post(
                 f"{self.chromadb_host}/api/v1/collections/{self.collection_id}/add",
                 json={
                     "embeddings": [embedding],
-                    "documents": [response],
+                    "documents": [generalized_response],  # Store the generalized response
                     "metadatas": [metadata],
                     "ids": [item_id]
                 },
