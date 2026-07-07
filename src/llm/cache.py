@@ -160,7 +160,7 @@ def get_cached_llm_response(
     # like "strategy" to avoid stale HOLD decisions missing BUY/SELL signals.
     # Also bypass if market_hash is provided, as the exact-match Redis cache
     # will already hit for identical market states, making the semantic query redundant.
-    if _semantic_cache.enabled and not bypass_semantic_cache and prompt_category != "strategy" and not market_hash:
+    if _semantic_cache.enabled and not bypass_semantic_cache and prompt_category not in ("strategy", "stock_selection") and not market_hash:
         semantic_hit = None
         try:
             future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol, model_type, settings.LLM_CACHE_VERSION, prompt_category)
@@ -324,7 +324,7 @@ def get_cached_llm_response(
     except Exception as e:
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
     # --- Semantic Cache Store ---
-    if _semantic_cache.enabled and not bypass_semantic_cache and prompt_category != "strategy" and not market_hash:
+    if _semantic_cache.enabled and not bypass_semantic_cache and prompt_category not in ("strategy", "stock_selection") and not market_hash:
         # Never cache BUY/SELL decisions, as they depend on real-time market data.
         # Parse the response as JSON to reliably detect the action field.
         action = _extract_action_from_response(response_text)
