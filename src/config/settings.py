@@ -204,6 +204,23 @@ class Settings(BaseSettings):
             raise ValueError("HARD_MAX_LOSS_PCT must be between 0.0 and 1.0")
         return v
 
+    # Timeframe-specific hard max loss overrides. If > 0, these take precedence
+    # over HARD_MAX_LOSS_PCT for positions on the corresponding timeframe.
+    HARD_MAX_LOSS_PCT_1H: float = 0.10
+    HARD_MAX_LOSS_PCT_1D: float = 0.12
+    HARD_MAX_LOSS_PCT_1W: float = 0.15
+    HARD_MAX_LOSS_PCT_1M: float = 0.20
+    HARD_MAX_LOSS_PCT_3M: float = 0.25
+    HARD_MAX_LOSS_PCT_6M_1Y: float = 0.30
+
+    @field_validator("HARD_MAX_LOSS_PCT_1H", "HARD_MAX_LOSS_PCT_1D", "HARD_MAX_LOSS_PCT_1W",
+                     "HARD_MAX_LOSS_PCT_1M", "HARD_MAX_LOSS_PCT_3M", "HARD_MAX_LOSS_PCT_6M_1Y")
+    @classmethod
+    def validate_tf_hard_max_loss_pct(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("Timeframe-specific HARD_MAX_LOSS_PCT must be between 0.0 and 1.0")
+        return v
+
     # BTP-specific hard max loss (0.05 = 5%) — BTPs are lower volatility than stocks
     BTP_HARD_MAX_LOSS_PCT: float = 0.05
 
@@ -212,6 +229,23 @@ class Settings(BaseSettings):
     def validate_btp_hard_max_loss_pct(cls, v: float) -> float:
         if not (0.0 < v <= 1.0):
             raise ValueError("BTP_HARD_MAX_LOSS_PCT must be between 0.0 and 1.0")
+        return v
+
+    # Timeframe-specific BTP hard max loss overrides. If > 0, these take precedence
+    # over BTP_HARD_MAX_LOSS_PCT for positions on the corresponding timeframe.
+    BTP_HARD_MAX_LOSS_PCT_1H: float = 0.03
+    BTP_HARD_MAX_LOSS_PCT_1D: float = 0.04
+    BTP_HARD_MAX_LOSS_PCT_1W: float = 0.05
+    BTP_HARD_MAX_LOSS_PCT_1M: float = 0.06
+    BTP_HARD_MAX_LOSS_PCT_3M: float = 0.08
+    BTP_HARD_MAX_LOSS_PCT_6M_1Y: float = 0.10
+
+    @field_validator("BTP_HARD_MAX_LOSS_PCT_1H", "BTP_HARD_MAX_LOSS_PCT_1D", "BTP_HARD_MAX_LOSS_PCT_1W",
+                     "BTP_HARD_MAX_LOSS_PCT_1M", "BTP_HARD_MAX_LOSS_PCT_3M", "BTP_HARD_MAX_LOSS_PCT_6M_1Y")
+    @classmethod
+    def validate_tf_btp_hard_max_loss_pct(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("Timeframe-specific BTP_HARD_MAX_LOSS_PCT must be between 0.0 and 1.0")
         return v
 
     # BTP-specific maximum take-profit percentage (0.03 = 3%) — BTPs trade in
