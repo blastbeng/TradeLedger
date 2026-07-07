@@ -1,7 +1,7 @@
 ---
 services:
   postgres:
-    image: postgres:latest
+    image: postgres:18-alpine
     container_name: trade-ledger-postgres
     restart: no
     ports:
@@ -54,7 +54,7 @@ services:
   
   trade-ledger-chroma:
     container_name: chroma
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:1.5.9
     environment:
       - PUID=1000
       - PGID=1000
