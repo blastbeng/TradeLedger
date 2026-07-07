@@ -1923,7 +1923,7 @@ class TradingEngine:
                     if time.time() - last_forced < cooldown:
                         continue
 
-                    if await self._detect_entry_signal(symbol, tf):
+                    if await self._signal_processor.detect_entry_signal(symbol, tf):
                         logger.info(f"Entry signal detected for {symbol}, forcing LLM evaluation.")
                         async with self._eval_state_lock:
                             self._force_eval[symbol] = True
@@ -1933,11 +1933,6 @@ class TradingEngine:
             except Exception as e:
                 logger.error(f"Entry signal monitor error: {e}", exc_info=True)
             await asyncio.sleep(settings.ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS)
-
-    async def _detect_entry_signal(self, symbol: str, timeframe: str) -> bool:
-        """Return True if a favourable entry condition is detected for the symbol.
-        Uses recent OHLCV data from the database and compares with previous state."""
-        return await self._signal_processor.detect_entry_signal(symbol, timeframe)
 
     async def _check_pending_entries(self):
         """Periodically check pending entry conditions and execute if met."""
