@@ -64,7 +64,7 @@ services:
     ports:
       - 9010:9010
     volumes:
-      - ./chroma/data:/chroma/chroma/
+      - ./chroma/data:/data
     restart: no
     healthcheck:
       test: [ "CMD-SHELL", "timeout 10s bash -c ':> /dev/tcp/127.17.0.1/9010' || exit 1" ]
