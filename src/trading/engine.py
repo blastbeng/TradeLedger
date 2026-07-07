@@ -2022,10 +2022,6 @@ class TradingEngine:
         """Log a manually executed trade in notify mode. Persists to DB and updates positions."""
         return await self._order_executor.log_manual_trade(ticker, side, quantity, money_spent, fee)
 
-    async def _record_position_pnl_snapshots(self):
-        """Record P&L snapshots for all open positions to the database."""
-        await self._risk_manager.record_position_pnl_snapshots()
-
     async def _process_native_exit_fill(
         self,
         symbol: str,
