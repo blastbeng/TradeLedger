@@ -26,6 +26,7 @@ def get_cached_llm_response(
     model_type: str = "actuator",
     temperature: Optional[float] = None,
     symbol: Optional[str] = None,
+    prompt_category: str = "default",
 ) -> Optional[dict]:
     """
     Get an LLM response, using Redis cache to avoid duplicate calls.
@@ -141,7 +142,7 @@ def get_cached_llm_response(
     if _semantic_cache.enabled and not market_hash:
         semantic_hit = None
         try:
-            future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol, model_type, settings.LLM_CACHE_VERSION)
+            future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol, model_type, settings.LLM_CACHE_VERSION, prompt_category)
             try:
                 semantic_hit = future.result(timeout=120.0)
             except FuturesTimeoutError:
@@ -309,7 +310,8 @@ def get_cached_llm_response(
             response_text,
             symbol,
             model_type,
-            settings.LLM_CACHE_VERSION
+            settings.LLM_CACHE_VERSION,
+            prompt_category
         )
 
         def _log_add_exception(fut):

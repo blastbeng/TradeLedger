@@ -121,6 +121,12 @@ class SemanticCacheClient:
         self.chromadb_host = settings.CHROMADB_HOST
         self.collection_name = settings.CHROMADB_COLLECTION_NAME
         self.distance_threshold = settings.SEMANTIC_CACHE_DISTANCE_THRESHOLD
+        self.distance_thresholds = {
+            "pause_resume": getattr(settings, 'SEMANTIC_CACHE_THRESHOLD_PAUSE_RESUME', 0.10),
+            "strategy": getattr(settings, 'SEMANTIC_CACHE_THRESHOLD_STRATEGY', 0.15),
+            "stock_selection": getattr(settings, 'SEMANTIC_CACHE_THRESHOLD_STOCK_SELECTION', 0.20),
+            "default": self.distance_threshold
+        }
         self.max_entries = getattr(settings, 'SEMANTIC_CACHE_MAX_ENTRIES', 10000)
         self.collection_id = None
         self._initialized = False
@@ -227,7 +233,7 @@ class SemanticCacheClient:
             logger.warning(f"Semantic Cache: Failed to get embedding: {e}. Response body: {resp_text}", exc_info=True)
             return None
 
-    def query(self, prompt: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None) -> Optional[str]:
+    def query(self, prompt: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None, prompt_category: str = "default") -> Optional[str]:
         """Queries the semantic cache for a matching prompt."""
         self._ensure_initialized()
         if not self.enabled or not self.collection_id:
@@ -235,7 +241,7 @@ class SemanticCacheClient:
             return None
 
         generalized_prompt, ticker = generalize_prompt(prompt, symbol)
-        logger.debug(f"Semantic Cache: Querying cache for prompt (ticker={ticker})...")
+        logger.debug(f"Semantic Cache: Querying cache for prompt (ticker={ticker}, category={prompt_category})...")
         embedding = self.get_embedding(generalized_prompt, timeout=120, priority=1)
         if not embedding:
             logger.debug("Semantic Cache: No embedding generated, skipping query.")
@@ -248,7 +254,8 @@ class SemanticCacheClient:
             where_clause = {
                 "$and": [
                     {"model_type": model_type},
-                    {"cache_version": cache_version or ""}
+                    {"cache_version": cache_version or ""},
+                    {"prompt_category": prompt_category}
                 ]
             }
 
@@ -267,9 +274,10 @@ class SemanticCacheClient:
 
             if data.get("distances") and data["distances"][0]:
                 distance = data["distances"][0][0]
-                logger.debug(f"Semantic Cache: Query distance={distance:.4f}, threshold={self.distance_threshold}")
-                if distance <= self.distance_threshold:
-                    logger.info(f"Semantic Cache: Hit! Distance={distance:.4f} <= {self.distance_threshold}")
+                threshold = self.distance_thresholds.get(prompt_category, self.distance_thresholds["default"])
+                logger.debug(f"Semantic Cache: Query distance={distance:.4f}, threshold={threshold}")
+                if distance <= threshold:
+                    logger.info(f"Semantic Cache: Hit! Distance={distance:.4f} <= {threshold}")
                     cached_response = data["documents"][0][0]
                     metadata = data["metadatas"][0][0]
                     # Reconstruct response with current ticker if needed
@@ -277,7 +285,7 @@ class SemanticCacheClient:
                         return reconstruct_response(cached_response, ticker)
                     return cached_response
                 else:
-                    logger.debug(f"Semantic Cache: Miss. Distance={distance:.4f} > {self.distance_threshold}")
+                    logger.debug(f"Semantic Cache: Miss. Distance={distance:.4f} > {threshold}")
             else:
                 logger.debug("Semantic Cache: Query returned no distances.")
         except Exception as e:
@@ -285,7 +293,7 @@ class SemanticCacheClient:
 
         return None
 
-    def add(self, prompt: str, response: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None):
+    def add(self, prompt: str, response: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None, prompt_category: str = "default"):
         """Adds a prompt and its response to the semantic cache."""
         self._ensure_initialized()
         if not self.enabled or not self.collection_id:
@@ -293,7 +301,7 @@ class SemanticCacheClient:
             return
 
         generalized_prompt, ticker = generalize_prompt(prompt, symbol)
-        logger.debug(f"Semantic Cache: Adding to cache (ticker={ticker})...")
+        logger.debug(f"Semantic Cache: Adding to cache (ticker={ticker}, category={prompt_category})...")
         embedding = self.get_embedding(generalized_prompt, timeout=300)
         if not embedding:
             return
@@ -307,7 +315,8 @@ class SemanticCacheClient:
                 "original_prompt": prompt,
                 "cached_at": str(time.time()),
                 "model_type": model_type,
-                "cache_version": cache_version or ""
+                "cache_version": cache_version or "",
+                "prompt_category": prompt_category
             }
 
             # Use a deterministic ID to prevent duplicate entries for the same prompt
