@@ -1058,7 +1058,7 @@ class TradingEngine:
                 else:
                     risk_interval = settings.RISK_CHECK_INTERVAL_SECONDS
                 await asyncio.sleep(risk_interval)
-                await self._check_risk_management()
+                await self._risk_manager.check_risk_management()
                 await self._save_state()
                 self._state_dirty = True
             except Exception as e:
@@ -1985,10 +1985,6 @@ class TradingEngine:
     ):
         """Process a filled native exit order (stop-loss or take-profit) inline."""
         await self._order_executor.process_native_exit_fill(symbol, order_id, order_obj, pos, exit_reason)
-
-    async def _check_risk_management(self):
-        """Check open positions and close if stop-loss, take-profit, or trailing stop is hit."""
-        await self._risk_manager.check_risk_management()
 
     async def _execute_signal(self, symbol: str, signal, timeframe: str = None, exit_reason: str = None, atr: Optional[float] = None):
         """Execute a BUY or SELL signal."""
