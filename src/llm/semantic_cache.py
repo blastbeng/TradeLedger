@@ -252,7 +252,7 @@ class SemanticCacheClient:
 
         generalized_prompt, ticker = generalize_prompt(prompt, symbol)
         logger.debug(f"Semantic Cache: Adding to cache (ticker={ticker})...")
-        embedding = self.get_embedding(generalized_prompt, timeout=5)
+        embedding = self.get_embedding(generalized_prompt)
         if not embedding:
             return
 
