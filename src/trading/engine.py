@@ -1777,55 +1777,6 @@ class TradingEngine:
                     )
             await asyncio.sleep(60)
 
-    async def _gather_prompt_context(
-        self,
-        symbol: str,
-        assigned_tf: str,
-        tf_seconds: int,
-        ticker: Dict[str, Any],
-        base_balance: float,
-        ohlcv_data: Dict[str, List[List]],
-        multi_tf_indicators: Dict[str, Dict[str, Any]],
-        multi_tf_raw_candles: Dict[str, List[List]],
-        atr: Optional[float],
-        rsi: Optional[float],
-        macd: Optional[float],
-        macd_signal: Optional[float],
-        macd_hist: Optional[float],
-        bb_upper: Optional[float],
-        bb_middle: Optional[float],
-        bb_lower: Optional[float],
-        ema_9: Optional[float],
-        ema_21: Optional[float],
-        adx: Optional[float],
-        plus_di: Optional[float],
-        minus_di: Optional[float],
-    ) -> Dict[str, Any]:
-        """Gather all additional market context needed for the strategy prompt."""
-        return await self._signal_processor.gather_prompt_context(
-            symbol=symbol,
-            assigned_tf=assigned_tf,
-            tf_seconds=tf_seconds,
-            ticker=ticker,
-            base_balance=base_balance,
-            ohlcv_data=ohlcv_data,
-            multi_tf_indicators=multi_tf_indicators,
-            multi_tf_raw_candles=multi_tf_raw_candles,
-            atr=atr,
-            rsi=rsi,
-            macd=macd,
-            macd_signal=macd_signal,
-            macd_hist=macd_hist,
-            bb_upper=bb_upper,
-            bb_middle=bb_middle,
-            bb_lower=bb_lower,
-            ema_9=ema_9,
-            ema_21=ema_21,
-            adx=adx,
-            plus_di=plus_di,
-            minus_di=minus_di,
-        )
-
     @staticmethod
     def _deduplicate_variants(variants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Remove backtest variants whose key risk parameters are identical or nearly identical.
