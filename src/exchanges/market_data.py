@@ -62,13 +62,13 @@ def _yf_download_with_timeout(symbols, **kwargs):
 
 
 # --- yfinance Circuit Breaker ---
-_yf_error_count = 0
-_yf_last_error_time = 0.0
+_yf_error_timestamps: collections.deque = collections.deque()
 _yf_circuit_open_until = 0.0
 _yf_lock = threading.Lock()
 
 YF_MAX_ERRORS = 20
 YF_CIRCUIT_COOLDOWN = 300  # 5 minutes
+YF_ERROR_WINDOW_SECONDS = 300  # 5 minutes
 
 # --- Borsa Italiana Circuit Breaker ---
 _bi_error_count = 0
@@ -99,29 +99,31 @@ def _check_yf_circuit() -> bool:
 
 def _record_yf_error():
     """Record a yfinance error and potentially trip the circuit breaker."""
-    global _yf_error_count, _yf_last_error_time, _yf_circuit_open_until
+    global _yf_circuit_open_until
     with _yf_lock:
         now = time.time()
-        if now - _yf_last_error_time > 300:
-            _yf_error_count = 0
-        _yf_error_count += 1
-        _yf_last_error_time = now
+        # Remove timestamps outside the window
+        while _yf_error_timestamps and _yf_error_timestamps[0] <= now - YF_ERROR_WINDOW_SECONDS:
+            _yf_error_timestamps.popleft()
+
+        _yf_error_timestamps.append(now)
+        error_count = len(_yf_error_timestamps)
 
         # Recreate session after a few errors to try to recover from invalid session issues
-        if _yf_error_count == 5:
+        if error_count == 5:
             _invalidate_yf_session()
 
-        if _yf_error_count >= YF_MAX_ERRORS:
+        if error_count >= YF_MAX_ERRORS:
             if _yf_circuit_open_until < now:
-                logger.error(f"yfinance circuit breaker tripped due to {_yf_error_count} errors. Blocking yfinance calls for {YF_CIRCUIT_COOLDOWN}s.")
+                logger.error(f"yfinance circuit breaker tripped due to {error_count} errors in the last {YF_ERROR_WINDOW_SECONDS}s. Blocking yfinance calls for {YF_CIRCUIT_COOLDOWN}s.")
             _yf_circuit_open_until = now + YF_CIRCUIT_COOLDOWN
             _invalidate_yf_session()
 
 def _reset_yf_circuit():
-    """Reset the circuit breaker after a successful call."""
-    global _yf_error_count
+    """Remove the oldest error from the sliding window after a successful call."""
     with _yf_lock:
-        _yf_error_count = 0
+        if _yf_error_timestamps:
+            _yf_error_timestamps.popleft()
 
 
 def _check_bi_circuit() -> bool:
