@@ -72,13 +72,16 @@ class SemanticCacheClient:
         """Initializes or retrieves the ChromaDB collection. Retries on failure."""
         base_url = f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections"
         collection_url = f"{base_url}/{self.collection_name}"
+        logger.info(f"Semantic Cache: Initializing ChromaDB collection at {collection_url}")
         try:
             # Check if collection exists
             resp = requests.get(collection_url, timeout=5)
             if resp.status_code == 200:
                 self.collection_id = resp.json().get("id")
+                logger.info(f"Semantic Cache: Found existing collection with ID: {self.collection_id}")
             elif resp.status_code == 404:
                 # Create collection with cosine distance
+                logger.info(f"Semantic Cache: Collection not found, creating new one at {base_url}")
                 resp = requests.post(
                     base_url,
                     json={"name": self.collection_name, "metadata": {"hnsw:space": "cosine"}},
@@ -86,6 +89,7 @@ class SemanticCacheClient:
                 )
                 resp.raise_for_status()
                 self.collection_id = resp.json().get("id")
+                logger.info(f"Semantic Cache: Created new collection with ID: {self.collection_id}")
             else:
                 resp.raise_for_status()
             self._init_failed = False
@@ -96,19 +100,24 @@ class SemanticCacheClient:
 
     def get_embedding(self, text: str) -> Optional[List[float]]:
         """Generates an embedding for the given text using the llama.cpp server."""
-        logger.debug(f"Semantic Cache: Generating embedding for text (len={len(text)})...")
+        embedding_url = f"{self.embedding_url}/embeddings"
+        logger.debug(f"Semantic Cache: Generating embedding for text (len={len(text)}) at {embedding_url} using model {self.embedding_model}...")
         # Use a lock to ensure only one embedding request is processed at a time
         # (RPi5 has limited resources and concurrent requests may cause timeouts)
         with self._embedding_lock:
+            start_time = time.time()
             try:
                 resp = requests.post(
-                    f"{self.embedding_url}/embeddings",
+                    embedding_url,
                     json={"model": self.embedding_model, "input": text},
                     timeout=120  # Increased timeout for RPi5
                 )
                 resp.raise_for_status()
-                logger.debug("Semantic Cache: Embedding generated successfully.")
+                logger.debug(f"Semantic Cache: Embedding generated successfully in {time.time() - start_time:.2f}s.")
                 return resp.json()["data"][0]["embedding"]
+            except requests.exceptions.Timeout as e:
+                logger.error(f"Semantic Cache: Embedding request timed out after 120s: {e}")
+                return None
             except Exception as e:
                 logger.warning(f"Semantic Cache: Failed to get embedding: {e}.")
                 return None
@@ -128,17 +137,20 @@ class SemanticCacheClient:
             return None
 
         try:
-            logger.debug("Semantic Cache: Querying ChromaDB...")
+            query_url = f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/query"
+            logger.debug(f"Semantic Cache: Querying ChromaDB at {query_url}...")
             resp = requests.post(
-                f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/query",
+                query_url,
                 json={"query_embeddings": [embedding], "n_results": 1},
                 timeout=10
             )
+            logger.debug(f"Semantic Cache: ChromaDB query response status: {resp.status_code}")
             resp.raise_for_status()
             data = resp.json()
 
             if data.get("distances") and data["distances"][0]:
                 distance = data["distances"][0][0]
+                logger.debug(f"Semantic Cache: Query distance={distance:.4f}, threshold={self.distance_threshold}")
                 if distance <= self.distance_threshold:
                     logger.info(f"Semantic Cache: Hit! Distance={distance:.4f} <= {self.distance_threshold}")
                     cached_response = data["documents"][0][0]
@@ -149,6 +161,8 @@ class SemanticCacheClient:
                     return cached_response
                 else:
                     logger.debug(f"Semantic Cache: Miss. Distance={distance:.4f} > {self.distance_threshold}")
+            else:
+                logger.debug("Semantic Cache: Query returned no distances.")
         except Exception as e:
             logger.warning(f"Semantic Cache: Failed to query ChromaDB: {e}.")
 
@@ -177,8 +191,10 @@ class SemanticCacheClient:
                 "cached_at": str(time.time())
             }
             item_id = str(uuid.uuid4())
+            add_url = f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/add"
+            logger.debug(f"Semantic Cache: Adding to ChromaDB at {add_url}. Prompt len={len(generalized_prompt)}, Response len={len(generalized_response)}")
             resp = requests.post(
-                f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/add",
+                add_url,
                 json={
                     "embeddings": [embedding],
                     "documents": [generalized_response],  # Store the generalized response
@@ -187,8 +203,9 @@ class SemanticCacheClient:
                 },
                 timeout=10
             )
+            logger.debug(f"Semantic Cache: ChromaDB add response status: {resp.status_code}")
             resp.raise_for_status()
-            logger.debug("Semantic Cache: Successfully added to ChromaDB.")
+            logger.info(f"Semantic Cache: Successfully added to ChromaDB with ID {item_id}.")
         except Exception as e:
             logger.warning(f"Semantic Cache: Failed to add to ChromaDB: {e}.")
 
@@ -207,7 +224,9 @@ class SemanticCacheClient:
             resp.raise_for_status()
             data = resp.json()
             ids_to_delete = []
-            for i, meta in enumerate(data.get("metadatas", [])):
+            metadatas = data.get("metadatas", [])
+            logger.debug(f"Semantic Cache: Retrieved {len(metadatas)} entries for cleanup check.")
+            for i, meta in enumerate(metadatas):
                 ts = meta.get("cached_at")
                 if ts and float(ts) < cutoff:
                     ids_to_delete.append(data["ids"][i])
