@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
+from src.llm.semantic_cache import semantic_cache_client
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,19 @@ def get_cached_llm_response(
         logger.warning(f"Redis cache get failed: {e}. Proceeding without cache.")
 
     logger.debug("LLM cache miss: model_type=%s, system_prompt=%.200s..., prompt=%.500s...", model_type, system_prompt, prompt)
+    # --- Semantic Cache Check ---
+    if semantic_cache_client.enabled:
+        try:
+            semantic_hit = semantic_cache_client.query(prompt)
+            if semantic_hit:
+                logger.info("Semantic cache hit for prompt: %.100s...", prompt[:100])
+                return {
+                    "response": semantic_hit,
+                    "provider": "semantic_cache",
+                    "model": "cached",
+                }
+        except Exception as e:
+            logger.warning(f"Semantic cache query failed, bypassing: {e}")
     # Context window management: hard limit at 1,000,000 tokens
     MAX_TOKENS = 1_000_000
     prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
@@ -269,6 +283,12 @@ def get_cached_llm_response(
         logger.debug("LLM cache miss – stored response for key %s (provider=%s, model=%s)", cache_key[:32], used_provider, used_model)
     except Exception as e:
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
+    # --- Semantic Cache Store ---
+    if semantic_cache_client.enabled:
+        try:
+            semantic_cache_client.add(prompt, response_text)
+        except Exception as e:
+            logger.warning(f"Semantic cache store failed, bypassing: {e}")
     return {
         "response": response_text,
         "provider": used_provider,
