@@ -101,35 +101,52 @@ class SemanticCacheClient:
 
     def get_embedding(self, text: str) -> Optional[List[float]]:
         """Generates an embedding for the given text using the llama.cpp server."""
-        # Truncate text to avoid hitting llama.cpp context/batch limits.
-        # 2000 characters is roughly 500-800 tokens, well within a 2048 context window
-        # and fast to process on the RPi5.
-        max_chars = 2000
-        if len(text) > max_chars:
-            logger.debug(f"Semantic Cache: Truncating text from {len(text)} to {max_chars} chars for embedding.")
-            text = text[:max_chars]
-
         embedding_url = f"{self.embedding_url}/embeddings"
-        logger.debug(f"Semantic Cache: Generating embedding for text (len={len(text)}) at {embedding_url} using model {self.embedding_model}...")
-        # Use a lock to ensure only one embedding request is processed at a time
-        # (RPi5 has limited resources and concurrent requests may cause timeouts)
+
+        # Chunk the text to avoid hitting llama.cpp batch limits, then average embeddings.
+        # 1000 characters is roughly 250-400 tokens, safely under typical n_batch limits.
+        chunk_size = 1000
+        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+        if not chunks:
+            return None
+
+        all_embeddings = []
         with self._embedding_lock:
-            start_time = time.time()
-            try:
-                resp = requests.post(
-                    embedding_url,
-                    json={"model": self.embedding_model, "input": text},
-                    timeout=120  # Increased timeout for RPi5
-                )
-                resp.raise_for_status()
-                logger.debug(f"Semantic Cache: Embedding generated successfully in {time.time() - start_time:.2f}s.")
-                return resp.json()["data"][0]["embedding"]
-            except requests.exceptions.Timeout as e:
-                logger.error(f"Semantic Cache: Embedding request timed out after 120s: {e}")
-                return None
-            except Exception as e:
-                logger.warning(f"Semantic Cache: Failed to get embedding: {e}.")
-                return None
+            for chunk in chunks:
+                logger.debug(f"Semantic Cache: Generating embedding for chunk (len={len(chunk)}) at {embedding_url}...")
+                start_time = time.time()
+                try:
+                    resp = requests.post(
+                        embedding_url,
+                        json={"model": self.embedding_model, "input": chunk},
+                        timeout=120  # Increased timeout for RPi5
+                    )
+                    resp.raise_for_status()
+                    all_embeddings.append(resp.json()["data"][0]["embedding"])
+                    logger.debug(f"Semantic Cache: Chunk embedded successfully in {time.time() - start_time:.2f}s.")
+                except requests.exceptions.Timeout as e:
+                    logger.error(f"Semantic Cache: Embedding request timed out after 120s: {e}")
+                    return None
+                except Exception as e:
+                    logger.warning(f"Semantic Cache: Failed to get embedding for chunk: {e}.")
+                    return None
+
+        if not all_embeddings:
+            return None
+
+        # Average the embeddings of all chunks
+        num_embeddings = len(all_embeddings)
+        embedding_dim = len(all_embeddings[0])
+        averaged_embedding = [0.0] * embedding_dim
+        for emb in all_embeddings:
+            for i in range(embedding_dim):
+                averaged_embedding[i] += emb[i]
+
+        for i in range(embedding_dim):
+            averaged_embedding[i] /= num_embeddings
+
+        return averaged_embedding
 
     def query(self, prompt: str, symbol: Optional[str] = None) -> Optional[str]:
         """Queries the semantic cache for a matching prompt."""
