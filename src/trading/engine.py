@@ -2049,7 +2049,7 @@ class TradingEngine:
 
     async def get_profit_summary(self) -> Dict[str, Any]:
         """Return profit/loss summary including queued orders."""
-        return await self._position_manager.get_profit_summary()
+        return await self.event_bus.request("get_profit_summary")
 
     async def get_open_trades(self) -> List[Dict[str, Any]]:
         """Return current open positions as trade-like dicts with unrealized P&L."""
@@ -2065,7 +2065,7 @@ class TradingEngine:
 
     async def get_risk_metrics(self) -> Dict[str, Any]:
         """Return current risk/exposure metrics."""
-        return await self._position_manager.get_risk_metrics()
+        return await self.event_bus.request("get_risk_metrics")
 
     async def sell_all_positions(self):
         """Sell all open positions at market price."""
