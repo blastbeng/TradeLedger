@@ -673,7 +673,7 @@ class SignalProcessor:
                 ind = symbol_inds.get(tf)
                 if ind:
                     # --- Staleness check: recompute if indicators are older than 2× the candle interval ---
-                    ind_ts = ind.pop("_indicator_timestamp", None)
+                    ind_ts = ind.get("_indicator_timestamp", None)
                     latest_candle_ts = candles[-1][0] if candles else None
                     if ind_ts is not None and latest_candle_ts is not None:
                         tf_ms = engine._timeframe_to_ms(tf)
