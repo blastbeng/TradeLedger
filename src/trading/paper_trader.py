@@ -194,9 +194,9 @@ class PaperTrader:
             if not candles or len(candles) < 5:
                 return self.slippage_base_pct
             
-            # Use the most recent completed candle for current volume
-            current_vol = candles[-2]["volume"] if len(candles) >= 2 else 0.0
-            volumes = [c["volume"] for c in candles[:-2]]
+            # Use the most recent (current) candle for current volume
+            current_vol = candles[-1]["volume"] if candles else 0.0
+            volumes = [c["volume"] for c in candles[:-1]]
             avg_vol = sum(volumes) / len(volumes) if volumes else 0.0
             
             slippage = self.slippage_base_pct
