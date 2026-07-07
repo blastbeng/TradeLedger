@@ -112,33 +112,32 @@ class SemanticCacheClient:
             return None
 
         all_embeddings = []
-        with llamacpp_lock:
-            for chunk in chunks:
-                logger.info(f"Semantic Cache: Generating embedding for chunk (len={len(chunk)}) at {embedding_url}...")
-                start_time = time.time()
-                resp = None
-                try:
-                    payload = {"model": self.embedding_model, "input": [chunk]}
-                    if not self.embedding_model:
-                        logger.warning("Semantic Cache: EMBEDDING_MODEL_NAME is not set. Sending request without model name.")
-                        payload.pop("model", None)
-                    logger.info(f"Semantic Cache: Embedding payload: {payload}")
-                    resp = requests.post(
-                        embedding_url,
-                        json=payload,
-                        timeout=120  # Reduced to prevent blocking llamacpp_lock
-                    )
-                    logger.info(f"Semantic Cache: Embedding response status: {resp.status_code}, text: {resp.text[:500]}")
-                    resp.raise_for_status()
-                    all_embeddings.append(resp.json()["data"][0]["embedding"])
-                    logger.info(f"Semantic Cache: Chunk embedded successfully in {time.time() - start_time:.2f}s.")
-                except requests.exceptions.Timeout as e:
-                    logger.error(f"Semantic Cache: Embedding request timed out after 120s: {e}", exc_info=True)
-                    return None
-                except Exception as e:
-                    resp_text = getattr(resp, 'text', 'N/A')
-                    logger.warning(f"Semantic Cache: Failed to get embedding for chunk: {e}. Response body: {resp_text}", exc_info=True)
-                    return None
+        for chunk in chunks:
+            logger.info(f"Semantic Cache: Generating embedding for chunk (len={len(chunk)}) at {embedding_url}...")
+            start_time = time.time()
+            resp = None
+            try:
+                payload = {"model": self.embedding_model, "input": [chunk]}
+                if not self.embedding_model:
+                    logger.warning("Semantic Cache: EMBEDDING_MODEL_NAME is not set. Sending request without model name.")
+                    payload.pop("model", None)
+                logger.info(f"Semantic Cache: Embedding payload: {payload}")
+                resp = requests.post(
+                    embedding_url,
+                    json=payload,
+                    timeout=120  # Reduced to prevent blocking llamacpp_lock
+                )
+                logger.info(f"Semantic Cache: Embedding response status: {resp.status_code}, text: {resp.text[:500]}")
+                resp.raise_for_status()
+                all_embeddings.append(resp.json()["data"][0]["embedding"])
+                logger.info(f"Semantic Cache: Chunk embedded successfully in {time.time() - start_time:.2f}s.")
+            except requests.exceptions.Timeout as e:
+                logger.error(f"Semantic Cache: Embedding request timed out after 120s: {e}", exc_info=True)
+                return None
+            except Exception as e:
+                resp_text = getattr(resp, 'text', 'N/A')
+                logger.warning(f"Semantic Cache: Failed to get embedding for chunk: {e}. Response body: {resp_text}", exc_info=True)
+                return None
 
         if not all_embeddings:
             return None

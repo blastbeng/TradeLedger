@@ -10,6 +10,9 @@ from src.llm.semantic_cache import get_semantic_cache_client
 
 logger = logging.getLogger(__name__)
 
+# Module-level executor for semantic cache queries to avoid blocking on shutdown
+_semantic_cache_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="semantic-cache")
+
 def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
     return len(text) // 4
@@ -137,14 +140,13 @@ def get_cached_llm_response(
     if _semantic_cache.enabled:
         semantic_hit = None
         try:
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_semantic_cache.query, prompt, symbol)
-                try:
-                    semantic_hit = future.result(timeout=5.0)
-                except FuturesTimeoutError:
-                    logger.warning("Semantic cache query timed out after 5s, skipping to LLM call.")
-                except Exception as e:
-                    logger.warning(f"Semantic cache query failed, bypassing: {e}")
+            future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol)
+            try:
+                semantic_hit = future.result(timeout=5.0)
+            except FuturesTimeoutError:
+                logger.warning("Semantic cache query timed out after 5s, skipping to LLM call.")
+            except Exception as e:
+                logger.warning(f"Semantic cache query failed, bypassing: {e}")
 
             if semantic_hit:
                 logger.info("Semantic cache hit for prompt: %.100s...", prompt[:100])
