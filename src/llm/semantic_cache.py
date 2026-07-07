@@ -342,7 +342,7 @@ class SemanticCacheClient:
             metadata = {
                 "ticker": ticker or "",
                 "original_prompt": prompt,
-                "cached_at": str(time.time()),
+                "cached_at": time.time(),
                 "model_type": model_type,
                 "cache_version": cache_version or "",
                 "prompt_category": prompt_category,
@@ -377,35 +377,54 @@ class SemanticCacheClient:
         if not self.enabled or not self.collection_id:
             return
         try:
-            # ChromaDB v2 API: get all entries with metadata, filter by age
             cutoff = time.time() - max_age_seconds
+            ids_to_delete = []
+
+            # 1. Fetch expired entries directly using ChromaDB metadata filtering
             resp = requests.post(
                 f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/get",
-                json={"include": ["metadatas", "ids"]},
+                json={
+                    "include": ["ids"],
+                    "where": {"cached_at": {"$lt": cutoff}}
+                },
                 timeout=10
             )
             resp.raise_for_status()
             data = resp.json()
-            ids_to_delete = []
-            metadatas = data.get("metadatas", [])
-            ids = data.get("ids", [])
-            logger.debug(f"Semantic Cache: Retrieved {len(metadatas)} entries for cleanup check.")
-
-            # 1. Find expired entries
-            for i, meta in enumerate(metadatas):
-                ts = meta.get("cached_at")
-                if ts and float(ts) < cutoff:
-                    ids_to_delete.append(ids[i])
+            expired_ids = data.get("ids", [])
+            if expired_ids:
+                ids_to_delete.extend(expired_ids)
+                logger.debug(f"Semantic Cache: Found {len(expired_ids)} expired entries to delete.")
 
             # 2. Enforce max size limit by finding oldest entries if over limit
-            if len(metadatas) > self.max_entries:
-                logger.info(f"Semantic Cache: Collection size {len(metadatas)} exceeds max {self.max_entries}. Pruning oldest entries.")
-                # Create list of (timestamp, id) for entries not already marked for deletion
+            # First, fetch only IDs to check the total size efficiently
+            resp = requests.post(
+                f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/get",
+                json={"include": ["ids"]},
+                timeout=10
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            all_ids = data.get("ids", [])
+
+            if len(all_ids) > self.max_entries:
+                logger.info(f"Semantic Cache: Collection size {len(all_ids)} exceeds max {self.max_entries}. Pruning oldest entries.")
+                # Fetch metadatas and ids to find the oldest entries
+                resp = requests.post(
+                    f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/get",
+                    json={"include": ["metadatas", "ids"]},
+                    timeout=10
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                metadatas = data.get("metadatas", [])
+                ids = data.get("ids", [])
+
                 remaining_entries = []
                 for i, meta in enumerate(metadatas):
                     if ids[i] not in ids_to_delete:
                         ts = meta.get("cached_at")
-                        if ts:
+                        if ts is not None:
                             remaining_entries.append((float(ts), ids[i]))
 
                 # Sort by timestamp ascending (oldest first)
