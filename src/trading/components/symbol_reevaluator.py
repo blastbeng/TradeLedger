@@ -1829,6 +1829,7 @@ class SymbolReevaluator:
         base_balance: float,
         old_symbols: List[Dict[str, str]],
         pause_trading: Optional[bool],
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
     ) -> None:
         """Apply composite-score-based fallback selection when LLM returns no symbols.
 
@@ -1867,7 +1868,15 @@ class SymbolReevaluator:
             if base_balance >= min_cost:
                 if engine._is_excluded(sym, default_tf):
                     continue
-                fallback_symbols.append({"symbol": sym, "timeframe": default_tf})
+
+                # Check if OHLCV data is available for the symbol
+                sym_data = ohlcv_data.get(sym, {})
+                available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
+                if not available_tfs:
+                    continue
+                tf = default_tf if default_tf in available_tfs else available_tfs[0]
+
+                fallback_symbols.append({"symbol": sym, "timeframe": tf})
             if len(fallback_symbols) >= engine.effective_max_symbols:
                 break
         if fallback_symbols:
@@ -2340,6 +2349,7 @@ class SymbolReevaluator:
         per_symbol_budget: float,
         last_key: str,
         now: float,
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
     ) -> None:
         """Apply fallback selection, cleanup, send notifications, and finalize state."""
         engine = self.engine
@@ -2352,6 +2362,7 @@ class SymbolReevaluator:
             base_balance=base_balance,
             old_symbols=old_symbols,
             pause_trading=pause_trading,
+            ohlcv_data=ohlcv_data,
         )
 
         await self.post_selection_cleanup_and_backfill(
@@ -2564,4 +2575,5 @@ class SymbolReevaluator:
             per_symbol_budget=per_symbol_budget,
             last_key=last_key,
             now=now,
+            ohlcv_data=ohlcv_data,
         )
