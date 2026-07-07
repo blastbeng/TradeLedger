@@ -1339,7 +1339,7 @@ class TradingEngine:
 
                 async def _download_symbol_data(pair: str, tfs: List[str]):
                     for tf in tfs:
-                        await self._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True)
+                        await self._market_data_manager._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True)
 
                 # Limit concurrent symbol downloads to avoid thread pool exhaustion
                 download_concurrency = asyncio.Semaphore(10)

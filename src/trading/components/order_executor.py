@@ -2233,6 +2233,7 @@ class OrderExecutor:
             if pos:
                 pos.pop("take_profit_order_id", None)
             # Notify user
+            stock_name = await engine._market_data_manager.get_stock_name(queued["symbol"])
             if engine.notifier:
                 display_symbol = engine._format_symbol_display(
                     queued["symbol"], stock_name, queued.get("timeframe")
@@ -3233,37 +3234,36 @@ class OrderExecutor:
 
             # Notify user
             if engine.notifier:
-                 stock_name = await engine._market_data_manager.get_stock_name(queued["symbol"])
-                     stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                     display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
-                     msg = f"🔄 Stop order updated for {display_symbol}: {old_stop_price:.4f} → {new_stop_price:.4f}"
-                     await engine.notifier.send_notification(
-                         msg,
-                         summary={
-                             "symbol": symbol,
-                             "action": "INFO",
-                             "reason": "Stop order replaced",
-                             "old_stop_price": old_stop_price,
-                             "new_stop_price": new_stop_price,
-                         }
-                     )
-             except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
-                 logger.error(
-                     f"Failed to place replacement stop order for {symbol}: {e}. "
-                     f"Old stop order {old_order_id} remains active at the previous price."
-                 )
-                 if engine.notifier:
-                     stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                     display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
-                     await engine.notifier.send_notification(
-                         f"⚠️ Stop order replacement failed for {display_symbol}: old stop order kept active.",
-                         summary={
-                             "symbol": symbol,
-                             "action": "ERROR",
-                             "reason": f"Stop order replacement failed, old order kept: {str(e)[:200]}",
-                         }
-                     )
-                 return
+                stock_name = await engine._market_data_manager.get_stock_name(symbol)
+                display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+                msg = f"🔄 Stop order updated for {display_symbol}: {old_stop_price:.4f} → {new_stop_price:.4f}"
+                await engine.notifier.send_notification(
+                    msg,
+                    summary={
+                        "symbol": symbol,
+                        "action": "INFO",
+                        "reason": "Stop order replaced",
+                        "old_stop_price": old_stop_price,
+                        "new_stop_price": new_stop_price,
+                    }
+                )
+        except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
+            logger.error(
+                f"Failed to place replacement stop order for {symbol}: {e}. "
+                f"Old stop order {old_order_id} remains active at the previous price."
+            )
+            if engine.notifier:
+                stock_name = await engine._market_data_manager.get_stock_name(symbol)
+                display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+                await engine.notifier.send_notification(
+                    f"⚠️ Stop order replacement failed for {display_symbol}: old stop order kept active.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "ERROR",
+                        "reason": f"Stop order replacement failed, old order kept: {str(e)[:200]}",
+                    }
+                )
+            return
 
          async def process_native_exit_fill(
              self,

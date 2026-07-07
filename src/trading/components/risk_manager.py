@@ -135,7 +135,7 @@ class RiskManager:
             missing_risk.append(sym.split("/")[0])
         if missing_risk:
             try:
-                raw = await engine._get_quotes_batched(missing_risk, timeout_per_chunk=45.0)
+                raw = await engine._market_data_manager._get_quotes_batched(missing_risk, timeout_per_chunk=45.0)
                 engine._portfolio_exposure_cache = None
                 for sym in engine.positions:
                     base = sym.split("/")[0]
