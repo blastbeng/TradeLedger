@@ -83,6 +83,15 @@ _yf_session_cache = None
 _yf_session_lock = threading.Lock()
 _yf_session_created = False  # True only after successful creation or confirmed ImportError
 
+def _invalidate_yf_session():
+    """Invalidate the cached yfinance session so it is recreated on next use."""
+    global _yf_session_cache, _yf_session_created
+    with _yf_session_lock:
+        if _yf_session_created and _yf_session_cache is not None:
+            logger.info("Invalidating yfinance session due to repeated errors.")
+            _yf_session_cache = None
+            _yf_session_created = False
+
 def _check_yf_circuit() -> bool:
     """Return True if the circuit is open (yfinance should be skipped)."""
     with _yf_lock:
@@ -97,10 +106,16 @@ def _record_yf_error():
             _yf_error_count = 0
         _yf_error_count += 1
         _yf_last_error_time = now
+
+        # Recreate session after a few errors to try to recover from invalid session issues
+        if _yf_error_count == 5:
+            _invalidate_yf_session()
+
         if _yf_error_count >= YF_MAX_ERRORS:
             if _yf_circuit_open_until < now:
                 logger.error(f"yfinance circuit breaker tripped due to {_yf_error_count} errors. Blocking yfinance calls for {YF_CIRCUIT_COOLDOWN}s.")
             _yf_circuit_open_until = now + YF_CIRCUIT_COOLDOWN
+            _invalidate_yf_session()
 
 def _reset_yf_circuit():
     """Reset the circuit breaker after a successful call."""
