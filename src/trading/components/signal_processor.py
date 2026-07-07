@@ -2201,7 +2201,6 @@ class SignalProcessor:
                     model_type=strategy_model_type,
                     temperature=effective_temp,
                     symbol=symbol,
-                    bypass_semantic_cache=is_critical,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -2227,7 +2226,6 @@ class SignalProcessor:
                         model_type="actuator",
                         temperature=effective_temp,
                         market_hash=market_hash,
-                        bypass_semantic_cache=is_critical,
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
@@ -2590,7 +2588,6 @@ class SignalProcessor:
                     model_type=strategy_model_type,
                     temperature=effective_temp,
                     symbol=symbol,
-                    bypass_semantic_cache=is_critical,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -2640,7 +2637,6 @@ class SignalProcessor:
                         model_type="actuator",
                         temperature=effective_temp,
                         market_hash=variants_market_hash,
-                        bypass_semantic_cache=is_critical,
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )

@@ -1047,13 +1047,6 @@ class Settings(BaseSettings):
             raise ValueError(f"NOTIFICATION_VERBOSITY must be one of {allowed}")
         return v
 
-    # Semantic Cache (ChromaDB + llama.cpp embeddings)
-    SEMANTIC_CACHE_ENABLED: bool = True
-    EMBEDDING_MODEL_BASE_URL: str = "http://localhost:9292/v1"
-    EMBEDDING_MODEL_NAME: str = "Qwen3-Embedding-0.6B-Q8_0.gguf"
-    CHROMADB_HOST: str = "http://localhost:9010"
-    CHROMADB_COLLECTION_NAME: str = "trade_ledger_semantic_cache"
-    SEMANTIC_CACHE_DISTANCE_THRESHOLD: float = 0.15
 
     def validate_llm_settings(self):
         """Validate that LLM provider settings are properly configured."""

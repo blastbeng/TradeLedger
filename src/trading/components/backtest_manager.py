@@ -485,7 +485,6 @@ class BacktestManager:
                     temperature=effective_temp,
                     symbol=symbol,
                     market_hash=market_hash,
-                    bypass_semantic_cache=is_critical,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -514,8 +513,7 @@ class BacktestManager:
                             temperature=effective_temp,
                             symbol=symbol,
                             market_hash=market_hash,
-                            bypass_semantic_cache=is_critical,
-                        ),
+                            ),
                         timeout=settings.LLM_TIMEOUT
                     )
                     final_strategy = create_strategy_from_llm(retry_result["response"])
