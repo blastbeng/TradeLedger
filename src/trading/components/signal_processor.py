@@ -2195,6 +2195,7 @@ class SignalProcessor:
                     market_hash=market_hash,
                     model_type=strategy_model_type,
                     temperature=effective_temp,
+                    symbol=symbol,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -2579,6 +2580,7 @@ class SignalProcessor:
                     market_hash=variants_market_hash,
                     model_type=strategy_model_type,
                     temperature=effective_temp,
+                    symbol=symbol,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -4072,6 +4074,7 @@ class SignalProcessor:
                     market_hash=market_hash,
                     model_type=model_type,
                     temperature=temperature,
+                    symbol=symbol,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -4124,6 +4127,7 @@ class SignalProcessor:
                     market_hash=compute_market_hash({"step": "1b", "analysis": analysis}),
                     model_type=model_type,
                     temperature=temperature,
+                    symbol=symbol,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
