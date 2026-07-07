@@ -174,7 +174,6 @@ class SemanticCacheClient:
             metadata = {
                 "ticker": ticker or "",
                 "original_prompt": prompt,
-                "cached_response": generalized_response,
                 "cached_at": str(time.time())
             }
             item_id = str(uuid.uuid4())
@@ -200,7 +199,7 @@ class SemanticCacheClient:
         try:
             # ChromaDB v2 API: get all entries with metadata, filter by age
             cutoff = time.time() - max_age_seconds
-            resp = requests.get(
+            resp = requests.post(
                 f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/get",
                 json={"include": ["metadatas", "ids"]},
                 timeout=10
