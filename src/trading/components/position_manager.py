@@ -65,7 +65,7 @@ class PositionManager:
         portfolio_total_value = base_balance
         portfolio_exposure = 0.0
         portfolio_stop_risk = 0.0
-        pos_tickers = await engine._get_all_position_tickers()
+        pos_tickers = await engine._market_data_manager._get_all_position_tickers()
         for sym, pos in engine.positions.items():
             try:
                 t = pos_tickers.get(sym)
