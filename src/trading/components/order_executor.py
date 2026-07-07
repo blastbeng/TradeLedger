@@ -3265,60 +3265,60 @@ class OrderExecutor:
                 )
             return
 
-         async def process_native_exit_fill(
-             self,
-             symbol: str,
-             order_id: str,
-             order_obj: Any,
-             pos: Dict[str, Any],
-             exit_reason: str,
-         ):
-             """Process a filled native exit order (stop-loss or take-profit) inline.
+    async def process_native_exit_fill(
+        self,
+        symbol: str,
+        order_id: str,
+        order_obj: Any,
+        pos: Dict[str, Any],
+        exit_reason: str,
+    ):
+        """Process a filled native exit order (stop-loss or take-profit) inline.
 
-             This avoids the race condition where a native exit order fills between
-             the OCO cancellation and a manual _execute_signal call, which would
-             result in a double sell.
-             """
-             engine = self.engine
-             # Find and remove the queued entry under the lock, but do NOT call
-             # _handle_queued_sell_fill inside the lock — it internally acquires
-             # _queued_orders_lock via _cancel_exit_orders, which would deadlock.
-             async with engine._queued_orders_lock:
-                 queued = next((q for q in engine.queued_orders if q.get("order_id") == order_id), None)
-                 if queued:
-                     engine.queued_orders = [q for q in engine.queued_orders if q.get("order_id") != order_id]
+        This avoids the race condition where a native exit order fills between
+        the OCO cancellation and a manual _execute_signal call, which would
+        result in a double sell.
+        """
+        engine = self.engine
+        # Find and remove the queued entry under the lock, but do NOT call
+        # _handle_queued_sell_fill inside the lock — it internally acquires
+        # _queued_orders_lock via _cancel_exit_orders, which would deadlock.
+        async with engine._queued_orders_lock:
+            queued = next((q for q in engine.queued_orders if q.get("order_id") == order_id), None)
+            if queued:
+                engine.queued_orders = [q for q in engine.queued_orders if q.get("order_id") != order_id]
 
-             if queued:
-                 filled_qty = float(order_obj.filled_qty) if order_obj.filled_qty else 0.0
-                 filled_avg_price = float(order_obj.filled_avg_price) if order_obj.filled_avg_price else 0.0
-                 if filled_qty > 0:
-                     delta_cost = filled_qty * filled_avg_price
-                     from src.exchanges.fees import calculate_transaction_costs
-                     _quote_ccy = symbol.split("/")[1] if "/" in symbol else engine.base_currency
-                     _fee_costs = calculate_transaction_costs("SELL", filled_avg_price, filled_qty, symbol=symbol)
-                     trade_dict = {
-                         'id': str(order_obj.id),
-                         'symbol': symbol,
-                         'side': 'sell',
-                         'amount': filled_qty,
-                         'price': filled_avg_price,
-                         'cost': delta_cost,
-                         'fee': {'cost': _fee_costs["total_costs"], 'currency': _quote_ccy},
-                         'status': 'closed',
-                         'timestamp': int(time.time() * 1000),
-                     }
-                     await self.handle_queued_sell_fill(trade_dict, queued, partial=False)
+        if queued:
+            filled_qty = float(order_obj.filled_qty) if order_obj.filled_qty else 0.0
+            filled_avg_price = float(order_obj.filled_avg_price) if order_obj.filled_avg_price else 0.0
+            if filled_qty > 0:
+                delta_cost = filled_qty * filled_avg_price
+                from src.exchanges.fees import calculate_transaction_costs
+                _quote_ccy = symbol.split("/")[1] if "/" in symbol else engine.base_currency
+                _fee_costs = calculate_transaction_costs("SELL", filled_avg_price, filled_qty, symbol=symbol)
+                trade_dict = {
+                    'id': str(order_obj.id),
+                    'symbol': symbol,
+                    'side': 'sell',
+                    'amount': filled_qty,
+                    'price': filled_avg_price,
+                    'cost': delta_cost,
+                    'fee': {'cost': _fee_costs["total_costs"], 'currency': _quote_ccy},
+                    'status': 'closed',
+                    'timestamp': int(time.time() * 1000),
+                }
+                await self.handle_queued_sell_fill(trade_dict, queued, partial=False)
 
-             # Cancel the OCO pair if it still exists
-             oco_pair_id = queued.get("oco_pair") if queued else None
-             if oco_pair_id:
-                 try:
-                     await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
-                 except (RuntimeError, ValueError, ConnectionError):
-                     pass
-                 async with engine._queued_orders_lock:
-                     engine.queued_orders = [q for q in engine.queued_orders if q.get("order_id") != oco_pair_id]
-             pos.pop("stop_loss_order_id", None)
-             pos.pop("take_profit_order_id", None)
-             pos.pop("stop_loss_order_type", None)
-             pos.pop("_native_stop_price", None)
+        # Cancel the OCO pair if it still exists
+        oco_pair_id = queued.get("oco_pair") if queued else None
+        if oco_pair_id:
+            try:
+                await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
+            except (RuntimeError, ValueError, ConnectionError):
+                pass
+            async with engine._queued_orders_lock:
+                engine.queued_orders = [q for q in engine.queued_orders if q.get("order_id") != oco_pair_id]
+        pos.pop("stop_loss_order_id", None)
+        pos.pop("take_profit_order_id", None)
+        pos.pop("stop_loss_order_type", None)
+        pos.pop("_native_stop_price", None)
