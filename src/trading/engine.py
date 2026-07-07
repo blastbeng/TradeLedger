@@ -1228,10 +1228,6 @@ class TradingEngine:
                 return max(base_interval, 3600)  # 1 hour
             return base_interval
 
-    async def _get_stock_name(self, symbol: str) -> str:
-        """Return the human-readable company name for a symbol, cached in Redis."""
-        return await self._market_data_manager.get_stock_name(symbol)
-
     @staticmethod
     def _format_symbol_display(symbol: str, stock_name: str, timeframe: Optional[str] = None) -> str:
         """Return a display string like 'AAPL[Apple Inc.]' or 'AAPL[Apple Inc.] (15m)'."""

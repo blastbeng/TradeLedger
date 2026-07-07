@@ -897,7 +897,7 @@ class PositionManager:
         await asyncio.to_thread(insert_trade, trade)
         logger.info(f"Closed BTP {symbol}: {pos['amount']} at par value {par_value}.")
         if engine.notifier:
-            stock_name = await engine._get_stock_name(symbol)
+            stock_name = await engine._market_data_manager.get_stock_name(symbol)
             display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
             await engine.notifier.send_notification(
                 f"💰 BTP {display_symbol} closed at par value {par_value}. P&L: {realized_pnl:+.4f}",
@@ -1003,7 +1003,7 @@ class PositionManager:
                     if unparseable_since is None:
                         pos["_unparseable_maturity_since"] = time.time()
                         if engine.notifier:
-                            stock_name = await engine._get_stock_name(symbol)
+                            stock_name = await engine._market_data_manager.get_stock_name(symbol)
                             display_symbol = engine._format_symbol_display(symbol, stock_name, None)
                             await engine.notifier.send_notification(
                                 f"⚠️ Could not parse maturity date '{maturity_str}' for BTP {display_symbol}. Manual check required. Will auto-close at par in 7 days.",
@@ -1019,7 +1019,7 @@ class PositionManager:
                         continue
                 else:
                     if engine.notifier:
-                        stock_name = await engine._get_stock_name(symbol)
+                        stock_name = await engine._market_data_manager.get_stock_name(symbol)
                         display_symbol = engine._format_symbol_display(symbol, stock_name, None)
                         await engine.notifier.send_notification(
                             f"⚠️ Could not parse maturity date '{maturity_str}' for BTP {display_symbol}. No open position found.",
@@ -1193,7 +1193,7 @@ class PositionManager:
                         f"Force-closing {symbol}: missing LLM risk parameters after {attempts} "
                         f"re-evaluation attempts."
                     )
-                    stock_name = await engine._get_stock_name(symbol)
+                    stock_name = await engine._market_data_manager.get_stock_name(symbol)
                     display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
                     if engine.notifier:
                         await engine.notifier.send_notification(

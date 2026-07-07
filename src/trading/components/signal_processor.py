@@ -119,7 +119,7 @@ class SignalProcessor:
     async def _get_initial_context(self, symbol: str, symbol_entry: Dict[str, str]) -> Optional[Dict[str, Any]]:
         """Fetch initial context: display symbol, min viable amount, and position flags."""
         engine = self.engine
-        stock_name = await engine._get_stock_name(symbol)
+        stock_name = await engine._market_data_manager.get_stock_name(symbol)
         display_symbol = engine._format_symbol_display(symbol, stock_name, symbol_entry["timeframe"])
 
         min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
@@ -1910,7 +1910,7 @@ class SignalProcessor:
                 f"{sector_count} open positions (max {max_positions_per_sector})"
             )
             if engine.notifier:
-                stock_name = await engine._get_stock_name(symbol)
+                stock_name = await engine._market_data_manager.get_stock_name(symbol)
                 display = engine._format_symbol_display(symbol, stock_name, assigned_tf)
                 await engine.notifier.send_notification(
                     f"⚠️ Skipping BUY {display}: sector '{current_sector}' concentration limit reached ({sector_count}/{max_positions_per_sector})",
@@ -3992,7 +3992,7 @@ class SignalProcessor:
             if entry is None:
                 return
             entry_tf = entry.get("timeframe")
-            stock_name = await engine._get_stock_name(symbol)
+            stock_name = await engine._market_data_manager.get_stock_name(symbol)
             display_symbol = engine._format_symbol_display(symbol, stock_name, entry_tf)
             if now >= entry["deadline"]:
                 # Timeout – clear and notify

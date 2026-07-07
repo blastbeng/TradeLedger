@@ -239,7 +239,7 @@ class TelegramBot:
             for entry in symbols:
                 symbol = entry["symbol"]
                 tf = entry["timeframe"]
-                name = await self.engine._get_stock_name(symbol)
+                name = await self.engine._market_data_manager.get_stock_name(symbol)
                 display = self.engine._format_symbol_display(symbol, name, tf)
                 msg += f"  • <code>{display}</code>\n"
         else:
@@ -250,7 +250,7 @@ class TelegramBot:
             msg += "<b>📈 Open Positions:</b>\n"
             for sym, pos in positions.items():
                 pos_tf = pos.get("timeframe")
-                pos_name = await self.engine._get_stock_name(sym)
+                pos_name = await self.engine._market_data_manager.get_stock_name(sym)
                 pos_display = self.engine._format_symbol_display(sym, pos_name, pos_tf)
                 msg += (
                     f"  • <code>{pos_display}</code>\n"
@@ -345,7 +345,7 @@ class TelegramBot:
         for idx, t in enumerate(open_trades, start=1):
             sym = t['symbol']
             trade_tf = t.get('timeframe')
-            trade_name = await self.engine._get_stock_name(sym)
+            trade_name = await self.engine._market_data_manager.get_stock_name(sym)
             trade_display = self.engine._format_symbol_display(sym, trade_name, trade_tf)
             amt = t['amount']
             price = t['price']
@@ -449,7 +449,7 @@ class TelegramBot:
                 side_emoji = "🟢" if side == "buy" else "🔴"
                 side_label = "BUY" if side == "buy" else "SELL"
                 q_tf = q.get('timeframe')
-                q_name = await self.engine._get_stock_name(sym)
+                q_name = await self.engine._market_data_manager.get_stock_name(sym)
                 q_display = self.engine._format_symbol_display(sym, q_name, q_tf)
                 original_amount = q.get('original_amount', q['amount'])
                 filled_qty = q.get('filled_qty', 0.0)
@@ -537,7 +537,7 @@ class TelegramBot:
             for r in rows:
                 symbol = r["symbol"]
                 tf = r.get("timeframe") or "—"
-                perf_name = await self.engine._get_stock_name(symbol)
+                perf_name = await self.engine._market_data_manager.get_stock_name(symbol)
                 perf_display = self.engine._format_symbol_display(symbol, perf_name, tf)
                 trades = r["trade_count"]
                 profit = r["profit"]
@@ -719,7 +719,7 @@ class TelegramBot:
             for entry in symbols:
                 symbol = entry["symbol"]
                 news_tf = entry.get("timeframe")
-                news_name = await self.engine._get_stock_name(symbol)
+                news_name = await self.engine._market_data_manager.get_stock_name(symbol)
                 news_display = self.engine._format_symbol_display(symbol, news_name, news_tf)
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                 try:
@@ -758,7 +758,7 @@ class TelegramBot:
             for entry in symbols:
                 symbol = entry["symbol"]
                 ns_tf = entry.get("timeframe")
-                ns_name = await self.engine._get_stock_name(symbol)
+                ns_name = await self.engine._market_data_manager.get_stock_name(symbol)
                 ns_display = self.engine._format_symbol_display(symbol, ns_name, ns_tf)
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                 articles = await asyncio.to_thread(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
@@ -804,7 +804,7 @@ class TelegramBot:
 
             symbol = open_trades[trade_id - 1]['symbol']
             sell_tf = open_trades[trade_id - 1].get('timeframe')
-            sell_name = await self.engine._get_stock_name(symbol)
+            sell_name = await self.engine._market_data_manager.get_stock_name(symbol)
             sell_display = self.engine._format_symbol_display(symbol, sell_name, sell_tf)
             await update.message.reply_text(f"🔄 Selling {sell_display}...", reply_markup=self.keyboard)
             await self.engine.sell_position(symbol)

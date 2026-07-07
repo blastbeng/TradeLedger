@@ -2105,7 +2105,7 @@ class SymbolReevaluator:
 
         # Build formatted symbol labels with stock names (parallelized)
         async def _fetch_label(c):
-            name = await engine._get_stock_name(c['symbol'])
+            name = await engine._market_data_manager.get_stock_name(c['symbol'])
             return engine._format_symbol_display(c['symbol'], name, c['timeframe'])
         symbol_labels = await asyncio.gather(*[_fetch_label(c) for c in engine.current_symbols])
         logger.info(f"Selected symbols: {symbol_labels}")

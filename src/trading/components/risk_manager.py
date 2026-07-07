@@ -180,7 +180,7 @@ class RiskManager:
                     continue
 
                 # --- Format symbol for notifications ---
-                stock_name = await engine._get_stock_name(symbol)
+                stock_name = await engine._market_data_manager.get_stock_name(symbol)
                 display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
 
                 # --- Hard stop: maximum total loss regardless of LLM decisions ---

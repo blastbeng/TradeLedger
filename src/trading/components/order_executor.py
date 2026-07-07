@@ -45,7 +45,7 @@ class OrderExecutor:
         """Execute a BUY or SELL signal."""
         engine = self.engine
         # --- Format symbol for notifications ---
-        stock_name = await engine._get_stock_name(symbol)
+        stock_name = await engine._market_data_manager.get_stock_name(symbol)
         tf = timeframe or (engine.positions.get(symbol, {}).get("timeframe") if symbol in engine.positions else None)
         display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
 
@@ -455,7 +455,7 @@ class OrderExecutor:
 
         # Notify user
         if engine.notifier:
-            stock_name = await engine._get_stock_name(symbol)
+            stock_name = await engine._market_data_manager.get_stock_name(symbol)
             display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
             msg = f"🛡️ Exit orders placed for {display_symbol}:\n"
             if sl_order_id:
@@ -1857,7 +1857,7 @@ class OrderExecutor:
                 reason_label = reason_labels.get(exit_reason, exit_reason) if exit_reason else None
                 reason_str = f" [{reason_label}]" if reason_label else ""
                 # --- Format symbol for notification ---
-                stock_name = await engine._get_stock_name(symbol)
+                stock_name = await engine._market_data_manager.get_stock_name(symbol)
                 # Use the timeframe from the position or the passed parameter
                 tf = timeframe or (pos.get("timeframe") if pos else None)
                 display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
@@ -2318,7 +2318,7 @@ class OrderExecutor:
         engine._state_dirty = True
 
         if engine.notifier:
-            stock_name = await engine._get_stock_name(queued['symbol'])
+            stock_name = await engine._market_data_manager.get_stock_name(queued['symbol'])
             tf = queued.get('timeframe')
             display = engine._format_symbol_display(queued['symbol'], stock_name, tf)
             await engine.notifier.send_notification(
@@ -2361,7 +2361,7 @@ class OrderExecutor:
             async with engine._cycle_spent_lock:
                 engine._cycle_spent = max(0.0, engine._cycle_spent - queued.get('amount', 0.0))
         if engine.notifier:
-            stock_name = await engine._get_stock_name(queued['symbol'])
+            stock_name = await engine._market_data_manager.get_stock_name(queued['symbol'])
             tf = queued.get('timeframe')
             display = engine._format_symbol_display(queued['symbol'], stock_name, tf)
             await engine.notifier.send_notification(
@@ -2552,7 +2552,7 @@ class OrderExecutor:
         await self.event_bus.publish("save_state", force=True)
         engine._portfolio_exposure_cache = None
         if engine.notifier:
-            stock_name = await engine._get_stock_name(symbol)
+            stock_name = await engine._market_data_manager.get_stock_name(symbol)
             display_symbol = engine._format_symbol_display(symbol, stock_name, timeframe)
             buy_msg = f"🟢 BUY {display_symbol}: {trade_dict['amount']:.6f} @ {trade_dict['price']:.4f}"
             buy_summary = {
@@ -2749,7 +2749,7 @@ class OrderExecutor:
             }
             reason_label = reason_labels.get(exit_reason, exit_reason) if exit_reason else None
             reason_str = f" [{reason_label}]" if reason_label else ""
-            stock_name = await engine._get_stock_name(symbol)
+            stock_name = await engine._market_data_manager.get_stock_name(symbol)
             tf = queued.get('timeframe') or (pos.get("timeframe") if pos else None)
             display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
             partial_str = " (partial)" if partial else ""
@@ -2790,7 +2790,7 @@ class OrderExecutor:
         if balance <= 0:
             return
 
-        stock_name = await engine._get_stock_name(symbol)
+        stock_name = await engine._market_data_manager.get_stock_name(symbol)
         tf = engine.positions.get(symbol, {}).get("timeframe") if symbol in engine.positions else None
         display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
 
@@ -2913,7 +2913,7 @@ class OrderExecutor:
             logger.warning(f"Cannot execute partial sell for {symbol}: no position.")
             return False
 
-        stock_name = await engine._get_stock_name(symbol)
+        stock_name = await engine._market_data_manager.get_stock_name(symbol)
         tf = pos.get("timeframe")
         display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
         base, quote = symbol.split("/")
@@ -3235,7 +3235,7 @@ class OrderExecutor:
 
             # Notify user
             if engine.notifier:
-                stock_name = await engine._get_stock_name(symbol)
+                stock_name = await engine._market_data_manager.get_stock_name(symbol)
                 display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
                 msg = f"🔄 Stop order updated for {display_symbol}: {old_stop_price:.4f} → {new_stop_price:.4f}"
                 await engine.notifier.send_notification(
