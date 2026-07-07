@@ -431,10 +431,6 @@ class TradingEngine:
         except Exception as e:
             logger.error(f"Force download error: {e}", exc_info=True)
 
-    async def _get_asset_info(self, symbol: str) -> Any:
-        """Return asset info (min order size, name, etc.), cached for 1 hour."""
-        return await self._market_data_manager.get_asset_info(symbol)
-
     async def _get_all_position_tickers(self) -> Dict[str, Dict[str, Any]]:
         """Fetch tickers for all open positions, batching missing ones into a single API call."""
         return await self._market_data_manager._get_all_position_tickers()

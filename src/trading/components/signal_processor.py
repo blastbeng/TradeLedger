@@ -928,7 +928,7 @@ class SignalProcessor:
 
         # Fetch minimum order size
         try:
-            asset = await engine._get_asset_info(symbol)
+            asset = await engine._market_data_manager.get_asset_info(symbol)
             min_order_amount = float(asset.min_order_size) if asset.min_order_size else None
         except (ValueError, TypeError, AttributeError, ConnectionError, TimeoutError, OSError):
             min_order_amount = None

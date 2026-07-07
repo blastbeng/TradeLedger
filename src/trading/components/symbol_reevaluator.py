@@ -805,7 +805,7 @@ class SymbolReevaluator:
         for symbol in sample_pairs:
             base = symbol.split('/')[0]
             try:
-                asset = await engine._get_asset_info(symbol)
+                asset = await engine._market_data_manager.get_asset_info(symbol)
                 min_amount = float(asset.min_order_size) if asset.min_order_size else None
             except Exception:
                 min_amount = None
