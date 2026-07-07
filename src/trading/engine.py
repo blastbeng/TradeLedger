@@ -495,7 +495,7 @@ class TradingEngine:
                 continue
             self._reconcile_running = True
             try:
-                await self._reconcile_positions()
+                await self.event_bus.request("reconcile_positions")
             except Exception as e:
                 logger.error(f"Reconcile error: {e}", exc_info=True)
             finally:
@@ -1508,10 +1508,6 @@ class TradingEngine:
         """Analyze closed trades to identify which conditions, timeframes, and parameters
         have historically led to wins vs losses. Cached and only recomputed when new trades arrive."""
         return await self.event_bus.request("compute_trade_pattern_analysis")
-
-    async def _reconcile_positions(self):
-        """Detect and handle external changes: delisted symbols, externally sold positions."""
-        await self.event_bus.request("reconcile_positions")
 
     def _append_trade(self, trade: Dict[str, Any]):
         """Append a trade to history and prune old entries to bound memory usage."""
