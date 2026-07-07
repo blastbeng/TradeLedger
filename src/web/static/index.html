@@ -1396,7 +1396,7 @@
                 .then(ms => updateMarketStatusUI(ms))
                 .catch(() => {});
             fetchMessages();
-            fetchSignals();
+            fetchSignals(currentSignalsPage);
         }
 
         function startRefreshTimer() {
