@@ -819,7 +819,7 @@ def get_borsa_italiana_candles(
         if rows:
             logger.info(f"Downloaded {len(rows)} candles from borsaitaliana for {symbol} {timeframe}")
             _reset_bi_circuit()
-            return _validate_and_clean_candles(rows)
+            return _validate_and_clean_candles(rows, symbol)
 
         return None
 
@@ -853,7 +853,7 @@ TIMEFRAME_MS = {
     "5Y": 157_680_000_000,
 }
 
-def _validate_and_clean_candles(candles: List[List]) -> List[List]:
+def _validate_and_clean_candles(candles: List[List], symbol: Optional[str] = None) -> List[List]:
     """Validate and clean OHLCV candles to ensure data quality.
 
     Removes candles with:
@@ -889,7 +889,16 @@ def _validate_and_clean_candles(candles: List[List]) -> List[List]:
         seen_timestamps[ts] = c
 
     # Sort by timestamp to maintain chronological order
-    return sorted(seen_timestamps.values(), key=lambda x: x[0])
+    cleaned = sorted(seen_timestamps.values(), key=lambda x: x[0])
+
+    total_removed = len(candles) - len(cleaned)
+    if total_removed > 0:
+        sym_str = f" for {symbol}" if symbol else ""
+        logger.warning(
+            f"Removed {total_removed}/{len(candles)} invalid or duplicate candles{sym_str}."
+        )
+
+    return cleaned
 
 def _aggregate_candles(candles: List[List], target_tf: str) -> List[List]:
     """Aggregate monthly candles into larger timeframes (6M, 1Y, 3Y, 5Y)."""
@@ -2170,7 +2179,7 @@ def get_multi_timeframe_bars(
         # Merge both sources
         merged = _merge_candles(borsa_candles, yf_candles)
         if merged:
-            merged = _validate_and_clean_candles(merged)
+            merged = _validate_and_clean_candles(merged, symbol)
             result[tf] = merged[-limit:] if limit else merged
             try:
                 redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
@@ -2276,7 +2285,7 @@ def get_bars_range(
 
     # Merge both sources
     merged = _merge_candles(borsa_candles, yf_candles)
-    merged = _validate_and_clean_candles(merged)
+    merged = _validate_and_clean_candles(merged, symbol)
 
     if merged:
         if limit and len(merged) > limit:
