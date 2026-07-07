@@ -1033,10 +1033,30 @@ class Settings(BaseSettings):
             "WEB_PORT",
         }
 
+        # LLM-related fields that should trigger cache invalidation if changed
+        llm_fields = {
+            "LLM_PROVIDER", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "OLLAMA_API_KEY",
+            "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+            "OLLAMA_MIND_MODEL", "OPENAI_MIND_MODEL", "OLLAMA_ACTUATOR_MODEL", "OPENAI_ACTUATOR_MODEL",
+            "LLM_MIND_PROVIDER", "LLM_ACTUATOR_PROVIDER", "LLM_FALLBACK_ENABLED",
+            "OPENAI_MIND_API_KEY", "OPENAI_ACTUATOR_API_KEY", "OPENAI_MIND_BASE_URL", "OPENAI_ACTUATOR_BASE_URL",
+            "OLLAMA_MIND_BASE_URL", "OLLAMA_ACTUATOR_BASE_URL", "OLLAMA_MIND_API_KEY", "OLLAMA_ACTUATOR_API_KEY",
+            "LLM_TEMPERATURE", "LLM_MIND_TEMPERATURE", "LLM_ACTUATOR_TEMPERATURE",
+            "LLM_WEAK_PROVIDER", "OPENAI_WEAK_MODEL", "OPENAI_WEAK_API_KEY", "OPENAI_WEAK_BASE_URL",
+            "OLLAMA_WEAK_MODEL", "OLLAMA_WEAK_BASE_URL", "OLLAMA_WEAK_API_KEY", "LLM_WEAK_TEMPERATURE",
+            "LLM_MIND_MODEL_THRESHOLD", "LLM_TIMEOUT", "LLM_ACTUATOR_TIMEOUT",
+            "LLM_CACHE_TTL"
+        }
+
+        llm_changed = any(getattr(self, f) != getattr(new_settings, f) for f in llm_fields)
+
         for field_name in self.model_fields:
-            if field_name in unsafe_fields:
+            if field_name in unsafe_fields or field_name == "LLM_CACHE_VERSION":
                 continue
             setattr(self, field_name, getattr(new_settings, field_name))
+
+        if llm_changed:
+            self.LLM_CACHE_VERSION = str(uuid.uuid4())
 
         if self.PAPER_INITIAL_BALANCE != old_paper_balance:
             self.PAPER_BALANCE_CHANGED = True
