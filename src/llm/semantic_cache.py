@@ -10,7 +10,7 @@ from src.config.settings import settings
 logger = logging.getLogger(__name__)
 
 # Regex to find tickers ending with .MI (or other configured suffixes)
-TICKER_REGEX = re.compile(r'\b((?:[A-Z0-9]+\.MI)|(?:IT[A-Z0-9]{10}))\b')
+TICKER_REGEX = re.compile(r'\b((?:[A-Z0-9]{1,6}(?:\.[A-Z]{1,3})?)|(?:IT[A-Z0-9]{10}))\b')
 
 def generalize_prompt(prompt: str, symbol: Optional[str] = None) -> Tuple[str, Optional[str]]:
     """

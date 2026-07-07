@@ -481,6 +481,7 @@ class BacktestManager:
                     60,
                     model_type=strategy_model_type,
                     temperature=effective_temp,
+                    symbol=symbol,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -507,6 +508,7 @@ class BacktestManager:
                             compact_prompt(build_system_prompt()), 30,
                             model_type="actuator",
                             temperature=effective_temp,
+                            symbol=symbol,
                         ),
                         timeout=settings.LLM_TIMEOUT
                     )
@@ -740,6 +742,7 @@ class BacktestManager:
                     60,
                     model_type=model_type,
                     temperature=temperature,
+                    symbol=symbol,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -771,6 +774,7 @@ class BacktestManager:
                         compact_prompt(build_system_prompt()), 30,
                         model_type="actuator",
                         temperature=temperature,
+                        symbol=symbol,
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
