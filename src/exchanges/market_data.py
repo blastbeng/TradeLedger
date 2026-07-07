@@ -33,7 +33,6 @@ def set_notifier(notifier):
     _notifier = notifier
 
 _get_quotes_lock = threading.Lock()
-_get_quotes_done = threading.Event()
 
 # Dedicated thread pool for yf.download with a hard timeout wrapper.
 # This prevents yf.download from hanging threads indefinitely when
@@ -1668,25 +1667,17 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     if not symbols:
         return {}
 
-    # If a fetch is already in progress, wait for it to complete (up to 5s).
-    # This allows concurrent callers to benefit from the ongoing fetch
-    # instead of immediately falling back to stale cache.
-    if _get_quotes_lock.locked():
-        _get_quotes_done.wait(timeout=5)
-        return get_quotes_cached(symbols)
-
-    # Try to acquire the lock to start a new fetch
-    if not _get_quotes_lock.acquire(timeout=0.1):
-        # Another thread just started a fetch, wait for it
-        _get_quotes_done.wait(timeout=5)
+    # If a fetch is already in progress, immediately fall back to cache
+    # instead of blocking for up to 5 seconds. The background quote refresh
+    # loop keeps the cache warm, so serving from cache is acceptable and
+    # avoids serializing all callers behind a single slow batch fetch.
+    if not _get_quotes_lock.acquire(blocking=False):
         return get_quotes_cached(symbols)
 
     try:
-        _get_quotes_done.clear()
         return _get_quotes_impl(symbols)
     finally:
         _get_quotes_lock.release()
-        _get_quotes_done.set()
 
 
 def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
