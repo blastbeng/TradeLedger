@@ -1914,32 +1914,35 @@ def build_analysis_prompt(data: StrategyPromptData) -> str:
     return full_prompt + analysis_output
 
 
-def build_backtest_variants_prompt(
-    symbol: str,
-    analysis: Dict[str, Any],
-    ticker: Dict[str, Any],
-    current_price: float,
-    atr: Optional[float],
-    assigned_timeframe: str,
-    base_currency: str,
-    base_balance: float,
-    per_symbol_budget: float,
-    min_order_amount: Optional[float] = None,
-    min_order_cost: Optional[float] = None,
-    remaining_balance: Optional[float] = None,
-    portfolio_total_value: Optional[float] = None,
-    portfolio_exposure_pct: Optional[float] = None,
-    portfolio_stop_risk_pct: Optional[float] = None,
-    portfolio_available_capital: Optional[float] = None,
-    max_portfolio_exposure_pct: Optional[float] = None,
-    max_portfolio_stop_risk_pct: Optional[float] = None,
-    global_risk_multiplier: Optional[float] = None,
-    min_stop_atr_mult: float = 1.0,
-    min_hold_time_mult: float = 1.0,
-    trading_paused: bool = False,
-    has_position: bool = False,
-    historical_backtest_results: Optional[List[Dict[str, Any]]] = None,
-) -> str:
+@dataclass
+class BacktestPromptData:
+    symbol: str
+    analysis: Dict[str, Any]
+    ticker: Dict[str, Any]
+    current_price: float
+    atr: Optional[float]
+    assigned_timeframe: str
+    base_currency: str
+    base_balance: float
+    per_symbol_budget: float
+    min_order_amount: Optional[float] = None
+    min_order_cost: Optional[float] = None
+    remaining_balance: Optional[float] = None
+    portfolio_total_value: Optional[float] = None
+    portfolio_exposure_pct: Optional[float] = None
+    portfolio_stop_risk_pct: Optional[float] = None
+    portfolio_available_capital: Optional[float] = None
+    max_portfolio_exposure_pct: Optional[float] = None
+    max_portfolio_stop_risk_pct: Optional[float] = None
+    global_risk_multiplier: Optional[float] = None
+    min_stop_atr_mult: float = 1.0
+    min_hold_time_mult: float = 1.0
+    trading_paused: bool = False
+    has_position: bool = False
+    historical_backtest_results: Optional[List[Dict[str, Any]]] = None
+
+
+def build_backtest_variants_prompt(data: BacktestPromptData) -> str:
     """Build a focused prompt for Step 1b: Parameter selection and backtest variants.
 
     Given the analysis from Step 1a, asks the LLM to propose backtest variants
@@ -1950,6 +1953,28 @@ def build_backtest_variants_prompt(
     from src.config.settings import settings as _settings
     import re as _re
     import time as _time
+
+    symbol = data.symbol
+    analysis = data.analysis
+    current_price = data.current_price
+    atr = data.atr
+    assigned_timeframe = data.assigned_timeframe
+    base_currency = data.base_currency
+    base_balance = data.base_balance
+    per_symbol_budget = data.per_symbol_budget
+    remaining_balance = data.remaining_balance
+    portfolio_total_value = data.portfolio_total_value
+    portfolio_exposure_pct = data.portfolio_exposure_pct
+    portfolio_stop_risk_pct = data.portfolio_stop_risk_pct
+    portfolio_available_capital = data.portfolio_available_capital
+    max_portfolio_exposure_pct = data.max_portfolio_exposure_pct
+    max_portfolio_stop_risk_pct = data.max_portfolio_stop_risk_pct
+    global_risk_multiplier = data.global_risk_multiplier
+    min_stop_atr_mult = data.min_stop_atr_mult
+    min_hold_time_mult = data.min_hold_time_mult
+    trading_paused = data.trading_paused
+    has_position = data.has_position
+    historical_backtest_results = data.historical_backtest_results
 
     tf_seconds = _timeframe_to_seconds(assigned_timeframe)
 
@@ -2006,10 +2031,10 @@ Base currency: {base_currency}
         prompt += f"- Max portfolio stop risk: {max_portfolio_stop_risk_pct*100:.0f}%\n"
     if global_risk_multiplier is not None and global_risk_multiplier < 1.0:
         prompt += f"- Global risk multiplier: {global_risk_multiplier}\n"
-    if min_order_amount is not None:
-        prompt += f"- Min order amount: {min_order_amount}\n"
-    if min_order_cost is not None:
-        prompt += f"- Min order cost: {min_order_cost:.2f} {base_currency}\n"
+    if data.min_order_amount is not None:
+        prompt += f"- Min order amount: {data.min_order_amount}\n"
+    if data.min_order_cost is not None:
+        prompt += f"- Min order cost: {data.min_order_cost:.2f} {base_currency}\n"
 
     # Transaction cost break-even
     if trade_value > 0:

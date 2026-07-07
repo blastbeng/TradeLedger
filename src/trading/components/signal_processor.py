@@ -16,7 +16,7 @@ from src.database import get_latest_ohlcv_timestamp, get_ohlcv, get_indicators, 
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
 from src.indicators import compute_all_indicators, compute_ema, compute_vwap, compute_pivot_points
 from src.llm.cache import get_cached_llm_response, compute_market_hash
-from src.llm.prompts import build_analysis_prompt, compact_prompt, build_backtest_variants_prompt, build_system_prompt, get_cached_news_summary, StrategyPromptData
+from src.llm.prompts import build_analysis_prompt, compact_prompt, build_backtest_variants_prompt, build_system_prompt, get_cached_news_summary, StrategyPromptData, BacktestPromptData
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
@@ -2620,8 +2620,7 @@ class SignalProcessor:
         llm_model = None
 
         # --- Build variants prompt ---
-        variants_prompt = await asyncio.to_thread(
-            build_backtest_variants_prompt,
+        prompt_data = BacktestPromptData(
             symbol=symbol,
             analysis=analysis_result,
             ticker=ticker,
@@ -2646,6 +2645,10 @@ class SignalProcessor:
             trading_paused=trading_paused,
             has_position=has_position,
             historical_backtest_results=historical_backtest_results,
+        )
+        variants_prompt = await asyncio.to_thread(
+            build_backtest_variants_prompt,
+            prompt_data
         )
         logger.info(f"LLM Step 1b variants prompt for {symbol}: {len(variants_prompt)} chars")
 
@@ -4171,8 +4174,7 @@ class SignalProcessor:
             return None, None, None, {"error": "Failed to parse Step 1a analysis response", "raw_response": step1a_response}
 
         # Step 1b: Backtest variants
-        variants_prompt = await asyncio.to_thread(
-            build_backtest_variants_prompt,
+        prompt_data = BacktestPromptData(
             symbol=symbol,
             analysis=analysis,
             ticker=data["ticker"],
@@ -4197,6 +4199,10 @@ class SignalProcessor:
             trading_paused=False,
             has_position=data.get("has_position", False),
             historical_backtest_results=data.get("historical_backtest_results"),
+        )
+        variants_prompt = await asyncio.to_thread(
+            build_backtest_variants_prompt,
+            prompt_data
         )
 
         try:
