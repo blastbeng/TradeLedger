@@ -2170,10 +2170,6 @@ class TradingEngine:
             return False
         return clock.is_open
 
-    async def _is_regular_hours(self) -> bool:
-        """Return True if the market is currently open."""
-        return await self._is_market_open()
-
     async def _remove_symbol_if_paused(self, symbol: str):
         """Clear pending entries for a symbol. Symbols are kept in current_symbols even when paused
         so the bot continues to generate and notify signals."""

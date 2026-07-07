@@ -1565,7 +1565,7 @@ class OrderExecutor:
         except (AttributeError, TypeError, ValueError, RuntimeError, KeyError) as e:
             logger.warning(f"Could not verify min sell size for {symbol}: {e}")
 
-        need_limit = not engine._is_regular_hours()
+        need_limit = not await engine._is_market_open()
         limit_price = None
         time_in_force = "day"
         # If LLM provided a limit_price, use it even during regular hours
@@ -1917,7 +1917,7 @@ class OrderExecutor:
         order should be skipped (invalid limit price).
         """
         engine = self.engine
-        need_limit = not engine._is_regular_hours()
+        need_limit = not await engine._is_market_open()
         limit_price = None
         time_in_force = "day"
         # If LLM provided a limit_price, use it even during regular hours
@@ -2822,7 +2822,7 @@ class OrderExecutor:
                     engine.positions[symbol]["_dust_sweep_pending"] = True
             return
 
-        need_limit = not engine._is_regular_hours()
+        need_limit = not await engine._is_market_open()
         limit_price = None
         time_in_force = "day"
         if need_limit:
@@ -2934,7 +2934,7 @@ class OrderExecutor:
             logger.info(f"{level_label} for {symbol} skipped: market closed.")
             return False
 
-        need_limit = not engine._is_regular_hours()
+        need_limit = not await engine._is_market_open()
         limit_price = None
         time_in_force = "day"
         if need_limit:
