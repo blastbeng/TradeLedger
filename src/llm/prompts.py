@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple
 from src.config.settings import settings
 from src.utils.symbol_utils import is_btp_isin
@@ -982,102 +983,200 @@ Output ONLY the raw JSON object."""
     return prompt
 
 
+@dataclass
+class StrategyPromptData:
+    symbol: str
+    ticker: Dict[str, Any]
+    balance: Dict[str, float]
+    open_positions: List[Dict[str, Any]]
+    per_symbol_budget: float
+    max_symbols: int
+    base_currency: str
+    performance: Optional[Dict[str, Any]] = None
+    ohlcv_data: Optional[Dict[str, List]] = None
+    assigned_timeframe: Optional[str] = None
+    atr: Optional[float] = None
+    atr_multi_tf: Optional[Dict[str, float]] = None
+    rsi: Optional[float] = None
+    macd: Optional[float] = None
+    macd_signal: Optional[float] = None
+    macd_hist: Optional[float] = None
+    bb_upper: Optional[float] = None
+    bb_middle: Optional[float] = None
+    bb_lower: Optional[float] = None
+    ema_9: Optional[float] = None
+    ema_21: Optional[float] = None
+    stochastic_k: Optional[float] = None
+    stochastic_d: Optional[float] = None
+    adx: Optional[float] = None
+    plus_di: Optional[float] = None
+    minus_di: Optional[float] = None
+    obv: Optional[float] = None
+    mfi: Optional[float] = None
+    cci: Optional[float] = None
+    williams_r: Optional[float] = None
+    unrealized_pnl: Optional[float] = None
+    position_info: Optional[Dict[str, Any]] = None
+    drawdown_pct: Optional[float] = None
+    raw_candles: Optional[List[List]] = None
+    recent_trades: Optional[List[Dict[str, Any]]] = None
+    historical_ohlcv: Optional[List[List]] = None
+    min_order_amount: Optional[float] = None
+    min_order_cost: Optional[float] = None
+    all_symbols: Optional[List[Dict[str, str]]] = None
+    past_trades: Optional[List[Dict[str, Any]]] = None
+    cycle_spent: Optional[float] = None
+    remaining_balance: Optional[float] = None
+    market_regime: Optional[str] = None
+    multi_tf_raw_candles: Optional[Dict[str, List[List]]] = None
+    multi_tf_indicators: Optional[Dict[str, Dict[str, Any]]] = None
+    session_info: Optional[Dict[str, Any]] = None
+    sentiment_trend: Optional[float] = None
+    volume_trend: Optional[float] = None
+    ichimoku: Optional[Dict[str, Optional[float]]] = None
+    market_breadth: Optional[Dict[str, Any]] = None
+    full_market_breadth: Optional[Dict[str, Any]] = None
+    keltner_channels: Optional[Dict[str, float]] = None
+    donchian_channels: Optional[Dict[str, float]] = None
+    parabolic_sar: Optional[float] = None
+    atr_percentile: Optional[float] = None
+    global_risk_multiplier: Optional[float] = None
+    trading_paused: bool = False
+    max_hold_expired: bool = False
+    max_hold_expired_count: int = 0
+    stop_loss_triggered: bool = False
+    stop_loss_review_count: int = 0
+    take_profit_triggered: bool = False
+    take_profit_review_count: int = 0
+    partial_tp_triggered: bool = False
+    partial_tp_review_count: int = 0
+    partial_tp_triggered_levels: Optional[List[int]] = None
+    partial_tp_executed_levels: Optional[List[int]] = None
+    dust_sweep_triggered: bool = False
+    dust_sweep_review_count: int = 0
+    max_stop_loss_reviews: int = 10
+    max_take_profit_reviews: int = 10
+    max_partial_tp_reviews: int = 10
+    max_dust_sweep_reviews: int = 10
+    portfolio_exposure_pct: Optional[float] = None
+    portfolio_stop_risk_pct: Optional[float] = None
+    portfolio_total_value: Optional[float] = None
+    portfolio_open_count: int = 0
+    portfolio_available_capital: Optional[float] = None
+    last_decision: Optional[Dict[str, Any]] = None
+    minutes_to_market_close: Optional[int] = None
+    current_strategy_interval_seconds: Optional[int] = None
+    max_portfolio_exposure_pct: Optional[float] = None
+    max_portfolio_stop_risk_pct: Optional[float] = None
+    trade_pattern_analysis: Optional[Dict[str, Any]] = None
+    symbol_event: Optional[Dict[str, Any]] = None
+    queued_orders: Optional[List[Dict[str, Any]]] = None
+    fundamentals: Optional[Dict[str, Any]] = None
+    vwap: Optional[float] = None
+    daily_pivot_points: Optional[Dict[str, float]] = None
+    min_hold_time_mult: float = 1.0
+    min_stop_atr_mult: float = 1.0
+    min_viable_trade_amount: float = 0.0
+    historical_backtest_results: Optional[List[Dict[str, Any]]] = None
+
+
 def build_strategy_prompt(
-    symbol: str,
-    ticker: Dict[str, Any],
-    balance: Dict[str, float],
-    open_positions: List[Dict[str, Any]],
-    per_symbol_budget: float,
-    max_symbols: int,
-    base_currency: str,
-    performance: Optional[Dict[str, Any]] = None,
-    ohlcv_data: Optional[Dict[str, List]] = None,
-    assigned_timeframe: Optional[str] = None,
-    atr: Optional[float] = None,
-    atr_multi_tf: Optional[Dict[str, float]] = None,
-    rsi: Optional[float] = None,
-    macd: Optional[float] = None,
-    macd_signal: Optional[float] = None,
-    macd_hist: Optional[float] = None,
-    bb_upper: Optional[float] = None,
-    bb_middle: Optional[float] = None,
-    bb_lower: Optional[float] = None,
-    ema_9: Optional[float] = None,
-    ema_21: Optional[float] = None,
-    stochastic_k: Optional[float] = None,
-    stochastic_d: Optional[float] = None,
-    adx: Optional[float] = None,
-    plus_di: Optional[float] = None,
-    minus_di: Optional[float] = None,
-    obv: Optional[float] = None,
-    mfi: Optional[float] = None,
-    cci: Optional[float] = None,
-    williams_r: Optional[float] = None,
-    unrealized_pnl: Optional[float] = None,
-    position_info: Optional[Dict[str, Any]] = None,
-    drawdown_pct: Optional[float] = None,
-    raw_candles: Optional[List[List]] = None,
-    recent_trades: Optional[List[Dict[str, Any]]] = None,
-    historical_ohlcv: Optional[List[List]] = None,
-    min_order_amount: Optional[float] = None,
-    min_order_cost: Optional[float] = None,
-    all_symbols: Optional[List[Dict[str, str]]] = None,
-    past_trades: Optional[List[Dict[str, Any]]] = None,
-    cycle_spent: Optional[float] = None,
-    remaining_balance: Optional[float] = None,
-    market_regime: Optional[str] = None,
-    multi_tf_raw_candles: Optional[Dict[str, List[List]]] = None,
-    multi_tf_indicators: Optional[Dict[str, Dict[str, Any]]] = None,
-    session_info: Optional[Dict[str, Any]] = None,
-    sentiment_trend: Optional[float] = None,
-    volume_trend: Optional[float] = None,
-    ichimoku: Optional[Dict[str, Optional[float]]] = None,
-    market_breadth: Optional[Dict[str, Any]] = None,
-    full_market_breadth: Optional[Dict[str, Any]] = None,
-    keltner_channels: Optional[Dict[str, float]] = None,
-    donchian_channels: Optional[Dict[str, float]] = None,
-    parabolic_sar: Optional[float] = None,
-    atr_percentile: Optional[float] = None,
-    global_risk_multiplier: Optional[float] = None,
-    trading_paused: bool = False,
-    max_hold_expired: bool = False,
-    max_hold_expired_count: int = 0,
-    stop_loss_triggered: bool = False,
-    stop_loss_review_count: int = 0,
-    take_profit_triggered: bool = False,
-    take_profit_review_count: int = 0,
-    partial_tp_triggered: bool = False,
-    partial_tp_review_count: int = 0,
-    partial_tp_triggered_levels: Optional[List[int]] = None,
-    partial_tp_executed_levels: Optional[List[int]] = None,
-    dust_sweep_triggered: bool = False,
-    dust_sweep_review_count: int = 0,
-    max_stop_loss_reviews: int = 10,
-    max_take_profit_reviews: int = 10,
-    max_partial_tp_reviews: int = 10,
-    max_dust_sweep_reviews: int = 10,
-    portfolio_exposure_pct: Optional[float] = None,
-    portfolio_stop_risk_pct: Optional[float] = None,
-    portfolio_total_value: Optional[float] = None,
-    portfolio_open_count: int = 0,
-    portfolio_available_capital: Optional[float] = None,
-    last_decision: Optional[Dict[str, Any]] = None,
-    minutes_to_market_close: Optional[int] = None,
-    current_strategy_interval_seconds: Optional[int] = None,
-    max_portfolio_exposure_pct: Optional[float] = None,
-    max_portfolio_stop_risk_pct: Optional[float] = None,
-    trade_pattern_analysis: Optional[Dict[str, Any]] = None,
-    symbol_event: Optional[Dict[str, Any]] = None,
-    queued_orders: Optional[List[Dict[str, Any]]] = None,
-    fundamentals: Optional[Dict[str, Any]] = None,
-    vwap: Optional[float] = None,
-    daily_pivot_points: Optional[Dict[str, float]] = None,
-    min_hold_time_mult: float = 1.0,
-    min_stop_atr_mult: float = 1.0,
-    min_viable_trade_amount: float = 0.0,
-    historical_backtest_results: Optional[List[Dict[str, Any]]] = None,
+    data: StrategyPromptData,
 ) -> str:
     """Build a prompt to generate a trading strategy for a specific stock/ETF."""
+    symbol = data.symbol
+    ticker = data.ticker
+    balance = data.balance
+    open_positions = data.open_positions
+    per_symbol_budget = data.per_symbol_budget
+    max_symbols = data.max_symbols
+    base_currency = data.base_currency
+    performance = data.performance
+    ohlcv_data = data.ohlcv_data
+    assigned_timeframe = data.assigned_timeframe
+    atr = data.atr
+    atr_multi_tf = data.atr_multi_tf
+    rsi = data.rsi
+    macd = data.macd
+    macd_signal = data.macd_signal
+    macd_hist = data.macd_hist
+    bb_upper = data.bb_upper
+    bb_middle = data.bb_middle
+    bb_lower = data.bb_lower
+    ema_9 = data.ema_9
+    ema_21 = data.ema_21
+    stochastic_k = data.stochastic_k
+    stochastic_d = data.stochastic_d
+    adx = data.adx
+    plus_di = data.plus_di
+    minus_di = data.minus_di
+    obv = data.obv
+    mfi = data.mfi
+    cci = data.cci
+    williams_r = data.williams_r
+    unrealized_pnl = data.unrealized_pnl
+    position_info = data.position_info
+    drawdown_pct = data.drawdown_pct
+    raw_candles = data.raw_candles
+    recent_trades = data.recent_trades
+    historical_ohlcv = data.historical_ohlcv
+    min_order_amount = data.min_order_amount
+    min_order_cost = data.min_order_cost
+    all_symbols = data.all_symbols
+    past_trades = data.past_trades
+    cycle_spent = data.cycle_spent
+    remaining_balance = data.remaining_balance
+    market_regime = data.market_regime
+    multi_tf_raw_candles = data.multi_tf_raw_candles
+    multi_tf_indicators = data.multi_tf_indicators
+    session_info = data.session_info
+    sentiment_trend = data.sentiment_trend
+    volume_trend = data.volume_trend
+    ichimoku = data.ichimoku
+    market_breadth = data.market_breadth
+    full_market_breadth = data.full_market_breadth
+    keltner_channels = data.keltner_channels
+    donchian_channels = data.donchian_channels
+    parabolic_sar = data.parabolic_sar
+    atr_percentile = data.atr_percentile
+    global_risk_multiplier = data.global_risk_multiplier
+    trading_paused = data.trading_paused
+    max_hold_expired = data.max_hold_expired
+    max_hold_expired_count = data.max_hold_expired_count
+    stop_loss_triggered = data.stop_loss_triggered
+    stop_loss_review_count = data.stop_loss_review_count
+    take_profit_triggered = data.take_profit_triggered
+    take_profit_review_count = data.take_profit_review_count
+    partial_tp_triggered = data.partial_tp_triggered
+    partial_tp_review_count = data.partial_tp_review_count
+    partial_tp_triggered_levels = data.partial_tp_triggered_levels
+    partial_tp_executed_levels = data.partial_tp_executed_levels
+    dust_sweep_triggered = data.dust_sweep_triggered
+    dust_sweep_review_count = data.dust_sweep_review_count
+    max_stop_loss_reviews = data.max_stop_loss_reviews
+    max_take_profit_reviews = data.max_take_profit_reviews
+    max_partial_tp_reviews = data.max_partial_tp_reviews
+    max_dust_sweep_reviews = data.max_dust_sweep_reviews
+    portfolio_exposure_pct = data.portfolio_exposure_pct
+    portfolio_stop_risk_pct = data.portfolio_stop_risk_pct
+    portfolio_total_value = data.portfolio_total_value
+    portfolio_open_count = data.portfolio_open_count
+    portfolio_available_capital = data.portfolio_available_capital
+    last_decision = data.last_decision
+    minutes_to_market_close = data.minutes_to_market_close
+    current_strategy_interval_seconds = data.current_strategy_interval_seconds
+    max_portfolio_exposure_pct = data.max_portfolio_exposure_pct
+    max_portfolio_stop_risk_pct = data.max_portfolio_stop_risk_pct
+    trade_pattern_analysis = data.trade_pattern_analysis
+    symbol_event = data.symbol_event
+    queued_orders = data.queued_orders
+    fundamentals = data.fundamentals
+    vwap = data.vwap
+    daily_pivot_points = data.daily_pivot_points
+    min_hold_time_mult = data.min_hold_time_mult
+    min_stop_atr_mult = data.min_stop_atr_mult
+    min_viable_trade_amount = data.min_viable_trade_amount
+    historical_backtest_results = data.historical_backtest_results
     current_price = ticker.get("last") if ticker else None
     if assigned_timeframe and assigned_timeframe not in TIMEFRAME_MAP:
         logger.warning(f"Assigned timeframe {assigned_timeframe} is not supported by yfinance. Falling back to default.")
@@ -1786,14 +1885,14 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
     return prompt
 
 
-def build_analysis_prompt(**kwargs) -> str:
+def build_analysis_prompt(data: StrategyPromptData) -> str:
     """Build a focused prompt for Step 1a: Market analysis only.
 
     Reuses build_strategy_prompt for all market data context,
     but appends a simpler output format instruction at the end.
     No trading parameters, backtest variants, or entry conditions are requested.
     """
-    full_prompt = build_strategy_prompt(**kwargs)
+    full_prompt = build_strategy_prompt(data)
 
     analysis_output = (
         "\n\n**IMPORTANT — Step 1a: Analysis Only**\n"

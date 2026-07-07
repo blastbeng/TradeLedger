@@ -16,7 +16,7 @@ from src.database import get_latest_ohlcv_timestamp, get_ohlcv, get_indicators, 
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
 from src.indicators import compute_all_indicators, compute_ema, compute_vwap, compute_pivot_points
 from src.llm.cache import get_cached_llm_response, compute_market_hash
-from src.llm.prompts import build_analysis_prompt, compact_prompt, build_backtest_variants_prompt, build_system_prompt, get_cached_news_summary
+from src.llm.prompts import build_analysis_prompt, compact_prompt, build_backtest_variants_prompt, build_system_prompt, get_cached_news_summary, StrategyPromptData
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
@@ -1045,8 +1045,7 @@ class SignalProcessor:
         """
         engine = self.engine
 
-        analysis_prompt = await asyncio.to_thread(
-            build_analysis_prompt,
+        prompt_data = StrategyPromptData(
             symbol=symbol,
             ticker=ticker,
             balance=balance,
@@ -1140,6 +1139,10 @@ class SignalProcessor:
             min_stop_atr_mult=min_stop_atr_mult,
             min_viable_trade_amount=min_viable_amount,
             historical_backtest_results=historical_backtest_results,
+        )
+        analysis_prompt = await asyncio.to_thread(
+            build_analysis_prompt,
+            prompt_data
         )
         # Add quote staleness warning if the price data is outdated
         staleness_warning = engine._market_data_manager._get_quote_staleness_warning(ticker)
