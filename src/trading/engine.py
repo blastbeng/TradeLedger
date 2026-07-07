@@ -1951,12 +1951,6 @@ class TradingEngine:
                 logger.error(f"Error checking pending entries: {e}", exc_info=True)
             await asyncio.sleep(60)  # check every 60 seconds (medium/long-term)
 
-    async def _check_entry_condition_once(
-        self, symbol: str, condition: Dict[str, Any], timeframe: str
-    ) -> bool:
-        """Check a single entry condition immediately. Return True if met."""
-        return await self._signal_processor.check_entry_condition_once(symbol, condition, timeframe)
-
     async def _execute_delayed_entry(self, symbol: str, signal, timeframe: str, delay_seconds: float):
         """Execute a delayed entry after waiting for the specified duration."""
         logger.info(f"Delayed entry: waiting {delay_seconds}s for {symbol}")
@@ -2195,62 +2189,6 @@ class TradingEngine:
         # Always clear any pending entry for this symbol
         self._pending_entries.pop(symbol, None)
         self._state_dirty = True
-
-    async def _run_backtest_variant(
-        self,
-        symbol: str,
-        variant_params: Dict[str, Any],
-        preliminary_signal: Signal,
-        atr: Optional[float],
-        current_price: float,
-        tf_secs: int,
-        assigned_tf: str,
-        historical_ohlcv: Optional[List[List]],
-        raw_candles: Optional[List[List]],
-        base_balance: float,
-        is_btp: bool,
-    ) -> Tuple[Optional[Dict[str, Any]], str]:
-        """Run a single backtest variant with database persistence and concurrency limiting."""
-        return await self._backtest_manager._run_backtest_variant(
-            symbol=symbol,
-            variant_params=variant_params,
-            preliminary_signal=preliminary_signal,
-            atr=atr,
-            current_price=current_price,
-            tf_secs=tf_secs,
-            assigned_tf=assigned_tf,
-            historical_ohlcv=historical_ohlcv,
-            raw_candles=raw_candles,
-            base_balance=base_balance,
-            is_btp=is_btp,
-        )
-
-    async def _run_backtest_from_signal(
-        self,
-        symbol: str,
-        signal: Signal,
-        atr: Optional[float],
-        current_price: float,
-        tf_secs: int,
-        assigned_tf: str,
-        historical_ohlcv: Optional[List[List]],
-        raw_candles: Optional[List[List]],
-        base_balance: float,
-        is_btp: bool,
-    ) -> Tuple[Optional[Dict[str, Any]], str]:
-        """Run a backtest using the parameters from a signal. Returns (stats, summary)."""
-        return await self._backtest_manager._run_backtest_from_signal(
-            symbol=symbol,
-            signal=signal,
-            atr=atr,
-            current_price=current_price,
-            tf_secs=tf_secs,
-            assigned_tf=assigned_tf,
-            historical_ohlcv=historical_ohlcv,
-            raw_candles=raw_candles,
-            base_balance=base_balance,
-            is_btp=is_btp,
-        )
 
     async def _prepare_simulation_data(self, symbol: str) -> Dict[str, Any]:
         """Fetch all necessary data and build the strategy prompt for simulation."""
