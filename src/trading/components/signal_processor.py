@@ -3180,7 +3180,7 @@ class SignalProcessor:
                 keep_count = 0
 
             # Build a richer prompt with performance context
-            perf = await asyncio.to_thread(engine._compute_performance_metrics)
+            perf = await engine._compute_performance_metrics()
             daily_pnl = perf["equity_curve"].get("daily_pnl", 0.0)
             total_pnl = perf["equity_curve"].get("total_pnl", 0.0)
             consecutive_losses = perf["equity_curve"].get("consecutive_losses", 0)
