@@ -24,6 +24,17 @@ class Settings(BaseSettings):
     # Risk management check interval (seconds) – stop-loss/take-profit checks
     RISK_CHECK_INTERVAL_SECONDS: int = 120
 
+    # Risk check interval for very long timeframes (>= 1 year).
+    # Overrides RISK_CHECK_INTERVAL_SECONDS for positions on 1Y/3Y/5Y timeframes.
+    RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS: int = 14400  # 4 hours
+
+    @field_validator("RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS")
+    @classmethod
+    def validate_risk_check_interval_very_long_tf(cls, v: int) -> int:
+        if v < 300:
+            raise ValueError("RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS must be >= 300")
+        return v
+
     # Main engine loop polling interval (seconds). For medium/long-term trading,
     # a longer interval reduces CPU usage while still processing symbols at their
     # designated strategy intervals.
@@ -336,6 +347,19 @@ class Settings(BaseSettings):
     def validate_dust_keep_timeout(cls, v: int) -> int:
         if v < 3600:
             raise ValueError("DUST_KEEP_TIMEOUT_SECONDS must be >= 3600")
+        return v
+
+    # Maximum position age as a multiple of the original max_hold_time_seconds.
+    # If the LLM keeps extending max_hold_time_seconds, the position is force-closed
+    # once its age exceeds this multiplier × the original max hold time.
+    # Set to 0 to disable the maximum position age safeguard.
+    MAX_POSITION_AGE_MULTIPLIER: float = 2.0
+
+    @field_validator("MAX_POSITION_AGE_MULTIPLIER")
+    @classmethod
+    def validate_max_position_age_multiplier(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("MAX_POSITION_AGE_MULTIPLIER must be >= 0")
         return v
 
     # Minimum seconds between condition-triggered re-evaluations

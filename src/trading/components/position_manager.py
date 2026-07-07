@@ -44,6 +44,13 @@ class PositionManager:
                 pos['cost_basis'] = pos['amount'] * pos['price']
                 pos['net_base'] = pos['amount']
 
+        # Pre-set the BTP trailing stop warning flag for loaded positions
+        # so we don't spam warnings on every risk check cycle.
+        for sym, pos in self.engine.positions.items():
+            base = sym.split("/")[0]
+            if is_btp_isin(base) and pos.get("trailing_stop") and "_ts_btp_warned" not in pos:
+                pos["_ts_btp_warned"] = True
+
     async def compute_portfolio_exposure_summary(self, base_balance: float) -> Dict[str, float]:
         """Compute portfolio exposure, stop-loss risk, and available capital for the prompt."""
         engine = self.engine
@@ -755,6 +762,11 @@ class PositionManager:
                 1.0, 31_536_000.0, symbol,  # 1 second to ~1 year
             )
             if val is not None:
+                # Store the original max hold time on first set so the
+                # maximum position age safeguard can reference it even
+                # if the LLM later extends max_hold_time_seconds.
+                if "_original_max_hold_time_seconds" not in pos:
+                    pos["_original_max_hold_time_seconds"] = val
                 pos["max_hold_time_seconds"] = val
                 # If the LLM explicitly sets a new hold time, clear any expiry flag
                 pos.pop("_max_hold_expired", None)
