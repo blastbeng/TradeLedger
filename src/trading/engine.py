@@ -387,7 +387,7 @@ class TradingEngine:
 
             async def _force_download_symbol(pair: str):
                 for tf in settings.OHLCV_TIMEFRAMES:
-                    await self._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True, force=True)
+                    await self._market_data_manager._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True, force=True)
 
             download_concurrency = asyncio.Semaphore(10)
             async def _limited_force_download(pair: str):
@@ -418,7 +418,7 @@ class TradingEngine:
 
             async def _force_download_symbol(pair: str):
                 for tf in settings.OHLCV_TIMEFRAMES:
-                    await self._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True, force=True)
+                    await self._market_data_manager._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True, force=True)
 
             download_concurrency = asyncio.Semaphore(10)
             async def _limited_force_download(pair: str):
@@ -1245,10 +1245,6 @@ class TradingEngine:
             display += f" ({timeframe})"
         return display
 
-    async def _download_symbol_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, quiet: bool = False, force: bool = False) -> None:
-        """Download OHLCV, fill gaps, and compute/store indicators for a single symbol/timeframe."""
-        await self._market_data_manager._download_symbol_ohlcv(symbol, timeframe, start_ms, end_ms, quiet, force)
-
     async def _download_market_data_loop(self):
         """Periodically download and store OHLCV data for tracked stocks, with gap detection."""
         # Initial delay to let the engine settle
@@ -1271,7 +1267,7 @@ class TradingEngine:
                         symbol = symbol_entry["symbol"]
                         tf = symbol_entry["timeframe"]
                         logger.debug(f"Downloading market data for {symbol} ({tf})")
-                        await self._download_symbol_ohlcv(symbol, tf, start_ms, now_ms)
+                        await self._market_data_manager._download_symbol_ohlcv(symbol, tf, start_ms, now_ms)
 
                     shuffled_symbols = list(self.current_symbols)
                     random.shuffle(shuffled_symbols)
