@@ -1559,6 +1559,7 @@ class TradingEngine:
         ]
         for factory in background_factories:
             sup = TaskSupervisor(factory, name=factory.__qualname__)
+            sup.set_notifier(self.notifier)
             task = asyncio.create_task(sup.run(), name=f"supervisor:{factory.__qualname__}")
             task.add_done_callback(self._log_task_exception)
             self._background_tasks.append(task)
@@ -1724,6 +1725,21 @@ class TradingEngine:
         await asyncio.sleep(60)  # initial delay
         while self._running:
             try:
+                # Skip LLM pause/resume check if duration-based auto-resume is imminent
+                pause_duration_raw = await asyncio.to_thread(self.redis.get, "trading:pause_duration")
+                pause_start_raw = await asyncio.to_thread(self.redis.get, "trading:pause_start")
+                if pause_duration_raw and pause_start_raw:
+                    try:
+                        pause_start = float(pause_start_raw)
+                        pause_duration = int(pause_duration_raw)
+                        remaining = (pause_start + pause_duration) - time.time()
+                        if remaining < 120:  # less than 2 minutes until auto-resume
+                            logger.debug("Skipping LLM pause/resume check – duration-based auto-resume imminent.")
+                            await asyncio.sleep(1800)
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
                 if await self._is_market_open():
                     await self._signal_processor.check_pause_resume_decision()
             except Exception as e:
@@ -1891,6 +1907,15 @@ class TradingEngine:
         logger.info(f"Delayed entry: waiting {delay_seconds}s for {symbol}")
         await asyncio.sleep(delay_seconds)
         if not self._running:
+            return
+        # Check if market is still open before executing
+        if not await self._is_market_open():
+            logger.info(f"Skipping delayed BUY for {symbol}: market closed after delay elapsed.")
+            if self.notifier:
+                await self.notifier.send_notification(
+                    f"⏸️ Delayed BUY for {symbol} skipped – market closed after delay.",
+                    summary={"symbol": symbol, "action": "SKIP", "reason": "Market closed after delay"}
+                )
             return
         # Check if the symbol already has a position (may have been bought by another path)
         if symbol in self.positions:

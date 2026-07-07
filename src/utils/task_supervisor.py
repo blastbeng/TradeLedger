@@ -24,6 +24,7 @@ class TaskSupervisor:
         self.last_failure_time: Optional[float] = None
         self.last_exception: Optional[str] = None
         self.is_healthy: bool = True
+        self._notifier = None
 
     async def run(self):
         while self._running:
@@ -54,9 +55,22 @@ class TaskSupervisor:
                 if self._restart_count > self.max_restarts:
                     logger.critical(f"Task {self.name} exceeded max_restarts ({self.max_restarts}). Aborting supervisor.")
                     self.is_healthy = False
+                    if self._notifier:
+                        try:
+                            asyncio.create_task(self._notifier.send_notification(
+                                f"🚨 Background task '{self.name}' has exceeded max restarts ({self.max_restarts}) and is aborting. "
+                                f"Last error: {str(e)[:200]}",
+                                summary={"action": "CRITICAL", "reason": f"Task {self.name} aborted after max restarts"}
+                            ))
+                        except Exception:
+                            pass
                     raise
                 logger.info(f"Restarting task {self.name} in {self.restart_delay}s (attempt {self._restart_count}/{self.max_restarts})")
                 await asyncio.sleep(self.restart_delay)
+
+    def set_notifier(self, notifier):
+        """Attach a notifier for escalation alerts."""
+        self._notifier = notifier
 
     def cancel(self):
         self._running = False

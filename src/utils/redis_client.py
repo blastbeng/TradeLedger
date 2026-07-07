@@ -8,10 +8,52 @@ _redis_client: redis.Redis = None
 _redis_available = True
 
 class DummyRedis:
-    """A no-op Redis client used when Redis is unavailable."""
+    """A no-op Redis client used when Redis is unavailable.
+
+    Read operations return safe defaults (None/0/False) to allow degraded
+    operation. Write operations raise ConnectionError to surface failures
+    rather than silently dropping data.
+    """
+    _warned = False
+
+    def _warn(self, method: str):
+        if not DummyRedis._warned:
+            logger.warning("Redis unavailable – DummyRedis.%s called (degraded mode)", method)
+            DummyRedis._warned = True
+
+    # Read operations – return safe defaults
+    def get(self, *args, **kwargs):
+        self._warn("get")
+        return None
+
+    def exists(self, *args, **kwargs):
+        self._warn("exists")
+        return 0
+
+    def ping(self, *args, **kwargs):
+        self._warn("ping")
+        return False
+
+    def incr(self, *args, **kwargs):
+        self._warn("incr")
+        return 0
+
+    # Write operations – raise to surface the failure
+    def set(self, *args, **kwargs):
+        raise ConnectionError("Redis unavailable – cannot execute SET")
+
+    def setex(self, *args, **kwargs):
+        raise ConnectionError("Redis unavailable – cannot execute SETEX")
+
+    def delete(self, *args, **kwargs):
+        raise ConnectionError("Redis unavailable – cannot execute DELETE")
+
+    def expire(self, *args, **kwargs):
+        raise ConnectionError("Redis unavailable – cannot execute EXPIRE")
+
     def __getattr__(self, name):
         def method(*args, **kwargs):
-            return None
+            raise ConnectionError(f"Redis unavailable – cannot execute {name.upper()}")
         return method
 
 def is_redis_available() -> bool:
