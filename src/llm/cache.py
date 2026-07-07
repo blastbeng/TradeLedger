@@ -142,9 +142,9 @@ def get_cached_llm_response(
         try:
             future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol)
             try:
-                semantic_hit = future.result(timeout=5.0)
+                semantic_hit = future.result(timeout=120.0)
             except FuturesTimeoutError:
-                logger.warning("Semantic cache query timed out after 5s, skipping to LLM call.")
+                logger.warning("Semantic cache query timed out after 120s, skipping to LLM call.")
             except Exception as e:
                 logger.warning(f"Semantic cache query failed, bypassing: {e}")
 

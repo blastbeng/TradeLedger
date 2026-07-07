@@ -134,7 +134,7 @@ class SemanticCacheClient:
             self._init_failed = True
             self._initialized = False  # allow retry
 
-    def get_embedding(self, text: str, timeout: int = 120) -> Optional[List[float]]:
+    def get_embedding(self, text: str, timeout: int = 180) -> Optional[List[float]]:
         """Generates an embedding for the given text using the llama.cpp server."""
         embedding_url = f"{self.embedding_url}/embeddings"
         logger.info(f"Semantic Cache: get_embedding called for text (len={len(text)})")
@@ -167,7 +167,7 @@ class SemanticCacheClient:
                     )
 
                 future = llamacpp_executor.submit(_do_request, priority=10)
-                resp = future.result(timeout=timeout + 10)  # Wait slightly longer than HTTP timeout
+                resp = future.result(timeout=timeout + 30)  # Wait slightly longer than HTTP timeout
 
                 logger.info(f"Semantic Cache: Embedding response status: {resp.status_code}, text: {resp.text[:500]}")
                 resp.raise_for_status()
@@ -206,7 +206,7 @@ class SemanticCacheClient:
 
         generalized_prompt, ticker = generalize_prompt(prompt, symbol)
         logger.debug(f"Semantic Cache: Querying cache for prompt (ticker={ticker})...")
-        embedding = self.get_embedding(generalized_prompt, timeout=5)
+        embedding = self.get_embedding(generalized_prompt, timeout=60)
         if not embedding:
             logger.debug("Semantic Cache: No embedding generated, skipping query.")
             return None

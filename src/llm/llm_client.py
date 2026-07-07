@@ -6,7 +6,6 @@ from typing import Optional
 import httpx
 
 from src.config.settings import settings
-from src.llm.semantic_cache import llamacpp_executor
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +49,7 @@ def _get_ollama_response(prompt: str, system_prompt: str = "", model: str = None
                     response.raise_for_status()
                     return response.json()
 
-            future = llamacpp_executor.submit(_do_request, priority=0)                                                                                                                                                                                                             
-            data = future.result(timeout=httpx_timeout.read + 10.0)                                                                                                                                                                                                                
+            data = _do_request()
                                                                                                                                                                                                                                                                                    
             # Validate response structure                                                                                                                                                                                                                                          
             if "message" not in data or "content" not in data["message"]:                                                                                                                                                                                                          
@@ -132,8 +130,7 @@ def _get_openai_response(prompt: str, system_prompt: str = "", model: str = None
                     response.raise_for_status()
                     return response.json()
 
-            future = llamacpp_executor.submit(_do_request, priority=0)                                                                                                                                                                                                             
-            data = future.result(timeout=httpx_timeout.read + 10.0)                                                                                                                                                                                                                
+            data = _do_request()
                                                                                                                                                                                                                                                                                    
             # Validate response structure                                                                                                                                                                                                                                          
             if "choices" not in data or not data["choices"]:                                                                                                                                                                                                                       
@@ -265,8 +262,7 @@ def check_llm_health() -> dict:
                     response = client.get(url, headers=headers)
                     response.raise_for_status()
 
-            future = llamacpp_executor.submit(_do_health_check, priority=0)
-            future.result(timeout=15.0)
+            _do_health_check()
 
             results[role] = {
                 "status": "connected",
