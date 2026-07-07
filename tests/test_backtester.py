@@ -1,6 +1,6 @@
 """Unit tests for the backtesting module."""
 import pytest
-from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest
+from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, BacktestConfig
 
 
 def _make_trending_candles(n=100, start_price=100.0, trend=0.001):
@@ -34,25 +34,30 @@ def _make_flat_candles(n=100, price=100.0):
 
 class TestBacktestBasic:
     def test_empty_candles(self):
-        result = backtest_strategy([], stop_loss_pct=0.05, take_profit_pct=0.10)
+        config = BacktestConfig(stop_loss_pct=0.05, take_profit_pct=0.10)
+        result = backtest_strategy([], config=config)
         assert result["insufficient_data"] is True
         assert result["total_trades"] == 0
 
     def test_insufficient_candles(self):
+        config = BacktestConfig(stop_loss_pct=0.05, take_profit_pct=0.10)
         result = backtest_strategy(
             [[0, 100, 101, 99, 100, 1000]],
-            stop_loss_pct=0.05,
-            take_profit_pct=0.10,
+            config=config,
         )
         assert result["insufficient_data"] is True
 
     def test_trending_market_produces_trades(self):
         candles = _make_trending_candles(100)
-        result = backtest_strategy(
-            candles,
+        config = BacktestConfig(
             stop_loss_pct=0.02,
             take_profit_pct=0.05,
             max_hold_time_seconds=86400 * 10,
+            backtest_entry_config={"ema_period": 0},
+        )
+        result = backtest_strategy(
+            candles,
+            config=config,
         )
         assert result["total_trades"] > 0
         assert result["insufficient_data"] is False
@@ -63,11 +68,15 @@ class TestBacktestBasic:
 
     def test_flat_market(self):
         candles = _make_flat_candles(100)
-        result = backtest_strategy(
-            candles,
+        config = BacktestConfig(
             stop_loss_pct=0.02,
             take_profit_pct=0.05,
             max_hold_time_seconds=86400 * 10,
+            backtest_entry_config={"ema_period": 0},
+        )
+        result = backtest_strategy(
+            candles,
+            config=config,
         )
         # In a flat market, most trades should hit stop-loss or max hold
         assert result["total_trades"] > 0
@@ -76,43 +85,59 @@ class TestBacktestBasic:
 class TestBacktestStats:
     def test_win_rate_calculation(self):
         candles = _make_trending_candles(100, trend=0.005)
-        result = backtest_strategy(
-            candles,
+        config = BacktestConfig(
             stop_loss_pct=0.01,
             take_profit_pct=0.05,
             max_hold_time_seconds=86400 * 30,
+            backtest_entry_config={"ema_period": 0},
+        )
+        result = backtest_strategy(
+            candles,
+            config=config,
         )
         assert 0 <= result["win_rate"] <= 1.0
         assert result["wins"] + result["losses"] == result["total_trades"]
 
     def test_buy_and_hold_pct(self):
         candles = _make_trending_candles(100, start_price=100.0, trend=0.001)
-        result = backtest_strategy(
-            candles,
+        config = BacktestConfig(
             stop_loss_pct=0.02,
             take_profit_pct=0.10,
             max_hold_time_seconds=86400 * 50,
+            backtest_entry_config={"ema_period": 0},
+        )
+        result = backtest_strategy(
+            candles,
+            config=config,
         )
         # Buy and hold should be positive in a trending market
         assert result["buy_and_hold_pct"] > 0
 
     def test_max_consecutive_losses(self):
         candles = _make_flat_candles(100)
-        result = backtest_strategy(
-            candles,
+        config = BacktestConfig(
             stop_loss_pct=0.01,
             take_profit_pct=0.05,
             max_hold_time_seconds=86400 * 5,
+            backtest_entry_config={"ema_period": 0},
+        )
+        result = backtest_strategy(
+            candles,
+            config=config,
         )
         assert result["max_consecutive_losses"] >= 0
 
     def test_avg_hold_time(self):
         candles = _make_trending_candles(100)
-        result = backtest_strategy(
-            candles,
+        config = BacktestConfig(
             stop_loss_pct=0.02,
             take_profit_pct=0.05,
             max_hold_time_seconds=86400 * 10,
+            backtest_entry_config={"ema_period": 0},
+        )
+        result = backtest_strategy(
+            candles,
+            config=config,
         )
         assert result["avg_hold_time_seconds"] >= 0
 
@@ -120,13 +145,17 @@ class TestBacktestStats:
 class TestBacktestWithFees:
     def test_intesa_fee_model(self):
         candles = _make_trending_candles(100)
-        result = backtest_strategy(
-            candles,
+        config = BacktestConfig(
             stop_loss_pct=0.02,
             take_profit_pct=0.05,
             max_hold_time_seconds=86400 * 10,
             fee_model="intesa",
             trade_value=10000.0,
+            backtest_entry_config={"ema_period": 0},
+        )
+        result = backtest_strategy(
+            candles,
+            config=config,
         )
         assert result["total_trades"] > 0
         # Fees should reduce total P&L
@@ -136,13 +165,17 @@ class TestBacktestWithFees:
 class TestBacktestTrailingStop:
     def test_trailing_stop_enabled(self):
         candles = _make_trending_candles(100, trend=0.003)
-        result = backtest_strategy(
-            candles,
+        config = BacktestConfig(
             stop_loss_pct=0.02,
             take_profit_pct=0.10,
             max_hold_time_seconds=86400 * 30,
             trailing_stop=True,
             trailing_stop_distance_pct=0.02,
+            backtest_entry_config={"ema_period": 0},
+        )
+        result = backtest_strategy(
+            candles,
+            config=config,
         )
         assert result["total_trades"] > 0
 
@@ -179,12 +212,16 @@ class TestFormatBacktestSummary:
 class TestWalkForward:
     def test_walk_forward_basic(self):
         candles = _make_trending_candles(100)
-        result = walk_forward_backtest(
-            candles,
-            num_windows=3,
+        config = BacktestConfig(
             stop_loss_pct=0.02,
             take_profit_pct=0.05,
             max_hold_time_seconds=86400 * 10,
+            backtest_entry_config={"ema_period": 0},
+        )
+        result = walk_forward_backtest(
+            candles,
+            num_windows=3,
+            config=config,
         )
         assert "per_window" in result
         assert "combined_stats" in result
@@ -192,10 +229,14 @@ class TestWalkForward:
 
     def test_walk_forward_insufficient_data(self):
         candles = _make_trending_candles(10)
+        config = BacktestConfig(
+            stop_loss_pct=0.02,
+            take_profit_pct=0.05,
+            backtest_entry_config={"ema_period": 0},
+        )
         result = walk_forward_backtest(
             candles,
             num_windows=5,
-            stop_loss_pct=0.02,
-            take_profit_pct=0.05,
+            config=config,
         )
         assert result["insufficient_data"] is True
