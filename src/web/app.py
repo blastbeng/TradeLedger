@@ -197,7 +197,7 @@ async def trades(limit: int = 0):
 @http_router.get("/api/profit")
 async def profit():
     engine = get_engine()
-    return await engine.get_profit_summary()
+    return await engine.event_bus.request("get_profit_summary")
 
 @http_router.get("/api/performance")
 async def performance():
