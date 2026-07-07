@@ -141,6 +141,8 @@ def get_cached_llm_response(
                     "provider": "semantic_cache",
                     "model": "cached",
                 }
+            else:
+                logger.debug("Semantic cache miss for prompt: %.100s...", prompt[:100])
         except Exception as e:
             logger.warning(f"Semantic cache query failed, bypassing: {e}")
     # Context window management: hard limit at 1,000,000 tokens

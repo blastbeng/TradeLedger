@@ -84,6 +84,7 @@ class SemanticCacheClient:
 
     def get_embedding(self, text: str) -> Optional[List[float]]:
         """Generates an embedding for the given text using the llama.cpp server."""
+        logger.debug(f"Semantic Cache: Generating embedding for text (len={len(text)})...")
         # Use a lock to ensure only one embedding request is processed at a time
         # (RPi5 has limited resources and concurrent requests may cause timeouts)
         with self._embedding_lock:
@@ -94,6 +95,7 @@ class SemanticCacheClient:
                     timeout=120  # Increased timeout for RPi5
                 )
                 resp.raise_for_status()
+                logger.debug("Semantic Cache: Embedding generated successfully.")
                 return resp.json()["data"][0]["embedding"]
             except Exception as e:
                 logger.warning(f"Semantic Cache: Failed to get embedding: {e}.")
@@ -102,14 +104,18 @@ class SemanticCacheClient:
     def query(self, prompt: str, symbol: Optional[str] = None) -> Optional[str]:
         """Queries the semantic cache for a matching prompt."""
         if not self.enabled or not self.collection_id:
+            logger.debug("Semantic Cache: Skipping query (disabled or no collection).")
             return None
 
         generalized_prompt, ticker = generalize_prompt(prompt, symbol)
+        logger.debug(f"Semantic Cache: Querying cache for prompt (ticker={ticker})...")
         embedding = self.get_embedding(generalized_prompt)
         if not embedding:
+            logger.debug("Semantic Cache: No embedding generated, skipping query.")
             return None
 
         try:
+            logger.debug("Semantic Cache: Querying ChromaDB...")
             resp = requests.post(
                 f"{self.chromadb_host}/api/v2/collections/{self.collection_id}/query",
                 json={"query_embeddings": [embedding], "n_results": 1},
@@ -121,12 +127,15 @@ class SemanticCacheClient:
             if data.get("distances") and data["distances"][0]:
                 distance = data["distances"][0][0]
                 if distance <= self.distance_threshold:
+                    logger.info(f"Semantic Cache: Hit! Distance={distance:.4f} <= {self.distance_threshold}")
                     cached_response = data["documents"][0][0]
                     metadata = data["metadatas"][0][0]
                     # Reconstruct response with current ticker if needed
                     if ticker and metadata.get("ticker"):
                         return reconstruct_response(cached_response, ticker, prompt)
                     return cached_response
+                else:
+                    logger.debug(f"Semantic Cache: Miss. Distance={distance:.4f} > {self.distance_threshold}")
         except Exception as e:
             logger.warning(f"Semantic Cache: Failed to query ChromaDB: {e}.")
 
@@ -135,9 +144,11 @@ class SemanticCacheClient:
     def add(self, prompt: str, response: str, symbol: Optional[str] = None):
         """Adds a prompt and its response to the semantic cache."""
         if not self.enabled or not self.collection_id:
+            logger.debug("Semantic Cache: Skipping add (disabled or no collection).")
             return
 
         generalized_prompt, ticker = generalize_prompt(prompt, symbol)
+        logger.debug(f"Semantic Cache: Adding to cache (ticker={ticker})...")
         embedding = self.get_embedding(generalized_prompt)
         if not embedding:
             return
@@ -163,6 +174,7 @@ class SemanticCacheClient:
                 timeout=10
             )
             resp.raise_for_status()
+            logger.debug("Semantic Cache: Successfully added to ChromaDB.")
         except Exception as e:
             logger.warning(f"Semantic Cache: Failed to add to ChromaDB: {e}.")
 
