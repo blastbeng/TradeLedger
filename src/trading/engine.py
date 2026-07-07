@@ -1555,35 +1555,6 @@ class TradingEngine:
         have historically led to wins vs losses. Cached and only recomputed when new trades arrive."""
         return await self.event_bus.request("compute_trade_pattern_analysis")
 
-    async def _classify_market_regime(
-        self,
-        adx: Optional[float],
-        plus_di: Optional[float],
-        minus_di: Optional[float],
-        ema_9: Optional[float],
-        ema_21: Optional[float],
-        bb_upper: Optional[float],
-        bb_lower: Optional[float],
-        bb_middle: Optional[float],
-        atr: Optional[float],
-        atr_percentile: Optional[float],
-        current_price: float,
-    ) -> str:
-        """Classify market regime using multiple indicators."""
-        return await self._signal_processor.classify_market_regime(
-            adx=adx,
-            plus_di=plus_di,
-            minus_di=minus_di,
-            ema_9=ema_9,
-            ema_21=ema_21,
-            bb_upper=bb_upper,
-            bb_lower=bb_lower,
-            bb_middle=bb_middle,
-            atr=atr,
-            atr_percentile=atr_percentile,
-            current_price=current_price,
-        )
-
     async def _reconcile_positions(self):
         """Detect and handle external changes: delisted symbols, externally sold positions."""
         await self.event_bus.request("reconcile_positions")
