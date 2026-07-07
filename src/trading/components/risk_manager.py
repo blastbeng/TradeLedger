@@ -275,6 +275,48 @@ class RiskManager:
             "max_dust_sweep_reviews": max_dust_sweep_reviews,
         }
 
+    def _get_hard_max_loss_pct(self, symbol: str, pos: Dict[str, Any]) -> float:
+        """Determine the hard max loss percentage based on asset type and timeframe."""
+        _is_btp = is_btp_isin(symbol)
+        default_loss = settings.BTP_HARD_MAX_LOSS_PCT if _is_btp else settings.HARD_MAX_LOSS_PCT
+
+        pos_tf = pos.get("timeframe")
+        if not pos_tf:
+            for entry in self.engine.current_symbols:
+                if entry["symbol"] == symbol:
+                    pos_tf = entry.get("timeframe")
+                    break
+
+        tf_loss = 0.0
+        if _is_btp:
+            if pos_tf == "1h":
+                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_1H
+            elif pos_tf == "1d":
+                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_1D
+            elif pos_tf == "1w":
+                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_1W
+            elif pos_tf == "1M":
+                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_1M
+            elif pos_tf == "3M":
+                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_3M
+            elif pos_tf in ("6M", "1Y", "3Y", "5Y"):
+                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_6M_1Y
+        else:
+            if pos_tf == "1h":
+                tf_loss = settings.HARD_MAX_LOSS_PCT_1H
+            elif pos_tf == "1d":
+                tf_loss = settings.HARD_MAX_LOSS_PCT_1D
+            elif pos_tf == "1w":
+                tf_loss = settings.HARD_MAX_LOSS_PCT_1W
+            elif pos_tf == "1M":
+                tf_loss = settings.HARD_MAX_LOSS_PCT_1M
+            elif pos_tf == "3M":
+                tf_loss = settings.HARD_MAX_LOSS_PCT_3M
+            elif pos_tf in ("6M", "1Y", "3Y", "5Y"):
+                tf_loss = settings.HARD_MAX_LOSS_PCT_6M_1Y
+
+        return tf_loss if tf_loss > 0 else default_loss
+
     async def check_hard_stop(
         self,
         symbol: str,
@@ -292,8 +334,7 @@ class RiskManager:
         if entry_price <= 0:
             return False
         unrealized_loss_pct = (entry_price - current_price) / entry_price
-        _is_btp = is_btp_isin(symbol)
-        _hard_max_loss = settings.BTP_HARD_MAX_LOSS_PCT if _is_btp else settings.HARD_MAX_LOSS_PCT
+        _hard_max_loss = self._get_hard_max_loss_pct(symbol, pos)
         if unrealized_loss_pct >= _hard_max_loss:
             logger.warning(
                 f"Hard max loss threshold reached for {symbol}: "
