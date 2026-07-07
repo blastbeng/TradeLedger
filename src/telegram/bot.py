@@ -14,7 +14,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from src.config.settings import settings
 from src.trading.engine import TradingEngine
 from src.utils.redis_client import get_redis_client
-from src.database import set_telegram_chat_id, get_telegram_chat_id, get_news_for_symbol
+from src.database import set_telegram_chat_id, get_telegram_chat_id, get_news_for_symbol, get_signals
 from src.llm.prompts import _format_news_for_prompt, get_cached_news_summary
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ class TelegramBot:
                 [KeyboardButton("⚠️ Risk"), KeyboardButton("📰 News")],
                 [KeyboardButton("⏸️ Pause"), KeyboardButton("▶️ Resume")],
                 [KeyboardButton("🔄 Re-eval"), KeyboardButton("💸 Sell All")],
+                [KeyboardButton("⬇️ Backfill"), KeyboardButton("📡 Signals")],
             ],
             resize_keyboard=True,
         )
@@ -107,6 +108,8 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("risk", self.cmd_risk))
         self.app.add_handler(CommandHandler("market", self.cmd_market))
         self.app.add_handler(CommandHandler("sell", self.cmd_sell))
+        self.app.add_handler(CommandHandler("backfill", self.cmd_backfill))
+        self.app.add_handler(CommandHandler("signals", self.cmd_signals))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_button))
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -149,6 +152,10 @@ class TelegramBot:
             await self.cmd_force_reeval(update, context)
         elif text == "💸 Sell All":
             await self.cmd_sell(update, context)
+        elif text == "⬇️ Backfill":
+            await self.cmd_backfill(update, context)
+        elif text == "📡 Signals":
+            await self.cmd_signals(update, context)
         else:
             # Any other text (e.g., first message "hi") shows the keyboard
             await update.message.reply_text(
@@ -622,6 +629,53 @@ class TelegramBot:
             return
         self.engine.trigger_symbol_reevaluation(force=True)
         await update.message.reply_text("🔄 Forced symbol re-evaluation triggered.", reply_markup=self.keyboard)
+
+    async def cmd_backfill(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._is_authorized(update):
+            return
+        asyncio.create_task(self.engine.force_download_all_assets())
+        await update.message.reply_text("⬇️ Force backfill of all discovered symbols triggered.", reply_markup=self.keyboard)
+
+    async def cmd_signals(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._is_authorized(update):
+            return
+        limit = 5
+        if context.args:
+            try:
+                limit = int(context.args[0])
+            except ValueError:
+                await update.message.reply_text("Usage: /signals <limit> (e.g., /signals 10)", reply_markup=self.keyboard)
+                return
+
+        result = await asyncio.to_thread(get_signals, limit, 0)
+        signals = result.get("signals", [])
+
+        if not signals:
+            await update.message.reply_text("📡 No recent signals found.", reply_markup=self.keyboard)
+            return
+
+        msg = f"<b>📡 Latest {len(signals)} Signals</b>\n\n"
+        for s in signals:
+            symbol = s.get("symbol", "")
+            display_symbol = s.get("display_symbol", symbol)
+            action = s.get("action", "")
+            confidence = s.get("confidence")
+            reasoning = s.get("reasoning", "")
+            timestamp = s.get("timestamp")
+            ts_str = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S') if timestamp else "?"
+
+            action_emoji = "🟢" if action == "BUY" else "🔴" if action == "SELL" else "⚪"
+            conf_str = f" ({confidence:.0f}%)" if confidence is not None else ""
+
+            msg += f"<b>{action_emoji} {action}</b> <code>{display_symbol}</code>{conf_str}\n"
+            msg += f"   🕒 {ts_str}\n"
+            if reasoning:
+                if len(reasoning) > 200:
+                    reasoning = reasoning[:197] + "..."
+                msg += f"   📝 {html.escape(reasoning)}\n"
+            msg += "\n"
+
+        await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
 
     async def cmd_market(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
