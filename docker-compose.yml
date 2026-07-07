@@ -42,7 +42,7 @@ services:
       trade-ledger-redis-dummy:
         condition: service_healthy
     volumes:
-      - ./src:/app/src   # for development hot-reload (optional)
+    #  - ./src:/app/src   # for development hot-reload (optional)
       - ./data:/app/data
       - ./.env:/app/.env:ro
 
