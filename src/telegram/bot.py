@@ -990,20 +990,37 @@ class TelegramBot:
 
     async def start(self):
         """Start the bot (initialize, start polling, start application)."""
-        await self.app.initialize()
-        await self.app.updater.start_polling()
-        await self.app.start()
+        # Guard against supervisor restarts: if the updater/app is already
+        # running, don't try to start it again.
+        if self.app.updater and self.app.updater.running:
+            logger.info("Telegram bot updater is already running, skipping initialization.")
+        else:
+            await self.app.initialize()
+            await self.app.updater.start_polling()
+        if not self.app.running:
+            await self.app.start()
         logger.info("Telegram bot started and polling.")
         # Notify the user about the trading mode
         mode = settings.TRADING_MODE.upper()
-        await self.send_notification(
-            f"🤖 Bot started in {mode} mode.",
-            summary={
-                "action": "INFO",
-                "reason": "Bot started",
-                "mode": mode,
-            }
-        )
+        try:
+            await self.send_notification(
+                f"🤖 Bot started in {mode} mode.",
+                summary={
+                    "action": "INFO",
+                    "reason": "Bot started",
+                    "mode": mode,
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send startup notification: {e}")
+        # Keep the task alive until cancelled by the supervisor during shutdown.
+        # Without this, the coroutine returns immediately (PTB v20 start methods
+        # are non-blocking), causing the supervisor to think the task exited
+        # normally and restart it — which fails with "Updater is already running".
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            pass
 
     async def stop(self):
         """Stop the bot gracefully."""
