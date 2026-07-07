@@ -6,6 +6,8 @@ import os
 import re
 import threading
 import time
+import sys
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
@@ -1029,6 +1031,11 @@ class TelegramBot:
 
         # --- Log summary to JSONL file (always, if enabled) ---
         if summary is not None and settings.NOTIFICATION_LOG_ENABLED:
+            # Capture full stacktrace for error notifications if an exception is active
+            if summary.get("action") == "ERROR":
+                exc_info = sys.exc_info()
+                if exc_info[0] is not None and "traceback" not in summary:
+                    summary["traceback"] = "".join(traceback.format_exception(*exc_info))
             data_dir = Path(settings.DATA_DIR)
             data_dir.mkdir(parents=True, exist_ok=True)
             log_path = data_dir / "notifications.jsonl"
