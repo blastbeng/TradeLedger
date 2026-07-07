@@ -1,7 +1,6 @@
 import hashlib
 import json
 import logging
-import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Optional
 from src.config.settings import settings
@@ -12,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 # Module-level executor for semantic cache queries to avoid blocking on shutdown
 _semantic_cache_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="semantic-cache")
+# Dedicated executor for background 'add' operations to avoid unbounded thread creation
+_semantic_cache_add_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="semantic-cache-add")
 
 def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
@@ -302,11 +303,12 @@ def get_cached_llm_response(
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
     # --- Semantic Cache Store ---
     if _semantic_cache.enabled:
-        threading.Thread(
-            target=_semantic_cache.add,
-            args=(prompt, response_text, symbol),
-            daemon=True
-        ).start()
+        _semantic_cache_add_executor.submit(
+            _semantic_cache.add,
+            prompt,
+            response_text,
+            symbol
+        )
     return {
         "response": response_text,
         "provider": used_provider,
