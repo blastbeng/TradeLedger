@@ -287,7 +287,8 @@ class TradingEngine:
         self._entry_signal_state = {}
         self._last_decisions = {}
         self._last_eval_snapshot = {}
-        self._cycle_spent = 0.0
+        async with self._cycle_spent_lock:
+            self._cycle_spent = 0.0
         self._balance_cache = None
         self._balance_cache_time = 0.0
         self._portfolio_exposure_cache = None
