@@ -1029,13 +1029,6 @@ class TradingEngine:
         return None
 
 
-
-
-
-    async def _compute_and_store_indicators(self, symbol: str, timeframe: str, candles: List[List]):
-        """Compute indicators for a symbol/timeframe using TA-Lib and store in DB."""
-        await self._market_data_manager.compute_and_store_indicators(symbol, timeframe, candles)
-
     async def _fetch_and_store_news_for_symbol(self, symbol: str):
         """Fetch news for a single symbol and store it in the database."""
         if not settings.NEWS_ENABLED:
