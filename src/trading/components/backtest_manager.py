@@ -122,10 +122,11 @@ class BacktestManager:
         # falling back to a much shorter timeframe whose results would be misleading.
         tf_seconds_bt = engine._timeframe_to_seconds(assigned_tf)
         max_possible_candles = (settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds_bt
-        if max_possible_candles < 5:
+        MIN_STATISTICALLY_SIGNIFICANT_CANDLES = 50
+        if max_possible_candles < MIN_STATISTICALLY_SIGNIFICANT_CANDLES:
             return None, (
                 f"Backtesting skipped for {assigned_tf}: only ~{int(max_possible_candles)} candles possible "
-                f"with {settings.OHLCV_RETENTION_DAYS} days retention (need ≥5). "
+                f"with {settings.OHLCV_RETENTION_DAYS} days retention (need ≥{MIN_STATISTICALLY_SIGNIFICANT_CANDLES}). "
                 f"Rely on LLM analysis, fundamentals, and multi-timeframe indicators instead."
             )
 
