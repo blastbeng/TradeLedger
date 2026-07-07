@@ -69,7 +69,7 @@ _root_logger.setLevel(getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
 # via dictConfig, this module is re-imported as src.main (separate from __main__),
 # which would re-run this code and add a second JSON handler.
 if not any(
-    isinstance(h, logging.StreamHandler) and isinstance(h.formatter, JsonFormatter)
+    isinstance(h, logging.StreamHandler) and type(h.formatter).__name__ == "JsonFormatter"
     for h in _root_logger.handlers
 ):
     _console_handler = logging.StreamHandler()
@@ -139,7 +139,7 @@ class RedisLogHandler(logging.Handler):
 redis_log_handler = RedisLogHandler(max_entries=200)
 # Guard against double-addition (e.g., if module is re-imported)
 _root_logger = logging.getLogger()
-if not any(isinstance(h, RedisLogHandler) for h in _root_logger.handlers):
+if not any(type(h).__name__ == "RedisLogHandler" for h in _root_logger.handlers):
     _root_logger.addHandler(redis_log_handler)
 
 def _seed_telegram_chat_id():
