@@ -1869,16 +1869,6 @@ class TradingEngine:
         """Log a manually executed trade in notify mode. Persists to DB and updates positions."""
         return await self._order_executor.log_manual_trade(ticker, side, quantity, money_spent, fee)
 
-    async def _execute_signal(self, symbol: str, signal, timeframe: str = None, exit_reason: str = None, atr: Optional[float] = None):
-        """Execute a BUY or SELL signal."""
-        await self._order_executor.execute_signal(
-            symbol=symbol,
-            signal=signal,
-            timeframe=timeframe,
-            exit_reason=exit_reason,
-            atr=atr,
-        )
-
     async def _monitor_entry_signals_loop(self):
         """Periodically check tracked symbols for favourable entry conditions.
         When a condition is met, force an immediate LLM evaluation."""
@@ -1944,9 +1934,9 @@ class TradingEngine:
                 )
             return
         logger.info(f"Delay elapsed for {symbol}, executing BUY")
-        await self._execute_signal(
-            symbol,
-            signal,
+        await self._order_executor.execute_signal(
+            symbol=symbol,
+            signal=signal,
             timeframe=timeframe,
             atr=None,
         )
