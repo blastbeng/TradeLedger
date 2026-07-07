@@ -303,7 +303,7 @@ def get_cached_llm_response(
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
     # --- Semantic Cache Store ---
     if _semantic_cache.enabled and not market_hash:
-        _semantic_cache_add_executor.submit(
+        future = _semantic_cache_add_executor.submit(
             _semantic_cache.add,
             prompt,
             response_text,
@@ -311,6 +311,14 @@ def get_cached_llm_response(
             model_type,
             settings.LLM_CACHE_VERSION
         )
+
+        def _log_add_exception(fut):
+            try:
+                fut.result()
+            except Exception as e:
+                logger.error(f"Semantic cache add failed: {e}", exc_info=True)
+
+        future.add_done_callback(_log_add_exception)
     return {
         "response": response_text,
         "provider": used_provider,

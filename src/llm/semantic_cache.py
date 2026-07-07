@@ -2,6 +2,7 @@ import re
 import logging
 import requests
 import uuid
+import hashlib
 import threading
 import time
 import queue
@@ -183,65 +184,48 @@ class SemanticCacheClient:
     def get_embedding(self, text: str, timeout: int = 300, priority: int = 10) -> Optional[List[float]]:
         """Generates an embedding for the given text using the llama.cpp server."""
         embedding_url = f"{self.embedding_url}/embeddings"
-        logger.info(f"Semantic Cache: get_embedding called for text (len={len(text)})")
 
-        # Chunk the text to avoid hitting llama.cpp batch limits, then average embeddings.
-        # 500 characters is roughly 125-200 tokens, safely under typical n_batch limits.
-        chunk_size = 500
-        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+        # Truncate to the first 500 characters to preserve the core semantic intent
+        # of the prompt (usually the instruction and symbol context) without diluting
+        # the signal by averaging embeddings of diverse sections (e.g., market data, news).
+        text_to_embed = text[:500]
 
-        if not chunks:
+        logger.info(f"Semantic Cache: get_embedding called for text (len={len(text_to_embed)})")
+
+        if not text_to_embed:
             return None
 
-        all_embeddings = []
-        for chunk in chunks:
-            logger.info(f"Semantic Cache: Generating embedding for chunk (len={len(chunk)}) at {embedding_url}...")
-            start_time = time.time()
-            resp = None
-            try:
-                payload = {"model": self.embedding_model, "input": [chunk]}
-                if not self.embedding_model:
-                    logger.warning("Semantic Cache: EMBEDDING_MODEL_NAME is not set. Sending request without model name.")
-                    payload.pop("model", None)
-                logger.info(f"Semantic Cache: Embedding payload: {payload}")
+        logger.info(f"Semantic Cache: Generating embedding at {embedding_url}...")
+        start_time = time.time()
+        resp = None
+        try:
+            payload = {"model": self.embedding_model, "input": [text_to_embed]}
+            if not self.embedding_model:
+                logger.warning("Semantic Cache: EMBEDDING_MODEL_NAME is not set. Sending request without model name.")
+                payload.pop("model", None)
+            logger.info(f"Semantic Cache: Embedding payload: {payload}")
 
-                def _do_request():
-                    return requests.post(
-                        embedding_url,
-                        json=payload,
-                        timeout=timeout
-                    )
+            def _do_request():
+                return requests.post(
+                    embedding_url,
+                    json=payload,
+                    timeout=timeout
+                )
 
-                future = llamacpp_executor.submit(_do_request, priority=priority)
-                resp = future.result(timeout=timeout + 60)  # Wait slightly longer than HTTP timeout
+            future = llamacpp_executor.submit(_do_request, priority=priority)
+            resp = future.result(timeout=timeout + 60)  # Wait slightly longer than HTTP timeout
 
-                logger.info(f"Semantic Cache: Embedding response status: {resp.status_code}, text: {resp.text[:500]}")
-                resp.raise_for_status()
-                all_embeddings.append(resp.json()["data"][0]["embedding"])
-                logger.info(f"Semantic Cache: Chunk embedded successfully in {time.time() - start_time:.2f}s.")
-            except requests.exceptions.Timeout as e:
-                logger.error(f"Semantic Cache: Embedding request timed out after {timeout}s: {e}", exc_info=True)
-                return None
-            except Exception as e:
-                resp_text = getattr(resp, 'text', 'N/A')
-                logger.warning(f"Semantic Cache: Failed to get embedding for chunk: {e}. Response body: {resp_text}", exc_info=True)
-                return None
-
-        if not all_embeddings:
+            logger.info(f"Semantic Cache: Embedding response status: {resp.status_code}, text: {resp.text[:500]}")
+            resp.raise_for_status()
+            logger.info(f"Semantic Cache: Text embedded successfully in {time.time() - start_time:.2f}s.")
+            return resp.json()["data"][0]["embedding"]
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Semantic Cache: Embedding request timed out after {timeout}s: {e}", exc_info=True)
             return None
-
-        # Average the embeddings of all chunks
-        num_embeddings = len(all_embeddings)
-        embedding_dim = len(all_embeddings[0])
-        averaged_embedding = [0.0] * embedding_dim
-        for emb in all_embeddings:
-            for i in range(embedding_dim):
-                averaged_embedding[i] += emb[i]
-
-        for i in range(embedding_dim):
-            averaged_embedding[i] /= num_embeddings
-
-        return averaged_embedding
+        except Exception as e:
+            resp_text = getattr(resp, 'text', 'N/A')
+            logger.warning(f"Semantic Cache: Failed to get embedding: {e}. Response body: {resp_text}", exc_info=True)
+            return None
 
     def query(self, prompt: str, symbol: Optional[str] = None, model_type: str = "actuator", cache_version: Optional[str] = None) -> Optional[str]:
         """Queries the semantic cache for a matching prompt."""
@@ -325,9 +309,14 @@ class SemanticCacheClient:
                 "model_type": model_type,
                 "cache_version": cache_version or ""
             }
-            item_id = str(uuid.uuid4())
-            add_url = f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/add"
-            logger.debug(f"Semantic Cache: Adding to ChromaDB at {add_url}. Prompt len={len(generalized_prompt)}, Response len={len(generalized_response)}")
+
+            # Use a deterministic ID to prevent duplicate entries for the same prompt
+            id_source = f"{generalized_prompt}:{model_type}:{cache_version or ''}"
+            item_id = hashlib.sha256(id_source.encode()).hexdigest()
+
+            # Use upsert to add or update the entry if it already exists
+            add_url = f"{self.chromadb_host}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/upsert"
+            logger.debug(f"Semantic Cache: Upserting to ChromaDB at {add_url}. Prompt len={len(generalized_prompt)}, Response len={len(generalized_response)}")
             resp = requests.post(
                 add_url,
                 json={
