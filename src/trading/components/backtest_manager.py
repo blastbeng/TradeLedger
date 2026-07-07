@@ -432,6 +432,7 @@ class BacktestManager:
         llm_provider: Optional[str],
         llm_model: Optional[str],
         market_hash: str = None,
+        is_critical: bool = False,
     ) -> Tuple[Signal, Optional[str], Optional[str]]:
         """Run the Step 2 LLM call and carry over execution-critical fields.
 
@@ -484,6 +485,7 @@ class BacktestManager:
                     temperature=effective_temp,
                     symbol=symbol,
                     market_hash=market_hash,
+                    bypass_semantic_cache=is_critical,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -512,6 +514,7 @@ class BacktestManager:
                             temperature=effective_temp,
                             symbol=symbol,
                             market_hash=market_hash,
+                            bypass_semantic_cache=is_critical,
                         ),
                         timeout=settings.LLM_TIMEOUT
                     )
@@ -622,6 +625,7 @@ class BacktestManager:
         display_symbol: str,
         ticker: Dict[str, Any],
         market_hash: str = None,
+        is_critical: bool = False,
     ) -> Tuple[Signal, str, Optional[str], Optional[str]]:
         """Run backtests and the Step 2 LLM call to produce the final signal.
 
@@ -680,6 +684,7 @@ class BacktestManager:
                 llm_provider=llm_provider,
                 llm_model=llm_model,
                 market_hash=market_hash,
+                is_critical=is_critical,
             )
         else:
             # For SELL or HOLD, no backtest needed, use preliminary decision

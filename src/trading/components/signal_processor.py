@@ -410,6 +410,7 @@ class SignalProcessor:
                 min_stop_atr_mult=ctx["min_stop_atr_mult"], min_hold_time_mult=ctx["min_hold_time_mult"], trading_paused=False,
                 has_position=has_position, strategy_model_type=strategy_model_type, effective_temp=effective_temp,
                 market_snapshot=ctx["market_snapshot"], historical_backtest_results=ctx["historical_backtest_results"],
+                is_critical=is_critical,
             )
             signal, combined_bt_summary, llm_provider, llm_model = await engine._backtest_manager.run_backtest_and_final_decision(
                 symbol=symbol, assigned_tf=assigned_tf, tf_seconds=tf_seconds, current_price=ctx["current_price"],
@@ -418,6 +419,7 @@ class SignalProcessor:
                 strategy_model_type=strategy_model_type, effective_temp=effective_temp,
                 preliminary_signal=preliminary_signal, display_symbol=display_symbol, ticker=ctx["ticker"],
                 market_hash=ctx["market_hash"],
+                is_critical=is_critical,
             )
 
         return {"signal": signal, "llm_provider": llm_provider, "llm_model": llm_model}
@@ -2199,6 +2201,7 @@ class SignalProcessor:
                     model_type=strategy_model_type,
                     temperature=effective_temp,
                     symbol=symbol,
+                    bypass_semantic_cache=is_critical,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -2224,6 +2227,7 @@ class SignalProcessor:
                         model_type="actuator",
                         temperature=effective_temp,
                         market_hash=market_hash,
+                        bypass_semantic_cache=is_critical,
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
@@ -2525,6 +2529,7 @@ class SignalProcessor:
         effective_temp: float,
         market_snapshot: Dict[str, Any],
         historical_backtest_results: Optional[list],
+        is_critical: bool = False,
     ) -> Tuple[Signal, Optional[str], Optional[str]]:
         """Run the Step 1b LLM call for backtest variants and parameters.
 
@@ -2585,6 +2590,7 @@ class SignalProcessor:
                     model_type=strategy_model_type,
                     temperature=effective_temp,
                     symbol=symbol,
+                    bypass_semantic_cache=is_critical,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -2634,6 +2640,7 @@ class SignalProcessor:
                         model_type="actuator",
                         temperature=effective_temp,
                         market_hash=variants_market_hash,
+                        bypass_semantic_cache=is_critical,
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
