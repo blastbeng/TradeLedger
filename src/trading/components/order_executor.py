@@ -598,6 +598,35 @@ class OrderExecutor:
         logger.info(f"Manual trade logged: {side} {quantity} {symbol} @ {price:.4f}")
         return {"status": "ok", "trade": trade}
 
+    async def _place_replacement_exit_orders_with_retry(
+        self, symbol: str, signal: Signal, exit_prices: Dict[str, Optional[float]], 
+        timeframe: Optional[str], max_retries: int = 3, delay: float = 1.0
+    ) -> None:
+        """Place replacement exit orders with a retry mechanism to avoid leaving positions unprotected."""
+        for attempt in range(max_retries):
+            try:
+                await self.place_exit_orders(symbol, signal, exit_prices, timeframe)
+                return
+            except (RuntimeError, ValueError, ConnectionError, KeyError, TypeError, AttributeError) as e:
+                logger.warning(
+                    f"Failed to place replacement exit orders for {symbol} "
+                    f"(attempt {attempt + 1}/{max_retries}): {e}"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(delay)
+
+        logger.error(
+            f"Failed to place replacement exit orders for {symbol} after {max_retries} attempts. "
+            f"Position remains unprotected until next risk cycle."
+        )
+        if self.engine.notifier:
+            stock_name = await self.engine._get_stock_name(symbol)
+            display_symbol = self.engine._format_symbol_display(symbol, stock_name, timeframe)
+            await self.engine.notifier.send_notification(
+                f"⚠️ Failed to place replacement exit orders for {display_symbol} after {max_retries} attempts. Position unprotected!",
+                summary={"symbol": symbol, "action": "ERROR", "reason": "Replacement exit orders failed"}
+            )
+
     async def process_queued_order_fill(
         self,
         queued: Dict[str, Any],
@@ -702,15 +731,9 @@ class OrderExecutor:
                         "stop_loss_price": pos.get("stop_loss"),
                         "take_profit_price": pos.get("take_profit"),
                     }
-                    try:
-                        await self.place_exit_orders(
-                            queued["symbol"], _dummy_signal, _exit_prices, pos.get("timeframe")
-                        )
-                    except (RuntimeError, ValueError, ConnectionError) as _e:
-                        logger.warning(
-                            f"Failed to place replacement exit orders after partial "
-                            f"fill for {queued['symbol']}: {_e}"
-                        )
+                    await self._place_replacement_exit_orders_with_retry(
+                        queued["symbol"], _dummy_signal, _exit_prices, pos.get("timeframe")
+                    )
             # Notify user
             if engine.notifier:
                 stock_name = await engine._get_stock_name(queued["symbol"])
@@ -1792,10 +1815,9 @@ class OrderExecutor:
                         "stop_loss_price": engine.positions[symbol].get("stop_loss"),
                         "take_profit_price": engine.positions[symbol].get("take_profit"),
                     }
-                    try:
-                        await self.place_exit_orders(symbol, _dummy_signal, _exit_prices, engine.positions[symbol].get("timeframe"))
-                    except (TypeError, ValueError, RuntimeError, AttributeError) as _e:
-                        logger.warning(f"Failed to place replacement exit orders after partial sell for {symbol}: {_e}")
+                    await self._place_replacement_exit_orders_with_retry(
+                        symbol, _dummy_signal, _exit_prices, engine.positions[symbol].get("timeframe")
+                    )
             else:
                 # Full sell: remove position
                 async with engine._positions_lock:
@@ -2671,7 +2693,9 @@ class OrderExecutor:
                         "stop_loss_price": engine.positions[symbol].get("stop_loss"),
                         "take_profit_price": engine.positions[symbol].get("take_profit"),
                     }
-                await self.place_exit_orders(symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe"))
+                await self._place_replacement_exit_orders_with_retry(
+                    symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe")
+                )
         else:
             # Full fill (non-partial) – original logic
             # Cancel any remaining exit orders before removing the position
@@ -2987,7 +3011,9 @@ class OrderExecutor:
                         "stop_loss_price": engine.positions[symbol].get("stop_loss"),
                         "take_profit_price": engine.positions[symbol].get("take_profit"),
                     }
-                    await self.place_exit_orders(symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe"))
+                    await self._place_replacement_exit_orders_with_retry(
+                    symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe")
+                )
 
             engine._append_trade(order)
             await asyncio.to_thread(insert_trade, order)
