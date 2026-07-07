@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Optional
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
@@ -134,8 +135,17 @@ def get_cached_llm_response(
     # --- Semantic Cache Check ---
     _semantic_cache = get_semantic_cache_client()
     if _semantic_cache.enabled:
+        semantic_hit = None
         try:
-            semantic_hit = _semantic_cache.query(prompt, symbol)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_semantic_cache.query, prompt, symbol)
+                try:
+                    semantic_hit = future.result(timeout=5.0)
+                except FuturesTimeoutError:
+                    logger.warning("Semantic cache query timed out after 5s, skipping to LLM call.")
+                except Exception as e:
+                    logger.warning(f"Semantic cache query failed, bypassing: {e}")
+
             if semantic_hit:
                 logger.info("Semantic cache hit for prompt: %.100s...", prompt[:100])
                 return {
