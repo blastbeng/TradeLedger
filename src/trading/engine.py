@@ -1568,18 +1568,14 @@ class TradingEngine:
                     total += trade.get("realized_pnl", 0.0)
         return total
 
-    def _compute_performance_metrics(self) -> Dict[str, Any]:
+    async def _compute_performance_metrics(self) -> Dict[str, Any]:
         """Analyze trade history to produce per-symbol and per-strategy performance summaries."""
-        with self._trade_history_lock:
-            trades_snapshot = list(self.trade_history)
-            version = self._trade_history_version
-            realized_pnl_offset = self._realized_pnl_offset
-        return self._position_manager.compute_performance_metrics()
+        return await self.event_bus.request("compute_performance_metrics")
 
-    def _compute_trade_pattern_analysis(self) -> Dict[str, Any]:
+    async def _compute_trade_pattern_analysis(self) -> Dict[str, Any]:
         """Analyze closed trades to identify which conditions, timeframes, and parameters
         have historically led to wins vs losses. Cached and only recomputed when new trades arrive."""
-        return self._position_manager.compute_trade_pattern_analysis()
+        return await self.event_bus.request("compute_trade_pattern_analysis")
 
     async def _classify_market_regime(
         self,
@@ -1612,7 +1608,7 @@ class TradingEngine:
 
     async def _reconcile_positions(self):
         """Detect and handle external changes: delisted symbols, externally sold positions."""
-        await self._position_manager.reconcile_positions()
+        await self.event_bus.request("reconcile_positions")
 
     def _append_trade(self, trade: Dict[str, Any]):
         """Append a trade to history and prune old entries to bound memory usage."""
