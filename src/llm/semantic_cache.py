@@ -116,6 +116,7 @@ class SemanticCacheClient:
             for chunk in chunks:
                 logger.debug(f"Semantic Cache: Generating embedding for chunk (len={len(chunk)}) at {embedding_url}...")
                 start_time = time.time()
+                resp = None
                 try:
                     resp = requests.post(
                         embedding_url,
