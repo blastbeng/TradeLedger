@@ -1,38 +1,15 @@
 import hashlib
 import json
 import logging
-import re
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Optional
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
-from src.llm.semantic_cache import get_semantic_cache_client
 
 logger = logging.getLogger(__name__)
-
-# Module-level executor for semantic cache queries to avoid blocking on shutdown
-_semantic_cache_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="semantic-cache")
-# Dedicated executor for background 'add' operations to avoid unbounded thread creation
-_semantic_cache_add_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="semantic-cache-add")
 
 def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
     return len(text) // 4
-
-def _extract_action_from_response(response_text: str) -> Optional[str]:
-    """Attempt to parse the LLM response as JSON and return the uppercase action, if any."""
-    try:
-        # Extract JSON from a markdown code block if present
-        match = re.search(r'```(?:json)?\s*(.*?)\s*```', response_text, re.DOTALL)
-        json_str = match.group(1) if match else response_text
-        data = json.loads(json_str)
-        if isinstance(data, dict):
-            action = data.get("action")
-            if isinstance(action, str):
-                return action.strip().upper()
-    except Exception:
-        pass
-    return None
 
 def get_cached_llm_response(
     prompt: str,
@@ -42,8 +19,6 @@ def get_cached_llm_response(
     model_type: str = "actuator",
     temperature: Optional[float] = None,
     symbol: Optional[str] = None,
-    prompt_category: str = "default",
-    bypass_semantic_cache: bool = False,
 ) -> Optional[dict]:
     """
     Get an LLM response, using Redis cache to avoid duplicate calls.
@@ -154,34 +129,6 @@ def get_cached_llm_response(
         logger.warning(f"Redis cache get failed: {e}. Proceeding without cache.")
 
     logger.debug("LLM cache miss: model_type=%s, system_prompt=%.200s..., prompt=%.500s...", model_type, system_prompt, prompt)
-    # --- Semantic Cache Check ---
-    _semantic_cache = get_semantic_cache_client()
-    # Bypass semantic cache for critical, time-sensitive prompt categories
-    # like "strategy" to avoid stale HOLD decisions missing BUY/SELL signals.
-    # Also bypass if market_hash is provided, as the exact-match Redis cache
-    # will already hit for identical market states, making the semantic query redundant.
-    if _semantic_cache.enabled and not bypass_semantic_cache and prompt_category not in ("strategy", "stock_selection") and not market_hash:
-        semantic_hit = None
-        try:
-            future = _semantic_cache_executor.submit(_semantic_cache.query, prompt, symbol, model_type, settings.LLM_CACHE_VERSION, prompt_category)
-            try:
-                semantic_hit = future.result(timeout=120.0)
-            except FuturesTimeoutError:
-                logger.warning("Semantic cache query timed out after 120s, skipping to LLM call.")
-            except Exception as e:
-                logger.warning(f"Semantic cache query failed, bypassing: {e}")
-
-            if semantic_hit:
-                logger.info("Semantic cache hit for prompt: %.100s...", prompt[:100])
-                return {
-                    "response": semantic_hit,
-                    "provider": "semantic_cache",
-                    "model": "cached",
-                }
-            else:
-                logger.debug("Semantic cache miss for prompt: %.100s...", prompt[:100])
-        except Exception as e:
-            logger.warning(f"Semantic cache query failed, bypassing: {e}")
     # Context window management: hard limit at 1,000,000 tokens
     MAX_TOKENS = 1_000_000
     prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
@@ -323,33 +270,6 @@ def get_cached_llm_response(
         logger.debug("LLM cache miss – stored response for key %s (provider=%s, model=%s)", cache_key[:32], used_provider, used_model)
     except Exception as e:
         logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
-    # --- Semantic Cache Store ---
-    if _semantic_cache.enabled and not bypass_semantic_cache and prompt_category not in ("strategy", "stock_selection") and not market_hash:
-        # Never cache BUY/SELL decisions, as they depend on real-time market data.
-        # Parse the response as JSON to reliably detect the action field.
-        action = _extract_action_from_response(response_text)
-        if action is None:
-            logger.debug("Semantic cache: Could not parse JSON action from response, skipping cache add.")
-        elif action in ("BUY", "SELL"):
-            logger.debug("Semantic cache: Critical decision (%s) detected, skipping cache add.", action)
-        else:
-            future = _semantic_cache_add_executor.submit(
-                _semantic_cache.add,
-                prompt,
-                response_text,
-                symbol,
-                model_type,
-                settings.LLM_CACHE_VERSION,
-                prompt_category
-            )
-
-            def _log_add_exception(fut):
-                try:
-                    fut.result()
-                except Exception as e:
-                    logger.error(f"Semantic cache add failed: {e}", exc_info=True)
-
-            future.add_done_callback(_log_add_exception)
     return {
         "response": response_text,
         "provider": used_provider,
