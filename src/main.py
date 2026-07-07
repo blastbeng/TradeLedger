@@ -59,14 +59,22 @@ class HealthEndpointFilter(logging.Filter):
             return False
         return True
 
-logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
-)
+# Set root logger level without adding a default plain-text StreamHandler
+# (logging.basicConfig would add one, which we don't want alongside JSON).
+_root_logger = logging.getLogger()
+_root_logger.setLevel(getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO))
 
-# Apply JSON formatter to the console output
-_console_handler = logging.StreamHandler()
-_console_handler.setFormatter(JsonFormatter())
-logging.getLogger().addHandler(_console_handler)
+# Apply JSON formatter to the console output.
+# Guard against duplicate addition: when uvicorn imports src.main.JsonFormatter
+# via dictConfig, this module is re-imported as src.main (separate from __main__),
+# which would re-run this code and add a second JSON handler.
+if not any(
+    isinstance(h, logging.StreamHandler) and isinstance(h.formatter, JsonFormatter)
+    for h in _root_logger.handlers
+):
+    _console_handler = logging.StreamHandler()
+    _console_handler.setFormatter(JsonFormatter())
+    _root_logger.addHandler(_console_handler)
 
 # Suppress httpx INFO logs (HTTP request/response lines) unless LOG_LEVEL is DEBUG
 if settings.LOG_LEVEL.upper() != "DEBUG":
