@@ -399,7 +399,7 @@ class SymbolReevaluator:
         btp_pairs = [f"{b['isin']}/{engine.base_currency}" for b in btp_bonds]
 
         # Fetch ETFs
-        etf_symbols = await engine._get_etf_symbols()
+        etf_symbols = await engine._market_data_manager.get_etf_symbols()
         etf_pairs = [f"{sym}/{engine.base_currency}" for sym in etf_symbols]
         available_pairs = stock_pairs + btp_pairs
 

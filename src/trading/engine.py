@@ -431,10 +431,6 @@ class TradingEngine:
         except Exception as e:
             logger.error(f"Force download error: {e}", exc_info=True)
 
-    async def _get_etf_symbols(self) -> List[str]:
-        """Return Italian UCITS ETF symbols, cached for 1 hour."""
-        return await self._market_data_manager.get_etf_symbols()
-
     async def _get_asset_info(self, symbol: str) -> Any:
         """Return asset info (min order size, name, etc.), cached for 1 hour."""
         return await self._market_data_manager.get_asset_info(symbol)
@@ -700,7 +696,7 @@ class TradingEngine:
                 # Fetch all asset types for stratified sampling
                 stock_assets = await self._market_data_manager.get_tradable_assets()
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in stock_assets]
-                etf_symbols = await self._get_etf_symbols()
+                etf_symbols = await self._market_data_manager.get_etf_symbols()
                 etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
                 btp_bonds = await self._market_data_manager.get_btp_bonds()
                 btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
