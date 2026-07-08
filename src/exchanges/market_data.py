@@ -58,15 +58,20 @@ from src.exchanges.iex_utils import (
     get_iex_quote,
     get_iex_candles,
 )
+from src.exchanges.asset_discovery import (
+    _fetch_info,
+    _discover_wikipedia_tickers,
+    _load_static_tickers,
+    _get_hardcoded_tickers,
+    _discover_financedatabase_tickers,
+    discover_italian_ucits_etfs,
+    _save_discovered_assets_to_db,
+    get_tradable_assets,
+    set_notifier,
+)
 
 logger = logging.getLogger(__name__)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-_notifier = None
-
-def set_notifier(notifier):
-    global _notifier
-    _notifier = notifier
-
 _get_quotes_lock = threading.Lock()
 
 def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
