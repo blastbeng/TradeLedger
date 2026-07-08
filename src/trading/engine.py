@@ -1945,7 +1945,7 @@ class TradingEngine:
             try:
                 now = time.time()
                 for symbol in list(self._pending_entries.keys()):
-                    await self._signal_processor.process_pending_entry(symbol, now)
+                    await self._signal_processor.entry_signal_manager.process_pending_entry(symbol, now)
             except Exception as e:
                 logger.error(f"Error checking pending entries: {e}", exc_info=True)
             await asyncio.sleep(60)  # check every 60 seconds (medium/long-term)
