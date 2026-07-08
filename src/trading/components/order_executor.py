@@ -2555,18 +2555,20 @@ class OrderExecutor:
                     signal=reconstructed_signal,
                     atr=queued.get('atr'),
                 )
-                await self.place_exit_orders(symbol, reconstructed_signal, exit_prices, queued.get('timeframe'))
+                await self._place_replacement_exit_orders_with_retry(
+                    symbol, reconstructed_signal, exit_prices, queued.get('timeframe')
+                )
             except (TypeError, ValueError, RuntimeError, AttributeError) as e:
-                logger.error(f"Failed to place exit orders after queued buy fill for {symbol}: {e}")
+                logger.error(f"Failed to setup exit orders after queued buy fill for {symbol}: {e}")
                 if engine.notifier:
                     stock_name = await engine._market_data_manager.get_stock_name(symbol)
                     display_symbol = engine._format_symbol_display(symbol, stock_name, queued.get('timeframe'))
                     await engine.notifier.send_notification(
-                        f"⚠️ Exit order placement failed for {display_symbol} after queued fill: {e}",
+                        f"⚠️ Exit order setup failed for {display_symbol} after queued fill: {e}",
                         summary={
                             "symbol": symbol,
                             "action": "ERROR",
-                            "reason": f"Exit order placement failed after queued fill: {str(e)[:200]}",
+                            "reason": f"Exit order setup failed after queued fill: {str(e)[:200]}",
                         }
                     )
 
