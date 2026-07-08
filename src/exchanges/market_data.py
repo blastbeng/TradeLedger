@@ -552,7 +552,7 @@ def get_iex_candles(
         return None
 
 def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """Fetch ISIN, country, and name from Borsa Italiana search API.
+    """Fetch ISIN, country, and name from Borsa Italiana search page.
 
     Returns (isin, country, name). Country is always 'Italy' if found.
     """
@@ -567,15 +567,19 @@ def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[s
         with httpx.Client(proxy=_get_proxies(), timeout=10.0, follow_redirects=True) as client:
             response = client.get(url, headers=headers)
             response.raise_for_status()
-            data = response.json()
-            if data and isinstance(data, list):
-                for item in data:
-                    isin = item.get("ISIN")
-                    name = item.get("Name")
-                    if isin and re.match(r'^[A-Z]{2}[A-Z0-9]{9}\d$', isin):
-                        # Borsa Italiana is the Italian exchange, so country is Italy
-                        _reset_bi_circuit()
-                        return isin, "Italy", name
+
+            soup = BeautifulSoup(response.text, "html.parser")
+            for a_tag in soup.find_all("a", href=True):
+                href = a_tag["href"]
+                if "/borsa/search/scheda.html?code=" in href:
+                    match = re.search(r'code=([^&]+)', href)
+                    if match:
+                        isin = match.group(1)
+                        if re.match(r'^[A-Z]{2}[A-Z0-9]{9}\d$', isin):
+                            name = a_tag.get_text(strip=True)
+                            if name.lower() == base_symbol.lower():
+                                _reset_bi_circuit()
+                                return isin, "Italy", name
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
         _record_bi_error(e)
         logger.error(f"Borsa Italiana search failed for {base_symbol}: {e}")
