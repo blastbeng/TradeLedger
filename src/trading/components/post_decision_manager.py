@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from src.config.settings import settings
 from src.database import get_aggregate_sentiment_from_db, insert_signal
@@ -11,7 +11,8 @@ from src.llm.prompts import get_cached_news_summary
 from src.strategies.base import Signal
 from src.strategies.validator import validate_signal
 
-from src.trading.components.signal_processor import DecisionContext
+if TYPE_CHECKING:
+    from src.trading.components.signal_processor import DecisionContext
 
 logger = logging.getLogger(__name__)
 
