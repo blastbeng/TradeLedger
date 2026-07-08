@@ -60,6 +60,7 @@ from src.utils.task_supervisor import TaskSupervisor
 from src.utils.event_bus import EventBus
 from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data
 from src.trading.components.order_executor import OrderExecutor
+from src.trading.components.manual_trade_logger import ManualTradeLogger
 from src.trading.components.risk_manager import RiskManager
 from src.trading.components.state_persistence import StatePersistence
 from src.trading.components.position_manager import PositionManager
@@ -145,6 +146,7 @@ class TradingEngine:
         self.event_bus.subscribe("remove_symbol_if_paused", self._remove_symbol_if_paused)
         self._state_persistence = StatePersistence(self, self.event_bus)
         self._order_executor = OrderExecutor(self, self.event_bus)
+        self._manual_trade_logger = ManualTradeLogger(self, self.event_bus)
         self._risk_manager = RiskManager(self, self.event_bus)
         self._symbol_reevaluator = SymbolReevaluator(self, self.event_bus)
         self._signal_processor = SignalProcessor(self, self.event_bus)
@@ -1895,7 +1897,7 @@ class TradingEngine:
 
     async def log_manual_trade(self, ticker: str, side: str, quantity: float, money_spent: float, fee: float) -> dict:
         """Log a manually executed trade in notify mode. Persists to DB and updates positions."""
-        return await self._order_executor.log_manual_trade(ticker, side, quantity, money_spent, fee)
+        return await self.event_bus.request("log_manual_trade", ticker, side, quantity, money_spent, fee)
 
     async def _monitor_entry_signals_loop(self):
         """Periodically check tracked symbols for favourable entry conditions.
