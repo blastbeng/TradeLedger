@@ -558,6 +558,15 @@ class Settings(BaseSettings):
     HTTP_PROXY_ENABLED: bool = False
     HTTP_PROXIES: list[str] = []
 
+    # Alpha Vantage
+    ALPHAVANTAGE_ENABLED: bool = False
+    ALPHAVANTAGE_API_KEY: str = ""
+    ALPHAVANTAGE_RATE_LIMIT_PER_MIN: int = 5  # free tier: 5 req/min
+
+    # IEX Cloud
+    IEX_ENABLED: bool = False
+    IEX_API_KEY: str = ""
+
 
 
 
