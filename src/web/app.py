@@ -6,6 +6,7 @@ import os
 import secrets
 import sys
 import time
+import uuid
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Response, APIRouter, Body
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
@@ -75,18 +76,23 @@ async def rate_limit_middleware(request: Request, call_next):
     redis = get_redis_client()
     rate_limit_key = f"rate_limit:{client_ip}"
 
-    # Remove timestamps older than the window
-    await asyncio.to_thread(redis.zremrangebyscore, rate_limit_key, 0, now - RATE_LIMIT_WINDOW)
+    try:
+        # Remove timestamps older than the window
+        await asyncio.to_thread(redis.zremrangebyscore, rate_limit_key, 0, now - RATE_LIMIT_WINDOW)
 
-    # Count current requests in the window
-    count = await asyncio.to_thread(redis.zcard, rate_limit_key)
+        # Count current requests in the window
+        count = await asyncio.to_thread(redis.zcard, rate_limit_key)
 
-    if count >= RATE_LIMIT_REQUESTS:
-        return JSONResponse(status_code=429, content={"detail": "Too Many Requests"})
+        if count >= RATE_LIMIT_REQUESTS:
+            return JSONResponse(status_code=429, content={"detail": "Too Many Requests"})
 
-    # Add current request timestamp and set expiration
-    await asyncio.to_thread(redis.zadd, rate_limit_key, {now: now})
-    await asyncio.to_thread(redis.expire, rate_limit_key, RATE_LIMIT_WINDOW)
+        # Add current request timestamp and set expiration
+        # Use a unique member (uuid) to avoid collisions if two requests happen at the exact same time
+        await asyncio.to_thread(redis.zadd, rate_limit_key, {uuid.uuid4().hex: now})
+        await asyncio.to_thread(redis.expire, rate_limit_key, RATE_LIMIT_WINDOW)
+    except Exception as e:
+        # Fail-open if Redis is unavailable
+        logger.warning(f"Rate limiter failed, allowing request: {e}")
 
     response = await call_next(request)
     return response
