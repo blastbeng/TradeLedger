@@ -585,7 +585,7 @@ class ExitOrderManager:
                     'status': 'closed',
                     'timestamp': int(time.time() * 1000),
                 }
-                await self.engine._order_executor.handle_queued_sell_fill(trade_dict, queued, partial=False)
+                await self.engine._order_executor._sell_executor.handle_queued_sell_fill(trade_dict, queued, partial=False)
 
         # Cancel the OCO pair if it still exists
         oco_pair_id = queued.get("oco_pair") if queued else None
