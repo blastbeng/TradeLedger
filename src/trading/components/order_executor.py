@@ -2037,7 +2037,7 @@ class OrderExecutor:
                 if "reasoning" not in filtered:
                     filtered["reasoning"] = ""
                 reconstructed_signal = Signal(**filtered)
-               exit_prices = self._exit_order_manager.compute_exit_order_prices(
+                exit_prices = self._exit_order_manager.compute_exit_order_prices(
                     entry_price=engine.positions[symbol]["price"],
                     signal=reconstructed_signal,
                     atr=queued.get('atr'),
