@@ -1,0 +1,185 @@
+"""Handles shortlist building and composite score computation for re-evaluation."""
+import logging
+from typing import Any, Dict, List, Optional, Tuple
+
+from src.config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+
+class ReevalShortlistBuilder:
+    """Builds the LLM shortlist and enforces minimum symbol constraints."""
+
+    def __init__(self, engine, event_bus):
+        self.engine = engine
+        self.event_bus = event_bus
+
+    def compute_ohlcv_summary(
+        self,
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+        sample_pairs: List[str],
+    ) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """Compute a per-symbol OHLCV summary from raw candle data.
+
+        Returns {symbol: {timeframe: {change_pct, high, low, volume}}}.
+        """
+        ohlcv_summary: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        if ohlcv_data:
+            for symbol in sample_pairs:
+                if symbol in ohlcv_data:
+                    tf_data = ohlcv_data[symbol]
+                    summary: Dict[str, Dict[str, Any]] = {}
+                    for tf, candles in tf_data.items():
+                        if not candles:
+                            continue
+                        open_price = candles[0][1]
+                        close_price = candles[-1][4]
+                        high = max(c[2] for c in candles)
+                        low = min(c[3] for c in candles)
+                        volume = sum(c[5] for c in candles)
+                        change_pct = ((close_price - open_price) / open_price) * 100 if open_price else 0
+                        summary[tf] = {
+                            "change_pct": round(change_pct, 2),
+                            "high": high,
+                            "low": low,
+                            "volume": volume,
+                        }
+                    ohlcv_summary[symbol] = summary
+        return ohlcv_summary
+
+    def compute_composite_scores_and_shortlist(
+        self,
+        sample_pairs: List[str],
+        symbol_trend_scores: Dict[str, float],
+        news_sentiment: Dict[str, Any],
+        trade_pattern_analysis: Dict[str, Any],
+        etf_pairs: List[str],
+        btp_pairs: List[str],
+    ) -> Tuple[Dict[str, float], List[str]]:
+        """Compute composite opportunity scores and build the LLM shortlist.
+
+        Returns (composite_scores, shortlist) where:
+        - composite_scores: {symbol: float} (0.0–1.0)
+        - shortlist: deduplicated list of symbols sorted by composite score,
+          with currently held symbols, historically best symbols, configured
+          ETFs, all discovered ETFs, and all BTPs appended.
+        """
+        engine = self.engine
+
+        # --- Composite opportunity score (trend + sentiment) ---
+        composite_scores: Dict[str, float] = {}
+        for sym in sample_pairs:
+            trend = symbol_trend_scores.get(sym, 0.0)
+            base_sym = sym.split("/")[0] if "/" in sym else sym
+            sent = news_sentiment.get(base_sym, {}).get("avg_compound", 0.0) if news_sentiment else 0.0
+            sentiment_score = (sent + 1.0) / 2.0  # map -1..1 to 0..1
+            composite = settings.COMPOSITE_TREND_WEIGHT * trend + settings.COMPOSITE_SENTIMENT_WEIGHT * sentiment_score
+            composite_scores[sym] = round(composite, 3)
+
+        # Build a shortlist for the LLM: all symbols sorted by composite score,
+        # plus any currently held symbols and historically best symbols.
+        sorted_by_composite = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
+        shortlist = sorted_by_composite
+
+        # Always include currently held symbols (they must be managed)
+        for entry in engine.current_symbols:
+            sym = entry["symbol"]
+            if sym in sample_pairs and sym not in shortlist:
+                shortlist.append(sym)
+
+        # Always include historically best symbols (from trade pattern analysis)
+        if trade_pattern_analysis:
+            best_syms = [item["symbol"] for item in trade_pattern_analysis.get("best_symbols", [])]
+            for sym in best_syms:
+                if sym in sample_pairs and sym not in shortlist:
+                    shortlist.append(sym)
+
+        # Always include the configured ETFs
+        for etf in settings.ALWAYS_INCLUDE_ETFS:
+            pair = f"{etf}/{engine.base_currency}"
+            if pair in sample_pairs and pair not in shortlist:
+                shortlist.append(pair)
+
+        # Always include ALL discovered ETFs for the LLM to consider
+        for sym in etf_pairs:
+            if sym not in shortlist:
+                shortlist.append(sym)
+
+        # Always include all BTPs for the LLM to consider
+        for sym in btp_pairs:
+            if sym not in shortlist:
+                shortlist.append(sym)
+
+        # Deduplicate shortlist while preserving order
+        seen = set()
+        shortlist = [s for s in shortlist if not (s in seen or seen.add(s))]
+
+        return composite_scores, shortlist
+
+    def enforce_min_symbols(
+        self,
+        deduped: List[Dict[str, str]],
+        pause_trading: Optional[bool],
+        sorted_by_composite: List[str],
+        market_limits: Dict[str, Dict[str, float]],
+        base_balance: float,
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+    ) -> None:
+        """Enforce MIN_SYMBOLS setting, filling remaining slots from composite scores.
+
+        Modifies engine.effective_max_symbols and appends to deduped in-place
+        if additional symbols are needed to reach MIN_SYMBOLS.
+        """
+        engine = self.engine
+
+        # --- Enforce minimum symbols (unless LLM explicitly paused) ---
+        if (
+            settings.MIN_SYMBOLS > 0
+            and pause_trading is not True
+            and engine.effective_max_symbols < settings.MIN_SYMBOLS
+            and len(deduped) >= settings.MIN_SYMBOLS
+        ):
+            logger.info(
+                f"LLM selected {engine.effective_max_symbols} symbols; "
+                f"enforcing MIN_SYMBOLS={settings.MIN_SYMBOLS}"
+            )
+            engine.effective_max_symbols = settings.MIN_SYMBOLS
+
+        # --- Fallback: fill remaining slots if LLM returned fewer than MIN_SYMBOLS ---
+        if (
+            settings.MIN_SYMBOLS > 0
+            and pause_trading is not True
+            and len(deduped) < settings.MIN_SYMBOLS
+        ):
+            # Try to fill remaining slots from composite-score-sorted sample_pairs
+            existing_syms = {e["symbol"] for e in deduped}
+            default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+            needed = settings.MIN_SYMBOLS - len(deduped)
+            filled = 0
+            for sym in sorted_by_composite:
+                if filled >= needed:
+                    break
+                if sym in existing_syms:
+                    continue
+                if engine._is_excluded(sym, default_tf):
+                    continue
+
+                # Check if OHLCV data is available for the symbol
+                sym_data = ohlcv_data.get(sym, {})
+                available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
+                if not available_tfs:
+                    continue
+                tf = default_tf if default_tf in available_tfs else available_tfs[0]
+
+                # Check if we can afford the minimum trade cost
+                min_cost = market_limits.get(sym, {}).get("min_cost", 0)
+                if base_balance >= min_cost:
+                    deduped.append({"symbol": sym, "timeframe": tf})
+                    existing_syms.add(sym)
+                    filled += 1
+            if filled > 0:
+                logger.info(
+                    f"LLM returned only {len(deduped) - filled} symbols; "
+                    f"filled {filled} additional slots from composite scores to reach MIN_SYMBOLS={settings.MIN_SYMBOLS}"
+                )
+                engine.effective_max_symbols = max(engine.effective_max_symbols, len(deduped))
