@@ -10,7 +10,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depe
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from collections import defaultdict, deque
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection
 from src.llm.prompts import get_cached_news_summary
@@ -22,9 +21,6 @@ from pydantic import BaseModel
 # Rate limiting configuration
 RATE_LIMIT_REQUESTS = 100  # max requests per window
 RATE_LIMIT_WINDOW = 60    # window size in seconds
-
-# In-memory store for rate limiting: {ip: deque([timestamps])}
-_rate_limit_store = defaultdict(deque)
 
 async def _get_display_symbol(engine, symbol: str, timeframe: Optional[str] = None) -> str:
     """Return a formatted display string for the given symbol and timeframe."""
@@ -76,20 +72,22 @@ app = FastAPI(title="Trade Ledger")
 async def rate_limit_middleware(request: Request, call_next):
     client_ip = request.client.host if request.client else "unknown"
     now = time.time()
+    redis = get_redis_client()
+    rate_limit_key = f"rate_limit:{client_ip}"
 
     # Remove timestamps older than the window
-    ip_deque = _rate_limit_store[client_ip]
-    while ip_deque and ip_deque[0] < now - RATE_LIMIT_WINDOW:
-        ip_deque.popleft()
+    await asyncio.to_thread(redis.zremrangebyscore, rate_limit_key, 0, now - RATE_LIMIT_WINDOW)
 
-    # Optional: clean up empty deques to prevent memory bloat
-    if not ip_deque:
-        _rate_limit_store.pop(client_ip, None)
+    # Count current requests in the window
+    count = await asyncio.to_thread(redis.zcard, rate_limit_key)
 
-    if len(ip_deque) >= RATE_LIMIT_REQUESTS:
+    if count >= RATE_LIMIT_REQUESTS:
         return JSONResponse(status_code=429, content={"detail": "Too Many Requests"})
 
-    ip_deque.append(now)
+    # Add current request timestamp and set expiration
+    await asyncio.to_thread(redis.zadd, rate_limit_key, {now: now})
+    await asyncio.to_thread(redis.expire, rate_limit_key, RATE_LIMIT_WINDOW)
+
     response = await call_next(request)
     return response
 
