@@ -125,22 +125,22 @@ class RiskManager:
             source_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
             source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
 
-            if drawdown_pct >= settings.PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT:
+            if drawdown_pct * 100 >= settings.PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT:
                 if not paused or source != "portfolio_drawdown":
                     logger.warning(
                         f"Portfolio drawdown circuit breaker triggered: "
-                        f"{drawdown_pct:.2%} >= {settings.PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT:.2%}. Pausing trading."
+                        f"{drawdown_pct * 100:.2f}% >= {settings.PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT:.2f}%. Pausing trading."
                     )
                     await asyncio.to_thread(engine.redis.set, "trading:paused", "1")
                     await asyncio.to_thread(engine.redis.set, "trading:pause_source", "portfolio_drawdown")
-                    await asyncio.to_thread(engine.redis.set, "trading:pause_reason", f"Portfolio drawdown {drawdown_pct:.2%} exceeded circuit breaker threshold")
+                    await asyncio.to_thread(engine.redis.set, "trading:pause_reason", f"Portfolio drawdown {drawdown_pct * 100:.2f}% exceeded circuit breaker threshold")
                     if engine.notifier:
                         await engine.notifier.send_notification(
-                            f"🛑 Portfolio drawdown circuit breaker triggered ({drawdown_pct:.2%}). Trading paused.",
+                            f"🛑 Portfolio drawdown circuit breaker triggered ({drawdown_pct * 100:.2f}%). Trading paused.",
                             summary={"action": "PAUSE", "reason": "Portfolio drawdown circuit breaker"}
                         )
             elif source == "portfolio_drawdown" and paused:
-                logger.info(f"Portfolio drawdown recovered to {drawdown_pct:.2%}. Resuming trading.")
+                logger.info(f"Portfolio drawdown recovered to {drawdown_pct * 100:.2f}%. Resuming trading.")
                 pause_keys = [
                     "trading:paused",
                     "trading:pause_source",
