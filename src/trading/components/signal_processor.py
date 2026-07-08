@@ -430,6 +430,7 @@ class SignalProcessor:
         symbol = symbol_entry["symbol"]
         assigned_tf = symbol_entry["timeframe"]
         tf_seconds = engine._timeframe_to_seconds(assigned_tf)
+        display_symbol = symbol  # Initialize to prevent NameError in except block
 
         try:
             _init_ctx = await self._get_initial_context(symbol, symbol_entry)
