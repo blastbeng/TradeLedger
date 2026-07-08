@@ -1788,17 +1788,23 @@ class TradingEngine:
     async def _health_check_loop(self):
         """Periodically check the health of supervised background tasks and alert on failures."""
         await asyncio.sleep(300)  # initial delay 5 minutes
+        alerted_supervisors = set()
         while self._running:
             try:
                 for sup in self._supervisors:
                     health = sup.get_health()
                     if not health["is_healthy"] or not health["running"]:
-                        if self.notifier:
-                            await self.notifier.send_notification(
-                                f"🚨 Critical background task '{health['name']}' is not healthy or has stopped running. "
-                                f"Last error: {health['last_exception']}",
-                                summary={"action": "CRITICAL", "reason": f"Task {health['name']} unhealthy"}
-                            )
+                        if sup.name not in alerted_supervisors:
+                            alerted_supervisors.add(sup.name)
+                            if self.notifier:
+                                await self.notifier.send_notification(
+                                    f"🚨 Critical background task '{health['name']}' is not healthy or has stopped running. "
+                                    f"Last error: {health['last_exception']}",
+                                    summary={"action": "CRITICAL", "reason": f"Task {health['name']} unhealthy"}
+                                )
+                    else:
+                        # If the task somehow becomes healthy/running again, clear the alert flag
+                        alerted_supervisors.discard(sup.name)
             except Exception as e:
                 logger.error(f"Health check loop error: {e}", exc_info=True)
             await asyncio.sleep(300)  # check every 5 minutes
