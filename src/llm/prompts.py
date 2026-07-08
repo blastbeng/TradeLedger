@@ -1798,7 +1798,8 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         "You MUST also include the decided price (the current market price or your specified `limit_price`) in the reasoning message.\n"
         "- `strategy`: an object containing `type` (string) and `parameters` (object).\n"
         "  The `parameters` object MUST include ALL required trading parameters:\n"
-        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`, etc.\n"
+        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`,\n"
+        "  and `backtest_entry_config` (REQUIRED for BUY actions — the same entry logic object used in your backtest variants), etc.\n"
         "- `backtest_variants`: a JSON array of objects, each containing a complete set of strategy parameters for backtesting. "
         "Each variant MUST include at minimum: `stop_loss_pct`, `take_profit_pct`, `max_hold_time_seconds`, `trailing_stop`, "
         "`position_size_fraction`, and `backtest_period_days`. You decide how many variants to return (minimum 1, recommended 3–5). "
@@ -2116,7 +2117,8 @@ Return a JSON object with these **required** fields:
 - `strategy`: an object containing `type` (string) and `parameters` (object).
   The `parameters` object MUST include ALL required trading parameters:
   `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`,
-  `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`, etc.
+  `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`,
+  and `backtest_entry_config` (the same entry logic object you use in your backtest variants — REQUIRED for BUY actions), etc.
 - `backtest_variants`: a JSON array of objects, each containing a complete set of strategy parameters
   for backtesting. Each variant MUST include at minimum: `stop_loss_pct`, `take_profit_pct`,
   `max_hold_time_seconds`, `trailing_stop`, `position_size_fraction`, and `backtest_period_days`.
@@ -2232,7 +2234,8 @@ If ANY backtest variant confirms a strategy is viable, you may output your final
         "You MUST also include the decided price (the current market price or your specified `limit_price`) in the reasoning message.\n"
         "- `strategy`: an object containing `type` and `parameters`.\n"
         "  The `parameters` object MUST include ALL required trading parameters (same as Step 1):\n"
-        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, etc.\n"
+        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`,\n"
+        "  and `backtest_entry_config` (REQUIRED for BUY actions — copy it from your best-performing backtest variant), etc.\n"
         "  You may adjust `position_size_fraction` based on backtest performance (e.g., reduce size if drawdown is high).\n"
     )
     prompt += (

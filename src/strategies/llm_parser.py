@@ -229,6 +229,13 @@ def parse_llm_response(response_text: str) -> Signal:
             if not backtest_variants:
                 backtest_variants = None
 
+        # Fallback: if backtest_entry_config is missing from params but present
+        # in the first backtest variant, copy it so the validator doesn't reject BUY signals.
+        if "backtest_entry_config" not in params and backtest_variants and isinstance(backtest_variants[0], dict):
+            bec = backtest_variants[0].get("backtest_entry_config")
+            if isinstance(bec, dict):
+                params["backtest_entry_config"] = bec
+
         return Signal(
             action=action,
             confidence=confidence,
