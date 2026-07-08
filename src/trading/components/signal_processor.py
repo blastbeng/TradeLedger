@@ -3172,12 +3172,32 @@ class SignalProcessor:
             consecutive_losses = perf["equity_curve"].get("consecutive_losses", 0)
             drawdown_pct = perf["equity_curve"].get("drawdown_pct", 0.0)
 
+            # Compute total unrealized P&L of open positions
+            total_unrealized_pnl = 0.0
+            if engine.positions:
+                open_symbols = list(engine.positions.keys())
+                base_symbols = [s.split("/")[0] for s in open_symbols]
+                try:
+                    tickers_map = await engine._market_data_manager._get_quotes_async(base_symbols, timeout=45.0)
+                    for sym, pos in engine.positions.items():
+                        base_sym = sym.split("/")[0]
+                        ticker = tickers_map.get(base_sym)
+                        if ticker and ticker.get("last"):
+                            current_price = ticker["last"]
+                            entry_price = pos.get("price", 0.0)
+                            amount = pos.get("amount", 0.0)
+                            total_unrealized_pnl += (current_price - entry_price) * amount
+                except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, KeyError):
+                    pass
+
             prompt_parts = [
                 "Trading is currently paused.",
             ]
             if pause_reason:
                 prompt_parts.append(f"Pause reason: {pause_reason}")
             prompt_parts.append(f"Account P&L: daily={daily_pnl:.4f}, total={total_pnl:.4f}, drawdown={drawdown_pct:.2f}%")
+            if engine.positions:
+                prompt_parts.append(f"Unrealized P&L of open positions: {total_unrealized_pnl:.4f}")
             if consecutive_losses > 0:
                 prompt_parts.append(f"Consecutive losing trades: {consecutive_losses}")
             if benchmark_price is not None:
