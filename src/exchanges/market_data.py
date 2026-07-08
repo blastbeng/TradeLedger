@@ -578,7 +578,7 @@ def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[s
                         return isin, "Italy", name
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
         _record_bi_error(e)
-        logger.debug(f"Borsa Italiana search failed for {base_symbol}: {e}")
+        logger.error(f"Borsa Italiana search failed for {base_symbol}: {e}")
     return None, None, None
 
 
