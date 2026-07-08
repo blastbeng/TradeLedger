@@ -559,7 +559,7 @@ def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[s
     if _check_bi_circuit():
         return None, None, None
 
-    url = f"https://www.borsaitaliana.it/borsa/search/srch.ash?testo={base_symbol}&lang=it"
+    url = f"https://www.borsaitaliana.it/borsa/searchengine/search.html?lang=it&q={base_symbol}&Cerca=Search"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
