@@ -388,6 +388,7 @@ class OrderExecutor:
         elif status in ('rejected', 'canceled', 'cancelled', 'expired'):
             await self.handle_canceled_or_rejected_order(queued, status)
 
+    async def execute_sell(
         self,
         symbol: str,
         display_symbol: str,
@@ -841,6 +842,7 @@ class OrderExecutor:
                     }
                 )
 
+    async def cancel_orphaned_orders(self):
         """Periodically cancel any open orders that are older than 10 minutes,
         but never cancel orders that are still being tracked as queued."""
         engine = self.engine
