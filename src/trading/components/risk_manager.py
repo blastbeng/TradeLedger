@@ -1350,8 +1350,8 @@ class RiskManager:
     ) -> None:
         """Activate breakeven stop if the position has gained enough profit.
 
-        Moves the stop-loss to the entry price once the current price
-        exceeds the entry price by the configured activation percentage.
+        Moves the stop-loss to the entry price plus exit fees once the current
+        price exceeds the entry price by the configured activation percentage.
         """
         engine = self.engine
         breakeven_activation = pos.get("breakeven_activation_pct")
@@ -1359,7 +1359,13 @@ class RiskManager:
             entry_price = pos["price"]
             if current_price >= entry_price * (1 + breakeven_activation):
                 # Compute exact break-even price that covers exit fee
-                breakeven_price = entry_price
+                # For stocks, exit fees (commission + fixed fee) are roughly 0.5%.
+                # BTPs have different fee structures, so we only apply the buffer
+                # to non-BTP assets.
+                if is_btp_isin(symbol):
+                    breakeven_price = entry_price
+                else:
+                    breakeven_price = entry_price * 1.005
                 async with engine._positions_lock:
                     if breakeven_price > pos["stop_loss"]:
                         pos["stop_loss"] = breakeven_price
