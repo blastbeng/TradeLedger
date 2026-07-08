@@ -21,6 +21,7 @@ from src.trading.components.reeval_shortlist_builder import ReevalShortlistBuild
 from src.trading.components.reeval_response_processor import ReevalResponseProcessor
 from src.trading.components.reeval_pause_resume_manager import ReevalPauseResumeManager
 
+from src.trading.components.reeval_post_selection_manager import ReevalPostSelectionManager
 from src.trading.components.reeval_notifier import ReevalNotifier
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ class SymbolReevaluator:
         self.shortlist_builder = ReevalShortlistBuilder(engine, event_bus)
         self.response_processor = ReevalResponseProcessor(engine, event_bus)
         self.pause_resume_manager = ReevalPauseResumeManager(engine, event_bus)
+        self.post_selection_manager = ReevalPostSelectionManager(engine, event_bus)
         self.notifier = ReevalNotifier(engine, event_bus)
         self.event_bus.subscribe("reevaluate_symbols_impl", self.reevaluate_symbols_impl)
 
@@ -99,168 +101,6 @@ class SymbolReevaluator:
             return None
 
         return (is_user_forced, is_market_condition_trigger, now, is_rebalance)
-
-    async def post_selection_cleanup_and_backfill(
-        self,
-        old_symbols: List[Dict[str, str]],
-        deduped: List[Dict[str, str]],
-        force: bool,
-    ) -> None:
-        """Ensure open positions remain tracked, update tenure, and trigger backfill/news."""
-        engine = self.engine
-
-        # Ensure all open positions remain in current_symbols so they continue to be managed by the LLM strategy
-        for symbol, pos in engine.positions.items():
-            if not any(entry["symbol"] == symbol for entry in engine.current_symbols):
-                tf = pos.get("timeframe") or (settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h")
-                engine.current_symbols.append({"symbol": symbol, "timeframe": tf})
-                logger.info(f"Keeping {symbol} in current_symbols due to open position (timeframe={tf})")
-
-        # If trading is paused, we still keep all symbols so the LLM can generate signals
-        # (which will be notified but not executed in paper mode).
-        # The LLM may have just set pause_trading = true, so re-read Redis.
-        paused_now = await asyncio.to_thread(engine.redis.get, "trading:paused")
-        if paused_now and paused_now == "1" and not force:
-            logger.info("Trading is paused. Keeping all symbols for signal generation.")
-
-        # Update symbol tenure tracking
-        now_ts = time.time()
-        new_symbol_set = {entry["symbol"] for entry in engine.current_symbols}
-        for sym in new_symbol_set:
-            if sym not in engine._symbol_first_seen:
-                engine._symbol_first_seen[sym] = now_ts
-        for sym in list(engine._symbol_first_seen.keys()):
-            if sym not in new_symbol_set:
-                del engine._symbol_first_seen[sym]
-
-        # Trigger immediate backfill for newly selected symbols
-        old_symbol_set = {entry["symbol"] for entry in old_symbols}
-        for entry in engine.current_symbols:
-            if entry["symbol"] not in old_symbol_set:
-                sym = entry["symbol"]
-                tf = entry["timeframe"]
-                logger.info(f"Triggering immediate backfill for newly selected symbol {sym} ({tf})")
-                asyncio.create_task(self.event_bus.publish("backfill_new_symbol", sym, tf))
-
-        # Also trigger immediate news fetch for newly selected symbols
-        if settings.NEWS_ENABLED:
-            for entry in deduped:
-                sym = entry["symbol"]
-                logger.info(f"Triggering immediate news fetch for newly selected symbol {sym}")
-                asyncio.create_task(engine._fetch_and_store_news_for_symbol(sym))
-
-    async def cleanup_stale_state_entries(self):
-        """Remove stale entries from engine state dicts and base-symbol caches.
-
-        Called at the end of each re-evaluation cycle to prune entries for
-        symbols that are no longer tracked and have no open position.
-        """
-        engine = self.engine
-        active_symbols = {entry["symbol"] for entry in engine.current_symbols}
-        active_symbols.update(engine.positions.keys())
-        async with engine._eval_state_lock:
-            for state_dict in (
-                engine._force_eval,
-                engine._last_decisions,
-                engine._entry_signal_state,
-                engine._force_eval_time,
-                engine._last_strategy_eval,
-                engine._strategy_intervals,
-                engine._last_eval_snapshot,
-                engine.last_loss_time,
-                engine.cooldown_durations,
-                engine._pending_entries,
-            ):
-                stale_keys = [s for s in state_dict if s not in active_symbols]
-                for s in stale_keys:
-                    state_dict.pop(s, None)
-                if stale_keys:
-                    logger.debug(f"Cleaned {len(stale_keys)} stale entries from engine state dicts")
-
-        active_bases = {s.split("/")[0] for s in active_symbols}
-        for cache_dict in (
-            engine._sentiment_cache,
-            engine._asset_cache,
-            engine._asset_cache_time,
-        ):
-            stale_keys = [k for k in cache_dict if k not in active_bases]
-            for k in stale_keys:
-                cache_dict.pop(k, None)
-            if stale_keys:
-                logger.debug(f"Cleaned {len(stale_keys)} stale entries from base-symbol caches")
-
-
-    async def prepare_reeval_prompt_context(
-        self,
-        now: float,
-        sample_pairs: List[str],
-        ohlcv_data: Dict[str, Dict[str, List[List]]],
-        sentiment_trend: Dict[str, Optional[float]],
-        market_breadth: Dict[str, Any],
-        is_rebalance: bool = False,
-    ) -> Tuple[bool, Dict[str, float], Dict[str, Any], str, Dict[str, Dict[str, Dict[str, Any]]], float]:
-        """Prepare context variables needed for the re-evaluation LLM prompts.
-
-        Returns (trading_paused_bool, symbol_tenure, symbol_max_tenure,
-                 auto_resume_note, ohlcv_summary, effective_temp).
-        """
-        engine = self.engine
-
-        # Check if trading is currently paused
-        trading_paused_raw = await asyncio.to_thread(engine.redis.get, "trading:paused")
-        trading_paused_bool = trading_paused_raw is not None and trading_paused_raw == "1"
-
-        # Compute symbol tenure for the prompt
-        symbol_tenure = {}
-        for sym, first_seen in engine._symbol_first_seen.items():
-            symbol_tenure[sym] = round(now - first_seen)
-
-        # Compute current max tenure per symbol for the prompt
-        symbol_max_tenure = {}
-        for entry in engine.current_symbols:
-            if 'max_tenure_hours' in entry:
-                symbol_max_tenure[entry['symbol']] = entry['max_tenure_hours']
-
-        # --- Warn if trading was recently auto-resumed ---
-        auto_resume_note = ""
-        last_auto_resume_raw = await asyncio.to_thread(engine.redis.get, "trading:last_auto_resume")
-        if last_auto_resume_raw:
-            try:
-                last_auto_resume_ts = float(last_auto_resume_raw)
-                seconds_since = now - last_auto_resume_ts
-                if seconds_since < engine._symbol_reevaluation_interval * 2:
-                    minutes_since = seconds_since / 60
-                    auto_resume_note = (
-                        f"\n**NOTE:** Trading was auto‑resumed {minutes_since:.1f} minutes ago after a pause. "
-                        "Market conditions may not have changed significantly. "
-                        "Consider whether conditions have actually improved enough to justify trading. "
-                        "If you decide to pause again, set a longer `pause_duration_seconds` (e.g., 1800–7200) "
-                        "to allow conditions to evolve; a very short pause will likely lead to the same outcome.\n"
-                    )
-            except (ValueError, TypeError):
-                pass
-
-        if is_rebalance:
-            auto_resume_note += "\n**NOTE:** This is a periodic portfolio rebalance. Please re-evaluate all positions and rebalance the portfolio accordingly.\n"
-
-        # Compute OHLCV summary for the prompt (do not pass raw candles to the LLM)
-        ohlcv_summary = self.shortlist_builder.compute_ohlcv_summary(ohlcv_data, sample_pairs)
-
-        # Compute prompt complexity for temperature selection
-        _st_values = [abs(v) for v in sentiment_trend.values() if v is not None]
-        _st_mag = max(_st_values) if _st_values else None
-        symbol_selection_complexity = self.engine._signal_processor.compute_prompt_complexity(
-            num_candidates=len(sample_pairs),
-            market_breadth=market_breadth,
-            fear_greed=None,
-            volatility_percentile=None,
-            sentiment_trend_magnitude=_st_mag,
-            conflicting_signals=False,
-            is_critical=False,
-        )
-        effective_temp = engine._signal_processor._get_effective_temperature("mind", symbol_selection_complexity)
-
-        return trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp
 
     async def process_llm_response(
         self,
@@ -423,7 +263,7 @@ class SymbolReevaluator:
             ohlcv_data=ohlcv_data,
         )
 
-        await self.post_selection_cleanup_and_backfill(
+        await self.post_selection_manager.post_selection_cleanup_and_backfill(
             old_symbols=old_symbols,
             deduped=deduped,
             force=force,
@@ -459,7 +299,7 @@ class SymbolReevaluator:
             await asyncio.to_thread(engine.redis.expire, "trading:last_triggered_reeval", 7200)
 
         # --- Cleanup stale entries from engine state dicts and caches ---
-        await self.cleanup_stale_state_entries()
+        await self.post_selection_manager.cleanup_stale_state_entries()
 
         engine._state_dirty = True
         logger.info("Re-evaluation complete: %d symbols selected.", len(engine.current_symbols))
@@ -538,7 +378,7 @@ class SymbolReevaluator:
             sample_pairs, tickers, market_trend
         )
 
-        trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp = await self.prepare_reeval_prompt_context(
+        trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp = await self.llm_runner.prepare_reeval_prompt_context(
             now=now,
             sample_pairs=sample_pairs,
             ohlcv_data=ohlcv_data,
