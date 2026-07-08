@@ -221,6 +221,14 @@ class TelegramBot:
             await update.message.reply_text("⚠️ Could not retrieve status.", reply_markup=self.keyboard)
             return
 
+        pos_symbols = {sym.split("/")[0] for sym in positions.keys()}
+        pos_quotes = {}
+        if pos_symbols:
+            try:
+                pos_quotes = await self.engine._market_data_manager._get_quotes_async(list(pos_symbols), timeout=15.0)
+            except Exception as e:
+                logger.warning(f"Batch quote fetch failed for status: {e}")
+
         msg = "<b>📊 Current Status</b>\n\n"
         mind_provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
         actuator_provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
@@ -256,8 +264,17 @@ class TelegramBot:
                     f"  • <code>{pos_display}</code>\n"
                     f"    Amount: {pos['amount']:.6f}\n"
                     f"    Entry: {pos['price']:.4f}\n"
-                    f"    SL: {pos['stop_loss']:.4f}  TP: {pos['take_profit']:.4f}\n"
                 )
+                base_sym = sym.split("/")[0]
+                ticker = pos_quotes.get(base_sym)
+                current_price = ticker.get('last') if ticker else None
+                if current_price is not None:
+                    pnl = (current_price - pos['price']) * pos['amount']
+                    pnl_pct = ((current_price - pos['price']) / pos['price']) * 100 if pos['price'] else 0
+                    pnl_sign = "+" if pnl >= 0 else ""
+                    pnl_pct_sign = "+" if pnl_pct >= 0 else ""
+                    msg += f"    Current: {current_price:.4f}  P&L: {pnl_sign}{pnl:.2f} ({pnl_pct_sign}{pnl_pct:.2f}%)\n"
+                msg += f"    SL: {pos['stop_loss']:.4f}  TP: {pos['take_profit']:.4f}\n"
         else:
             msg += "<b>📈 Open Positions:</b> None\n"
 
