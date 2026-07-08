@@ -1765,7 +1765,7 @@ class TradingEngine:
                         pass
 
                 if await self._is_market_open():
-                    await self._signal_processor.check_pause_resume_decision()
+                    await self._signal_processor.pause_resume_manager.check_pause_resume_decision()
             except Exception as e:
                 logger.error(f"Pause/resume check error: {e}", exc_info=True)
             await asyncio.sleep(1800)  # every 30 minutes
@@ -2123,7 +2123,7 @@ class TradingEngine:
 
     async def simulate_backtest(self, symbol: str) -> Dict[str, Any]:
         """Simulate Step 1a (analysis), Step 1b (variants), and run backtest without executing trades."""
-        data = await self._signal_processor.prepare_simulation_data(symbol)
+        data = await self._signal_processor.simulation_manager.prepare_simulation_data(symbol)
         if "error" in data:
             return data
 
@@ -2131,7 +2131,7 @@ class TradingEngine:
         temperature = data.get("temperature", 0.2)
         market_hash = data.get("market_hash")
 
-        _analysis, step1b_response, preliminary_signal, error = await self._signal_processor.run_simulation_step1(symbol, data)
+        _analysis, step1b_response, preliminary_signal, error = await self._signal_processor.simulation_manager.run_simulation_step1(symbol, data)
         if error is not None:
             return error
 
@@ -2157,7 +2157,7 @@ class TradingEngine:
 
     async def simulate_decision(self, symbol: str) -> Dict[str, Any]:
         """Simulate Step 1a (analysis), Step 1b (variants), and Step 2 (final decision) without executing trades."""
-        data = await self._signal_processor.prepare_simulation_data(symbol)
+        data = await self._signal_processor.simulation_manager.prepare_simulation_data(symbol)
         if "error" in data:
             return data
 
@@ -2165,7 +2165,7 @@ class TradingEngine:
         temperature = data.get("temperature", 0.2)
         market_hash = data.get("market_hash")
 
-        _analysis, step1b_response, preliminary_signal, error = await self._signal_processor.run_simulation_step1(symbol, data)
+        _analysis, step1b_response, preliminary_signal, error = await self._signal_processor.simulation_manager.run_simulation_step1(symbol, data)
         if error is not None:
             return error
 
