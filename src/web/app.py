@@ -57,6 +57,19 @@ async def verify_auth(request: Request):
 
     return True
 
+async def verify_csrf(request: Request):
+    """Verify the CSRF token from the X-CSRF-Token header matches the csrf_token cookie."""
+    if not settings.WEB_USERNAME or not settings.WEB_PASSWORD:
+        return True
+
+    cookie_token = request.cookies.get("csrf_token")
+    header_token = request.headers.get("X-CSRF-Token")
+
+    if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
+        raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
+
+    return True
+
 app = FastAPI(title="Trade Ledger")
 
 @app.middleware("http")
@@ -97,7 +110,12 @@ async def login(request: Request, response: Response, credentials: dict = Body(.
     redis = get_redis_client()
     await asyncio.to_thread(redis.set, f"session:{token}", "1", ex=86400)  # 1 day expiry
     response.set_cookie(key="session_token", value=token, httponly=True, samesite="lax", max_age=86400)
-    return {"status": "ok"}
+
+    # Generate and set CSRF token
+    csrf_token = secrets.token_urlsafe(32)
+    response.set_cookie(key="csrf_token", value=csrf_token, httponly=False, samesite="lax", max_age=86400)
+
+    return {"status": "ok", "csrf_token": csrf_token}
 
 @public_router.post("/api/logout")
 async def logout(request: Request, response: Response):
@@ -290,7 +308,7 @@ async def history(limit: int = 50):
         trades = await asyncio.gather(*[_add_display_to_trade(t) for t in trades])
     return trades
 
-@http_router.post("/api/pause")
+@http_router.post("/api/pause", dependencies=[Depends(verify_csrf)])
 async def pause():
     engine = get_engine()
     redis = engine.redis
@@ -302,7 +320,7 @@ async def pause():
     await asyncio.to_thread(redis.delete, "trading:llm_pause_time")
     return {"status": "paused"}
 
-@http_router.post("/api/resume")
+@http_router.post("/api/resume", dependencies=[Depends(verify_csrf)])
 async def resume():
     engine = get_engine()
     if not await engine._is_market_open():
@@ -320,7 +338,7 @@ async def resume():
         await asyncio.to_thread(redis.delete, key)
     return {"status": "resumed"}
 
-@http_router.post("/api/sell")
+@http_router.post("/api/sell", dependencies=[Depends(verify_csrf)])
 async def sell(symbol: str = None):
     engine = get_engine()
     if not await engine._is_market_open():
@@ -332,7 +350,7 @@ async def sell(symbol: str = None):
         asyncio.create_task(engine.sell_all_positions())
         return {"status": "selling all"}
 
-@http_router.post("/api/manual-trade")
+@http_router.post("/api/manual-trade", dependencies=[Depends(verify_csrf)])
 async def manual_trade(req: ManualTradeRequest):
     engine = get_engine()
     if not await engine._is_market_open():
@@ -376,12 +394,12 @@ async def signals(page: int = 1, limit: int = 5):
     offset = (page - 1) * limit
     return await run_in_threadpool(get_signals, limit, offset)
 
-@http_router.post("/api/reload")
+@http_router.post("/api/reload", dependencies=[Depends(verify_csrf)])
 async def reload():
     await run_in_threadpool(settings.reload)
     return {"status": "reloaded"}
 
-@http_router.post("/api/config/update-interval")
+@http_router.post("/api/config/update-interval", dependencies=[Depends(verify_csrf)])
 async def update_interval(data: dict):
     """Update the WebSocket payload cache TTL to match the frontend's chosen interval."""
     global _ws_payload_ttl
@@ -389,25 +407,25 @@ async def update_interval(data: dict):
     _ws_payload_ttl = max(1.0, ms / 1000.0)  # convert ms to seconds, minimum 1s
     return {"status": "ok", "ttl_seconds": _ws_payload_ttl}
 
-@http_router.post("/api/force-reeval")
+@http_router.post("/api/force-reeval", dependencies=[Depends(verify_csrf)])
 async def force_reeval():
     engine = get_engine()
     engine.trigger_symbol_reevaluation(force=True)
     return {"status": "Forced re-evaluation triggered"}
 
-@http_router.post("/api/force-download")
+@http_router.post("/api/force-download", dependencies=[Depends(verify_csrf)])
 async def force_download():
     engine = get_engine()
     asyncio.create_task(engine.force_download_tracked_symbols())
     return {"status": "Force download of tracked symbols OHLCV data triggered"}
 
-@http_router.post("/api/force-backfill")
+@http_router.post("/api/force-backfill", dependencies=[Depends(verify_csrf)])
 async def force_backfill():
     engine = get_engine()
     asyncio.create_task(engine.force_download_all_assets())
     return {"status": "Force backfill of all discovered symbols triggered"}
 
-@http_router.post("/api/restart")
+@http_router.post("/api/restart", dependencies=[Depends(verify_csrf)])
 async def restart():
     """
     Restart the entire application by exiting the process.
@@ -634,12 +652,12 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
 
-@http_router.post("/api/simulate/backtest/{symbol:path}")
+@http_router.post("/api/simulate/backtest/{symbol:path}", dependencies=[Depends(verify_csrf)])
 async def simulate_backtest(symbol: str):
     engine = get_engine()
     return await engine.simulate_backtest(symbol)
 
-@http_router.post("/api/simulate/decision/{symbol:path}")
+@http_router.post("/api/simulate/decision/{symbol:path}", dependencies=[Depends(verify_csrf)])
 async def simulate_decision(symbol: str):
     engine = get_engine()
     return await engine.simulate_decision(symbol)
