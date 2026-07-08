@@ -1927,7 +1927,7 @@ class TradingEngine:
                     if time.time() - last_forced < cooldown:
                         continue
 
-                    if await self._signal_processor.detect_entry_signal(symbol, tf):
+                    if await self._signal_processor.entry_signal_manager.detect_entry_signal(symbol, tf):
                         logger.info(f"Entry signal detected for {symbol}, forcing LLM evaluation.")
                         async with self._eval_state_lock:
                             self._force_eval[symbol] = True
