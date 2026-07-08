@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Post-LLM decision processing, validation, and execution."""
 import asyncio
 import json
