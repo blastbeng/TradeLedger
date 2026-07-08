@@ -23,6 +23,7 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
 from src.utils.symbol_utils import is_btp_isin
 from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close_prices
+from src.exchanges.proxy_utils import DynamicProxyRotator, _dynamic_rotator, _get_proxies
 
 logger = logging.getLogger(__name__)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
