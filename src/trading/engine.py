@@ -785,7 +785,7 @@ class TradingEngine:
         await asyncio.sleep(120)  # initial delay
         while self._running:
             try:
-                await self._symbol_reevaluator.check_market_conditions()
+                await self._symbol_reevaluator.market_condition_monitor.check_market_conditions()
             except Exception as e:
                 logger.error(f"Market condition check error: {e}", exc_info=True)
             await asyncio.sleep(1800)  # check every 30 minutes (medium/long-term)
