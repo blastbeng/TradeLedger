@@ -687,7 +687,7 @@ class MarketDataManager:
 
         gaps_found = len(gaps)
         gaps_filled = 0
-        max_gaps_per_cycle = 5  # Limit gap fills per cycle to avoid rate limits
+        max_gaps_per_cycle = settings.MAX_GAPS_PER_CYCLE  # Limit gap fills per cycle to avoid rate limits
 
         # Sort by gap size descending so the largest (most impactful) gaps are filled first
         gaps.sort(key=lambda g: g[0], reverse=True)

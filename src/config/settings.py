@@ -497,6 +497,9 @@ class Settings(BaseSettings):
             raise ValueError("BACKFILL_MAX_CANDLES_PER_CALL must be >= 100")
         return v
 
+    # Maximum number of OHLCV gaps to fill per cycle to avoid rate limits
+    MAX_GAPS_PER_CYCLE: int = 20
+
     # Maximum number of backtest variants per cycle
     MAX_BACKTEST_VARIANTS: int = 10
 
