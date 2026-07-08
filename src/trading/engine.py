@@ -2045,7 +2045,7 @@ class TradingEngine:
             return
         while self._running:
             try:
-                await self._order_executor.cleanup_orphaned_orders()
+                await self._order_executor.cancel_orphaned_orders()
             except Exception as e:
                 logger.error(f"Orphaned order cleanup error: {e}", exc_info=True)
             await asyncio.sleep(900)  # every 15 minutes
