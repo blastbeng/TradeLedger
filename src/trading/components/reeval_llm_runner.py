@@ -382,7 +382,7 @@ class ReevalLLMRunner:
         # Compute prompt complexity for temperature selection
         _st_values = [abs(v) for v in sentiment_trend.values() if v is not None]
         _st_mag = max(_st_values) if _st_values else None
-        symbol_selection_complexity = engine._signal_processor.compute_prompt_complexity(
+        symbol_selection_complexity = engine._signal_processor.model_tier_manager.compute_prompt_complexity(
             num_candidates=len(sample_pairs),
             market_breadth=market_breadth,
             fear_greed=None,
@@ -391,7 +391,7 @@ class ReevalLLMRunner:
             conflicting_signals=False,
             is_critical=False,
         )
-        effective_temp = engine._signal_processor._get_effective_temperature("mind", symbol_selection_complexity)
+        effective_temp = engine._signal_processor.model_tier_manager._get_effective_temperature("mind", symbol_selection_complexity)
 
         return trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp
 """Handles LLM chunk evaluation and final selection for symbol re-evaluation."""
@@ -778,7 +778,7 @@ class ReevalLLMRunner:
         # Compute prompt complexity for temperature selection
         _st_values = [abs(v) for v in sentiment_trend.values() if v is not None]
         _st_mag = max(_st_values) if _st_values else None
-        symbol_selection_complexity = engine._signal_processor.compute_prompt_complexity(
+        symbol_selection_complexity = engine._signal_processor.model_tier_manager.compute_prompt_complexity(
             num_candidates=len(sample_pairs),
             market_breadth=market_breadth,
             fear_greed=None,
@@ -787,6 +787,6 @@ class ReevalLLMRunner:
             conflicting_signals=False,
             is_critical=False,
         )
-        effective_temp = engine._signal_processor._get_effective_temperature("mind", symbol_selection_complexity)
+        effective_temp = engine._signal_processor.model_tier_manager._get_effective_temperature("mind", symbol_selection_complexity)
 
         return trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp
