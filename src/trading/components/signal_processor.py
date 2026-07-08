@@ -27,6 +27,7 @@ from src.trading.components.signal_market_data import SignalMarketDataFetcher
 from src.trading.components.model_tier_manager import ModelTierManager
 from src.trading.components.entry_signal_manager import EntrySignalManager
 from src.trading.components.llm_step_manager import LLMStepManager
+from src.trading.components.simulation_manager import SimulationManager
 
 try:
     from src.news.fetcher import detect_upcoming_events
@@ -96,6 +97,7 @@ class SignalProcessor:
         self.model_tier_manager = ModelTierManager(engine)
         self.entry_signal_manager = EntrySignalManager(engine, event_bus)
         self.llm_step_manager = LLMStepManager(self)
+        self.simulation_manager = SimulationManager(self)
         self.event_bus.subscribe("process_symbol", self.process_symbol)
         self.event_bus.subscribe("check_pause_resume_decision", self.check_pause_resume_decision)
         self.event_bus.subscribe("detect_entry_signal", self.entry_signal_manager.detect_entry_signal)
