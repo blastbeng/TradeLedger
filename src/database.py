@@ -5,6 +5,7 @@ import logging
 import time
 import functools
 import hashlib
+import threading
 from typing import Dict, List, Any, Optional
 
 from src.config.settings import settings
@@ -82,17 +83,48 @@ class _PgConnectionWrapper:
         return cur
 
 
+_sqlite_local = threading.local()
+
+class _SqliteConnectionWrapper:
+    """Wraps a sqlite3 connection so that close() is a no-op, allowing reuse."""
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def close(self):
+        # Do not close the persistent thread-local connection
+        pass
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def cursor(self):
+        return self._conn.cursor()
+
+    def execute(self, sql, params=None):
+        return self._conn.execute(sql, params)
+
+    def executemany(self, sql, params_list):
+        return self._conn.executemany(sql, params_list)
+
 def get_connection():
     """Return a database connection appropriate for the current backend."""
     if _backend == "postgresql":
         conn = _pg_pool.getconn()
         return _PgConnectionWrapper(conn)
     else:
-        os.makedirs(os.path.dirname(settings.DATABASE_PATH), exist_ok=True)
-        conn = sqlite3.connect(settings.DATABASE_PATH, timeout=30)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        return conn
+        if not hasattr(_sqlite_local, 'connection'):
+            os.makedirs(os.path.dirname(settings.DATABASE_PATH), exist_ok=True)
+            conn = sqlite3.connect(settings.DATABASE_PATH, timeout=30)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            _sqlite_local.connection = _SqliteConnectionWrapper(conn)
+        return _sqlite_local.connection
 
 
 def _normalize_symbol(symbol: str) -> str:
