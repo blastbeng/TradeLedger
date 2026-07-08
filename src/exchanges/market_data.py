@@ -26,6 +26,10 @@ from src.exchanges.borsa_italiana_utils import (
     _reset_bi_circuit,
     _get_borsa_italiana_token,
     _invalidate_borsa_token_cache,
+    _get_isin_and_info_from_borsa_italiana,
+    get_borsa_italiana_quote,
+    get_borsa_italiana_candles,
+    BORSA_TIMEFRAME_MAP,
 )
 from src.exchanges.yf_session import (
     _yf_download_with_timeout,
@@ -62,41 +66,6 @@ def set_notifier(notifier):
     _notifier = notifier
 
 _get_quotes_lock = threading.Lock()
-
-def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """Fetch ISIN, country, and name from Borsa Italiana search page.
-
-    Returns (isin, country, name). Country is always 'Italy' if found.
-    """
-    if _check_bi_circuit():
-        return None, None, None
-
-    url = f"https://www.borsaitaliana.it/borsa/searchengine/search.html?lang=it&q={base_symbol}&Cerca=Search"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    try:
-        with httpx.Client(proxy=_get_proxies(), timeout=10.0, follow_redirects=True) as client:
-            response = client.get(url, headers=headers)
-            response.raise_for_status()
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            for a_tag in soup.find_all("a", href=True):
-                href = a_tag["href"]
-                if "/borsa/search/scheda.html?code=" in href:
-                    match = re.search(r'code=([^&]+)', href)
-                    if match:
-                        isin = match.group(1)
-                        if re.match(r'^[A-Z]{2}[A-Z0-9]{9}\d$', isin):
-                            name = a_tag.get_text(strip=True)
-                            if name.lower() == base_symbol.lower():
-                                _reset_bi_circuit()
-                                return isin, "Italy", name
-    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
-        _record_bi_error(e)
-        logger.error(f"Borsa Italiana search failed for {base_symbol}: {e}")
-    return None, None, None
-
 
 def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     """Fetch the ISIN code for a symbol, using DB first, then yfinance as fallback."""
@@ -143,109 +112,6 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
             pass
 
     return isin
-
-
-# Borsa Italiana timeframe conversion map (daily data → resampled via pandas)
-BORSA_TIMEFRAME_MAP = {
-    "1d": "1d",       # Daily (uses intraday endpoint)
-    "1M": "1M",       # Monthly
-    "3M": "3M",       # Quarterly
-    "6M": "6M",       # Semi-annual
-    "1Y": "1Y",       # Year End
-    "3Y": "3Y",       # 3-Year
-    "5Y": "5Y",       # 5-Year
-}
-
-def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
-    """Fetch the latest real-time quote from Borsa Italiana for an Italian stock or BTP.
-
-    Returns a dict with keys: last, bid, ask, volume, change_24h, percentage,
-    quoteVolume, last_update, source.
-    Returns None if the quote cannot be fetched.
-    """
-    if _check_bi_circuit():
-        return None
-
-    base = symbol.split("/")[0] if "/" in symbol else symbol
-
-    if is_btp_isin(base):
-        isin = base
-    else:
-        isin = _get_isin_from_yfinance(base)
-        if not isin:
-            return None
-
-    market_code = settings.MARKET_CODE
-    token = _get_borsa_italiana_token(isin, market_code)
-    if not token:
-        return None
-
-    headers = {
-        "accept": "*/*",
-        "accept-language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-        "authorization": f"Bearer {token}",
-        "priority": "u=1, i",
-        "referer": f"https://grafici.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it",
-        "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-    }
-
-    try:
-        with httpx.Client(proxy=_get_proxies(), timeout=10.0, follow_redirects=True) as client:
-            url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/intraday?resolution=1MN"
-            for attempt in range(2):
-                try:
-                    response = client.get(url, headers=headers)
-                    response.raise_for_status()
-                    break
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code in (401, 403) and attempt == 0:
-                        logger.debug(f"Borsa Italiana token expired for {symbol}, refreshing...")
-                        _invalidate_borsa_token_cache(isin, market_code)
-                        token = _get_borsa_italiana_token(isin, market_code)
-                        if not token:
-                            return None
-                        headers["authorization"] = f"Bearer {token}"
-                        continue
-                    raise
-
-            try:
-                data = response.json()
-            except (json.JSONDecodeError, ValueError):
-                match = re.search(r'<pre>(.*?)</pre>', response.text, re.DOTALL)
-                if match:
-                    try:
-                        data = json.loads(match.group(1))
-                    except json.JSONDecodeError:
-                        return None
-                else:
-                    return None
-
-            intraday_points = data.get("intradayPoint", [])
-            if intraday_points:
-                latest = intraday_points[-1]
-                last_price = float(latest.get("endPx", 0))
-                if last_price > 0:
-                    vol = float(latest.get("vol", 0) or 0)
-                    _reset_bi_circuit()
-                    return {
-                        "last": last_price,
-                        "bid": last_price,
-                        "ask": last_price,
-                        "volume": vol,
-                        "quoteVolume": vol,
-                        "last_update": int(time.time() * 1000),
-                        "source": "borsa_italiana",
-                    }
-    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
-        _record_bi_error(e)
-        logger.debug(f"Borsa Italiana quote fetch failed for {symbol}: {e}")
-    return None
 
 
 def get_borsa_italiana_candles(

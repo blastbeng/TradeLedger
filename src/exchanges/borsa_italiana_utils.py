@@ -1,14 +1,19 @@
+import json
 import logging
 import re
 import threading
 import time
-from typing import Optional, Dict
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any, List
 
+import pandas as pd
 import httpx
 from bs4 import BeautifulSoup
 
 from src.config.settings import settings
+from src.utils.symbol_utils import is_btp_isin
 from src.exchanges.proxy_utils import _get_proxies
+from src.exchanges.candle_utils import _validate_and_clean_candles
 
 logger = logging.getLogger(__name__)
 
@@ -111,3 +116,367 @@ def _invalidate_borsa_token_cache(isin: str, market_code: str) -> None:
     cache_key = f"{isin}-{market_code}"
     with _borsa_token_cache_lock:
         _borsa_token_cache.pop(cache_key, None)
+
+
+def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Fetch ISIN, country, and name from Borsa Italiana search page.
+
+    Returns (isin, country, name). Country is always 'Italy' if found.
+    """
+    if _check_bi_circuit():
+        return None, None, None
+
+    url = f"https://www.borsaitaliana.it/borsa/searchengine/search.html?lang=it&q={base_symbol}&Cerca=Search"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        with httpx.Client(proxy=_get_proxies(), timeout=10.0, follow_redirects=True) as client:
+            response = client.get(url, headers=headers)
+            response.raise_for_status()
+
+            soup = BeautifulSoup(response.text, "html.parser")
+            for a_tag in soup.find_all("a", href=True):
+                href = a_tag["href"]
+                if "/borsa/search/scheda.html?code=" in href:
+                    match = re.search(r'code=([^&]+)', href)
+                    if match:
+                        isin = match.group(1)
+                        if re.match(r'^[A-Z]{2}[A-Z0-9]{9}\d$', isin):
+                            name = a_tag.get_text(strip=True)
+                            if name.lower() == base_symbol.lower():
+                                _reset_bi_circuit()
+                                return isin, "Italy", name
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
+        _record_bi_error(e)
+        logger.error(f"Borsa Italiana search failed for {base_symbol}: {e}")
+    return None, None, None
+
+
+# Borsa Italiana timeframe conversion map (daily data → resampled via pandas)
+BORSA_TIMEFRAME_MAP = {
+    "1d": "1d",       # Daily (uses intraday endpoint)
+    "1M": "1M",       # Monthly
+    "3M": "3M",       # Quarterly
+    "6M": "6M",       # Semi-annual
+    "1Y": "1Y",       # Year End
+    "3Y": "3Y",       # 3-Year
+    "5Y": "5Y",       # 5-Year
+}
+
+def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
+    """Fetch the latest real-time quote from Borsa Italiana for an Italian stock or BTP.
+
+    Returns a dict with keys: last, bid, ask, volume, change_24h, percentage,
+    quoteVolume, last_update, source.
+    Returns None if the quote cannot be fetched.
+    """
+    if _check_bi_circuit():
+        return None
+
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+
+    if is_btp_isin(base):
+        isin = base
+    else:
+        from src.exchanges.market_data import _get_isin_from_yfinance
+        isin = _get_isin_from_yfinance(base)
+        if not isin:
+            return None
+
+    market_code = settings.MARKET_CODE
+    token = _get_borsa_italiana_token(isin, market_code)
+    if not token:
+        return None
+
+    headers = {
+        "accept": "*/*",
+        "accept-language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        "authorization": f"Bearer {token}",
+        "priority": "u=1, i",
+        "referer": f"https://grafici.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it",
+        "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    }
+
+    try:
+        with httpx.Client(proxy=_get_proxies(), timeout=10.0, follow_redirects=True) as client:
+            url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/intraday?resolution=1MN"
+            for attempt in range(2):
+                try:
+                    response = client.get(url, headers=headers)
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code in (401, 403) and attempt == 0:
+                        logger.debug(f"Borsa Italiana token expired for {symbol}, refreshing...")
+                        _invalidate_borsa_token_cache(isin, market_code)
+                        token = _get_borsa_italiana_token(isin, market_code)
+                        if not token:
+                            return None
+                        headers["authorization"] = f"Bearer {token}"
+                        continue
+                    raise
+
+            try:
+                data = response.json()
+            except (json.JSONDecodeError, ValueError):
+                match = re.search(r'<pre>(.*?)</pre>', response.text, re.DOTALL)
+                if match:
+                    try:
+                        data = json.loads(match.group(1))
+                    except json.JSONDecodeError:
+                        return None
+                else:
+                    return None
+
+            intraday_points = data.get("intradayPoint", [])
+            if intraday_points:
+                latest = intraday_points[-1]
+                last_price = float(latest.get("endPx", 0))
+                if last_price > 0:
+                    vol = float(latest.get("vol", 0) or 0)
+                    _reset_bi_circuit()
+                    return {
+                        "last": last_price,
+                        "bid": last_price,
+                        "ask": last_price,
+                        "volume": vol,
+                        "quoteVolume": vol,
+                        "last_update": int(time.time() * 1000),
+                        "source": "borsa_italiana",
+                    }
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
+        _record_bi_error(e)
+        logger.debug(f"Borsa Italiana quote fetch failed for {symbol}: {e}")
+    return None
+
+
+def get_borsa_italiana_candles(
+    symbol: str,
+    timeframe: str,
+    limit: int = 500,
+    start_ms: int = None,
+) -> Optional[List[List]]:
+    """Download OHLCV candles from borsaitaliana.it grafici API as the primary source.
+
+    Fetches daily candles from the borsaitaliana chart API and resamples
+    them to the requested timeframe using pandas.
+    For 1d timeframe, uses the intraday endpoint.
+
+    Returns list of [timestamp_ms, open, high, low, close, volume].
+    Returns None if the download fails or the timeframe is not supported.
+    """
+    if _check_bi_circuit():
+        return None
+
+    if timeframe not in BORSA_TIMEFRAME_MAP:
+        return None
+
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+
+    # For BTPs, the symbol IS the ISIN
+    if is_btp_isin(base):
+        isin = base
+    else:
+        from src.database import get_isin_from_db
+        db_symbol = base
+        if settings.TICKER_SUFFIX and db_symbol.endswith(settings.TICKER_SUFFIX):
+            db_symbol = db_symbol[:-len(settings.TICKER_SUFFIX)]
+        isin = get_isin_from_db(db_symbol)
+        if not isin:
+            logger.debug(f"No ISIN in DB for {symbol}, skipping borsaitaliana")
+            return None
+
+    # Determine market code for referer URL
+    market_code = settings.MARKET_CODE
+
+    # Dynamically fetch the bearer token
+    token = _get_borsa_italiana_token(isin, market_code)
+    if not token:
+        logger.warning(f"Skipping Borsa Italiana download for {symbol} {timeframe}: no token found.")
+        return None
+
+    # Headers matching the browser request exactly
+    headers = {
+        "accept": "*/*",
+        "accept-language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        "authorization": f"Bearer {token}",
+        "priority": "u=1, i",
+        "referer": f"https://grafici.borsaitaliana.it/summary-chart/{isin}-{market_code}?lang=it",
+        "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    }
+
+    try:
+        with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
+            if timeframe == "1d":
+                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=1M&adjustment=true&add-last-price=true"
+                logger.debug(f"Fetching 1d data from history endpoint: {url}")
+            else:
+                period = BORSA_TIMEFRAME_MAP.get(timeframe)
+                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period={period}&adjustment=true&add-last-price=true"
+
+            for attempt in range(2):
+                try:
+                    response = client.get(url, headers=headers)
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code in (401, 403) and attempt == 0:
+                        logger.debug(f"Borsa Italiana token expired for {symbol}, refreshing...")
+                        _invalidate_borsa_token_cache(isin, market_code)
+                        token = _get_borsa_italiana_token(isin, market_code)
+                        if not token:
+                            logger.warning(f"Skipping Borsa Italiana download for {symbol} {timeframe}: no token found after refresh.")
+                            return None
+                        headers["authorization"] = f"Bearer {token}"
+                        continue
+                    raise
+
+        # The API returns JSON wrapped in HTML <pre> tags
+        text = response.text
+        try:
+            data = response.json()
+        except (json.JSONDecodeError, ValueError):
+            # Extract JSON from HTML <pre> tags
+            match = re.search(r'<pre>(.*?)</pre>', text, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    logger.error(f"Could not parse JSON from borsaitaliana response for {symbol}")
+                    return None
+            else:
+                logger.error(f"No JSON data found in borsaitaliana response for {symbol}")
+                return None
+
+        # Extract candle data — handle both "history" and "intraday" response formats
+        history = data.get("history", {})
+        history_dt = history.get("historyDt", [])
+        intraday_points = data.get("intradayPoint", [])
+
+        rows = []
+        if intraday_points and timeframe != "1d":
+            # Intraday response format (1d endpoint)
+            # Fields: time (YYYYMMDD-HH:MM:SS), beginPx, highPx, lowPx, endPx, vol
+            for item in intraday_points:
+                time_str = item.get("time", "")
+                if not time_str:
+                    continue
+                try:
+                    # Format: "YYYYMMDD-HH:MM:SS"
+                    dt = datetime.strptime(time_str, "%Y%m%d-%H:%M:%S")
+                    ts = int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+                    rows.append([
+                        ts,
+                        float(item["beginPx"]),
+                        float(item["highPx"]),
+                        float(item["lowPx"]),
+                        float(item["endPx"]),
+                        float(item.get("vol", 0) or 0),
+                    ])
+                except (ValueError, KeyError) as e:
+                    logger.error(f"Failed to parse borsaitaliana intraday candle for {symbol}: {e}")
+                    continue
+        elif history_dt:
+            # History response format (1M, 3M, 1Y, etc. endpoints)
+            # Fields: dt (YYYYMMDD), openPx, highPx, lowPx, closePx, qty
+            for item in history_dt:
+                dt_str = item.get("dt", "")
+                if not dt_str:
+                    continue
+                try:
+                    if len(dt_str) == 8:
+                        # YYYYMMDD (daily)
+                        dt = datetime.strptime(dt_str, "%Y%m%d")
+                    elif len(dt_str) == 14:
+                        # YYYYMMDDHHMMSS (intraday)
+                        dt = datetime.strptime(dt_str, "%Y%m%d%H%M%S")
+                    elif len(dt_str) == 12:
+                        # YYMMDDHHMMSS (intraday, 2-digit year)
+                        dt = datetime.strptime(dt_str, "%y%m%d%H%M%S")
+                    else:
+                        continue
+                    ts = int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+                    close_px = item.get("closePx") or item.get("lastPx") or item.get("setPx") or 0
+                    rows.append([
+                        ts,
+                        float(item.get("openPx") or close_px),
+                        float(item.get("highPx") or close_px),
+                        float(item.get("lowPx") or close_px),
+                        float(close_px),
+                        float(item.get("qty", 0) or 0),
+                    ])
+                except (ValueError, KeyError) as e:
+                    logger.error(f"Failed to parse borsaitaliana history candle for {symbol}: {e}")
+                    continue
+        else:
+            logger.warning(f"Empty history from borsaitaliana for {symbol} {timeframe}")
+            return None
+
+        if not rows:
+            return None
+
+        # Sort by timestamp
+        rows.sort(key=lambda c: c[0])
+
+        # Filter by start_ms if provided
+        if start_ms is not None:
+            rows = [c for c in rows if c[0] >= start_ms]
+
+        # For 1d intraday data, aggregate 1-minute candles into daily candles
+        if timeframe == "1d" and len(rows) > 1:
+            # Check if we have intraday granularity (timestamps within same day)
+            first_ts = rows[0][0]
+            second_ts = rows[1][0]
+            if (second_ts - first_ts) < 86400000:  # less than 1 day apart = intraday
+                logger.debug(f"Aggregating {len(rows)} intraday candles into daily candles for {symbol}")
+                df = pd.DataFrame(rows, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+                df['Date'] = pd.to_datetime(df['Timestamp'], unit='ms')
+                df.set_index('Date', inplace=True)
+                ohlcv_rules = {
+                    'Open': 'first',
+                    'High': 'max',
+                    'Low': 'min',
+                    'Close': 'last',
+                    'Volume': 'sum'
+                }
+                df = df.resample('1D').agg(ohlcv_rules)
+                df.dropna(subset=['Open'], inplace=True)
+                df.reset_index(inplace=True)
+                rows = []
+                for _, row in df.iterrows():
+                    ts = int(row['Date'].timestamp() * 1000)
+                    vol = float(row['Volume']) if pd.notna(row['Volume']) else 0.0
+                    rows.append([ts, float(row['Open']), float(row['High']), float(row['Low']), float(row['Close']), vol])
+                rows.sort(key=lambda c: c[0])
+
+        # Sort by timestamp
+        rows.sort(key=lambda c: c[0])
+
+        # Apply limit
+        if limit and len(rows) > limit:
+            rows = rows[-limit:]
+
+        if rows:
+            logger.info(f"Downloaded {len(rows)} candles from borsaitaliana for {symbol} {timeframe}")
+            _reset_bi_circuit()
+            return _validate_and_clean_candles(rows, symbol)
+
+        return None
+
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
+        _record_bi_error(e)
+        logger.debug(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {e}")
+        return None
