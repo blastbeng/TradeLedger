@@ -166,6 +166,11 @@ class Settings(BaseSettings):
     # Minimum composite score for a symbol to be used in the volume‑based fallback.
     # Symbols below this score are skipped even if they have high volume.
     FALLBACK_MIN_COMPOSITE_SCORE: float = 0.1
+
+    # Composite score weights for symbol selection
+    COMPOSITE_TREND_WEIGHT: float = 0.6
+    COMPOSITE_SENTIMENT_WEIGHT: float = 0.4
+
     FALLBACK_MIN_24H_VOLUME: float = 0.0
     EXCLUDED_SYMBOLS: list[str] = []
 

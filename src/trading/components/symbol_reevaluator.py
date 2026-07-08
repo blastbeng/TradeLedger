@@ -847,7 +847,7 @@ class SymbolReevaluator:
             base_sym = sym.split("/")[0] if "/" in sym else sym
             sent = news_sentiment.get(base_sym, {}).get("avg_compound", 0.0) if news_sentiment else 0.0
             sentiment_score = (sent + 1.0) / 2.0  # map -1..1 to 0..1
-            composite = 0.6 * trend + 0.4 * sentiment_score
+            composite = settings.COMPOSITE_TREND_WEIGHT * trend + settings.COMPOSITE_SENTIMENT_WEIGHT * sentiment_score
             composite_scores[sym] = round(composite, 3)
 
         # Build a shortlist for the LLM: all symbols sorted by composite score,
