@@ -1519,7 +1519,7 @@ Maximum symbols to trade: {max_symbols}
                 
 
                 if not ind_compact: continue
-                ind_lines.append(f"[{tf}] {json.dumps(ind_compact)}")
+                ind_lines.append(f"[{tf}] {json.dumps(ind_compact, separators=(',', ':'))}")
         if ind_lines:
             prompt += "\nComputed indicators per timeframe:\n" + "\n".join(ind_lines) + "\n"
     elif raw_candles:
