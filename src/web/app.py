@@ -117,7 +117,7 @@ async def login(request: Request, response: Response, credentials: dict = Body(.
 
     return {"status": "ok", "csrf_token": csrf_token}
 
-@public_router.post("/api/logout")
+@public_router.post("/api/logout", dependencies=[Depends(verify_csrf)])
 async def logout(request: Request, response: Response):
     """Clear the session cookie and invalidate the token."""
     token = request.cookies.get("session_token")
