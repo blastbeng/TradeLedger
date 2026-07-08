@@ -546,6 +546,34 @@ class BacktestManager:
                         "order_fill_timeout_seconds",
                         "time_in_force",
                     ):
+                    for risk_key in (
+                        "cooldown_after_loss_seconds",
+                        "max_hold_time_seconds",
+                        "stop_loss_method",
+                        "stop_loss_atr_multiple",
+                        "trailing_stop_distance_pct",
+                        "trailing_stop_atr_multiple",
+                        "trailing_stop_activation_pct",
+                        "partial_take_profit_levels",
+                        "partial_take_profit_pct",
+                        "partial_take_profit_fraction",
+                        "breakeven_activation_pct",
+                        "trailing_take_profit",
+                        "trailing_take_profit_distance_pct",
+                        "max_unrealized_loss_pct",
+                        "news_sentiment_exit_threshold",
+                        "max_risk_per_trade_pct",
+                        "max_portfolio_risk_pct",
+                        "min_profit_per_trade",
+                        "min_risk_reward_ratio",
+                        "min_confidence",
+                        "position_size_multiplier",
+                        "strategy_interval_seconds",
+                        "backtest_period_days",
+                        "order_fill_timeout_seconds",
+                        "time_in_force",
+                        "backtest_entry_config",
+                    ):
                         if risk_key not in signal.strategy_params and risk_key in prelim_params:
                             signal.strategy_params[risk_key] = prelim_params[risk_key]
                 else:
