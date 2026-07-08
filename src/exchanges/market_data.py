@@ -20,6 +20,13 @@ from src.utils.redis_client import get_redis_client
 from src.utils.symbol_utils import is_btp_isin
 from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close_prices
 from src.exchanges.proxy_utils import DynamicProxyRotator, _dynamic_rotator, _get_proxies
+from src.exchanges.borsa_italiana_utils import (
+    _check_bi_circuit,
+    _record_bi_error,
+    _reset_bi_circuit,
+    _get_borsa_italiana_token,
+    _invalidate_borsa_token_cache,
+)
 from src.exchanges.yf_session import (
     _yf_download_with_timeout,
     _check_yf_circuit,
@@ -40,42 +47,6 @@ def set_notifier(notifier):
     _notifier = notifier
 
 _get_quotes_lock = threading.Lock()
-
-# --- Borsa Italiana Circuit Breaker ---
-_bi_error_count = 0
-_bi_last_error_time = 0.0
-_bi_circuit_open_until = 0.0
-_bi_lock = threading.Lock()
-
-BI_MAX_ERRORS = 20
-BI_CIRCUIT_COOLDOWN = 300  # 5 minutes
-
-def _check_bi_circuit() -> bool:
-    """Return True if the Borsa Italiana circuit is open (calls should be skipped)."""
-    with _bi_lock:
-        return time.time() < _bi_circuit_open_until
-
-def _record_bi_error(exc: Optional[Exception] = None):
-    """Record a Borsa Italiana error and potentially trip the circuit breaker."""
-    global _bi_error_count, _bi_last_error_time, _bi_circuit_open_until
-    with _bi_lock:
-        now = time.time()
-        if now - _bi_last_error_time > 300:
-            _bi_error_count = 0
-        _bi_error_count += 1
-        _bi_last_error_time = now
-        if _bi_error_count >= BI_MAX_ERRORS:
-            if _bi_circuit_open_until < now:
-                exc_msg = f" Last error: {exc}" if exc else ""
-                logger.error(f"Borsa Italiana circuit breaker tripped due to {_bi_error_count} errors. Blocking BI calls for {BI_CIRCUIT_COOLDOWN}s.{exc_msg}")
-            _bi_circuit_open_until = now + BI_CIRCUIT_COOLDOWN
-
-def _reset_bi_circuit():
-    """Reset the Borsa Italiana circuit breaker after a successful call."""
-    global _bi_error_count
-    with _bi_lock:
-        _bi_error_count = 0
-
 
 # --- Alpha Vantage Rate Limiter ---
 _av_rate_limiter = YFinanceRateLimiter(
