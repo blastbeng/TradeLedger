@@ -103,8 +103,21 @@ class RiskManager:
         try:
             with engine._trade_history_lock:
                 trades_snapshot = list(engine.trade_history)
-            equity_dd = engine._position_manager.compute_equity_and_drawdown(trades_snapshot)
-            drawdown_pct = equity_dd.get("drawdown_pct", 0.0)
+            # Compute drawdown based on realized P&L only to avoid pausing
+            # on temporary unrealized dips in medium/long-term trading.
+            cumulative_pnl = 0.0
+            peak_pnl = 0.0
+            max_dd_pct = 0.0
+            for trade in sorted(trades_snapshot, key=lambda x: x.get("timestamp", 0)):
+                if trade.get("side") == "sell":
+                    cumulative_pnl += trade.get("realized_pnl", 0.0)
+                    if cumulative_pnl > peak_pnl:
+                        peak_pnl = cumulative_pnl
+                    if peak_pnl > 0:
+                        dd_pct = (peak_pnl - cumulative_pnl) / peak_pnl
+                        if dd_pct > max_dd_pct:
+                            max_dd_pct = dd_pct
+            drawdown_pct = max_dd_pct
 
             paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
             source_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
