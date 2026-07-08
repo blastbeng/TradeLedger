@@ -21,6 +21,8 @@ from src.trading.components.reeval_shortlist_builder import ReevalShortlistBuild
 from src.trading.components.reeval_response_processor import ReevalResponseProcessor
 from src.trading.components.reeval_pause_resume_manager import ReevalPauseResumeManager
 
+from src.trading.components.reeval_notifier import ReevalNotifier
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,6 +39,7 @@ class SymbolReevaluator:
         self.shortlist_builder = ReevalShortlistBuilder(engine, event_bus)
         self.response_processor = ReevalResponseProcessor(engine, event_bus)
         self.pause_resume_manager = ReevalPauseResumeManager(engine, event_bus)
+        self.notifier = ReevalNotifier(engine, event_bus)
         self.event_bus.subscribe("reevaluate_symbols_impl", self.reevaluate_symbols_impl)
 
     async def check_cooldown_and_reset(
@@ -383,124 +386,6 @@ class SymbolReevaluator:
                 logger.info("LLM selected 0 symbols – pausing trading until next evaluation.")
 
 
-    async def build_and_send_reeval_notification(
-        self,
-        base_balance: float,
-        per_symbol_budget: float,
-        pause_trading: Optional[bool],
-        pause_reason: str,
-        pause_duration: Optional[Any],
-        trading_paused_bool: bool,
-        force: bool,
-        is_user_forced: bool,
-        parsed: Dict[str, Any],
-        llm_provider: Optional[str],
-        llm_model: Optional[str],
-    ) -> None:
-        """Build and send the re-evaluation completion notification."""
-        engine = self.engine
-
-        # Build formatted symbol labels with stock names (parallelized)
-        async def _fetch_label(c):
-            name = await engine._market_data_manager.get_stock_name(c['symbol'])
-            return engine._format_symbol_display(c['symbol'], name, c['timeframe'])
-        symbol_labels = await asyncio.gather(*[_fetch_label(c) for c in engine.current_symbols])
-        logger.info(f"Selected symbols: {symbol_labels}")
-
-        # Build a pause/resume message if the LLM provided a decision
-        pause_msg = ""
-        if isinstance(pause_trading, bool):
-            if pause_trading:
-                if trading_paused_bool:
-                    pause_msg = "⏸️ LLM decided to keep trading paused"
-                else:
-                    pause_msg = "⏸️ LLM decided to pause trading"
-            else:
-                if trading_paused_bool:
-                    pause_msg = "▶️ LLM decided to resume trading"
-                else:
-                    pause_msg = "▶️ LLM decided to keep trading active"
-            if pause_reason:
-                pause_msg += f" – {pause_reason}"
-
-        # Include pause duration if set
-        if pause_duration is not None and isinstance(pause_duration, (int, float)) and pause_duration > 0:
-            minutes = pause_duration / 60
-            if minutes >= 1:
-                duration_str = f"{minutes:.0f} min"
-            else:
-                duration_str = f"{pause_duration:.0f}s"
-            if pause_msg:
-                pause_msg += f" (auto‑resume in {duration_str})"
-            else:
-                pause_msg = f"⏱️ LLM set pause duration: {duration_str}"
-
-        if force:
-            market_open = await engine._is_market_open()
-            if not market_open:
-                status_str = "paused"
-                emoji = "⏸️"
-            else:
-                if trading_paused_bool:
-                    if isinstance(pause_trading, bool) and not pause_trading:
-                        status_str = "resumed"
-                        emoji = "▶️"
-                    else:
-                        status_str = "paused"
-                        emoji = "⏸️"
-                else:
-                    status_str = "active"
-                    emoji = "▶️"
-            forced_by = "manually forced" if is_user_forced else "forced by market conditions"
-            pause_msg = f"{emoji} Reevaluation has been {forced_by} – Bot is currently {status_str}"
-            if pause_reason:
-                pause_msg += f" – {pause_reason}"
-
-        if not engine.current_symbols:
-            logger.warning("No symbols selected after evaluation. Bot will idle until next cycle.")
-            if engine.notifier:
-                msg = f"⚠️ No stocks selected. Bot will idle.\n"
-                msg += f"Balance: {base_balance:.2f} {engine.base_currency}, "
-                msg += f"Per-symbol budget: {per_symbol_budget:.2f}"
-                if pause_msg:
-                    msg = pause_msg + "\n" + msg
-                await engine.notifier.send_notification(
-                    msg,
-                    summary={
-                        "action": "HOLD",
-                        "reason": "No stocks selected",
-                        "base_balance": base_balance,
-                        "per_symbol_budget": per_symbol_budget,
-                        "pause_decision": pause_trading if isinstance(pause_trading, bool) else None,
-                        "pause_reason": pause_reason,
-                        "model_type": "mind",
-                        "llm_provider": llm_provider,
-                        "llm_model": llm_model,
-                    }
-                )
-        elif engine.notifier:
-            stock_reasoning = parsed.get("reasoning", "") if isinstance(parsed, dict) else ""
-            if stock_reasoning:
-                msg = f"🔄 Tickers Updated: {', '.join(symbol_labels)}\n💡 {stock_reasoning}"
-            else:
-                msg = f"🔄 Tickers Updated: {', '.join(symbol_labels)}"
-            if pause_msg:
-                msg = pause_msg + "\n" + msg
-            await engine.notifier.send_notification(
-                msg,
-                summary={
-                    "action": "INFO",
-                    "reason": "Symbols updated",
-                    "stocks": [c["symbol"] for c in engine.current_symbols],
-                    "stock_reasoning": stock_reasoning,
-                    "pause_decision": pause_trading if isinstance(pause_trading, bool) else None,
-                    "pause_reason": pause_reason,
-                    "model_type": "mind",
-                    "llm_provider": llm_provider,
-                    "llm_model": llm_model,
-                }
-            )
-
     async def process_llm_response(
         self,
         response: Optional[str],
@@ -668,7 +553,7 @@ class SymbolReevaluator:
             force=force,
         )
 
-        await self.build_and_send_reeval_notification(
+        await self.notifier.build_and_send_reeval_notification(
             base_balance=base_balance,
             per_symbol_budget=per_symbol_budget,
             pause_trading=pause_trading,
@@ -897,6 +782,8 @@ from src.trading.components.reeval_shortlist_builder import ReevalShortlistBuild
 from src.trading.components.reeval_response_processor import ReevalResponseProcessor
 from src.trading.components.reeval_pause_resume_manager import ReevalPauseResumeManager
 
+from src.trading.components.reeval_notifier import ReevalNotifier
+
 logger = logging.getLogger(__name__)
 
 
@@ -913,6 +800,7 @@ class SymbolReevaluator:
         self.shortlist_builder = ReevalShortlistBuilder(engine, event_bus)
         self.response_processor = ReevalResponseProcessor(engine, event_bus)
         self.pause_resume_manager = ReevalPauseResumeManager(engine, event_bus)
+        self.notifier = ReevalNotifier(engine, event_bus)
         self.event_bus.subscribe("reevaluate_symbols_impl", self.reevaluate_symbols_impl)
 
     async def check_cooldown_and_reset(
@@ -1135,124 +1023,6 @@ class SymbolReevaluator:
 
         return trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp
 
-    async def build_and_send_reeval_notification(
-        self,
-        base_balance: float,
-        per_symbol_budget: float,
-        pause_trading: Optional[bool],
-        pause_reason: str,
-        pause_duration: Optional[Any],
-        trading_paused_bool: bool,
-        force: bool,
-        is_user_forced: bool,
-        parsed: Dict[str, Any],
-        llm_provider: Optional[str],
-        llm_model: Optional[str],
-    ) -> None:
-        """Build and send the re-evaluation completion notification."""
-        engine = self.engine
-
-        # Build formatted symbol labels with stock names (parallelized)
-        async def _fetch_label(c):
-            name = await engine._market_data_manager.get_stock_name(c['symbol'])
-            return engine._format_symbol_display(c['symbol'], name, c['timeframe'])
-        symbol_labels = await asyncio.gather(*[_fetch_label(c) for c in engine.current_symbols])
-        logger.info(f"Selected symbols: {symbol_labels}")
-
-        # Build a pause/resume message if the LLM provided a decision
-        pause_msg = ""
-        if isinstance(pause_trading, bool):
-            if pause_trading:
-                if trading_paused_bool:
-                    pause_msg = "⏸️ LLM decided to keep trading paused"
-                else:
-                    pause_msg = "⏸️ LLM decided to pause trading"
-            else:
-                if trading_paused_bool:
-                    pause_msg = "▶️ LLM decided to resume trading"
-                else:
-                    pause_msg = "▶️ LLM decided to keep trading active"
-            if pause_reason:
-                pause_msg += f" – {pause_reason}"
-
-        # Include pause duration if set
-        if pause_duration is not None and isinstance(pause_duration, (int, float)) and pause_duration > 0:
-            minutes = pause_duration / 60
-            if minutes >= 1:
-                duration_str = f"{minutes:.0f} min"
-            else:
-                duration_str = f"{pause_duration:.0f}s"
-            if pause_msg:
-                pause_msg += f" (auto‑resume in {duration_str})"
-            else:
-                pause_msg = f"⏱️ LLM set pause duration: {duration_str}"
-
-        if force:
-            market_open = await engine._is_market_open()
-            if not market_open:
-                status_str = "paused"
-                emoji = "⏸️"
-            else:
-                if trading_paused_bool:
-                    if isinstance(pause_trading, bool) and not pause_trading:
-                        status_str = "resumed"
-                        emoji = "▶️"
-                    else:
-                        status_str = "paused"
-                        emoji = "⏸️"
-                else:
-                    status_str = "active"
-                    emoji = "▶️"
-            forced_by = "manually forced" if is_user_forced else "forced by market conditions"
-            pause_msg = f"{emoji} Reevaluation has been {forced_by} – Bot is currently {status_str}"
-            if pause_reason:
-                pause_msg += f" – {pause_reason}"
-
-        if not engine.current_symbols:
-            logger.warning("No symbols selected after evaluation. Bot will idle until next cycle.")
-            if engine.notifier:
-                msg = f"⚠️ No stocks selected. Bot will idle.\n"
-                msg += f"Balance: {base_balance:.2f} {engine.base_currency}, "
-                msg += f"Per-symbol budget: {per_symbol_budget:.2f}"
-                if pause_msg:
-                    msg = pause_msg + "\n" + msg
-                await engine.notifier.send_notification(
-                    msg,
-                    summary={
-                        "action": "HOLD",
-                        "reason": "No stocks selected",
-                        "base_balance": base_balance,
-                        "per_symbol_budget": per_symbol_budget,
-                        "pause_decision": pause_trading if isinstance(pause_trading, bool) else None,
-                        "pause_reason": pause_reason,
-                        "model_type": "mind",
-                        "llm_provider": llm_provider,
-                        "llm_model": llm_model,
-                    }
-                )
-        elif engine.notifier:
-            stock_reasoning = parsed.get("reasoning", "") if isinstance(parsed, dict) else ""
-            if stock_reasoning:
-                msg = f"🔄 Tickers Updated: {', '.join(symbol_labels)}\n💡 {stock_reasoning}"
-            else:
-                msg = f"🔄 Tickers Updated: {', '.join(symbol_labels)}"
-            if pause_msg:
-                msg = pause_msg + "\n" + msg
-            await engine.notifier.send_notification(
-                msg,
-                summary={
-                    "action": "INFO",
-                    "reason": "Symbols updated",
-                    "stocks": [c["symbol"] for c in engine.current_symbols],
-                    "stock_reasoning": stock_reasoning,
-                    "pause_decision": pause_trading if isinstance(pause_trading, bool) else None,
-                    "pause_reason": pause_reason,
-                    "model_type": "mind",
-                    "llm_provider": llm_provider,
-                    "llm_model": llm_model,
-                }
-            )
-
     async def process_llm_response(
         self,
         response: Optional[str],
@@ -1420,7 +1190,7 @@ class SymbolReevaluator:
             force=force,
         )
 
-        await self.build_and_send_reeval_notification(
+        await self.notifier.build_and_send_reeval_notification(
             base_balance=base_balance,
             per_symbol_budget=per_symbol_budget,
             pause_trading=pause_trading,
