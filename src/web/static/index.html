@@ -580,10 +580,25 @@
         const originalFetch = window.fetch;
         window.fetch = async function(...args) {
             const url = args[0];
+            const options = args[1] || {};
+
             // Don't intercept the login request itself
             if (typeof url === 'string' && url === '/api/login') {
                 return originalFetch(...args);
             }
+
+            // Inject CSRF token for POST requests
+            if (options.method && options.method.toUpperCase() === 'POST') {
+                const csrfToken = localStorage.getItem('csrf_token');
+                if (csrfToken) {
+                    options.headers = {
+                        ...options.headers,
+                        'X-CSRF-Token': csrfToken
+                    };
+                    args[1] = options;
+                }
+            }
+
             const response = await originalFetch(...args);
             if (response.status === 401) {
                 showLoginOverlay();
@@ -604,6 +619,10 @@
             });
 
             if (resp.ok) {
+                const data = await resp.json();
+                if (data.csrf_token) {
+                    localStorage.setItem('csrf_token', data.csrf_token);
+                }
                 hideLoginOverlay();
                 location.reload(); // Reload to fetch all data with the new cookie
             } else {
@@ -613,6 +632,7 @@
 
         document.getElementById('btn-logout').addEventListener('click', async () => {
             await originalFetch('/api/logout', { method: 'POST' });
+            localStorage.removeItem('csrf_token');
             if (ws) ws.close(); // Close WebSocket to stop data flow
             showLoginOverlay();
         });
