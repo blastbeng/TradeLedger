@@ -365,6 +365,13 @@ class SignalProcessor:
             logger.info(f"Skipping LLM for {symbol}: market unchanged, no strong signals.")
             async with engine._eval_state_lock:
                 engine._force_eval.pop(symbol, None)
+            # Update snapshot so price/indicator change checks use recent data
+            engine._last_eval_snapshot[symbol] = {
+                "timestamp": time.time(),
+                "price": ctx["current_price"],
+                "rsi": ctx["rsi"],
+                "macd_hist": ctx["macd_hist"],
+            }
             return None
 
         strategy_model_type, effective_temp = self.model_tier_manager.compute_model_tier_and_temperature(
@@ -1411,7 +1418,7 @@ class SignalProcessor:
         # but never less than the configured MAX_SKIP_INTERVAL_SECONDS.
         # This prevents excessively frequent forced evaluations for long
         # timeframes (e.g., 1Y candles should not be forced every 7 days).
-        max_skip = max(settings.MAX_SKIP_INTERVAL_SECONDS, int(timeframe_seconds))
+        max_skip = settings.MAX_SKIP_INTERVAL_SECONDS
         if now - last_time > min(3 * effective_interval, max_skip):
             return False
 
@@ -1459,6 +1466,24 @@ class SignalProcessor:
             # RSI extremes are optional – only use them if the LLM has set them.
             rsi_oversold = None
             rsi_overbought = None
+            try:
+                raw = await engine.config_service.get_config("skip_eval_rsi_oversold")
+                if raw:
+                    rsi_oversold = float(raw)
+                raw = await engine.config_service.get_config("skip_eval_rsi_overbought")
+                if raw:
+                    rsi_overbought = float(raw)
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
+                pass
+            if (
+                rsi is not None
+                and rsi_oversold is not None
+                and rsi_overbought is not None
+                and (rsi < rsi_oversold or rsi > rsi_overbought)
+            ):
+                return False
+            rsi_oversold = 30.0
+            rsi_overbought = 70.0
             try:
                 raw = await engine.config_service.get_config("skip_eval_rsi_oversold")
                 if raw:
