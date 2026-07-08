@@ -1,17 +1,20 @@
 """Handles data fetching and filtering for symbol re-evaluation."""
 import asyncio
+import json
 import logging
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
-from src.database import get_ohlcv, get_indicators_for_symbols, get_aggregate_sentiment_from_db
+from src.database import get_ohlcv, get_indicators_for_symbols, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols
 from src.exchanges.market_data import get_quotes_cached
 
 try:
-    from src.news.fetcher import discover_trending_stocks, discover_tickers_from_news
+    from src.news.fetcher import discover_trending_stocks, discover_tickers_from_news, detect_upcoming_events
 except ImportError:
     discover_trending_stocks = None
     discover_tickers_from_news = None
+    detect_upcoming_events = None
 
 logger = logging.getLogger(__name__)
 
@@ -373,3 +376,143 @@ class ReevalDataFetcher:
                 symbol_trend_scores[sym] = 0.0
 
         return symbol_indicators, symbol_trend_scores
+
+    async def fetch_news_sentiment_and_trends(
+        self,
+        sample_pairs: List[str],
+        tickers: Dict[str, Dict[str, Any]],
+    ) -> Tuple[Dict[str, Any], Dict[str, Optional[float]], Optional[Dict[str, Any]]]:
+        """Batch-fetch news sentiment, compute sentiment trends, and market trend.
+
+        Returns (news_sentiment, sentiment_trend, market_trend) where:
+        - news_sentiment: {base_symbol: aggregate_sentiment_dict}
+        - sentiment_trend: {base_symbol: delta_or_None}
+        - market_trend: dict with symbol/change_24h/last, or None
+        """
+        engine = self.engine
+        news_sentiment: Dict[str, Any] = {}
+        if settings.NEWS_ENABLED:
+            batch_sentiment = await asyncio.to_thread(
+                get_aggregate_sentiment_for_symbols, sample_pairs, settings.NEWS_CACHE_TTL_SECONDS
+            )
+            for sym, agg in batch_sentiment.items():
+                if agg:
+                    base = sym.split("/")[0] if "/" in sym else sym
+                    news_sentiment[base] = agg
+
+        # Sentiment trend (delta from previous cycle)
+        sentiment_trend: Dict[str, Optional[float]] = {}
+        for sym in sample_pairs:
+            base_symbol = sym.split("/")[0] if "/" in sym else sym
+            current_compound = None
+            if base_symbol in news_sentiment:
+                current_compound = news_sentiment[base_symbol].get("avg_compound")
+            prev_key = f"sentiment:prev:{base_symbol}"
+            prev_raw = await asyncio.to_thread(engine.redis.get, prev_key)
+            prev_compound = float(prev_raw) if prev_raw else None
+            if current_compound is not None:
+                await asyncio.to_thread(engine.redis.setex, prev_key, settings.NEWS_CACHE_TTL_SECONDS, str(current_compound))
+            if current_compound is not None and prev_compound is not None:
+                sentiment_trend[base_symbol] = round(current_compound - prev_compound, 4)
+            else:
+                sentiment_trend[base_symbol] = None
+
+        # Overall market trend (use configured benchmark, e.g., FTSEMIB.MI)
+        market_trend = None
+        benchmark_symbol = settings.BENCHMARK_SYMBOL
+        if benchmark_symbol in tickers:
+            benchmark_ticker = tickers[benchmark_symbol]
+            market_trend = {
+                "symbol": benchmark_symbol,
+                "change_24h": benchmark_ticker.get("percentage"),
+                "last": benchmark_ticker.get("last"),
+            }
+        elif sample_pairs:
+            first = sample_pairs[0]
+            if first in tickers:
+                t = tickers[first]
+                market_trend = {
+                    "symbol": first,
+                    "change_24h": t.get("percentage"),
+                    "last": t.get("last"),
+                }
+
+        return news_sentiment, sentiment_trend, market_trend
+
+    async def fetch_shortlist_context(
+        self,
+        sample_pairs: List[str],
+        tickers: Dict[str, Dict[str, Any]],
+        market_trend: Optional[Dict[str, Any]],
+    ) -> Tuple[Dict[str, Dict[str, Any]], dict, Dict[str, Any], Optional[Dict[str, Any]], Optional[float]]:
+        """Fetch missing tickers, detect events, compute market breadth, and store market status.
+
+        Returns (symbol_events, session_info, market_breadth, full_market_breadth, vix).
+        """
+        engine = self.engine
+
+        # --- Ensure tickers dict covers all symbols in the final shortlist ---
+        missing_tickers = [s for s in sample_pairs if s not in tickers or not tickers.get(s, {}).get('last')]
+        if missing_tickers:
+            missing_plain = [s.split("/")[0] for s in missing_tickers]
+            try:
+                extra_raw = await asyncio.to_thread(get_quotes_cached, missing_plain)
+                for pair in missing_tickers:
+                    base = pair.split("/")[0]
+                    if base in extra_raw and extra_raw[base].get('last'):
+                        tickers[pair] = extra_raw[base]
+            except Exception as e:
+                logger.warning(f"Failed to fetch missing tickers for shortlist: {e}")
+
+        # --- Detect upcoming corporate events from news (parallelized) ---
+        symbol_events: Dict[str, Dict[str, Any]] = {}
+        if settings.NEWS_ENABLED and detect_upcoming_events is not None:
+            async def _detect_event(sym: str):
+                try:
+                    event = await asyncio.to_thread(detect_upcoming_events, sym)
+                    if event:
+                        return sym, event
+                except Exception:
+                    pass
+                return sym, None
+
+            event_tasks = [_detect_event(sym) for sym in sample_pairs]
+            event_results = await asyncio.gather(*event_tasks)
+            for sym, event in event_results:
+                if event:
+                    symbol_events[sym] = event
+
+        session_info = engine._market_data_manager._get_session_info()
+
+        # Market breadth: percentage of candidate stocks with positive 24h change
+        positive_count = sum(1 for sym in sample_pairs if (tickers.get(sym, {}).get('percentage') or 0) > 0)
+        total_count = len(sample_pairs)
+        market_breadth = {
+            "positive_pct": round(positive_count / total_count * 100, 1) if total_count > 0 else 0.0,
+            "positive_count": positive_count,
+            "total_count": total_count,
+        }
+        engine._market_breadth = market_breadth
+
+        # Read full market breadth from Redis (computed by background task)
+        full_market_breadth = None
+        try:
+            full_breadth_raw = await asyncio.to_thread(engine.redis.get, "market:breadth:full")
+            if full_breadth_raw:
+                full_market_breadth = json.loads(full_breadth_raw)
+        except Exception:
+            pass
+
+        vix = await engine._fetch_vix()
+
+        # Store market status in Redis for the web dashboard
+        market_status = {
+            "vix": vix,
+            "market_breadth": market_breadth,
+            "full_market_breadth": full_market_breadth,
+            "spy_price": market_trend["last"] if market_trend else None,
+            "timestamp": time.time(),
+        }
+        await asyncio.to_thread(engine.redis.setex, "market:status", 3600, json.dumps(market_status))
+
+        return symbol_events, session_info, market_breadth, full_market_breadth, vix
