@@ -3775,6 +3775,12 @@ class SignalProcessor:
         # indicators change dramatically between candles (e.g., RSI 20→80).
         tf_seconds = engine._timeframe_to_seconds(timeframe)
         if tf_seconds >= 2_592_000:  # >= 1 month (1M, 3M, 6M, 1Y)
+            # Volume confirmation: require the last complete candle's volume
+            # to be above the 20-period EMA to validate long-term breakouts.
+            volume_confirmed = (
+                len(volumes) >= 2 and volume_ema > 0 and volumes[-2] > volume_ema
+            )
+
             # 1. Trend direction reversal: +DI crosses above -DI
             prev_plus_di = prev.get("plus_di")
             prev_minus_di = prev.get("minus_di")
@@ -3794,7 +3800,7 @@ class SignalProcessor:
             # 3. Major breakout: price breaks above Donchian upper channel
             donchian = ind.get("donchian_channels")
             if (donchian is not None and prev_close is not None
-                    and current_close is not None):
+                    and current_close is not None and volume_confirmed):
                 dc_upper = donchian.get("upper")
                 if dc_upper is not None and prev_close <= dc_upper and current_close > dc_upper:
                     return True
@@ -3802,7 +3808,8 @@ class SignalProcessor:
             # 4. Ichimoku cloud breakout: price crosses above cloud top
             prev_cloud_top = prev.get("ichimoku_cloud_top")
             if (prev_cloud_top is not None and ichimoku is not None
-                    and prev_close is not None and current_close is not None):
+                    and prev_close is not None and current_close is not None
+                    and volume_confirmed):
                 cloud_top = ichimoku.get("cloud_top")
                 if cloud_top is not None and prev_close <= cloud_top and current_close > cloud_top:
                     return True
