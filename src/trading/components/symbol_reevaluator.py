@@ -1593,7 +1593,7 @@ class SymbolReevaluator:
         if _assets_result is None:
             return
         available_pairs, btp_pairs, etf_pairs, old_symbols, last_key = _assets_result
-        _quotes_result = await self.fetch_quotes_and_sort(
+        _quotes_result = await self.data_fetcher.fetch_quotes_and_sort(
             available_pairs, btp_pairs, etf_pairs, now, last_key
         )
         if _quotes_result is None:
