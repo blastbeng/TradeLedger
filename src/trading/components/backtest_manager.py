@@ -819,7 +819,7 @@ class BacktestManager:
             raw_candles=data.get("raw_candles"),
         )
 
-        backtest_results, combined_bt_summary = await self._run_random_backtest_variant(
+        backtest_results = await self._run_backtest_variants_parallel(
             symbol=symbol,
             variants_to_test=variants_to_test,
             preliminary_signal=preliminary_signal,
@@ -832,5 +832,9 @@ class BacktestManager:
             base_balance=data["base_balance"],
             is_btp=data["is_btp"],
         )
+
+        combined_bt_summary = " | ".join(
+            f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
+        ) if backtest_results else "No backtest performed"
 
         return backtest_results, combined_bt_summary
