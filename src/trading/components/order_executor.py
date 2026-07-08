@@ -1720,7 +1720,6 @@ class OrderExecutor:
         engine = self.engine
         # --- Place native exit orders (OCO) if LLM specified them ---
         current_entry = engine.positions[symbol]["price"]
-        exit_prices = self.compute_exit_order_prices(
         exit_prices = self._exit_order_manager.compute_exit_order_prices(
             entry_price=current_entry,
             signal=signal,
@@ -2038,7 +2037,6 @@ class OrderExecutor:
                 if "reasoning" not in filtered:
                     filtered["reasoning"] = ""
                 reconstructed_signal = Signal(**filtered)
-                exit_prices = self.compute_exit_order_prices(
                exit_prices = self._exit_order_manager.compute_exit_order_prices(
                     entry_price=engine.positions[symbol]["price"],
                     signal=reconstructed_signal,
