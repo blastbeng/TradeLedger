@@ -1,22 +1,19 @@
 import json
 import logging
-import re
 import time
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple
 from src.config.settings import settings
 from src.utils.symbol_utils import is_btp_isin
-from src.database import get_news_for_symbol, get_aggregate_sentiment_from_db
+from src.database import get_news_for_symbol
 from src.llm.stock_selection_prompts import build_stock_selection_prompt, build_final_selection_prompt
 from src.exchanges.market_data import TIMEFRAME_MAP
 from src.llm.prompt_utils import (
     _timeframe_to_seconds,
     compact_prompt,
     _summarize_ohlcv,
-    _format_raw_candles_compact,
     _format_trade_pattern_analysis,
     _format_news_for_prompt,
-    get_cached_news_summary,
 )
 logger = logging.getLogger(__name__)
 from src.llm.system_prompt import build_system_prompt, SYSTEM_PROMPT_TEMPLATE
