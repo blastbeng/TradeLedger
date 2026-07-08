@@ -103,18 +103,20 @@ class RiskManager:
         try:
             with engine._trade_history_lock:
                 trades_snapshot = list(engine.trade_history)
-            # Compute drawdown based on realized P&L only to avoid pausing
-            # on temporary unrealized dips in medium/long-term trading.
+            # Compute drawdown based on realized equity (initial balance + realized P&L)
+            # to avoid pausing on temporary unrealized dips in medium/long-term trading.
+            initial_balance = settings.PAPER_INITIAL_BALANCE
             cumulative_pnl = 0.0
-            peak_pnl = 0.0
+            peak_equity = initial_balance
             max_dd_pct = 0.0
             for trade in sorted(trades_snapshot, key=lambda x: x.get("timestamp", 0)):
                 if trade.get("side") == "sell":
                     cumulative_pnl += trade.get("realized_pnl", 0.0)
-                    if cumulative_pnl > peak_pnl:
-                        peak_pnl = cumulative_pnl
-                    if peak_pnl > 0:
-                        dd_pct = (peak_pnl - cumulative_pnl) / peak_pnl
+                    current_equity = initial_balance + cumulative_pnl
+                    if current_equity > peak_equity:
+                        peak_equity = current_equity
+                    if peak_equity > 0:
+                        dd_pct = (peak_equity - current_equity) / peak_equity
                         if dd_pct > max_dd_pct:
                             max_dd_pct = dd_pct
             drawdown_pct = max_dd_pct
