@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple
 from src.config.settings import settings
 from src.utils.symbol_utils import is_btp_isin
-from src.database import get_news_for_symbol, get_aggregate_sentiment_from_db, get_news_for_symbols
+from src.database import get_news_for_symbol, get_aggregate_sentiment_from_db
+from src.llm.stock_selection_prompts import build_stock_selection_prompt, build_final_selection_prompt
 from src.exchanges.market_data import TIMEFRAME_MAP
 from src.llm.prompt_utils import (
     _timeframe_to_seconds,
