@@ -1,5 +1,6 @@
 """Handles shortlist building and composite score computation for re-evaluation."""
 import logging
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
@@ -183,8 +184,132 @@ class ReevalShortlistBuilder:
                     f"filled {filled} additional slots from composite scores to reach MIN_SYMBOLS={settings.MIN_SYMBOLS}"
                 )
                 engine.effective_max_symbols = max(engine.effective_max_symbols, len(deduped))
+
+    async def apply_fallback_selection(
+        self,
+        sample_pairs: List[str],
+        composite_scores: Dict[str, float],
+        tickers: Dict[str, Dict[str, Any]],
+        market_limits: Dict[str, Dict[str, float]],
+        base_balance: float,
+        old_symbols: List[Dict[str, str]],
+        pause_trading: Optional[bool],
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+    ) -> None:
+        """Apply composite-score-based fallback selection when LLM returns no symbols.
+
+        Picks top affordable symbols by composite score, falling back to
+        previously tracked symbols if no suitable candidates are found.
+        """
+        engine = self.engine
+        if engine.current_symbols or pause_trading is True:
+            return
+
+        logger.warning("LLM returned no symbols without pausing – using composite-score-based fallback.")
+        if engine.notifier:
+            await engine.notifier.send_notification(
+                "⚠️ LLM returned no symbols. Using composite-score-based fallback selection.",
+                summary={
+                    "action": "FALLBACK",
+                    "reason": "LLM returned no symbols, using fallback",
+                    "model_type": "mind",
+                }
+            )
+        # Sort sample_pairs by composite score (already computed above)
+        sorted_pairs = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
+        fallback_symbols: List[Dict[str, str]] = []
+        default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+        for sym in sorted_pairs:
+            if composite_scores.get(sym, 0) < settings.FALLBACK_MIN_COMPOSITE_SCORE:
+                continue
+            # Apply minimum 24h volume filter if configured
+            if settings.FALLBACK_MIN_24H_VOLUME > 0:
+                vol = tickers.get(sym, {}).get('quoteVolume', 0) or 0
+                if vol < settings.FALLBACK_MIN_24H_VOLUME:
+                    continue
+            min_cost = market_limits.get(sym, {}).get('min_cost', 0)
+            # Use total base_balance, not per_symbol_budget, since the LLM
+            # allocates capital dynamically (not equal split)
+            if base_balance >= min_cost:
+                if engine._is_excluded(sym, default_tf):
+                    continue
+
+                # Check if OHLCV data is available for the symbol
+                sym_data = ohlcv_data.get(sym, {})
+                available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
+                if not available_tfs:
+                    continue
+                tf = default_tf if default_tf in available_tfs else available_tfs[0]
+
+                fallback_symbols.append({"symbol": sym, "timeframe": tf})
+            if len(fallback_symbols) >= engine.effective_max_symbols:
+                break
+        if fallback_symbols:
+            existing_symbols = {c['symbol']: c for c in engine.current_symbols}
+            for entry in fallback_symbols:
+                if entry['symbol'] in existing_symbols and 'entry_time' in existing_symbols[entry['symbol']]:
+                    entry['entry_time'] = existing_symbols[entry['symbol']]['entry_time']
+                else:
+                    entry['entry_time'] = time.time()
+            engine.current_symbols = fallback_symbols
+        elif old_symbols:
+            logger.warning("Fallback found no symbols. Keeping previously tracked symbols.")
+            engine.current_symbols = old_symbols
+            engine.effective_max_symbols = max(len(old_symbols), 1)
+
+    def update_current_symbols(
+        self,
+        deduped: List[Dict[str, str]],
+        old_symbols: List[Dict[str, str]],
+    ) -> None:
+        """Replace current_symbols with the newly selected symbols.
+
+        Preserves entry_time and max_tenure_hours for existing symbols,
+        and updates position timeframes if they changed. If the LLM
+        returned no symbols, keeps previously tracked symbols.
+        """
+        engine = self.engine
+        if deduped and engine.effective_max_symbols > 0:
+            existing_symbols = {c['symbol']: c for c in engine.current_symbols}
+            for entry in deduped[: engine.effective_max_symbols]:
+                sym = entry['symbol']
+                new_tf = entry['timeframe']
+                if sym in existing_symbols:
+                    old_entry = existing_symbols[sym]
+                    if 'entry_time' in old_entry:
+                        entry['entry_time'] = old_entry['entry_time']
+                    else:
+                        entry['entry_time'] = time.time()
+
+                    # Preserve max_tenure_hours from existing symbol if LLM didn't specify it
+                    if 'max_tenure_hours' not in entry and 'max_tenure_hours' in old_entry:
+                        entry['max_tenure_hours'] = old_entry['max_tenure_hours']
+
+                    # Check if timeframe changed for an existing symbol
+                    old_tf = old_entry.get('timeframe')
+                    if old_tf != new_tf:
+                        logger.info(f"Timeframe changed for {sym}: {old_tf} -> {new_tf}")
+                        if sym in engine.positions:
+                            engine.positions[sym]['timeframe'] = new_tf
+                            # Clear max hold expired flags since the timeframe context changed
+                            engine.positions[sym].pop("_max_hold_expired", None)
+                            engine.positions[sym].pop("_max_hold_expired_count", None)
+                else:
+                    entry['entry_time'] = time.time()
+            engine.current_symbols = deduped[: engine.effective_max_symbols]
+        else:
+            # LLM returned no symbols – keep previously tracked symbols
+            if old_symbols:
+                logger.info("LLM selected 0 symbols. Keeping previously tracked symbols for signal generation.")
+                engine.current_symbols = old_symbols
+                engine.effective_max_symbols = max(len(old_symbols), 1)
+            else:
+                engine.current_symbols = []
+                engine.effective_max_symbols = 0
+                logger.info("LLM selected 0 symbols – pausing trading until next evaluation.")
 """Handles shortlist building and composite score computation for re-evaluation."""
 import logging
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
@@ -368,3 +493,126 @@ class ReevalShortlistBuilder:
                     f"filled {filled} additional slots from composite scores to reach MIN_SYMBOLS={settings.MIN_SYMBOLS}"
                 )
                 engine.effective_max_symbols = max(engine.effective_max_symbols, len(deduped))
+
+    async def apply_fallback_selection(
+        self,
+        sample_pairs: List[str],
+        composite_scores: Dict[str, float],
+        tickers: Dict[str, Dict[str, Any]],
+        market_limits: Dict[str, Dict[str, float]],
+        base_balance: float,
+        old_symbols: List[Dict[str, str]],
+        pause_trading: Optional[bool],
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+    ) -> None:
+        """Apply composite-score-based fallback selection when LLM returns no symbols.
+
+        Picks top affordable symbols by composite score, falling back to
+        previously tracked symbols if no suitable candidates are found.
+        """
+        engine = self.engine
+        if engine.current_symbols or pause_trading is True:
+            return
+
+        logger.warning("LLM returned no symbols without pausing – using composite-score-based fallback.")
+        if engine.notifier:
+            await engine.notifier.send_notification(
+                "⚠️ LLM returned no symbols. Using composite-score-based fallback selection.",
+                summary={
+                    "action": "FALLBACK",
+                    "reason": "LLM returned no symbols, using fallback",
+                    "model_type": "mind",
+                }
+            )
+        # Sort sample_pairs by composite score (already computed above)
+        sorted_pairs = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
+        fallback_symbols: List[Dict[str, str]] = []
+        default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+        for sym in sorted_pairs:
+            if composite_scores.get(sym, 0) < settings.FALLBACK_MIN_COMPOSITE_SCORE:
+                continue
+            # Apply minimum 24h volume filter if configured
+            if settings.FALLBACK_MIN_24H_VOLUME > 0:
+                vol = tickers.get(sym, {}).get('quoteVolume', 0) or 0
+                if vol < settings.FALLBACK_MIN_24H_VOLUME:
+                    continue
+            min_cost = market_limits.get(sym, {}).get('min_cost', 0)
+            # Use total base_balance, not per_symbol_budget, since the LLM
+            # allocates capital dynamically (not equal split)
+            if base_balance >= min_cost:
+                if engine._is_excluded(sym, default_tf):
+                    continue
+
+                # Check if OHLCV data is available for the symbol
+                sym_data = ohlcv_data.get(sym, {})
+                available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
+                if not available_tfs:
+                    continue
+                tf = default_tf if default_tf in available_tfs else available_tfs[0]
+
+                fallback_symbols.append({"symbol": sym, "timeframe": tf})
+            if len(fallback_symbols) >= engine.effective_max_symbols:
+                break
+        if fallback_symbols:
+            existing_symbols = {c['symbol']: c for c in engine.current_symbols}
+            for entry in fallback_symbols:
+                if entry['symbol'] in existing_symbols and 'entry_time' in existing_symbols[entry['symbol']]:
+                    entry['entry_time'] = existing_symbols[entry['symbol']]['entry_time']
+                else:
+                    entry['entry_time'] = time.time()
+            engine.current_symbols = fallback_symbols
+        elif old_symbols:
+            logger.warning("Fallback found no symbols. Keeping previously tracked symbols.")
+            engine.current_symbols = old_symbols
+            engine.effective_max_symbols = max(len(old_symbols), 1)
+
+    def update_current_symbols(
+        self,
+        deduped: List[Dict[str, str]],
+        old_symbols: List[Dict[str, str]],
+    ) -> None:
+        """Replace current_symbols with the newly selected symbols.
+
+        Preserves entry_time and max_tenure_hours for existing symbols,
+        and updates position timeframes if they changed. If the LLM
+        returned no symbols, keeps previously tracked symbols.
+        """
+        engine = self.engine
+        if deduped and engine.effective_max_symbols > 0:
+            existing_symbols = {c['symbol']: c for c in engine.current_symbols}
+            for entry in deduped[: engine.effective_max_symbols]:
+                sym = entry['symbol']
+                new_tf = entry['timeframe']
+                if sym in existing_symbols:
+                    old_entry = existing_symbols[sym]
+                    if 'entry_time' in old_entry:
+                        entry['entry_time'] = old_entry['entry_time']
+                    else:
+                        entry['entry_time'] = time.time()
+
+                    # Preserve max_tenure_hours from existing symbol if LLM didn't specify it
+                    if 'max_tenure_hours' not in entry and 'max_tenure_hours' in old_entry:
+                        entry['max_tenure_hours'] = old_entry['max_tenure_hours']
+
+                    # Check if timeframe changed for an existing symbol
+                    old_tf = old_entry.get('timeframe')
+                    if old_tf != new_tf:
+                        logger.info(f"Timeframe changed for {sym}: {old_tf} -> {new_tf}")
+                        if sym in engine.positions:
+                            engine.positions[sym]['timeframe'] = new_tf
+                            # Clear max hold expired flags since the timeframe context changed
+                            engine.positions[sym].pop("_max_hold_expired", None)
+                            engine.positions[sym].pop("_max_hold_expired_count", None)
+                else:
+                    entry['entry_time'] = time.time()
+            engine.current_symbols = deduped[: engine.effective_max_symbols]
+        else:
+            # LLM returned no symbols – keep previously tracked symbols
+            if old_symbols:
+                logger.info("LLM selected 0 symbols. Keeping previously tracked symbols for signal generation.")
+                engine.current_symbols = old_symbols
+                engine.effective_max_symbols = max(len(old_symbols), 1)
+            else:
+                engine.current_symbols = []
+                engine.effective_max_symbols = 0
+                logger.info("LLM selected 0 symbols – pausing trading until next evaluation.")
