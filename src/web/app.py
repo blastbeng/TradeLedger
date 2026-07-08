@@ -346,9 +346,10 @@ async def manual_trade(req: ManualTradeRequest):
         raise HTTPException(status_code=400, detail="Money spent must be positive")
 
     # Validate ticker against discovered symbols (case-insensitive)
+    # Strip exchange suffix (e.g., .MI) and pair base (e.g., /USD) for comparison
     known_symbols = await run_in_threadpool(get_all_discovered_symbols)
-    ticker_upper = req.ticker.upper()
-    if not any(s.get("symbol", "").upper() == ticker_upper for s in known_symbols):
+    base_ticker = req.ticker.split("/")[0].split(".")[0].upper()
+    if not any(s.get("symbol", "").upper() == base_ticker for s in known_symbols):
         raise HTTPException(status_code=400, detail=f"Unknown ticker: {req.ticker}. Please use a valid discovered symbol.")
 
     result = await engine.log_manual_trade(req.ticker, req.side, req.quantity, req.money_spent, req.fee)
