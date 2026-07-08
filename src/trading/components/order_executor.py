@@ -25,6 +25,7 @@ class OrderExecutor:
         self.event_bus = event_bus
         self._exit_order_manager = None
         self._buy_executor = None
+        self._sell_executor = None
         self.event_bus.subscribe("execute_signal", self.execute_signal)
         self.event_bus.subscribe("sweep_dust", self.sweep_dust)
         self.event_bus.subscribe("execute_partial_tp_single", self.execute_partial_tp_single)
