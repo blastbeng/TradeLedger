@@ -154,20 +154,28 @@ def _reset_bi_circuit():
 
 class YFinanceRateLimiter:
     """Sliding window rate limiter for yfinance requests."""
-    def __init__(self, max_requests: int, window_seconds: int):
+    def __init__(self, max_requests: int, window_seconds: int, use_yf_settings: bool = True):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
+        self.use_yf_settings = use_yf_settings
         self._timestamps: collections.deque = collections.deque()
         self._lock = threading.Lock()
 
     def acquire(self):
-        # Read live settings to allow runtime reload without restart
-        if not settings.YF_RATE_LIMIT_ENABLED or settings.YF_RATE_LIMIT_MAX_REQUESTS <= 0:
-            return
-        with self._lock:
-            now = time.time()
+        if self.use_yf_settings:
+            # Read live settings to allow runtime reload without restart
+            if not settings.YF_RATE_LIMIT_ENABLED or settings.YF_RATE_LIMIT_MAX_REQUESTS <= 0:
+                return
             window = settings.YF_RATE_LIMIT_WINDOW_SECONDS
             max_req = settings.YF_RATE_LIMIT_MAX_REQUESTS
+        else:
+            if self.max_requests <= 0:
+                return
+            window = self.window_seconds
+            max_req = self.max_requests
+
+        with self._lock:
+            now = time.time()
             # Remove timestamps outside the window
             while self._timestamps and self._timestamps[0] <= now - window:
                 self._timestamps.popleft()
@@ -176,7 +184,7 @@ class YFinanceRateLimiter:
                 # Sleeping would hold the thread pool worker hostage and cause
                 # asyncio.wait_for timeouts in the engine.  Raising lets the
                 # caller fall back to the database immediately.
-                raise ConnectionError("yfinance rate limit exceeded")
+                raise ConnectionError("rate limit exceeded")
             self._timestamps.append(time.time())
 
 
@@ -324,6 +332,7 @@ _dynamic_rotator = DynamicProxyRotator()
 _av_rate_limiter = YFinanceRateLimiter(
     max_requests=settings.ALPHAVANTAGE_RATE_LIMIT_PER_MIN,
     window_seconds=60,
+    use_yf_settings=False,
 )
 
 
@@ -474,6 +483,7 @@ def get_alphavantage_candles(
 _iex_rate_limiter = YFinanceRateLimiter(
     max_requests=100,  # IEX free tier: 100 req/min
     window_seconds=60,
+    use_yf_settings=False,
 )
 
 
