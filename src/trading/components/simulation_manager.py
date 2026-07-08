@@ -6,8 +6,13 @@ from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
 from src.llm.cache import get_cached_llm_response, compute_market_hash
-from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, BacktestPromptData
+from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, BacktestPromptData, StrategyPromptData
 from src.strategies.llm_parser import create_strategy_from_llm
+
+try:
+    from src.news.fetcher import detect_upcoming_events
+except ImportError:
+    detect_upcoming_events = None
 
 logger = logging.getLogger(__name__)
 
@@ -282,13 +287,13 @@ class SimulationManager:
         trade_pattern_analysis = await engine.event_bus.request("compute_trade_pattern_analysis")
 
         symbol_event = None
-        if settings.NEWS_ENABLED and self.sp.detect_upcoming_events is not None:
+        if settings.NEWS_ENABLED and detect_upcoming_events is not None:
             try:
-                symbol_event = await asyncio.to_thread(self.sp.detect_upcoming_events, symbol)
+                symbol_event = await asyncio.to_thread(detect_upcoming_events, symbol)
             except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, json.JSONDecodeError):
                 pass
 
-        prompt_data = self.sp.StrategyPromptData(
+        prompt_data = StrategyPromptData(
             symbol=symbol,
             ticker=ticker,
             balance=balance,
