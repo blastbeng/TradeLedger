@@ -55,6 +55,7 @@ class TaskSupervisor:
                 if self._restart_count > self.max_restarts:
                     logger.critical(f"Task {self.name} exceeded max_restarts ({self.max_restarts}). Aborting supervisor.")
                     self.is_healthy = False
+                    self._running = False
                     if self._notifier:
                         try:
                             asyncio.create_task(self._notifier.send_notification(

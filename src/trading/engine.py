@@ -1570,6 +1570,7 @@ class TradingEngine:
             self._refresh_all_quotes_loop,
             self._refresh_ticker_discovery_loop,
             self._redis_health_check_loop,
+            self._health_check_loop,
         ]
         for factory in background_factories:
             sup = TaskSupervisor(factory, name=factory.__qualname__)
@@ -1783,6 +1784,24 @@ class TradingEngine:
                         summary={"action": "INFO", "reason": "Redis connection restored"}
                     )
             await asyncio.sleep(60)
+
+    async def _health_check_loop(self):
+        """Periodically check the health of supervised background tasks and alert on failures."""
+        await asyncio.sleep(300)  # initial delay 5 minutes
+        while self._running:
+            try:
+                for sup in self._supervisors:
+                    health = sup.get_health()
+                    if not health["is_healthy"] or not health["running"]:
+                        if self.notifier:
+                            await self.notifier.send_notification(
+                                f"🚨 Critical background task '{health['name']}' is not healthy or has stopped running. "
+                                f"Last error: {health['last_exception']}",
+                                summary={"action": "CRITICAL", "reason": f"Task {health['name']} unhealthy"}
+                            )
+            except Exception as e:
+                logger.error(f"Health check loop error: {e}", exc_info=True)
+            await asyncio.sleep(300)  # check every 5 minutes
 
     @staticmethod
     def _deduplicate_variants(variants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
