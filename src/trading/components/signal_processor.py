@@ -1463,25 +1463,7 @@ class SignalProcessor:
         if not has_position:
             # Only call if there is a potential entry signal (extreme RSI, MACD crossover, etc.)
             # RSI extreme? (thresholds are LLM-decided)
-            # RSI extremes are optional – only use them if the LLM has set them.
-            rsi_oversold = None
-            rsi_overbought = None
-            try:
-                raw = await engine.config_service.get_config("skip_eval_rsi_oversold")
-                if raw:
-                    rsi_oversold = float(raw)
-                raw = await engine.config_service.get_config("skip_eval_rsi_overbought")
-                if raw:
-                    rsi_overbought = float(raw)
-            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
-                pass
-            if (
-                rsi is not None
-                and rsi_oversold is not None
-                and rsi_overbought is not None
-                and (rsi < rsi_oversold or rsi > rsi_overbought)
-            ):
-                return False
+            # RSI extremes use sensible defaults (30/70) that the LLM can override.
             rsi_oversold = 30.0
             rsi_overbought = 70.0
             try:
@@ -1493,12 +1475,7 @@ class SignalProcessor:
                     rsi_overbought = float(raw)
             except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
-            if (
-                rsi is not None
-                and rsi_oversold is not None
-                and rsi_overbought is not None
-                and (rsi < rsi_oversold or rsi > rsi_overbought)
-            ):
+            if rsi is not None and (rsi < rsi_oversold or rsi > rsi_overbought):
                 return False
             # MACD histogram direction change? (harder to detect without previous sign – skip for simplicity)
             # Otherwise, no strong signal → skip
