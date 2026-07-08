@@ -393,7 +393,6 @@ class SignalProcessor:
             elif flags["partial_tp_triggered"]: critical_reason = "Partial TP triggered, LLM timeout"
             elif flags["dust_sweep_triggered"]: critical_reason = "Dust sweep triggered, LLM timeout"
 
-        analysis_result, llm_provider, llm_model, _should_return = await self.run_step1a_llm_call(
         analysis_result, llm_provider, llm_model, _should_return = await self.llm_step_manager.run_step1a_llm_call(
             symbol=symbol, display_symbol=display_symbol, analysis_prompt=ctx["analysis_prompt"],
             system_prompt=compact_prompt(build_system_prompt()), market_hash=ctx["market_hash"],
@@ -404,14 +403,12 @@ class SignalProcessor:
         if _should_return:
             return None
 
-        signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest = await self.handle_step1a_fallback(
         signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest = await self.llm_step_manager.handle_step1a_fallback(
             symbol=symbol, analysis_result=analysis_result, has_position=has_position,
             strategy_model_type=strategy_model_type, llm_provider=llm_provider, llm_model=llm_model,
         )
 
         if not _skip_backtest:
-            preliminary_signal, llm_provider, llm_model = await self.run_step1b_llm_call(
             preliminary_signal, llm_provider, llm_model = await self.llm_step_manager.run_step1b_llm_call(
                 symbol=symbol, analysis_result=analysis_result, ticker=ctx["ticker"], current_price=ctx["current_price"],
                 atr=ctx["atr"], assigned_tf=assigned_tf, base_balance=ctx["base_balance"], per_symbol_budget=ctx["per_symbol_budget"],
@@ -2067,6 +2064,7 @@ class SignalProcessor:
             }
             await engine.notifier.send_notification(msg, summary=decision_summary)
 
+    async def process_post_llm_decision(
         self,
         data: DecisionContext,
     ) -> None:
