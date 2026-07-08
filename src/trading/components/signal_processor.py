@@ -2363,6 +2363,10 @@ class SignalProcessor:
             except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
 
+            # Apply hard min/max bounds to prevent misconfiguration
+            cb_threshold = max(1, min(cb_threshold, 50))
+            cb_cooldown = max(10, min(cb_cooldown, 3600))
+
             if fail_count >= cb_threshold:
                 cb_data = json.dumps({
                     "active_until": time.time() + cb_cooldown,
