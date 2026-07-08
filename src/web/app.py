@@ -19,6 +19,8 @@ from src.database import get_all_discovered_symbols, get_signals
 from typing import Optional
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
+
 # Rate limiting configuration
 RATE_LIMIT_REQUESTS = 100  # max requests per window
 RATE_LIMIT_WINDOW = 60    # window size in seconds
@@ -130,8 +132,6 @@ async def logout(request: Request, response: Response):
         await asyncio.to_thread(redis.delete, f"session:{token}")
     response.delete_cookie("session_token")
     return {"status": "ok"}
-
-logger = logging.getLogger(__name__)
 
 # Serve static files (dashboard)
 app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
