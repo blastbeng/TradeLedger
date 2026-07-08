@@ -645,3 +645,112 @@ class SellExecutor:
             if signal_dict.get('llm_model'):
                 sell_summary["llm_model"] = signal_dict.get('llm_model')
             await engine.notifier.send_notification(sell_msg, summary=sell_summary)
+
+    async def sweep_dust(self, symbol: str):
+        """Sell any remaining dust balance of a symbol after a partial sell."""
+        engine = self.engine
+        base = symbol.split("/")[0]
+        try:
+            balance = await asyncio.to_thread(engine.trader.get_balance, base)
+        except (RuntimeError, ValueError, ConnectionError) as e:
+            logger.warning(f"Dust sweep: could not fetch balance for {base}: {e}")
+            return
+        if balance <= 0:
+            return
+
+        stock_name = await engine._market_data_manager.get_stock_name(symbol)
+        tf = engine.positions.get(symbol, {}).get("timeframe") if symbol in engine.positions else None
+        display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
+
+        try:
+            base = symbol.split("/")[0]
+            quotes = await engine._market_data_manager._get_quotes_async([base], timeout=45.0)
+            ticker = quotes.get(base)
+            price = ticker["last"]
+        except (KeyError, RuntimeError, ConnectionError, ValueError) as e:
+            logger.warning(f"Dust sweep: could not fetch price for {symbol}: {e}")
+            return
+
+        # Fetch minimum order size from asset info
+        try:
+            asset = await engine._market_data_manager.get_asset_info(symbol)
+            min_amount = float(asset.min_order_size) if asset.min_order_size else None
+            if not asset.fractionable and (min_amount is None or min_amount < 1.0):
+                min_amount = 1.0
+        except (AttributeError, TypeError, ValueError):
+            min_amount = None
+        if min_amount is not None and balance < float(min_amount):
+            logger.info(f"Dust sweep: {balance} {base} below min amount {min_amount}, cannot sell.")
+            return
+
+        if not await engine._is_market_open():
+            logger.info(f"Dust sweep for {symbol} deferred: market closed. Will retry on next market open.")
+            if symbol in engine.positions:
+                async with engine._positions_lock:
+                    engine.positions[symbol]["_dust_sweep_pending"] = True
+            return
+
+        need_limit = not await engine._is_market_open()
+        limit_price = None
+        time_in_force = "day"
+        if need_limit:
+            limit_price = self._order_executor._default_limit_price(symbol, "SELL", ticker, atr=None)
+            if limit_price is None:
+                logger.error(f"Cannot place limit order for dust sweep on {symbol}: no limit price.")
+                return
+
+        if limit_price is not None and limit_price <= 0:
+            logger.error(f"Invalid limit_price for dust sweep on {symbol}, skipping.")
+            return
+
+        try:
+            order = await asyncio.to_thread(
+                engine.trader.create_market_sell_order, symbol, balance,
+                settings.ORDER_FILL_TIMEOUT_SECONDS, limit_price, time_in_force
+            )
+            logger.info(f"Dust sweep: sold {balance} {base} from {symbol} – order {order.get('id')}")
+
+            # Record the dust sale in trade history for consistency
+            fee = order.get('fee', {})
+            fee_cost = float(fee.get('cost', 0.0) or 0.0)
+            fee_currency = fee.get('currency', '')
+            pos = engine.positions.get(symbol)
+            if pos:
+                cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
+                net_quote = order['cost'] - (fee_cost if fee_currency == symbol.split('/')[1] else 0.0)
+                realized_pnl = net_quote - cost_basis
+                order["realized_pnl"] = realized_pnl
+                order["cost_basis"] = cost_basis
+                order["exit_reason"] = "dust_sweep"
+                order["strategy_type"] = pos.get("strategy_type", "unknown")
+                order["timeframe"] = pos.get("timeframe")
+                if "timestamp" in pos:
+                    order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
+                engine._append_trade(order)
+                await asyncio.to_thread(insert_trade, order)
+                await self.event_bus.publish("save_state", force=True)
+                engine._portfolio_exposure_cache = None
+
+            # Cancel any remaining exit orders before removing the position
+            await self._order_executor._exit_order_manager.cancel_exit_orders(symbol)
+
+            # Remove the now-empty position
+            async with engine._positions_lock:
+                engine.positions.pop(symbol, None)
+            engine._strategy_intervals.pop(symbol, None)
+            engine._last_strategy_eval.pop(symbol, None)
+            await self.event_bus.publish("remove_symbol_if_paused", symbol)
+
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"🧹 Dust sweep: sold remaining {balance} {base} from {display_symbol}",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SELL",
+                        "reason": "Dust sweep",
+                        "amount": balance,
+                        "exit_reason": "dust_sweep",
+                    }
+                )
+        except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
+            logger.error(f"Dust sweep failed for {symbol}: {e}")
