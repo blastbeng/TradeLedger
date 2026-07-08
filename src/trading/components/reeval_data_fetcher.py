@@ -516,3 +516,148 @@ class ReevalDataFetcher:
         await asyncio.to_thread(engine.redis.setex, "market:status", 3600, json.dumps(market_status))
 
         return symbol_events, session_info, market_breadth, full_market_breadth, vix
+
+    def compute_correlation_matrix(
+        self,
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+        sorted_by_vol: List[str],
+    ) -> Dict[str, Dict[str, float]]:
+        """Compute pairwise Pearson correlation matrix from OHLCV close prices.
+
+        For each pair of symbols, uses the longest timeframe where both have
+        enough data (minimum 20 candles and 19 returns) to avoid missing pairs.
+        """
+        corr_matrix: Dict[str, Dict[str, float]] = {}
+        if ohlcv_data and settings.OHLCV_TIMEFRAMES:
+            MIN_CANDLES = 20
+            MIN_RETURNS = 19
+
+            # Pre-compute valid returns for each symbol on each timeframe
+            sym_tf_returns: Dict[str, Dict[str, List[float]]] = {}
+            for sym in sorted_by_vol:
+                if sym not in ohlcv_data:
+                    continue
+                sym_tf_returns[sym] = {}
+                for tf in settings.OHLCV_TIMEFRAMES:
+                    if tf in ohlcv_data[sym]:
+                        candles = ohlcv_data[sym][tf]
+                        if len(candles) >= MIN_CANDLES:
+                            closes = [c[4] for c in candles]
+                            returns = [(closes[i] - closes[i - 1]) / closes[i - 1]
+                                       for i in range(1, len(closes)) if closes[i - 1] != 0]
+                            if len(returns) >= MIN_RETURNS:
+                                sym_tf_returns[sym][tf] = returns
+
+            corr_symbols = list(sym_tf_returns.keys())
+            for sym_a in corr_symbols:
+                corr_matrix[sym_a] = {}
+                for sym_b in corr_symbols:
+                    if sym_a == sym_b:
+                        corr_matrix[sym_a][sym_b] = 1.0
+                    elif sym_b in corr_matrix and sym_a in corr_matrix[sym_b]:
+                        corr_matrix[sym_a][sym_b] = corr_matrix[sym_b][sym_a]
+                    else:
+                        # Find the longest timeframe where both symbols have valid returns
+                        best_tf = None
+                        for tf in reversed(settings.OHLCV_TIMEFRAMES):
+                            if tf in sym_tf_returns[sym_a] and tf in sym_tf_returns[sym_b]:
+                                best_tf = tf
+                                break
+
+                        if best_tf:
+                            ret_a = sym_tf_returns[sym_a][best_tf]
+                            ret_b = sym_tf_returns[sym_b][best_tf]
+                            min_len = min(len(ret_a), len(ret_b))
+                            if min_len < 2:
+                                continue
+                            a = ret_a[-min_len:]
+                            b = ret_b[-min_len:]
+                            mean_a = sum(a) / min_len
+                            mean_b = sum(b) / min_len
+                            cov = sum((a[k] - mean_a) * (b[k] - mean_b) for k in range(min_len)) / min_len
+                            std_a = (sum((x - mean_a) ** 2 for x in a) / min_len) ** 0.5
+                            std_b = (sum((x - mean_b) ** 2 for x in b) / min_len) ** 0.5
+                            if std_a > 0 and std_b > 0:
+                                corr_matrix[sym_a][sym_b] = round(cov / (std_a * std_b), 3)
+        return corr_matrix
+
+    async def get_or_compute_correlation_matrix(
+        self,
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+        sorted_by_vol: List[str],
+    ) -> Dict[str, Dict[str, float]]:
+        """Fetch the correlation matrix from Redis cache, or compute and cache it.
+
+        Uses a dynamic TTL: shorter (10 min) during extreme market breadth,
+        longer (30 min) otherwise.
+        """
+        engine = self.engine
+        corr_cache_key = "reeval:correlation_matrix"
+        correlation_matrix = None
+        try:
+            cached_corr = await asyncio.to_thread(engine.redis.get, corr_cache_key)
+            if cached_corr:
+                correlation_matrix = json.loads(cached_corr)
+        except Exception:
+            pass
+
+        if correlation_matrix is None:
+            correlation_matrix = await asyncio.to_thread(
+                self.compute_correlation_matrix, ohlcv_data, sorted_by_vol
+            )
+            # Dynamic TTL: shorter during high-volatility / extreme market conditions
+            corr_ttl = 1800  # default 30 minutes
+            _mb = getattr(engine, '_market_breadth', None)
+            if _mb:
+                pos_pct = _mb.get("positive_pct", 50)
+                if pos_pct > 80 or pos_pct < 20:
+                    corr_ttl = 600  # 10 minutes during extreme breadth
+            _fmb = None
+            try:
+                _fmb_raw = await asyncio.to_thread(engine.redis.get, "market:breadth:full")
+                if _fmb_raw:
+                    _fmb = json.loads(_fmb_raw)
+            except Exception:
+                pass
+            if _fmb:
+                pos_pct = _fmb.get("positive_pct", 50)
+                if pos_pct > 80 or pos_pct < 20:
+                    corr_ttl = 600
+            try:
+                await asyncio.to_thread(
+                    engine.redis.setex, corr_cache_key, corr_ttl, json.dumps(correlation_matrix)
+                )
+            except Exception:
+                pass
+
+        return correlation_matrix
+
+    async def compute_market_limits(
+        self,
+        sample_pairs: List[str],
+        tickers: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Dict[str, float]]:
+        """Compute per-symbol market limits (min order size and min cost).
+
+        Returns a dict: {symbol: {"min_cost": float, "min_amount": float|None}}
+        """
+        engine = self.engine
+        market_limits: Dict[str, Dict[str, float]] = {}
+        for symbol in sample_pairs:
+            base = symbol.split('/')[0]
+            try:
+                asset = await engine._market_data_manager.get_asset_info(symbol)
+                min_amount = float(asset.min_order_size) if asset.min_order_size else None
+            except Exception:
+                min_amount = None
+            ticker = tickers.get(symbol, {})
+            last_price = ticker.get('last', 0)
+            if min_amount is not None and last_price:
+                numeric_min_cost = min_amount * last_price
+            else:
+                numeric_min_cost = 0.0
+            market_limits[symbol] = {
+                'min_cost': numeric_min_cost,
+                'min_amount': min_amount,
+            }
+        return market_limits
