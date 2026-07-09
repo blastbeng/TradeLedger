@@ -964,6 +964,10 @@ class Settings(BaseSettings):
     WEB_USERNAME: Optional[str] = None
     WEB_PASSWORD: Optional[str] = None
 
+    # Web rate limiting
+    WEB_RATE_LIMIT_REQUESTS: int = 300  # max requests per window
+    WEB_RATE_LIMIT_WINDOW: int = 60    # window size in seconds
+
     # Entry signal MACD magnitude threshold as a multiple of ATR
     ENTRY_SIGNAL_MACD_ATR_MULT: float = 0.05
 

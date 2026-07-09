@@ -21,9 +21,9 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-# Rate limiting configuration
-RATE_LIMIT_REQUESTS = 100  # max requests per window
-RATE_LIMIT_WINDOW = 60    # window size in seconds
+# Rate limiting configuration (configurable via settings)
+RATE_LIMIT_REQUESTS = settings.WEB_RATE_LIMIT_REQUESTS
+RATE_LIMIT_WINDOW = settings.WEB_RATE_LIMIT_WINDOW
 
 async def _get_display_symbol(engine, symbol: str, timeframe: Optional[str] = None) -> str:
     """Return a formatted display string for the given symbol and timeframe."""
