@@ -243,7 +243,7 @@ def backtest_strategy(
     total_pnl_currency = 0.0
 
     # Parse configurable entry logic
-    entry_ema_period = config.backtest_entry_config.get("ema_period", 0)
+    entry_ema_period = int(config.backtest_entry_config.get("ema_period", 0))
     entry_ema_direction = config.backtest_entry_config.get("ema_direction", "above")
     entry_min_adx = config.backtest_entry_config.get("min_adx", 0.0)
     entry_max_rsi = config.backtest_entry_config.get("max_rsi", 100.0)

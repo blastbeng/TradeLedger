@@ -73,8 +73,10 @@ def _validate_signal_impl(
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config (must be a dict)")
 
             ema_period = bec.get("ema_period", 0)
-            if not isinstance(ema_period, int) or ema_period < 0:
+            if not isinstance(ema_period, (int, float)) or ema_period < 0:
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: ema_period must be a non-negative integer")
+            ema_period = int(ema_period)
+            bec["ema_period"] = ema_period
 
             ema_direction = bec.get("ema_direction", "above")
             if ema_direction not in ("above", "below"):
@@ -488,8 +490,9 @@ def _validate_signal_impl(
 
         if "max_trades" in params:
             mt = params["max_trades"]
-            if not isinstance(mt, int) or mt <= 0:
+            if not isinstance(mt, (int, float)) or mt <= 0:
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_trades")
+            params["max_trades"] = int(mt)
 
         if "initial_balance" in params:
             ib = params["initial_balance"]

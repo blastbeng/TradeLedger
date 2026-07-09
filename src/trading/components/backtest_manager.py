@@ -43,6 +43,20 @@ class BacktestManager:
         variants_to_test = []
         if preliminary_signal.backtest_variants:
             variants_to_test = list(preliminary_signal.backtest_variants)
+            # Ensure each variant has a backtest_entry_config — if missing, default it
+            _default_entry_config = {
+                "ema_period": 21,
+                "ema_direction": "above",
+                "min_adx": 20,
+                "logic": "and",
+            }
+            for v in variants_to_test:
+                if not isinstance(v, dict):
+                    continue
+                if not v.get("backtest_entry_config"):
+                    # Try to copy from the preliminary signal's params first
+                    _prelim_bec = (preliminary_signal.strategy_params or {}).get("backtest_entry_config")
+                    v["backtest_entry_config"] = _prelim_bec if isinstance(_prelim_bec, dict) else dict(_default_entry_config)
         else:
             # Fallback: use the preliminary signal's own params as a single variant
             fallback_params = dict(preliminary_signal.strategy_params or {})
