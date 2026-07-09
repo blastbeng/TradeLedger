@@ -306,7 +306,7 @@
         }
         @media (max-width: 768px) {
             .llm-chart-container {
-                height: 160px !important;
+                height: 250px !important;
             }
             #llm-metrics-periods > div {
                 padding: 8px !important;
@@ -523,7 +523,7 @@
                 </div>
                 <div style="margin-bottom:16px;">
                     <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">📊 Calls &amp; Tokens (last 24h, hourly)</h3>
-                    <div style="position:relative; width:100%; height:200px;" class="llm-chart-container">
+                    <div style="position:relative; width:100%; height:300px;" class="llm-chart-container">
                         <canvas id="llm-metrics-chart"></canvas>
                     </div>
                 </div>
@@ -2407,13 +2407,13 @@
                         maintainAspectRatio: false,
                         interaction: { mode: 'index', intersect: false },
                         plugins: {
-                            legend: { display: true, labels: { color: '#8b949e', font: { size: 10 } } },
+                            legend: { display: true, labels: { color: '#8b949e', font: { size: 12 } } },
                         },
                         scales: {
-                            x: { ticks: { color: '#8b949e', font: { size: 9 }, maxTicksLimit: 12 } },
-                            y: { type: 'linear', position: 'left', ticks: { color: '#8b949e', font: { size: 9 } }, title: { display: true, text: 'Calls', color: '#8b949e', font: { size: 10 } } },
-                            y1: { type: 'linear', position: 'right', ticks: { color: '#8b949e', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Tokens', color: '#8b949e', font: { size: 10 } } },
-                            y2: { type: 'linear', position: 'right', ticks: { color: '#8b949e', font: { size: 9 }, callback: v => v + '%' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Cache %', color: '#8b949e', font: { size: 10 } }, offset: true },
+                            x: { ticks: { color: '#8b949e', font: { size: 12 }, maxTicksLimit: 12 } },
+                            y: { type: 'linear', position: 'left', ticks: { color: '#8b949e', font: { size: 12 } }, title: { display: true, text: 'Calls', color: '#8b949e', font: { size: 12 } } },
+                            y1: { type: 'linear', position: 'right', ticks: { color: '#8b949e', font: { size: 12 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Tokens', color: '#8b949e', font: { size: 12 } } },
+                            y2: { type: 'linear', position: 'right', ticks: { color: '#8b949e', font: { size: 12 }, callback: v => v + '%' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Cache %', color: '#8b949e', font: { size: 12 } }, offset: true },
                         }
                     }
                 });
