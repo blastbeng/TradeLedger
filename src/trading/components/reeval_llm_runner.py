@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
 from src.llm.cache import get_cached_llm_response, compute_market_hash
-from src.llm.prompts import build_stock_selection_prompt, build_system_prompt, compact_prompt
+from src.llm.prompts import build_stock_selection_prompt, build_system_prompt, compact_prompt, build_stock_selection_messages, build_final_selection_messages
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +80,9 @@ class ReevalLLMRunner:
                         if sym_a in chunk_set:
                             chunk_corr[sym_a] = {sym_b: v for sym_b, v in row.items() if sym_b in chunk_set}
 
-                # Build chunk prompt
-                chunk_prompt = await asyncio.to_thread(
-                    build_stock_selection_prompt,
+                # Build chunk messages (system + user) for prompt caching
+                chunk_messages = await asyncio.to_thread(
+                    build_stock_selection_messages,
                     available_symbols=chunk_symbols,
                     current_symbols=engine.current_symbols,
                     max_symbols=engine.effective_max_symbols,
@@ -109,8 +109,13 @@ class ReevalLLMRunner:
                     market_breadth=market_breadth,
                     min_viable_trade_amount=min_viable_amount,
                 )
+                # Apply compact_prompt to system and user content for consistency
+                chunk_messages[0]["content"] = compact_prompt(chunk_messages[0]["content"])
+                chunk_messages[-1]["content"] = compact_prompt(chunk_messages[-1]["content"])
                 if auto_resume_note:
-                    chunk_prompt += "\n" + auto_resume_note
+                    chunk_messages[-1]["content"] += "\n" + auto_resume_note
+                # Keep prompt text for correction retries
+                chunk_prompt = chunk_messages[-1]["content"]
 
                 # Build market snapshot for caching
                 chunk_market_snapshot = {
@@ -138,12 +143,11 @@ class ReevalLLMRunner:
                         result = await asyncio.wait_for(
                             asyncio.to_thread(
                                 get_cached_llm_response,
-                                compact_prompt(chunk_prompt),
-                                system_prompt,
-                                300,
+                                "", "", 300,
                                 market_hash=chunk_market_hash,
                                 model_type="mind",
                                 temperature=effective_temp,
+                                messages=chunk_messages,
                             ),
                             timeout=settings.LLM_TIMEOUT
                         )
@@ -174,11 +178,16 @@ class ReevalLLMRunner:
                             "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
                             "Here is the original request:\n\n" + chunk_prompt
                         )
+                        correction_messages = [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": compact_prompt(correction)},
+                        ]
                         try:
                             correction_result = await asyncio.wait_for(
                                 asyncio.to_thread(
-                                    get_cached_llm_response, compact_prompt(correction), system_prompt, 120,
+                                    get_cached_llm_response, "", "", 120,
                                     model_type="actuator", temperature=effective_temp,
+                                    messages=correction_messages,
                                 ),
                                 timeout=settings.LLM_TIMEOUT
                             )
@@ -227,7 +236,6 @@ class ReevalLLMRunner:
         If all retries fail and chunk_results exist, merges all chunk
         selections as a fallback.
         """
-        from src.llm.prompts import build_final_selection_prompt
         engine = self.engine
 
         num_chunks = (len(sample_pairs) + settings.LLM_CHUNK_SIZE - 1) // settings.LLM_CHUNK_SIZE
@@ -241,8 +249,8 @@ class ReevalLLMRunner:
         if not chunk_results:
             logger.warning("All chunk LLM calls failed. Will use fallback selection.")
         else:
-            final_prompt = await asyncio.to_thread(
-                build_final_selection_prompt,
+            final_messages = await asyncio.to_thread(
+                build_final_selection_messages,
                 chunk_results=chunk_results,
                 current_symbols=engine.current_symbols,
                 max_symbols=engine.effective_max_symbols,
@@ -265,8 +273,11 @@ class ReevalLLMRunner:
                 market_limits=market_limits,
                 available_timeframes_by_symbol=available_timeframes_by_symbol,
             )
+            # Apply compact_prompt to system and user content for consistency
+            final_messages[0]["content"] = compact_prompt(final_messages[0]["content"])
+            final_messages[-1]["content"] = compact_prompt(final_messages[-1]["content"])
             if auto_resume_note:
-                final_prompt += "\n" + auto_resume_note
+                final_messages[-1]["content"] += "\n" + auto_resume_note
 
             max_retries = 2
             for attempt in range(max_retries + 1):
@@ -274,11 +285,10 @@ class ReevalLLMRunner:
                     result = await asyncio.wait_for(
                         asyncio.to_thread(
                             get_cached_llm_response,
-                            compact_prompt(final_prompt),
-                            compact_prompt(build_system_prompt()),
-                            300,
+                            "", "", 300,
                             model_type="mind",
                             temperature=effective_temp,
+                            messages=final_messages,
                         ),
                         timeout=settings.LLM_TIMEOUT
                     )
