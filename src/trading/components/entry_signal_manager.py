@@ -82,7 +82,8 @@ class EntrySignalManager:
         # Exclude the latest candle (which may be incomplete for intraday
         # timeframes) by using the second-to-last EMA value.
         volume_ema_list = compute_ema(volumes, 20)
-        volume_ema = volume_ema_list[-2] if len(volume_ema_list) >= 2 else 0.0
+        _raw_ema = volume_ema_list[-2] if len(volume_ema_list) >= 2 else None
+        volume_ema = _raw_ema if _raw_ema is not None else 0.0
 
         # Store current state for next cycle
         new_state = {
