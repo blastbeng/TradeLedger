@@ -119,13 +119,14 @@ def _validate_signal_impl(
                 # Compute a default from the ATR multiplier if ATR and price are available
                 if atr is not None and price is not None and price > 0 and atr > 0:
                     sl = (atr_mult * atr) / price
-                    params["stop_loss_pct"] = sl
-                    logger.info(f"Validator: computed default stop_loss_pct={sl:.4f} from ATR multiplier {atr_mult} for {symbol}")
                 else:
-                    # ATR unavailable — use a conservative default
                     sl = 0.05  # 5% default for long timeframes where ATR is often unavailable
-                    params["stop_loss_pct"] = sl
-                    logger.info(f"Validator: using default stop_loss_pct={sl} for {symbol} (ATR unavailable, atr_multiple method)")
+                # Ensure default sl < tp if tp is already known
+                if tp is not None and sl >= tp:
+                    sl = tp * 0.5  # Half the take-profit as a sensible stop
+                    logger.info(f"Validator: adjusted default stop_loss_pct to {sl:.4f} (must be < take_profit_pct={tp:.4f}) for {symbol}")
+                params["stop_loss_pct"] = sl
+                logger.info(f"Validator: using default stop_loss_pct={sl} for {symbol} (atr_multiple method)")
             else:
                 sl = params["stop_loss_pct"]
                 if not isinstance(sl, (int, float)) or not (0 < sl < 1.0):
@@ -135,12 +136,14 @@ def _validate_signal_impl(
                 # Default to a sensible value based on ATR if available
                 if atr is not None and price is not None and price > 0 and atr > 0:
                     sl = (2.0 * atr) / price  # 2x ATR as default
-                    params["stop_loss_pct"] = sl
-                    logger.info(f"Validator: computed default stop_loss_pct={sl:.4f} from ATR for {symbol}")
                 else:
                     sl = 0.05  # 5% default
-                    params["stop_loss_pct"] = sl
-                    logger.info(f"Validator: using default stop_loss_pct={sl} for {symbol}")
+                # Ensure default sl < tp if tp is already known
+                if tp is not None and sl >= tp:
+                    sl = tp * 0.5
+                    logger.info(f"Validator: adjusted default stop_loss_pct to {sl:.4f} (must be < take_profit_pct={tp:.4f}) for {symbol}")
+                params["stop_loss_pct"] = sl
+                logger.info(f"Validator: using default stop_loss_pct={sl} for {symbol}")
             else:
                 sl = params["stop_loss_pct"]
                 if not isinstance(sl, (int, float)) or not (0 < sl < 1.0):
@@ -189,11 +192,15 @@ def _validate_signal_impl(
             # Default take_profit_pct based on ATR if available
             if atr is not None and price is not None and price > 0 and atr > 0:
                 tp = (3.0 * atr) / price  # 3x ATR as default
-                params["take_profit_pct"] = tp
-                tp_valid = True
-                logger.info(f"Validator: computed default take_profit_pct={tp:.4f} from ATR for {symbol}")
             else:
                 tp = 0.10  # 10% default
+            # Ensure default tp > sl to avoid logical consistency rejection
+            if sl is not None and tp <= sl:
+                tp = sl * 1.5  # 1.5x the stop-loss as a minimum viable take-profit
+                logger.info(f"Validator: adjusted default take_profit_pct to {tp:.4f} (must be > stop_loss_pct={sl:.4f}) for {symbol}")
+            params["take_profit_pct"] = tp
+            tp_valid = True
+            logger.info(f"Validator: using default take_profit_pct={tp} for {symbol}")
                 params["take_profit_pct"] = tp
                 tp_valid = True
                 logger.info(f"Validator: using default take_profit_pct={tp} for {symbol}")
@@ -202,15 +209,15 @@ def _validate_signal_impl(
         if tp_atr_valid and not tp_valid:
             if atr is not None and price is not None and price > 0 and atr > 0:
                 tp = (tp_atr * atr) / price
-                params["take_profit_pct"] = tp
-                tp_valid = True
-                logger.info(f"Validator: computed default take_profit_pct={tp:.4f} from ATR multiplier {tp_atr} for {symbol}")
             else:
-                # ATR unavailable — use a conservative default
                 tp = 0.10  # 10% default for long timeframes
-                params["take_profit_pct"] = tp
-                tp_valid = True
-                logger.info(f"Validator: using default take_profit_pct={tp} for {symbol} (ATR unavailable, atr_multiple take-profit)")
+            # Ensure default tp > sl to avoid logical consistency rejection
+            if sl is not None and tp <= sl:
+                tp = sl * 1.5
+                logger.info(f"Validator: adjusted default take_profit_pct to {tp:.4f} (must be > stop_loss_pct={sl:.4f}) for {symbol}")
+            params["take_profit_pct"] = tp
+            tp_valid = True
+            logger.info(f"Validator: using default take_profit_pct={tp} for {symbol} (ATR fallback for atr_multiple take-profit)")
         trailing = params["trailing_stop"]
         if not isinstance(trailing, bool):
             return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop must be boolean")
@@ -224,6 +231,10 @@ def _validate_signal_impl(
             if not tsd_valid and not ts_atr_valid:
                 # Neither distance nor ATR multiple provided — use a sensible default
                 tsd = 0.03  # 3% default trailing distance
+                # Ensure default tsd < sl to avoid logical consistency rejection
+                if sl is not None and tsd >= sl:
+                    tsd = sl * 0.5  # Half the stop-loss as a sensible trailing distance
+                    logger.info(f"Validator: adjusted default trailing_stop_distance_pct to {tsd:.4f} (must be < stop_loss_pct={sl:.4f}) for {symbol}")
                 params["trailing_stop_distance_pct"] = tsd
                 tsd_valid = True
                 logger.info(f"Validator: using default trailing_stop_distance_pct={tsd} for {symbol}")
