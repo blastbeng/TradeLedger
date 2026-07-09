@@ -242,8 +242,8 @@ def build_strategy_prompt(
     if _pct is not None:
         _ticker_compact["change_24h"] = _pct
     prompt = f"""Symbol: {symbol}
-Current ticker: {json.dumps(_ticker_compact)}
-Current balances: {json.dumps(balance)}
+Current ticker: {json.dumps(_ticker_compact, separators=(',', ':'))}
+Current balances: {json.dumps(balance, separators=(',', ':'))}
 """
     # Explicitly highlight the 24h change so the LLM uses it in its analysis
     _change_24h = ticker.get("percentage")
@@ -276,7 +276,7 @@ Current balances: {json.dumps(balance)}
         }
         for p in open_positions
     ]
-    prompt += f"""Open positions: {json.dumps(_positions_compact)}
+    prompt += f"""Open positions: {json.dumps(_positions_compact, separators=(',', ':'))}
 Total available {base_currency} balance: {base_balance:.2f}
 Suggested equal share per symbol: {per_symbol_budget:.2f} {base_currency}
 Maximum symbols to trade: {max_symbols}
@@ -401,7 +401,7 @@ Maximum symbols to trade: {max_symbols}
     if atr_percentile is not None:
         prompt += f"ATR percentile (last 100 obs): {atr_percentile:.1f}%\n"
     if atr_multi_tf:
-        prompt += f"ATR across timeframes: {json.dumps(atr_multi_tf)}\n"
+        prompt += f"ATR across timeframes: {json.dumps(atr_multi_tf, separators=(',', ':'))}\n"
     # --- Transaction cost break-even calculation ---
     _is_btp = is_btp_isin(symbol)
     # Use the full remaining balance (or total balance) for fee break-even calculation
@@ -632,7 +632,7 @@ Maximum symbols to trade: {max_symbols}
             }
             for t in recent_trades
         ]
-        prompt += f"\nRecent closed trades (last {len(recent_trades)}):\n{json.dumps(_recent_compact)}\n"
+        prompt += f"\nRecent closed trades (last {len(recent_trades)}):\n{json.dumps(_recent_compact, separators=(',', ':'))}\n"
         prompt += "If recent trades are losing, become more conservative.\n"
 
     # --- Past trades for this symbol ---
@@ -803,11 +803,11 @@ You are trading spot only (no shorting). Only output SELL if you currently hold 
         equity = performance.get("equity_curve", {})
         perf_lines = ["Historical Performance:"]
         if stock_perf:
-            perf_lines.append(f"- This stock's past performance: {json.dumps(stock_perf)} (stop_loss_hits = number of times stop-loss was triggered; avg_hold_time_seconds = average trade duration)")
+            perf_lines.append(f"- This stock's past performance: {json.dumps(stock_perf, separators=(',', ':'))} (stop_loss_hits = number of times stop-loss was triggered; avg_hold_time_seconds = average trade duration)")
         if equity:
-            perf_lines.append(f"- Overall equity curve: {json.dumps(equity)}")
+            perf_lines.append(f"- Overall equity curve: {json.dumps(equity, separators=(',', ':'))}")
         if strategy_perf:
-            perf_lines.append(f"- Strategy performance summary: {json.dumps(strategy_perf)}")
+            perf_lines.append(f"- Strategy performance summary: {json.dumps(strategy_perf, separators=(',', ':'))}")
         
         if len(perf_lines) > 1:
             prompt += "\n".join(perf_lines) + "\n"

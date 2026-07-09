@@ -252,10 +252,10 @@ def build_final_decision_prompt(
 
         backtest_sections.append(
             f"**Variant {i+1}:**\n"
-            f"Parameters: {json.dumps(variant_params, indent=2)}\n"
+            f"Parameters: {json.dumps(variant_params, separators=(',', ':'))}\n"
             f"{fallback_warning}"
             f"Summary: {bt_summary}\n"
-            f"Full statistics: {json.dumps(bt_stats, indent=2)}\n"
+            f"Full statistics: {json.dumps(bt_stats, separators=(',', ':'))}\n"
         )
     all_backtests_text = "\n".join(backtest_sections)
 
@@ -269,7 +269,7 @@ Base currency: {base_currency}
 - Preliminary Action: {preliminary_decision.get("action", "HOLD")}
 - Confidence: {preliminary_decision.get("confidence", 0.0)}
 - Reasoning: {preliminary_decision.get("reasoning", "")}
-- Proposed Strategy Parameters: {json.dumps(preliminary_decision.get("strategy_params", {}), indent=2)}
+- Proposed Strategy Parameters: {json.dumps(preliminary_decision.get("strategy_params", {}), separators=(',', ':'))}
 
 **Local Python Backtest Results ({len(backtest_results)} variant(s) tested):**
 {all_backtests_text}

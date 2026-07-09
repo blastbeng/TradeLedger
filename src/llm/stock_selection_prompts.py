@@ -225,7 +225,7 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
             if valid_tfs:
                 filtered_ohlcv_summary[sym] = valid_tfs
         if filtered_ohlcv_summary:
-            prompt += f"\nMulti-timeframe OHLCV summary (price change %, high, low, volume):\n{json.dumps(filtered_ohlcv_summary)}\n"
+            prompt += f"\nMulti-timeframe OHLCV summary (price change %, high, low, volume):\n{json.dumps(filtered_ohlcv_summary, separators=(',', ':'))}\n"
         else:
             prompt += (
                 "\n**Note:** No OHLCV data is available for any candidate symbol. "
@@ -257,7 +257,7 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
         if trimmed:
             prompt += (
                 "\nPairwise correlation matrix (Pearson correlation of daily returns, range -1 to +1):\n"
-                f"{json.dumps(trimmed)}\n"
+                f"{json.dumps(trimmed, separators=(',', ':'))}\n"
             )
     if symbol_indicators:
         prompt += "\nTechnical indicators for candidate assets (stocks, ETFs, BTPs):\n"
@@ -341,11 +341,11 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
         strategy_perf = performance.get('strategy_performance', {})
 
         if equity_curve:
-            perf_lines.append(f"Overall equity curve: {json.dumps(equity_curve)}")
+            perf_lines.append(f"Overall equity curve: {json.dumps(equity_curve, separators=(',', ':'))}")
         if stock_perf:
-            perf_lines.append(f"Per-stock performance (win rate, avg P&L, total trades): {json.dumps(stock_perf)}")
+            perf_lines.append(f"Per-stock performance (win rate, avg P&L, total trades): {json.dumps(stock_perf, separators=(',', ':'))}")
         if strategy_perf:
-            perf_lines.append(f"Per-strategy performance: {json.dumps(strategy_perf)}")
+            perf_lines.append(f"Per-strategy performance: {json.dumps(strategy_perf, separators=(',', ':'))}")
 
         if len(perf_lines) > 1:
             prompt += "\n".join(perf_lines) + "\n"
@@ -455,11 +455,11 @@ Current base currency: {base_currency}
 Your available {base_currency} balance: {base_balance:.2f}
 Maximum number of stocks to trade: {max_symbols}
 Reference equal-share budget per stock (suggestion only): {per_symbol_budget:.2f} {base_currency}
-Available timeframes: {json.dumps(available_timeframes)}
-Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols) if current_symbols else "None"}
+Available timeframes: {json.dumps(available_timeframes, separators=(',', ':'))}
+Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols, separators=(',', ':')) if current_symbols else "None"}
 
 **Combined Shortlist from All Batches (deduplicated):**
-{json.dumps(shortlist)}
+{json.dumps(shortlist, separators=(',', ':'))}
 
 """
     if available_timeframes_by_symbol:
@@ -516,11 +516,11 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
         strategy_perf = performance.get('strategy_performance', {})
 
         if equity_curve:
-            perf_lines.append(f"Overall equity curve: {json.dumps(equity_curve)}")
+            perf_lines.append(f"Overall equity curve: {json.dumps(equity_curve, separators=(',', ':'))}")
         if stock_perf:
-            perf_lines.append(f"Per-stock performance (win rate, avg P&L, total trades): {json.dumps(stock_perf)}")
+            perf_lines.append(f"Per-stock performance (win rate, avg P&L, total trades): {json.dumps(stock_perf, separators=(',', ':'))}")
         if strategy_perf:
-            perf_lines.append(f"Per-strategy performance: {json.dumps(strategy_perf)}")
+            perf_lines.append(f"Per-strategy performance: {json.dumps(strategy_perf, separators=(',', ':'))}")
 
         if len(perf_lines) > 1:
             prompt += "\n".join(perf_lines) + "\n"
