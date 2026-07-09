@@ -129,7 +129,7 @@ For 1w candles, consider timeouts of 86400–604800 s (1–7 days); for 1M candl
 Return a JSON object with these **required** fields:
 - `action`: one of BUY, SELL, HOLD
 - `confidence`: a float between 0.0 and 1.0
-- `reasoning`: VERY short string (max 80 chars). Synthetic format: "RSI oversold + MACD bull cross | uptrend 1Y". No full sentences. Do NOT repeat the price (it's already in ticker data).
+- `reasoning`: EXTREMELY short string (max 50 chars). Use abbreviations and symbols only. Format: "RSI<30+MACD↑|1Y↑". NO full sentences. NO articles. NO price. Example: "BB squeeze+ADX40|6M trend".
 - `strategy`: an object containing `type` (string) and `parameters` (object).
   The `parameters` object MUST include ALL required trading parameters:
   `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`,

@@ -168,7 +168,7 @@ Base currency: {base_currency}
 Return JSON:
 - action: BUY|SELL|HOLD
 - confidence: float 0-1
-- reasoning: str max 80 chars
+- reasoning: str max 50 chars. Use abbreviations/symbols only (e.g., "RSI<30+MACD↑|1Y↑"). NO full sentences.
 - strategy: {{type, parameters{{stop_loss_pct,take_profit_pct,position_size_fraction,confidence_sizing_weight,trailing_stop,max_hold_time_seconds,cooldown_after_loss_seconds,backtest_period_days,backtest_entry_config(REQUIRED for BUY)}}}}
 - backtest_variants: array of objects with same params (min 1, max {_settings.MAX_BACKTEST_VARIANTS})
 - entry_condition: object (REQUIRED for BUY)

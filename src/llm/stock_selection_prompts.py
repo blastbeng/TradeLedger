@@ -174,7 +174,7 @@ Return JSON:
 - "confidence_rejection_threshold":float 0.0-1.0
 - "limit_price_max_distance_pct":float? 0.0-1.0
 - "min_viable_trade_amount":float?
-- "reasoning":str max 80 chars
+- "reasoning":str max 50 chars. Use abbreviations/symbols only. NO full sentences.
 - "stock_revaluation_interval_seconds":int? >=3600
 - "pause_trading":bool?
 - "pause_reason":str?

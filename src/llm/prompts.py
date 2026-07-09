@@ -681,7 +681,7 @@ def build_analysis_prompt(data: StrategyPromptData) -> str:
         "Instead, output ONLY a raw JSON object with these fields:\n"
         '- "action": one of BUY, SELL, HOLD\n'
         '- "confidence": a float between 0.0 and 1.0\n'
-        '- "reasoning": VERY short (max 80 chars). Synthetic format: "RSI oversold + MACD bull cross". No full sentences. Do NOT repeat the price.\n'
+        '- "reasoning": EXTREMELY short (max 50 chars). Use abbreviations/symbols only (e.g., "RSI<30+MACD↑"). NO full sentences. NO price.\n'
         '- "strategy_direction": a short string describing your intended strategy approach '
         '(e.g., "momentum_breakout", "mean_reversion", "trend_following", "range_trading", "hold")\n\n'
         "Focus ONLY on analyzing the market data and deciding the direction. "
