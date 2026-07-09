@@ -109,9 +109,6 @@ class ReevalLLMRunner:
                     market_breadth=market_breadth,
                     min_viable_trade_amount=min_viable_amount,
                 )
-                # Apply compact_prompt to system and user content for consistency
-                chunk_messages[0]["content"] = compact_prompt(chunk_messages[0]["content"])
-                chunk_messages[-1]["content"] = compact_prompt(chunk_messages[-1]["content"])
                 if auto_resume_note:
                     chunk_messages[-1]["content"] += "\n" + auto_resume_note
                 # Keep prompt text for correction retries
@@ -273,9 +270,6 @@ class ReevalLLMRunner:
                 market_limits=market_limits,
                 available_timeframes_by_symbol=available_timeframes_by_symbol,
             )
-            # Apply compact_prompt to system and user content for consistency
-            final_messages[0]["content"] = compact_prompt(final_messages[0]["content"])
-            final_messages[-1]["content"] = compact_prompt(final_messages[-1]["content"])
             if auto_resume_note:
                 final_messages[-1]["content"] += "\n" + auto_resume_note
 

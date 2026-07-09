@@ -368,8 +368,6 @@ class LLMStepManager:
             build_backtest_variants_messages,
             prompt_data
         )
-        variants_messages[0]["content"] = compact_prompt(variants_messages[0]["content"])
-        variants_messages[-1]["content"] = compact_prompt(variants_messages[-1]["content"])
 
         # Use a different market hash for Step 1b (include analysis to differentiate)
         variants_market_hash = compute_market_hash({
