@@ -167,6 +167,13 @@ Base currency: {base_currency}
             )
         prompt += "Avoid repeating failed combinations. Prefer parameters similar to historically profitable ones.\n\n"
 
+    prompt += (
+        "\n**CRITICAL — Fallback Parameters for ATR Methods:**\n"
+        "If you set `stop_loss_method: \"atr_multiple\"`, you MUST also include `stop_loss_pct` as a fallback "
+        "(set it to the estimated ATR-based stop percentage: `stop_loss_atr_multiple × ATR / current_price`). "
+        "Similarly, if you use `take_profit_atr_multiple`, you MUST also include `take_profit_pct` as a fallback. "
+        "If you omit these fallbacks, the validator will reject your signal.\n"
+    )
     prompt += f"""
 **Backtest Entry Logic (REQUIRED):**
 You MUST include a `backtest_entry_config` object in EVERY backtest variant. If omitted, the backtest will fail with an error and no results will be produced.

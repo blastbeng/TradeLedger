@@ -123,12 +123,52 @@ class BacktestManager:
         tf_seconds_bt = engine._timeframe_to_seconds(assigned_tf)
         max_possible_candles = (settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds_bt
         MIN_STATISTICALLY_SIGNIFICANT_CANDLES = 50
+        fallback_tf = None
         if max_possible_candles < MIN_STATISTICALLY_SIGNIFICANT_CANDLES:
-            return None, (
-                f"Backtesting skipped for {assigned_tf}: only ~{int(max_possible_candles)} candles possible "
-                f"with {settings.OHLCV_RETENTION_DAYS} days retention (need ≥{MIN_STATISTICALLY_SIGNIFICANT_CANDLES}). "
-                f"Rely on LLM analysis, fundamentals, and multi-timeframe indicators instead."
+            # Try to fall back to a shorter timeframe that has enough candles
+            fallback_tfs = ["1w", "1d", "1h"]
+            for ft in fallback_tfs:
+                if ft == assigned_tf:
+                    continue
+                ft_secs = engine._timeframe_to_seconds(ft)
+                ft_max_candles = (settings.OHLCV_RETENTION_DAYS * 86400) / ft_secs
+                if ft_max_candles >= MIN_STATISTICALLY_SIGNIFICANT_CANDLES:
+                    fallback_tf = ft
+                    break
+            if fallback_tf is None:
+                return None, (
+                    f"Backtesting skipped for {assigned_tf}: only ~{int(max_possible_candles)} candles possible "
+                    f"with {settings.OHLCV_RETENTION_DAYS} days retention (need ≥{MIN_STATISTICALLY_SIGNIFICANT_CANDLES}). "
+                    f"Rely on LLM analysis, fundamentals, and multi-timeframe indicators instead."
+                )
+            logger.info(
+                f"Backtest timeframe fallback for {symbol}: {assigned_tf} → {fallback_tf} "
+                f"(insufficient candles on {assigned_tf}, using {fallback_tf} for backtest validation)"
             )
+            # Use the fallback timeframe for backtesting
+            tf_seconds_bt = engine._timeframe_to_seconds(fallback_tf)
+            bt_since_ms_fallback = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+            bt_limit_fallback = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds_bt) + 100
+            bt_db_candles_fallback = await asyncio.to_thread(
+                get_ohlcv, symbol, fallback_tf, since_ms=bt_since_ms_fallback, limit=bt_limit_fallback
+            )
+            if bt_db_candles_fallback and len(bt_db_candles_fallback) >= MIN_BACKTEST_CANDLES:
+                bt_candles = [
+                    [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
+                    for c in bt_db_candles_fallback
+                ]
+                # Adjust max_hold_time for the fallback timeframe
+                if bt_max_hold is not None:
+                    original_tf_secs = engine._timeframe_to_seconds(assigned_tf)
+                    hold_ratio = bt_max_hold / original_tf_secs if original_tf_secs > 0 else 1.0
+                    bt_max_hold = int(hold_ratio * tf_seconds_bt)
+            else:
+                return None, (
+                    f"Backtesting skipped for {assigned_tf}: only ~{int(max_possible_candles)} candles possible "
+                    f"with {settings.OHLCV_RETENTION_DAYS} days retention (need ≥{MIN_STATISTICALLY_SIGNIFICANT_CANDLES}). "
+                    f"Fallback to {fallback_tf} also insufficient. "
+                    f"Rely on LLM analysis, fundamentals, and multi-timeframe indicators instead."
+                )
 
         # --- Skip backtesting if the assigned timeframe has too few candles ---
         MIN_BACKTEST_CANDLES = 50
@@ -248,7 +288,7 @@ class BacktestManager:
                 candles=bt_candles,
                 config=bt_config,
             )
-            backtest_stats["actual_timeframe"] = assigned_tf
+            backtest_stats["actual_timeframe"] = fallback_tf if fallback_tf is not None else assigned_tf
             backtest_stats["assigned_timeframe"] = assigned_tf
             bt_entry_config_used = bt_entry_config is not None and isinstance(bt_entry_config, dict) and len(bt_entry_config) > 0
             bt_summary = format_backtest_summary(backtest_stats, entry_config_used=bt_entry_config_used)

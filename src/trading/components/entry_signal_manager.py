@@ -30,7 +30,9 @@ class EntrySignalManager:
         db_candles = await asyncio.to_thread(
             get_ohlcv, symbol, timeframe, limit=50
         )
-        if len(db_candles) < 26:
+        tf_seconds = engine._timeframe_to_seconds(timeframe)
+        min_candles = 5 if tf_seconds >= 2_592_000 else 26  # Long timeframes need fewer candles
+        if len(db_candles) < min_candles:
             return False
 
         # If DB indicators are missing (common for long timeframes like

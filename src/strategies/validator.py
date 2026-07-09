@@ -105,12 +105,6 @@ def _validate_signal_impl(
             atr_mult = params["stop_loss_atr_multiple"]
             if not isinstance(atr_mult, (int, float)) or atr_mult <= 0:
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_atr_multiple")
-            # stop_loss_pct is REQUIRED as a fallback when ATR is unavailable at execution time
-            if "stop_loss_pct" not in params:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Missing stop_loss_pct (required as fallback for atr_multiple method)")
-            sl = params["stop_loss_pct"]
-            if not isinstance(sl, (int, float)) or not (0 < sl < 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_pct")
             # stop_loss_pct is used as a fallback when ATR is unavailable at execution time.
             # If the LLM omitted it, use a sensible default rather than rejecting the signal.
             if "stop_loss_pct" not in params:
@@ -164,9 +158,6 @@ def _validate_signal_impl(
         tp_atr_valid = tp_atr is not None and isinstance(tp_atr, (int, float)) and tp_atr > 0
         if not tp_valid and not tp_atr_valid:
             return Signal(action="HOLD", confidence=0.0, reasoning="Invalid or missing take_profit_pct or take_profit_atr_multiple")
-        # When using ATR-based take-profit, take_profit_pct must also be valid as a fallback
-        if tp_atr_valid and not tp_valid:
-            return Signal(action="HOLD", confidence=0.0, reasoning="take_profit_pct is required as a fallback when using take_profit_atr_multiple")
         # When using ATR-based take-profit, take_profit_pct is used as a fallback.
         # If the LLM omitted it, compute a default from the ATR multiplier or use a sensible default.
         if tp_atr_valid and not tp_valid:
@@ -187,12 +178,6 @@ def _validate_signal_impl(
         if trailing:
             if symbol and is_btp_isin(symbol):
                 return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")
-            tsd = params.get("trailing_stop_distance_pct")
-            ts_atr = params.get("trailing_stop_atr_multiple")
-            tsd_valid = tsd is not None and isinstance(tsd, (int, float)) and (0 < tsd < 1.0)
-            ts_atr_valid = ts_atr is not None and isinstance(ts_atr, (int, float)) and ts_atr > 0
-            if not tsd_valid and not ts_atr_valid:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid or missing trailing_stop_distance_pct or trailing_stop_atr_multiple")
             tsd = params.get("trailing_stop_distance_pct")
             ts_atr = params.get("trailing_stop_atr_multiple")
             tsd_valid = tsd is not None and isinstance(tsd, (int, float)) and (0 < tsd < 1.0)
@@ -225,7 +210,8 @@ def _validate_signal_impl(
                 )
 
         if "cooldown_after_loss_seconds" not in params:
-            return Signal(action="HOLD", confidence=0.0, reasoning="Missing required parameter: cooldown_after_loss_seconds")
+            params["cooldown_after_loss_seconds"] = 0
+            logger.info(f"Validator: defaulting cooldown_after_loss_seconds to 0 for {symbol}")
         cd = params["cooldown_after_loss_seconds"]
         if not isinstance(cd, (int, float)) or cd < 0:
             return Signal(action="HOLD", confidence=0.0, reasoning="Invalid cooldown_after_loss_seconds")
