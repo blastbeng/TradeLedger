@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 import time
 from typing import Optional, List, Dict
 from src.config.settings import settings
@@ -12,6 +13,22 @@ logger = logging.getLogger(__name__)
 def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
     return len(text) // 4
+
+def _normalize_text_for_cache(text: str) -> str:
+    """Round all decimal numbers in text to 2 decimal places for stable cache keys.
+
+    This normalizes the cache key so that tiny changes in floating-point values
+    (e.g., 1.234567 vs 1.234568) don't cause cache misses. The actual prompt
+    text sent to the LLM is not affected — only the cache key is normalized.
+    """
+    if not text:
+        return text
+    def _round_num(match):
+        try:
+            return f"{round(float(match.group(0)), 2)}"
+        except (ValueError, OverflowError):
+            return match.group(0)
+    return re.sub(r'-?\d+\.\d{3,}', _round_num, text)
 
 def get_cached_llm_response(
     prompt: str,
@@ -116,9 +133,15 @@ def get_cached_llm_response(
 
     # Build cache key
     if messages is not None:
-        # Build a deterministic key from the message list + system prompt
+        # Normalize message content for cache key to improve cache hit rate.
+        # Numbers with 3+ decimal places are rounded to 2 in the key only;
+        # the actual messages sent to the LLM retain full precision.
+        normalized_messages = [
+            {**msg, "content": _normalize_text_for_cache(msg.get("content", ""))}
+            for msg in messages
+        ]
         key_data = json.dumps(
-            {"messages": messages, "system": system_prompt, "model_type": model_type,
+            {"messages": normalized_messages, "system": _normalize_text_for_cache(system_prompt), "model_type": model_type,
              "provider": provider, "model": model,
              "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE,
              "cache_version": settings.LLM_CACHE_VERSION},
@@ -130,7 +153,7 @@ def get_cached_llm_response(
         cache_key = f"llm:{settings.LLM_CACHE_VERSION}:{provider}:{model}:{model_type}:market:{market_hash}:sys:{sys_hash}:t{cache_temp if cache_temp is not None else 'def'}"
     else:
         key_data = json.dumps(
-            {"prompt": prompt, "system": system_prompt, "model_type": model_type,
+            {"prompt": _normalize_text_for_cache(prompt), "system": _normalize_text_for_cache(system_prompt), "model_type": model_type,
              "provider": provider, "model": model,
              "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE,
              "cache_version": settings.LLM_CACHE_VERSION},
