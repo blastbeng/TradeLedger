@@ -212,9 +212,56 @@ async def status():
 async def trades(limit: int = 0):
     engine = get_engine()
     open_trades = await engine.event_bus.request("get_open_trades")
+
+    # Batch-fetch current prices for all symbols (like Telegram does)
+    all_price_symbols = set()
     for t in open_trades:
-        t["display_symbol"] = await _get_display_symbol(engine, t["symbol"], t.get("timeframe"))
-    return {"trades": open_trades}
+        all_price_symbols.add(t['symbol'].split("/")[0])
+    batch_quotes = {}
+    if all_price_symbols:
+        try:
+            batch_quotes = await engine._get_quotes_async(list(all_price_symbols), timeout=15.0)
+        except Exception as e:
+            logger.warning(f"Batch quote fetch failed for trades: {e}")
+
+    # Enrich trades with position data (SL/TP, trailing stops, etc.) from engine.positions
+    enriched_trades = []
+    for t in open_trades:
+        t_copy = dict(t)
+        t_copy["display_symbol"] = await _get_display_symbol(engine, t["symbol"], t.get("timeframe"))
+
+        # Add current price from batch quotes
+        base_sym = t['symbol'].split("/")[0]
+        ticker = batch_quotes.get(base_sym)
+        current_price = ticker.get('last') if ticker else None
+        t_copy["current_price"] = current_price
+
+        # Enrich with position data
+        pos = engine.positions.get(t['symbol'])
+        if pos:
+            t_copy["stop_loss"] = pos.get('stop_loss')
+            t_copy["take_profit"] = pos.get('take_profit')
+            t_copy["entry_order_type"] = pos.get('entry_order_type')
+            t_copy["trailing_stop"] = pos.get('trailing_stop')
+            t_copy["trailing_stop_distance_pct"] = pos.get('trailing_stop_distance_pct')
+            t_copy["trailing_stop_activation_pct"] = pos.get('trailing_stop_activation_pct')
+            t_copy["max_hold_time_seconds"] = pos.get('max_hold_time_seconds')
+            t_copy["timestamp"] = pos.get('timestamp')  # position timestamp
+            t_copy["stop_loss_order_id"] = pos.get('stop_loss_order_id')
+            t_copy["stop_loss_order_type"] = pos.get('stop_loss_order_type')
+            t_copy["take_profit_order_id"] = pos.get('take_profit_order_id')
+
+            # Calculate P&L with current price if available
+            if current_price is not None:
+                pnl = (current_price - t['price']) * t['amount']
+                pnl_pct = ((current_price - t['price']) / t['price']) * 100 if t['price'] else 0
+                t_copy["unrealized_pnl"] = pnl
+                t_copy["unrealized_pnl_pct"] = pnl_pct
+                t_copy["position_value"] = t['amount'] * current_price
+
+        enriched_trades.append(t_copy)
+
+    return {"trades": enriched_trades}
 
 @http_router.get("/api/profit")
 async def profit():
