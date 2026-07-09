@@ -334,7 +334,7 @@ def build_backtest_variants_messages(data: BacktestPromptData) -> List[Dict[str,
     from src.llm.prompt_utils import compact_prompt
     return [
         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="trading"))},
-        {"role": "user", "content": build_backtest_variants_prompt(data)},
+        {"role": "user", "content": compact_prompt(build_backtest_variants_prompt(data))},
     ]
 
 
@@ -353,7 +353,7 @@ def build_final_decision_messages(
     from src.llm.prompt_utils import compact_prompt
     return [
         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="trading"))},
-        {"role": "user", "content": build_final_decision_prompt(
+        {"role": "user", "content": compact_prompt(build_final_decision_prompt(
             symbol=symbol,
             ticker=ticker,
             preliminary_decision=preliminary_decision,
@@ -362,5 +362,5 @@ def build_final_decision_messages(
             trading_paused=trading_paused,
             total_variants_proposed=total_variants_proposed,
             historical_backtest_results=historical_backtest_results,
-        )},
+        ))},
     ]

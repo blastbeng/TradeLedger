@@ -637,7 +637,7 @@ def build_stock_selection_messages(
     from src.llm.prompt_utils import compact_prompt
     return [
         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="stock_selection"))},
-        {"role": "user", "content": build_stock_selection_prompt(
+        {"role": "user", "content": compact_prompt(build_stock_selection_prompt(
             available_symbols=available_symbols,
             current_symbols=current_symbols,
             max_symbols=max_symbols,
@@ -647,7 +647,7 @@ def build_stock_selection_messages(
             per_symbol_budget=per_symbol_budget,
             market_limits=market_limits,
             **kwargs
-        )},
+        ))},
     ]
 
 
@@ -665,7 +665,7 @@ def build_final_selection_messages(
     from src.llm.prompt_utils import compact_prompt
     return [
         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="stock_selection"))},
-        {"role": "user", "content": build_final_selection_prompt(
+        {"role": "user", "content": compact_prompt(build_final_selection_prompt(
             chunk_results=chunk_results,
             current_symbols=current_symbols,
             max_symbols=max_symbols,
@@ -673,5 +673,5 @@ def build_final_selection_messages(
             base_balance=base_balance,
             per_symbol_budget=per_symbol_budget,
             **kwargs
-        )},
+        ))},
     ]
