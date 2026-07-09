@@ -714,22 +714,33 @@
             await originalFetch('/api/logout', { method: 'POST' });
             localStorage.removeItem('csrf_token');
             if (ws) ws.close(); // Close WebSocket to stop data flow
+            if (pollingTimer) { clearInterval(pollingTimer); pollingTimer = null; }
+            pollingMode = false;
+            wsFailCount = 0;
             showLoginOverlay();
         });
 
         const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
         let ws;
         function connect() {
+            if (pollingMode) return; // Don't try WebSocket if in polling mode
+
             ws = new WebSocket(wsUrl);
             ws.onopen = () => {
+                wsFailCount = 0; // Reset on successful connection
                 document.getElementById('status-dot').className = 'status-dot connected';
+                document.getElementById('status-dot').style.background = '';
+                document.getElementById('status-dot').style.boxShadow = '';
                 document.getElementById('status-text').textContent = 'Connected';
             };
             ws.onclose = () => {
                 document.getElementById('status-dot').className = 'status-dot disconnected';
                 document.getElementById('status-text').textContent = 'Disconnected – retrying in 3s';
-                // Don't retry if the login overlay is showing
-                if (document.getElementById('login-overlay').style.display !== 'flex') {
+                wsFailCount++;
+                if (wsFailCount >= 3 && !pollingMode) {
+                    console.warn('WebSocket failed ' + wsFailCount + ' times, switching to HTTP polling fallback');
+                    switchToPollingMode();
+                } else if (document.getElementById('login-overlay').style.display !== 'flex') {
                     setTimeout(connect, 3000);
                 }
             };
@@ -1177,6 +1188,58 @@
         const positionsMap = {}; // symbol -> { row, amount, entry, stopLoss, takeProfit, trailing }
         let updateIntervalMs = 5000;  // default 5 seconds
         let refreshTimer = null;
+        let wsFailCount = 0;
+        let pollingMode = false;
+        let pollingTimer = null;
+
+        function switchToPollingMode() {
+            pollingMode = true;
+            document.getElementById('status-dot').className = 'status-dot connected';
+            document.getElementById('status-dot').style.background = '#d29922';
+            document.getElementById('status-dot').style.boxShadow = '0 0 8px #d29922';
+            document.getElementById('status-text').textContent = 'Polling (HTTP fallback)';
+            startPolling();
+            // Try reconnecting WebSocket every 60s in case the issue is resolved
+            setInterval(() => {
+                if (!pollingMode) return;
+                try {
+                    const testWs = new WebSocket(wsUrl);
+                    testWs.onopen = () => {
+                        testWs.close();
+                        // WebSocket works again — switch back
+                        pollingMode = false;
+                        if (pollingTimer) { clearInterval(pollingTimer); pollingTimer = null; }
+                        wsFailCount = 0;
+                        connect();
+                    };
+                    testWs.onerror = () => { /* still broken, stay in polling */ };
+                    testWs.onclose = () => { /* still broken, stay in polling */ };
+                } catch (e) { /* ignore */ }
+            }, 60000);
+        }
+
+        function startPolling() {
+            if (pollingTimer) clearInterval(pollingTimer);
+            pollData(); // immediate first poll
+            pollingTimer = setInterval(pollData, updateIntervalMs);
+        }
+
+        async function pollData() {
+            try {
+                const resp = await fetch('/api/status');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    updateUI(data);
+                } else if (resp.status === 401) {
+                    showLoginOverlay();
+                    return;
+                }
+            } catch (e) {
+                console.error('Polling /api/status failed:', e);
+            }
+            // Also fetch the supplementary data (prices, history, risk, etc.)
+            refreshData();
+        }
 
         function updateRiskUI(risk) {
             const riskDiv = document.getElementById('risk');
@@ -1578,6 +1641,9 @@
             updateIntervalMs = parseInt(e.target.value, 10);
             startRefreshTimer();
             startLogsTimer();
+            if (pollingMode) {
+                startPolling();
+            }
             // Notify server of new TTL
             fetch('/api/config/update-interval', {
                 method: 'POST',
