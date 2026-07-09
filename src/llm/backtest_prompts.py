@@ -190,7 +190,7 @@ Example: {{"backtest_entry_config": {{"ema_period": 21, "ema_direction": "above"
 Return a JSON object with these **required** fields:
 - `action`: one of BUY, SELL, HOLD (should match your Step 1a analysis)
 - `confidence`: a float between 0.0 and 1.0 (should match your Step 1a analysis)
-- `reasoning`: a string explaining your parameter choices. You MUST include the current market price.
+- `reasoning`: VERY short (max 80 chars). Format: "Wide SL for high ATR, long hold for trend". No full sentences.
 - `strategy`: an object containing `type` (string) and `parameters` (object).
   The `parameters` object MUST include ALL required trading parameters:
   `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`,
@@ -307,8 +307,7 @@ If ANY backtest variant confirms a strategy is viable, you may output your final
         "Return a JSON object with these **required** fields:\n"
         "- `action`: one of BUY, SELL, HOLD\n"
         "- `confidence`: a float between 0.0 and 1.0\n"
-        "- `reasoning`: a string explaining your final decision, specifically referencing the backtest results. "
-        "You MUST also include the decided price (the current market price or your specified `limit_price`) in the reasoning message.\n"
+        "- `reasoning`: VERY short (max 80 chars). Format: \"Best: V2 WR=60% PF=1.5\". No full sentences. Do NOT repeat the price.\n"
         "- `strategy`: an object containing `type` and `parameters`.\n"
         "  The `parameters` object MUST include ALL required trading parameters (same as Step 1):\n"
         "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`,\n"

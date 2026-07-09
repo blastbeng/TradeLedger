@@ -183,7 +183,7 @@ Return a JSON object with the following fields:
 - `"confidence_rejection_threshold"`: Float 0.0-1.0. Min confidence for trade execution.
 - `"limit_price_max_distance_pct"`: Optional Float 0.0-1.0. Max limit price distance from bid/ask.
 - `"min_viable_trade_amount"`: Optional positive number. Suggested min trade amount in {base_currency}.
-- `"reasoning"`: Short string (max 200 chars) explaining your selection.
+- `"reasoning"`: VERY short (max 80 chars). Format: "Strong trends + positive sentiment". No full sentences.
 
 You may optionally include the following fields:
 - "stock_revaluation_interval_seconds" (integer >= 3600, i.e., at least 1 hour) to change how often the bot re-evaluates the stock list. The bot also re-evaluates automatically before market open and when unusual market conditions are detected (significant news, extreme indicators, unusually active market).
@@ -582,7 +582,7 @@ Return a JSON object with the following fields:
 - `"stocks"`: Array of objects with `"symbol"`, `"timeframe"` (one of: {', '.join([repr(tf) for tf in available_timeframes])}), `"sector"`, and optional `"max_tenure_hours"`.
 - `"max_stocks"`: Integer 0-{max_symbols}. Must equal length of `"stocks"`.
 - `"max_positions_per_sector"`: Integer 1-{max_symbols}. Max open positions per sector.
-- `"reasoning"`: Short string (max 200 chars) explaining your final selection.
+- `"reasoning"`: VERY short (max 80 chars). No full sentences.
 - `"skip_eval_price_change_atr_mult"`: Float (e.g., 0.5). Min price change (ATR%) to trigger LLM eval.
 - `"skip_eval_rsi_change"`: Float (e.g., 5.0). Min RSI change to trigger LLM eval.
 - `"skip_eval_rsi_oversold"`: Float (e.g., 30.0). RSI level below which LLM eval is always triggered.

@@ -89,7 +89,7 @@ If you prefer not to use risk-based sizing, you may set `position_size_fraction`
 - If sentiment conflicts with technicals, give more weight to technicals but explain your reasoning.
 
 ## Output Format
-- Output strict JSON only. The response must start with `{` or `[` and end with `}` or `]`. No markdown fences, no explanations, no extra text.
+- Output strict JSON only. Use COMPACT JSON (no extra whitespace or indentation). The response must start with `{` or `[` and end with `}` or `]`. No markdown fences, no explanations, no extra text.
 
 ## Stock & ETF Market Specifics
 - **Earnings & Corporate Events:** Stocks can gap significantly due to earnings or major events. Avoid holding through them unless you have very high conviction.
@@ -129,7 +129,7 @@ For 1w candles, consider timeouts of 86400–604800 s (1–7 days); for 1M candl
 Return a JSON object with these **required** fields:
 - `action`: one of BUY, SELL, HOLD
 - `confidence`: a float between 0.0 and 1.0
-- `reasoning`: a string explaining **why** you chose this action and this confidence level. Include the key factors (indicators, sentiment, market regime, etc.) that led to your decision. You MUST also include the decided price (the current market price or your specified `limit_price`) in the reasoning message.
+- `reasoning`: VERY short string (max 80 chars). Synthetic format: "RSI oversold + MACD bull cross | uptrend 1Y". No full sentences. Do NOT repeat the price (it's already in ticker data).
 - `strategy`: an object containing `type` (string) and `parameters` (object).
   The `parameters` object MUST include ALL required trading parameters:
   `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`,

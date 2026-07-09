@@ -161,7 +161,7 @@ class PauseResumeManager:
             prompt = (
                 "\n".join(prompt_parts)
                 + "\n\nShould we resume trading now? Reply with a JSON object: "
-                '{"resume_trading": true/false, "reason": "short explanation", '
+                '{"resume_trading": true/false, "reason": "max 40 chars", '
                 '"global_risk_multiplier": 0.0-1.0 (optional)}'
                 + "\n\n**Important:** Only resume if you see specific, high‑confidence opportunities. "
                 "If conditions are still poor, you may keep trading paused, but remember that "
