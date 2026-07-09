@@ -827,35 +827,29 @@ def _compute_stats(
 
 
 def format_backtest_summary(stats: Dict[str, Any], entry_config_used: bool = True) -> str:
-    """Format backtest statistics into a human-readable string for LLM prompts and notifications."""
+    """Format backtest statistics into a highly compact string for LLM prompts."""
     if stats.get("error"):
         return stats["error"]
     if stats.get("insufficient_data") or stats.get("total_trades", 0) == 0:
-        return "Insufficient data for backtesting."
+        return "Insufficient data."
 
-    entry_note = "" if entry_config_used else " [NO ENTRY FILTER — enters every candle]"
+    entry_note = "" if entry_config_used else " [NO ENTRY FILTER]"
     portfolio_part = ""
     if stats.get("total_pnl_currency", 0) != 0 and stats.get("final_balance", 0) > 0:
-        portfolio_part = (
-            f", Portfolio P&L: {stats['total_pnl_currency']:+.2f}"
-            f", Final balance: {stats['final_balance']:.2f}"
-            f", Total return: {stats.get('total_return_pct', 0)*100:+.2f}%"
-        )
+        portfolio_part = f",PnL€={stats['total_pnl_currency']:+.0f},Ret={stats.get('total_return_pct', 0)*100:+.1f}%"
     gap_part = ""
     if stats.get("gap_warning"):
-        gap_part = f"\n{stats['gap_warning']}"
+        gap_part = " ⚠GAPS"
     return (
-        f"Python backtest ({stats['total_trades']} trades){entry_note}: "
-        f"Win rate: {stats['win_rate']*100:.1f}%, "
-        f"Avg P&L: {stats['avg_pnl_pct']*100:+.2f}%, "
-        f"Total P&L: {stats['total_pnl_pct']*100:+.2f}%, "
-        f"Buy & Hold: {stats.get('buy_and_hold_pct', 0)*100:+.2f}%, "
-        f"Max drawdown: {stats['max_drawdown_pct']*100:.2f}%, "
-        f"Profit factor: {stats['profit_factor']:.2f}, "
-        f"Sharpe ratio: {stats.get('sharpe_ratio', 0.0):.2f}, "
-        f"Avg hold: {stats['avg_hold_time_seconds']/3600:.1f}h, "
-        f"Max consec. losses: {stats['max_consecutive_losses']}, "
-        f"Partial TPs: {stats.get('partial_tp_count', 0)}"
+        f"BT({stats['total_trades']}t){entry_note}:"
+        f"WR={stats['win_rate']*100:.0f}%,"
+        f"PnL={stats['total_pnl_pct']*100:+.1f}%,"
+        f"B&H={stats.get('buy_and_hold_pct', 0)*100:+.1f}%,"
+        f"DD={stats['max_drawdown_pct']*100:.1f}%,"
+        f"PF={stats['profit_factor']:.1f},"
+        f"Sh={stats.get('sharpe_ratio', 0.0):.1f},"
+        f"H={stats['avg_hold_time_seconds']/3600:.1f}h,"
+        f"CL={stats['max_consecutive_losses']}"
         f"{portfolio_part}"
         f"{gap_part}"
     )
@@ -921,25 +915,14 @@ def walk_forward_backtest(
 
 def format_walk_forward_summary(wf_stats: Dict[str, Any]) -> str:
     if wf_stats.get("insufficient_data"):
-        return "Insufficient data for walk-forward analysis."
+        return "WF: N/A"
     per_window = wf_stats.get("per_window", [])
     if not per_window:
-        return "No walk-forward windows could be computed."
-    # If all windows have errors, surface the first error
+        return "WF: N/A"
     window_errors = [w.get("error") for w in per_window if w.get("error")]
     if window_errors and len(window_errors) == len(per_window):
-        return f"Walk-forward failed: {window_errors[0]}"
-    lines = [f"Walk-forward ({len(per_window)} windows):"]
-    for w in per_window:
-        lines.append(
-            f"  W{w['window']}: {w.get('total_trades', 0)} trades, "
-            f"WR: {w.get('win_rate', 0)*100:.1f}%, "
-            f"P&L: {w.get('total_pnl_pct', 0)*100:+.2f}%"
-        )
+        return f"WF: FAIL"
+    parts = [f"W{w['window']}:{w.get('total_trades', 0)}t,WR={w.get('win_rate', 0)*100:.0f}%,PnL={w.get('total_pnl_pct', 0)*100:+.1f}%" for w in per_window]
     combined = wf_stats.get("combined_stats", {})
-    lines.append(
-        f"  Combined: {combined.get('total_trades', 0)} trades, "
-        f"WR: {combined.get('win_rate', 0)*100:.1f}%, "
-        f"P&L: {combined.get('total_pnl_pct', 0)*100:+.2f}%"
-    )
-    return "\n".join(lines)
+    parts.append(f"C:{combined.get('total_trades', 0)}t,WR={combined.get('win_rate', 0)*100:.0f}%,PnL={combined.get('total_pnl_pct', 0)*100:+.1f}%")
+    return "WF|" + "|".join(parts)
