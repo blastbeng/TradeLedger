@@ -623,7 +623,10 @@ async def tickers(symbols: str = ""):
 async def llm_metrics():
     """Return aggregated LLM metrics for the dashboard."""
     try:
-        return await run_in_threadpool(get_llm_metrics_summary)
+        data = await run_in_threadpool(get_llm_metrics_summary)
+        data["mind_provider_url"] = getattr(settings, "LLM_MIND_BASE_URL", "") or getattr(settings, "LLM_BASE_URL", "")
+        data["actuator_provider_url"] = getattr(settings, "LLM_ACTUATOR_BASE_URL", "") or getattr(settings, "LLM_BASE_URL", "")
+        return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

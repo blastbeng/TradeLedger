@@ -476,6 +476,31 @@
                 <div id="simulation-result" style="margin-top: 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-family: monospace; white-space: pre-wrap; max-height: 400px; overflow-y: auto; font-size: 0.85rem; color: var(--text-secondary);">Select a ticker and run a simulation.</div>
             </div>
 
+            <div class="card card-full" id="llm-metrics-card">
+                <h2>🤖 LLM Metrics <button id="btn-refresh-llm-metrics" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Refresh</button></h2>
+                <div id="llm-metrics-summary" style="margin-bottom:16px; font-size:0.9rem;"></div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+                    <div>
+                        <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">Per Model</h3>
+                        <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
+                            <table id="llm-per-model-table">
+                                <thead><tr><th>Provider</th><th>Model</th><th>Type</th><th>Calls</th><th>Tokens</th><th>Avg Latency (ms)</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">Recent Calls</h3>
+                        <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
+                            <table id="llm-recent-calls-table">
+                                <thead><tr><th>Time</th><th>Model</th><th>Type</th><th>Latency (ms)</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="card card-full">
                 <h2>📋 Logs <button id="btn-refresh-logs" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Refresh</button></h2>
                 <div id="logs-content" style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; white-space: pre-wrap; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; color: var(--text-secondary);">
@@ -504,32 +529,6 @@
                         <option value="60000">60s</option>
                     </select>
                 </div>
-            </div>
-
-            <div class="card card-full" id="llm-metrics-card">
-                <h2>🤖 LLM Metrics <button id="btn-refresh-llm-metrics" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Refresh</button></h2>
-                <div id="llm-metrics-summary" style="margin-bottom:16px; font-size:0.9rem;"></div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
-                    <div>
-                        <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">Per Model</h3>
-                        <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
-                            <table id="llm-per-model-table">
-                                <thead><tr><th>Provider</th><th>Model</th><th>Type</th><th>Calls</th><th>Tokens</th><th>Avg Latency (ms)</th></tr></thead>
-                                <tbody></tbody>
-                            </table>
-                        </div>
-                    </div>
-                    <div>
-                        <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">Recent Calls</h3>
-                        <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
-                            <table id="llm-recent-calls-table">
-                                <thead><tr><th>Time</th><th>Provider</th><th>Model</th><th>Type</th><th>Tokens</th><th>Cache</th><th>Latency (ms)</th><th>Error</th></tr></thead>
-                                <tbody></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
 
@@ -589,6 +588,14 @@
             <button id="close-signal-modal" style="position:absolute; top:12px; right:16px; background:none; border:none; color:var(--text); font-size:1.5rem; cursor:pointer; z-index:1;">&times;</button>
             <h2 id="signal-modal-title" style="margin-bottom:16px; color:var(--accent); padding-right:32px; flex-shrink:0;"></h2>
             <div id="signal-modal-body" style="font-size:0.95rem; line-height:1.6; white-space:pre-wrap; overflow-y:auto; flex:1; overflow-wrap:break-word; word-break:break-word; padding-right:4px;"></div>
+        </div>
+    </div>
+
+    <div id="llm-call-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:1000; justify-content:center; align-items:center;">
+        <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius); padding:24px; width:90%; max-width:600px; max-height:80vh; overflow:hidden; position:relative; display:flex; flex-direction:column;">
+            <button id="close-llm-call-modal" style="position:absolute; top:12px; right:16px; background:none; border:none; color:var(--text); font-size:1.5rem; cursor:pointer; z-index:1;">&times;</button>
+            <h2 id="llm-call-modal-title" style="margin-bottom:16px; color:var(--accent); padding-right:32px; flex-shrink:0;"></h2>
+            <div id="llm-call-modal-body" style="font-size:0.95rem; line-height:1.6; white-space:pre-wrap; overflow-y:auto; flex:1; overflow-wrap:break-word; word-break:break-word; padding-right:4px;"></div>
         </div>
     </div>
 
@@ -1565,6 +1572,17 @@
             }
         };
 
+        const llmCallModal = document.getElementById('llm-call-modal');
+        const closeLlmCallBtn = document.getElementById('close-llm-call-modal');
+        closeLlmCallBtn.onclick = () => {
+            llmCallModal.style.display = 'none';
+        };
+        llmCallModal.onclick = (e) => {
+            if (e.target === llmCallModal) {
+                llmCallModal.style.display = 'none';
+            }
+        };
+
         timeframeSelect.onchange = () => {
             if (currentSymbol) fetchAndRenderChart(currentSymbol, timeframeSelect.value);
         };
@@ -2085,7 +2103,9 @@
                 summaryDiv.innerHTML = `
                     <strong>Total Calls:</strong> ${data.total_calls} &nbsp;|&nbsp;
                     <strong>Total Tokens:</strong> ${data.total_tokens.toLocaleString()} (Prompt: ${data.total_prompt_tokens.toLocaleString()}, Completion: ${data.total_completion_tokens.toLocaleString()}) &nbsp;|&nbsp;
-                    <strong>Cache Hit Rate:</strong> ${data.cache_hit_rate.toFixed(1)}%
+                    <strong>Cache Hit Rate:</strong> ${data.cache_hit_rate.toFixed(1)}%<br>
+                    <strong>Mind Provider URL:</strong> ${data.mind_provider_url || 'N/A'}<br>
+                    <strong>Actuator Provider URL:</strong> ${data.actuator_provider_url || 'N/A'}
                 `;
 
                 // Per-model table
@@ -2116,21 +2136,33 @@
                 if (data.recent_calls && data.recent_calls.length > 0) {
                     data.recent_calls.forEach(c => {
                         const row = recentBody.insertRow();
+                        row.style.cursor = 'pointer';
                         row.insertCell().textContent = new Date(c.timestamp * 1000).toLocaleTimeString();
-                        row.insertCell().textContent = c.provider;
                         row.insertCell().textContent = c.model;
                         row.insertCell().textContent = c.model_type;
-                        row.insertCell().textContent = c.total_tokens.toLocaleString();
-                        row.insertCell().textContent = c.cache_hit ? '✅' : '❌';
                         row.insertCell().textContent = c.latency_ms.toFixed(1);
-                        const errCell = row.insertCell();
-                        errCell.textContent = c.error || '';
-                        if (c.error) errCell.style.color = 'var(--red)';
+                        row.onclick = () => {
+                            const modal = document.getElementById('llm-call-modal');
+                            const title = document.getElementById('llm-call-modal-title');
+                            const body = document.getElementById('llm-call-modal-body');
+                            title.textContent = `LLM Call: ${c.model} (${c.model_type})`;
+                            let html = `<strong>Time:</strong> ${new Date(c.timestamp * 1000).toLocaleString()}\n`;
+                            html += `<strong>Provider:</strong> ${c.provider}\n`;
+                            html += `<strong>Model:</strong> ${c.model}\n`;
+                            html += `<strong>Type:</strong> ${c.model_type}\n`;
+                            html += `<strong>Total Tokens:</strong> ${c.total_tokens.toLocaleString()}\n`;
+                            html += `<strong>Cache Hit:</strong> ${c.cache_hit ? '✅' : '❌'}\n`;
+                            html += `<strong>Latency (ms):</strong> ${c.latency_ms.toFixed(1)}\n`;
+                            html += `<strong>Error:</strong> ${c.error || 'None'}\n`;
+                            html += `<strong>Provider URL:</strong> ${c.model_type === 'mind' ? (data.mind_provider_url || 'N/A') : (data.actuator_provider_url || 'N/A')}\n`;
+                            body.innerHTML = html;
+                            modal.style.display = 'flex';
+                        };
                     });
                 } else {
                     const row = recentBody.insertRow();
                     const cell = row.insertCell();
-                    cell.colSpan = 8;
+                    cell.colSpan = 4;
                     cell.textContent = 'No recent calls';
                     cell.style.textAlign = 'center';
                     cell.style.color = 'var(--text-secondary)';
