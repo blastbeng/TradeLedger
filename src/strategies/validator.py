@@ -201,9 +201,6 @@ def _validate_signal_impl(
             params["take_profit_pct"] = tp
             tp_valid = True
             logger.info(f"Validator: using default take_profit_pct={tp} for {symbol}")
-                params["take_profit_pct"] = tp
-                tp_valid = True
-                logger.info(f"Validator: using default take_profit_pct={tp} for {symbol}")
         # When using ATR-based take-profit, take_profit_pct is used as a fallback.
         # If the LLM omitted it, compute a default from the ATR multiplier or use a sensible default.
         if tp_atr_valid and not tp_valid:
