@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 from src.config.settings import settings
 from src.utils.symbol_utils import is_btp_isin
-from src.llm.prompt_utils import _timeframe_to_seconds
+from src.llm.prompt_utils import _timeframe_to_seconds, _round_floats
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +87,11 @@ def build_backtest_variants_prompt(data: BacktestPromptData) -> str:
     # Use the full remaining balance (or total balance) for fee break-even calculation
     trade_value = remaining_balance if remaining_balance is not None and remaining_balance > 0 else base_balance
 
+    _cp_str = f"{current_price:.2f}" if isinstance(current_price, (int, float)) else str(current_price)
     prompt = f"""**Step 1b: Parameter Selection & Backtest Variants**
 
 Symbol: {symbol}
-Current price: {current_price}
+Current price: {_cp_str}
 Assigned timeframe: {assigned_timeframe}
 Base currency: {base_currency}
 
@@ -101,13 +102,13 @@ Base currency: {base_currency}
 - Strategy Direction: {analysis.get("strategy_direction", "unknown")}
 
 **Key Market Context for Parameter Selection:**
-- ATR (14-period, {assigned_timeframe}): {f"{atr:.6f}" if atr is not None else "N/A"}
+- ATR (14-period, {assigned_timeframe}): {f"{atr:.2f}" if atr is not None else "N/A"}
 """
     if atr is not None and current_price and current_price > 0:
         atr_pct = atr / current_price
         min_sl = min_stop_atr_mult * atr_pct
-        prompt += f"- ATR%: {atr_pct:.4%}\n"
-        prompt += f"- Minimum stop-loss (validator enforces): {min_sl:.4%} ({min_stop_atr_mult} × ATR%)\n"
+        prompt += f"- ATR%: {atr_pct:.2%}\n"
+        prompt += f"- Minimum stop-loss (validator enforces): {min_sl:.2%} ({min_stop_atr_mult} × ATR%)\n"
 
     prompt += f"- Total {base_currency} balance: {base_balance:.2f}\n"
     prompt += f"- Suggested per-symbol budget: {per_symbol_budget:.2f} {base_currency}\n"
@@ -126,7 +127,7 @@ Base currency: {base_currency}
     if max_portfolio_stop_risk_pct is not None:
         prompt += f"- Max portfolio stop risk: {max_portfolio_stop_risk_pct*100:.0f}%\n"
     if global_risk_multiplier is not None and global_risk_multiplier < 1.0:
-        prompt += f"- Global risk multiplier: {global_risk_multiplier}\n"
+        prompt += f"- Global risk multiplier: {global_risk_multiplier:.2f}\n"
     if data.min_order_amount is not None:
         prompt += f"- Min order amount: {data.min_order_amount}\n"
     if data.min_order_cost is not None:
@@ -202,6 +203,7 @@ def build_final_decision_prompt(
 ) -> str:
     """Build a prompt to ask the LLM for its final decision after reviewing backtest results."""
     current_price = ticker.get("last") if ticker else None
+    _cp_str = f"{current_price:.2f}" if isinstance(current_price, (int, float)) else str(current_price)
 
     # Build a combined backtest results section showing ALL variants
     backtest_sections = []
@@ -222,24 +224,24 @@ def build_final_decision_prompt(
 
         backtest_sections.append(
             f"**Variant {i+1}:**\n"
-            f"Parameters: {json.dumps(variant_params, separators=(',', ':'))}\n"
+            f"Parameters: {json.dumps(_round_floats(variant_params), separators=(',', ':'))}\n"
             f"{fallback_warning}"
             f"Summary: {bt_summary}\n"
-            f"Full statistics: {json.dumps(bt_stats, separators=(',', ':'))}\n"
+            f"Full statistics: {json.dumps(_round_floats(bt_stats), separators=(',', ':'))}\n"
         )
     all_backtests_text = "\n".join(backtest_sections)
 
     prompt = f"""**Step 2: Final Trading Decision**
 
 Symbol: {symbol}
-Current price: {current_price}
+Current price: {_cp_str}
 Base currency: {base_currency}
 
 **Your Step 1 Preliminary Decision:**
 - Preliminary Action: {preliminary_decision.get("action", "HOLD")}
-- Confidence: {preliminary_decision.get("confidence", 0.0)}
+- Confidence: {preliminary_decision.get("confidence", 0.0):.2f}
 - Reasoning: {preliminary_decision.get("reasoning", "")}
-- Proposed Strategy Parameters: {json.dumps(preliminary_decision.get("strategy_params", {}), separators=(',', ':'))}
+- Proposed Strategy Parameters: {json.dumps(_round_floats(preliminary_decision.get("strategy_params", {})), separators=(',', ':'))}
 
 **Local Python Backtest Results ({len(backtest_results)} variant(s) tested):**
 {all_backtests_text}
