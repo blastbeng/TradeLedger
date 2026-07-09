@@ -233,17 +233,22 @@ def build_strategy_prompt(
         logger.warning(f"Assigned timeframe {assigned_timeframe} is not supported by yfinance. Falling back to default.")
         assigned_timeframe = "1d" if "1d" in TIMEFRAME_MAP else list(TIMEFRAME_MAP.keys())[0]
     tf_seconds = _timeframe_to_seconds(assigned_timeframe) if assigned_timeframe else 86400
-    _ticker_compact = {
-        k: ticker.get(k) for k in ("last", "bid", "ask", "volume", "quoteVolume", "name", "coupon", "maturity")
-        if k in ticker
-    }
+    _ticker_compact = {}
+    for k in ("last", "bid", "ask", "volume", "quoteVolume", "name", "coupon", "maturity"):
+        if k in ticker:
+            val = ticker.get(k)
+            if k in ("last", "bid", "ask") and isinstance(val, (int, float)):
+                _ticker_compact[k] = round(val, 2)
+            else:
+                _ticker_compact[k] = val
     # Rename "percentage" to "change_24h" so the LLM understands what it represents
     _pct = ticker.get("percentage")
     if _pct is not None:
         _ticker_compact["change_24h"] = _pct
+    _balance_compact = {k: round(v, 2) if isinstance(v, (int, float)) else v for k, v in balance.items()}
     prompt = f"""Symbol: {symbol}
 Current ticker: {json.dumps(_ticker_compact, separators=(',', ':'))}
-Current balances: {json.dumps(balance, separators=(',', ':'))}
+Current balances: {json.dumps(_balance_compact, separators=(',', ':'))}
 """
     # Explicitly highlight the 24h change so the LLM uses it in its analysis
     _change_24h = ticker.get("percentage")
@@ -261,16 +266,25 @@ Current balances: {json.dumps(balance, separators=(',', ':'))}
             prompt += f"Other symbols being traded: {symbol_list_str}\n"
         else:
             prompt += "This is the only symbol being traded; you may use the full available balance.\n"
-    _positions_compact = [
-        {
+    _positions_compact = []
+    for p in open_positions:
+        pos = {
             "symbol": p.get("symbol"),
-            "entry": p.get("price"),
             "amount": p.get("amount"),
-            "sl": p.get("stop_loss"),
-            "tp": p.get("take_profit"),
         }
-        for p in open_positions
-    ]
+        for key in ("price", "stop_loss", "take_profit"):
+            val = p.get(key)
+            if isinstance(val, (int, float)):
+                pos[key] = round(val, 2)
+            else:
+                pos[key] = val
+        _positions_compact.append({
+            "symbol": pos["symbol"],
+            "entry": pos["price"],
+            "amount": pos["amount"],
+            "sl": pos["stop_loss"],
+            "tp": pos["take_profit"],
+        })
     prompt += f"""Open positions: {json.dumps(_positions_compact, separators=(',', ':'))}
 Total available {base_currency} balance: {base_balance:.2f}
 Suggested equal share per symbol: {per_symbol_budget:.2f} {base_currency}
@@ -284,7 +298,7 @@ Maximum symbols to trade: {max_symbols}
         if max_portfolio_exposure_pct is not None and max_portfolio_stop_risk_pct is not None:
             prompt += f"Limits: Exp<{max_portfolio_exposure_pct*100:.0f}%,Risk<{max_portfolio_stop_risk_pct*100:.0f}%. Reduce size if exceeded.\n"
     if cycle_spent is not None and remaining_balance is not None:
-        prompt += f"CycleSpent:{cycle_spent:.2f},Remaining:{remaining_balance:.2f}\n"
+        prompt += f"CycleSpent:{cycle_spent:.0f},Remaining:{remaining_balance:.0f}\n"
         prompt += f"MaxTrade:{remaining_balance:.2f} (full remaining). position_size_fraction must not exceed remaining.\n"
     if global_risk_multiplier is not None and global_risk_multiplier < 1.0:
         prompt += f"\n**GlobalRiskMult:{global_risk_multiplier}** (amount=frac×balance×mult)\n"
@@ -324,11 +338,11 @@ Maximum symbols to trade: {max_symbols}
 
     # --- Volatility, order book imbalance, and position P&L context ---
     if atr is not None:
-        prompt += f"ATR(14,{assigned_timeframe or 'default'}):{atr:.6f}\n"
+        prompt += f"ATR(14,{assigned_timeframe or 'default'}):{atr:.4f}\n"
     if atr is not None and current_price is not None and current_price > 0:
         atr_pct = atr / current_price
         min_sl = min_stop_atr_mult * atr_pct
-        prompt += f"ATR%={atr_pct:.4%},minSL={min_sl:.4%}({min_stop_atr_mult}×ATR%)\n"
+        prompt += f"ATR%={atr_pct:.2%},minSL={min_sl:.2%}({min_stop_atr_mult}×ATR%)\n"
     if atr_percentile is not None:
         prompt += f"ATR percentile (last 100 obs): {atr_percentile:.1f}%\n"
     if atr_multi_tf:
@@ -355,7 +369,7 @@ Maximum symbols to trade: {max_symbols}
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)
-        prompt += f"\n**PrevDecision({age_seconds:.0f}s ago):** {last_decision.get('action')},conf={last_decision.get('confidence', 0):.2f}"
+        prompt += f"\n**PrevDecision({int(age_seconds // 60)}m ago):** {last_decision.get('action')},conf={last_decision.get('confidence', 0):.2f}"
         sl_pct = last_decision.get("stop_loss_pct")
         tp_pct = last_decision.get("take_profit_pct")
         psf = last_decision.get("position_size_fraction")
@@ -366,7 +380,7 @@ Maximum symbols to trade: {max_symbols}
         if parts: prompt += f" ({','.join(parts)})"
         prompt += f" R:{last_decision.get('reasoning', '')[:80]}\n"
     if unrealized_pnl is not None and position_info:
-        prompt += f"Current position unrealized P&L: {unrealized_pnl:.2f} {base_currency}\n"
+        prompt += f"Current position unrealized P&L: {unrealized_pnl:.0f} {base_currency}\n"
         entry_price = position_info.get('price', 0)
         amount = position_info.get('amount', 0)
         prompt += f"Position: entry {entry_price}, amount {amount}\n"
@@ -376,7 +390,7 @@ Maximum symbols to trade: {max_symbols}
             cost_basis = entry_price * amount
             if cost_basis > 0:
                 pnl_pct = (unrealized_pnl / cost_basis) * 100
-                prompt += f"Unrealized P&L: {pnl_pct:+.2f}%\n"
+                prompt += f"Unrealized P&L: {pnl_pct:+.0f}%\n"
         current_sl = position_info.get('stop_loss')
         current_tp = position_info.get('take_profit')
         if current_sl is not None: prompt += f"Current SL price: {current_sl:.6f}\n"
@@ -384,10 +398,10 @@ Maximum symbols to trade: {max_symbols}
         if current_price and current_price > 0:
             if current_sl is not None:
                 sl_distance_pct = ((current_price - current_sl) / current_price) * 100
-                prompt += f"Distance to SL: {sl_distance_pct:.2f}% below current\n"
+                prompt += f"Distance to SL: {sl_distance_pct:.0f}% below current\n"
             if current_tp is not None:
                 tp_distance_pct = ((current_tp - current_price) / current_price) * 100
-                prompt += f"Distance to TP: {tp_distance_pct:.2f}% above current\n"
+                prompt += f"Distance to TP: {tp_distance_pct:.0f}% above current\n"
         trailing_active = position_info.get('trailing_stop', False)
         if trailing_active:
             trailing_dist = position_info.get('trailing_stop_distance_pct')
@@ -398,7 +412,7 @@ Maximum symbols to trade: {max_symbols}
             entry_ts = position_info.get('timestamp', 0) / 1000.0
             elapsed = time.time() - entry_ts if entry_ts > 0 else 0
             remaining = max(0, max_hold - elapsed)
-            prompt += f"Max hold: {max_hold:.0f}s total, {remaining:.0f}s remaining\n"
+            prompt += f"Max hold: {max_hold:.0f}s total, {int(remaining // 60)}m remaining\n"
 
     # --- Multi-timeframe OHLCV summary and indicators ---
     if multi_tf_raw_candles:
@@ -408,7 +422,7 @@ Maximum symbols to trade: {max_symbols}
                 summary = _summarize_ohlcv(multi_tf_raw_candles[tf])
                 if summary:
                     tf_summaries.append(
-                        f"  [{tf}] chg={summary['change_pct']}%, H={summary['high']}, L={summary['low']}, "
+                        f"  [{tf}] chg={summary['change_pct']}%, H={summary['high']:.2f}, L={summary['low']:.2f}, "
                         f"vol={summary['volume']}, candles={summary['candle_count']}"
                     )
         if tf_summaries:
@@ -421,16 +435,16 @@ Maximum symbols to trade: {max_symbols}
                 ind_compact = {}
                 if ind.get('rsi') is not None: ind_compact['rsi'] = round(ind['rsi'], 2)
                 if ind.get('macd') is not None:
-                    ind_compact['macd'] = round(ind['macd'], 4)
-                    ind_compact['macd_sig'] = round(ind['macd_signal'], 4)
-                    ind_compact['macd_h'] = round(ind['macd_hist'], 4)
+                    ind_compact['macd'] = round(ind['macd'], 2)
+                    ind_compact['macd_sig'] = round(ind['macd_signal'], 2)
+                    ind_compact['macd_h'] = round(ind['macd_hist'], 2)
                 if ind.get('bb_upper') is not None:
-                    ind_compact['bb_u'] = round(ind['bb_upper'], 4)
-                    ind_compact['bb_m'] = round(ind['bb_middle'], 4)
-                    ind_compact['bb_l'] = round(ind['bb_lower'], 4)
+                    ind_compact['bb_u'] = round(ind['bb_upper'], 2)
+                    ind_compact['bb_m'] = round(ind['bb_middle'], 2)
+                    ind_compact['bb_l'] = round(ind['bb_lower'], 2)
                 if ind.get('ema_9') is not None:
-                    ind_compact['ema9'] = round(ind['ema_9'], 4)
-                    if ind.get('ema_21') is not None: ind_compact['ema21'] = round(ind['ema_21'], 4)
+                    ind_compact['ema9'] = round(ind['ema_9'], 2)
+                    if ind.get('ema_21') is not None: ind_compact['ema21'] = round(ind['ema_21'], 2)
                 if ind.get('stochastic_k') is not None:
                     ind_compact['stoch_k'] = round(ind['stochastic_k'], 2)
                     if ind.get('stochastic_d') is not None: ind_compact['stoch_d'] = round(ind['stochastic_d'], 2)
@@ -444,17 +458,17 @@ Maximum symbols to trade: {max_symbols}
                 if ind.get('williams_r') is not None: ind_compact['wr'] = round(ind['williams_r'], 2)
                 if ind.get('ichimoku') is not None:
                     ich = ind['ichimoku']
-                    ind_compact['ich'] = {"t": round(ich['tenkan_sen'], 4), "k": round(ich['kijun_sen'], 4),
-                                          "sa": round(ich['senkou_span_a'], 4), "sb": round(ich['senkou_span_b'], 4),
-                                          "cb": round(ich['cloud_bottom'], 4), "ct": round(ich['cloud_top'], 4)}
+                    ind_compact['ich'] = {"t": round(ich['tenkan_sen'], 2), "k": round(ich['kijun_sen'], 2),
+                                          "sa": round(ich['senkou_span_a'], 2), "sb": round(ich['senkou_span_b'], 2),
+                                          "cb": round(ich['cloud_bottom'], 2), "ct": round(ich['cloud_top'], 2)}
                 if ind.get('donchian_channels') is not None:
                     dc = ind['donchian_channels']
-                    ind_compact['dc'] = {"u": round(dc['upper'], 4), "m": round(dc['middle'], 4), "l": round(dc['lower'], 4)}
-                if ind.get('atr') is not None: ind_compact['atr'] = round(ind['atr'], 6)
-                if ind.get('parabolic_sar') is not None: ind_compact['sar'] = round(ind['parabolic_sar'], 6)
+                    ind_compact['dc'] = {"u": round(dc['upper'], 2), "m": round(dc['middle'], 2), "l": round(dc['lower'], 2)}
+                if ind.get('atr') is not None: ind_compact['atr'] = round(ind['atr'], 2)
+                if ind.get('parabolic_sar') is not None: ind_compact['sar'] = round(ind['parabolic_sar'], 2)
                 if ind.get('keltner_channels') is not None:
                     kc = ind['keltner_channels']
-                    ind_compact['kc'] = {"u": round(kc['upper'], 6), "m": round(kc['middle'], 6), "l": round(kc['lower'], 6)}
+                    ind_compact['kc'] = {"u": round(kc['upper'], 2), "m": round(kc['middle'], 2), "l": round(kc['lower'], 2)}
                 
 
                 if not ind_compact: continue
@@ -465,8 +479,8 @@ Maximum symbols to trade: {max_symbols}
         summary = _summarize_ohlcv(raw_candles)
         if summary:
             prompt += (
-                f"\nOHLCV summary ({assigned_timeframe}): chg={summary['change_pct']}%, H={summary['high']}, "
-                f"L={summary['low']}, vol={summary['volume']}, candles={summary['candle_count']}\n"
+                f"\nOHLCV summary ({assigned_timeframe}): chg={summary['change_pct']}%, H={summary['high']:.2f}, "
+                f"L={summary['low']:.2f}, vol={summary['volume']}, candles={summary['candle_count']}\n"
             )
     if historical_ohlcv:
         hist_summary = _summarize_ohlcv(historical_ohlcv)
@@ -483,7 +497,7 @@ Maximum symbols to trade: {max_symbols}
 
             prompt += (
                 f"\nHistOHLCV ({hist_summary['candle_count']}c,{assigned_timeframe or 'default'}):"
-                f"chg={hist_summary['change_pct']:.2f}%,H={hist_summary['high']:.4f},L={hist_summary['low']:.4f}\n"
+                f"chg={hist_summary['change_pct']:.2f}%,H={hist_summary['high']:.2f},L={hist_summary['low']:.2f}\n"
                 f"Last20:avg={avg_close:.4f},max={max_close:.4f},min={min_close:.4f},vol={avg_volume:.0f},mom5={recent_momentum_pct:+.2f}%\n"
             )
         prompt += (
@@ -499,7 +513,7 @@ Maximum symbols to trade: {max_symbols}
             "Explore different hypotheses: tight vs wide SL, short vs long hold, trailing on/off, different TP targets.\n"
         )
     if drawdown_pct is not None:
-        prompt += f"Drawdown:{drawdown_pct}%\n"
+        prompt += f"Drawdown:{drawdown_pct:.0f}%\n"
     if recent_trades:
         _recent_compact = [
             {
@@ -627,7 +641,7 @@ Maximum symbols to trade: {max_symbols}
         daily_pnl = equity.get("daily_pnl", 0.0)
         total_pnl = equity.get("total_pnl", 0.0)
         consecutive_losses = equity.get("consecutive_losses", 0)
-        prompt += f"P&L: Today={daily_pnl:.4f},Total={total_pnl:.4f}"
+        prompt += f"P&L: Today={daily_pnl:.0f},Total={total_pnl:.0f}"
         if consecutive_losses > 0:
             prompt += f",⚠️{consecutive_losses} consec losses"
         prompt += "\n"

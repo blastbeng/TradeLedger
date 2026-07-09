@@ -481,9 +481,8 @@ def _normalize_for_hash(obj, depth=0):
     if isinstance(obj, list):
         return [_normalize_for_hash(item, depth + 1) for item in obj]
     if isinstance(obj, float):
-        # Round to 12 decimal places — enough precision for very small indicator values (e.g., MACD histogram),
-        # while filtering out floating-point noise that changes every cycle.
-        return round(obj, 12)
+        # Round to 2 decimal places to improve cache hit rate for trading data
+        return round(obj, 2)
     if obj is None:
         return "null"
     return obj
