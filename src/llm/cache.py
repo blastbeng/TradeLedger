@@ -107,6 +107,12 @@ def get_cached_llm_response(
         and provider in settings.LLM_PROMPT_CACHING_PROVIDERS
         and messages is not None  # only when we have a split message list
     )
+    # Determine whether to add the cache_control header (only for providers that support it)
+    add_cache_control = (
+        settings.LLM_PROMPT_CACHING_ENABLED
+        and provider in settings.LLM_PROMPT_CACHING_CONTROL_PROVIDERS
+        and messages is not None
+    )
 
     # Build cache key
     if messages is not None:
@@ -187,7 +193,7 @@ def get_cached_llm_response(
                 model=model, base_url=base_url, api_key=api_key,
                 temperature=temperature, timeout=effective_timeout,
                 messages=api_messages,
-                enable_prompt_caching=use_prompt_caching,
+                add_cache_control=add_cache_control,
             )
         else:
             from src.llm.llm_client import _get_ollama_response
@@ -243,7 +249,7 @@ def get_cached_llm_response(
                         temperature=temperature,
                         timeout=effective_timeout,
                         messages=api_messages,
-                        enable_prompt_caching=use_prompt_caching,
+                        add_cache_control=add_cache_control,
                     )
                     used_provider = "openai"
                     used_model = fallback_model
@@ -287,7 +293,7 @@ def get_cached_llm_response(
                         temperature=temperature,
                         timeout=effective_timeout,
                         messages=api_messages,
-                        enable_prompt_caching=False,
+                        add_cache_control=add_cache_control,
                     )
                     used_provider = "ollama"
                     used_model = fallback_model

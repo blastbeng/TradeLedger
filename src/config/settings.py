@@ -626,7 +626,10 @@ class Settings(BaseSettings):
     LLM_FALLBACK_ENABLED: bool = True
     # Prompt caching for DeepSeek (and other providers that support it)
     LLM_PROMPT_CACHING_ENABLED: bool = True
-    LLM_PROMPT_CACHING_PROVIDERS: list[str] = ["deepseek"]
+    LLM_PROMPT_CACHING_PROVIDERS: list[str] = ["deepseek", "ollama", "openai"]
+    # Providers that support the cache_control field (e.g., DeepSeek).
+    # Only these providers will receive the cache_control header.
+    LLM_PROMPT_CACHING_CONTROL_PROVIDERS: list[str] = ["deepseek"]
 
     # Cache version key to invalidate LLM cache on settings reload.
     # Automatically generated on instantiation; changes when settings.reload() is called.
@@ -716,6 +719,11 @@ class Settings(BaseSettings):
     @field_validator("LLM_PROMPT_CACHING_PROVIDERS")
     @classmethod
     def validate_llm_prompt_caching_providers(cls, v: list[str]) -> list[str]:
+        return v
+
+    @field_validator("LLM_PROMPT_CACHING_CONTROL_PROVIDERS")
+    @classmethod
+    def validate_llm_prompt_caching_control_providers(cls, v: list[str]) -> list[str]:
         return v
 
     @staticmethod

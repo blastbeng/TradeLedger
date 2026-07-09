@@ -15,7 +15,7 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
                          temperature: Optional[float] = None,
                          timeout: Optional[float] = None,
                          messages: Optional[list[dict]] = None,
-                         enable_prompt_caching: bool = False,
+                         add_cache_control: bool = False,
 ) -> str:
     """Send a prompt to the configured Ollama model and return the response text."""
     url = f"{(base_url or settings.OLLAMA_BASE_URL).rstrip('/')}/api/chat"
@@ -104,7 +104,7 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
                          temperature: Optional[float] = None,
                          timeout: Optional[float] = None,
                          messages: Optional[list[dict]] = None,
-                         enable_prompt_caching: bool = False,
+                         add_cache_control: bool = False,
 ) -> str:
     """Send a prompt to the configured OpenAI-compatible API and return the response text."""
     url = f"{(base_url or settings.OPENAI_BASE_URL).rstrip('/')}/chat/completions"
@@ -122,8 +122,8 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
             api_messages.append({"role": "system", "content": system_prompt})
         api_messages.append({"role": "user", "content": prompt})
 
-    # Add cache_control to system message and first user message when caching is enabled
-    if enable_prompt_caching:
+    # Add cache_control to system message and first user message when supported
+    if add_cache_control:
         for msg in api_messages:
             if msg["role"] == "system":
                 msg["cache_control"] = {"type": "ephemeral"}
@@ -157,6 +157,7 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
 
             data = _do_request()
 
+
                                                                                                                                                                                                                                                                                    
             # Validate response structure                                                                                                                                                                                                                                          
             if "choices" not in data or not data["choices"]:                                                                                                                                                                                                                       
@@ -166,6 +167,7 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
                 )                                                                                                                                                                                                                                                                  
                 raise RuntimeError(f"OpenAI API returned unexpected format: missing 'choices'. Response: {str(data)[:500]}")                                                                                                                                                       
                                                                                                                                                                                                                                                                                    
+
 
             content = data["choices"][0]["message"]["content"]                                                                                                                                                                                                                     
             logger.info("LLM response (openai): %.500s...", content)                                                                                                                                                                                                               
