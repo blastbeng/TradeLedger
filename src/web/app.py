@@ -15,7 +15,7 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
-from src.database import get_all_discovered_symbols, get_signals
+from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries
 from typing import Optional
 from pydantic import BaseModel
 
@@ -618,6 +618,22 @@ async def tickers(symbols: str = ""):
         for full_sym in full_symbol_list:
             result[full_sym] = {"last": None, "bid": None, "ask": None, "change_24h": None, "percentage": None}
     return result
+
+@http_router.get("/api/llm-metrics")
+async def llm_metrics():
+    """Return aggregated LLM metrics for the dashboard."""
+    try:
+        return await run_in_threadpool(get_llm_metrics_summary)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@http_router.get("/api/llm-metrics/timeseries")
+async def llm_metrics_timeseries(hours: int = 24):
+    """Return hourly aggregated LLM metrics for charting."""
+    try:
+        return await run_in_threadpool(get_llm_metrics_timeseries, hours)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
