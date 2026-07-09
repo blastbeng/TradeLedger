@@ -146,13 +146,7 @@ Base currency: {base_currency}
             sell_fee = max(_settings.STOCK_FEE_MIN, trade_value * _settings.STOCK_FEE_PERC) + _settings.STOCK_FEE_FIXED
         total_fees = buy_fee + sell_fee
         break_even_pct = total_fees / trade_value
-        prompt += (
-            f"\n**Transaction Cost Break-Even — Example using full available balance:**\n"
-            f"  If you use the full available balance (~{trade_value:.2f} {base_currency}) for this trade:\n"
-            f"  Total round-trip fees: {total_fees:.2f} {base_currency} ({break_even_pct*100:.2f}%)\n"
-            f"  Your take_profit_pct MUST be > {break_even_pct*100:.2f}% to be profitable.\n"
-            f"  **You are NOT limited to the per-symbol budget.** You may use up to the full remaining balance for this single trade if your conviction is high.\n"
-        )
+        prompt += f"\n**Fees:** Round-trip={total_fees:.2f} ({break_even_pct*100:.2f}%). TP must be > {break_even_pct*100:.2f}%. You may use full remaining balance.\n"
 
     if historical_backtest_results:
         prompt += "\n**Historical Backtest Results (learn from past tests):**\n"
@@ -167,43 +161,19 @@ Base currency: {base_currency}
             )
         prompt += "Avoid repeating failed combinations. Prefer parameters similar to historically profitable ones.\n\n"
 
-    prompt += (
-        "\n**CRITICAL — Fallback Parameters for ATR Methods:**\n"
-        "If you set `stop_loss_method: \"atr_multiple\"`, you MUST also include `stop_loss_pct` as a fallback "
-        "(set it to the estimated ATR-based stop percentage: `stop_loss_atr_multiple × ATR / current_price`). "
-        "Similarly, if you use `take_profit_atr_multiple`, you MUST also include `take_profit_pct` as a fallback. "
-        "If you omit these fallbacks, the validator will reject your signal.\n"
-    )
+    prompt += "\n**ATR fallback:** Always include `stop_loss_pct` and `take_profit_pct` even if using ATR methods. Set to estimated ATR-based %.\n"
+    prompt += "\n**Backtest Entry Config (REQUIRED):** Include `backtest_entry_config` in every variant. Fields: ema_period,ema_direction,min_adx,max_rsi,min_rsi,macd_filter,logic. Example: {\"backtest_entry_config\":{\"ema_period\":21,\"ema_direction\":\"above\",\"min_adx\":25,\"max_rsi\":65,\"macd_filter\":\"positive\",\"logic\":\"and\"}}\n"
+    prompt += f"\n**Constraints:** min max_hold={validator_min}s, min SL={min_stop_atr_mult}×ATR%, TP>SL.\n"
     prompt += f"""
-**Backtest Entry Logic (REQUIRED):**
-You MUST include a `backtest_entry_config` object in EVERY backtest variant. If omitted, the backtest will fail with an error and no results will be produced.
-Supported fields: ema_period, ema_direction, min_adx, max_rsi, min_rsi, macd_filter, logic.
-Example: {{"backtest_entry_config": {{"ema_period": 21, "ema_direction": "above", "min_adx": 25, "max_rsi": 65, "macd_filter": "positive", "logic": "and"}}}}
-
-**Validator Constraints:**
-- Minimum max_hold_time_seconds for {assigned_timeframe}: {validator_min} seconds
-- Minimum stop-loss: {min_stop_atr_mult} × ATR% (if ATR available)
-- take_profit_pct MUST be strictly greater than stop_loss_pct
-
-**Output ONLY the raw JSON object as specified.**
-
-Return a JSON object with these **required** fields:
-- `action`: one of BUY, SELL, HOLD (should match your Step 1a analysis)
-- `confidence`: a float between 0.0 and 1.0 (should match your Step 1a analysis)
-- `reasoning`: VERY short (max 80 chars). Format: "Wide SL for high ATR, long hold for trend". No full sentences.
-- `strategy`: an object containing `type` (string) and `parameters` (object).
-  The `parameters` object MUST include ALL required trading parameters:
-  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`,
-  `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`,
-  and `backtest_entry_config` (the same entry logic object you use in your backtest variants — REQUIRED for BUY actions), etc.
-- `backtest_variants`: a JSON array of objects, each containing a complete set of strategy parameters
-  for backtesting. Each variant MUST include at minimum: `stop_loss_pct`, `take_profit_pct`,
-  `max_hold_time_seconds`, `trailing_stop`, `position_size_fraction`, and `backtest_period_days`.
-  You decide how many variants to return (minimum 1, recommended 3–5, maximum {_settings.MAX_BACKTEST_VARIANTS}).
-  Each variant should explore a different hypothesis based on your Step 1a analysis.
-- `entry_condition`: REQUIRED for every BUY action. An object specifying the exact moment to enter.
-- `limit_price`: optional, a specific limit price for the order.
-- `time_in_force`: optional, "day" or "gtc". Default "day".
+Return JSON:
+- action: BUY|SELL|HOLD
+- confidence: float 0-1
+- reasoning: str max 80 chars
+- strategy: {{type, parameters{{stop_loss_pct,take_profit_pct,position_size_fraction,confidence_sizing_weight,trailing_stop,max_hold_time_seconds,cooldown_after_loss_seconds,backtest_period_days,backtest_entry_config(REQUIRED for BUY)}}}}
+- backtest_variants: array of objects with same params (min 1, max {_settings.MAX_BACKTEST_VARIANTS})
+- entry_condition: object (REQUIRED for BUY)
+- limit_price: float? (optional)
+- time_in_force: "day"|"gtc"? (optional)
 """
     if has_position:
         prompt += (
@@ -274,22 +244,11 @@ Base currency: {base_currency}
 **Local Python Backtest Results ({len(backtest_results)} variant(s) tested):**
 {all_backtests_text}
 
-You have received the results of ALL {len(backtest_results)} backtest variant(s) above. 
-Compare the variants and choose the best-performing one (or combine insights from multiple variants) to inform your final decision.
-If ALL backtests show poor performance (e.g., negative total P&L, low win rate, high drawdown), you should reconsider and likely output HOLD or adjust your parameters.
-If ANY backtest variant confirms a strategy is viable, you may output your final action (BUY, SELL, or HOLD) using the best-performing variant's parameters.
-**Benchmark:** The backtest results include a `buy_and_hold_pct` field, which represents the return of simply buying and holding the asset over the same period. If your strategy's `total_pnl_pct` is lower than `buy_and_hold_pct`, it means your active trading strategy is worse than doing nothing. Only proceed with a BUY if your strategy is better than buy-and-hold or if it significantly reduces drawdown.
+Compare variants. Choose best-performing or combine insights. If all poor, output HOLD. Benchmark: buy_and_hold_pct. Only BUY if strategy beats buy-and-hold or reduces drawdown.
 """
-    prompt += (
-        f"\n**Backtest Period:** The backtests were run using historical data on the {preliminary_decision.get('timeframe', 'assigned')} timeframe. "
-        f"Each variant may have used a different `backtest_period_days` value (see individual variant parameters above).\n"
-    )
+    prompt += f"\nBacktests on {preliminary_decision.get('timeframe', 'assigned')} timeframe, varying periods.\n"
     if total_variants_proposed is not None and total_variants_proposed > len(backtest_results):
-        prompt += (
-            f"\n**Note:** You proposed {total_variants_proposed} backtest variants in Step 1, but only the first "
-            f"{len(backtest_results)} were tested (maximum {settings.MAX_BACKTEST_VARIANTS} variants per cycle). The results above cover all "
-            f"tested variants. To avoid truncation in future cycles, limit your `backtest_variants` array to at most {settings.MAX_BACKTEST_VARIANTS} entries.\n"
-        )
+        prompt += f"\nProposed {total_variants_proposed} variants, only {len(backtest_results)} tested (max {settings.MAX_BACKTEST_VARIANTS}).\n"
     if historical_backtest_results:
         prompt += "\n**Historical Backtest Results for this symbol (past tests):**\n"
         for bt in historical_backtest_results[:5]:
@@ -303,20 +262,14 @@ If ANY backtest variant confirms a strategy is viable, you may output your final
             )
         prompt += "Consider these historical results when making your final decision.\n"
     prompt += (
-        "**Output ONLY the raw JSON object as specified.**\n"
-        "Return a JSON object with these **required** fields:\n"
-        "- `action`: one of BUY, SELL, HOLD\n"
-        "- `confidence`: a float between 0.0 and 1.0\n"
-        "- `reasoning`: VERY short (max 80 chars). Format: \"Best: V2 WR=60% PF=1.5\". No full sentences. Do NOT repeat the price.\n"
-        "- `strategy`: an object containing `type` and `parameters`.\n"
-        "  The `parameters` object MUST include ALL required trading parameters (same as Step 1):\n"
-        "  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`,\n"
-        "  and `backtest_entry_config` (REQUIRED for BUY actions — copy it from your best-performing backtest variant), etc.\n"
-        "  You may adjust `position_size_fraction` based on backtest performance (e.g., reduce size if drawdown is high).\n"
-    )
-    prompt += (
-        "\nIf your final action is BUY, you MUST also include an `entry_condition` object (same format as Step 1).\n"
-        "You may also include `order_type`, `limit_price`, `time_in_force`, and other execution parameters.\n"
+        "Return JSON:\n"
+        "- action: BUY|SELL|HOLD\n"
+        "- confidence: float 0-1\n"
+        "- reasoning: str max 80 chars\n"
+        "- strategy: {type, parameters{stop_loss_pct,take_profit_pct,position_size_fraction,confidence_sizing_weight,trailing_stop,max_hold_time_seconds,cooldown_after_loss_seconds,backtest_entry_config(REQUIRED for BUY)}}\n"
+        "- entry_condition: object (REQUIRED for BUY)\n"
+        "- limit_price: float? (optional)\n"
+        "- time_in_force: \"day\"|\"gtc\"? (optional)\n"
     )
     if trading_paused:
         prompt += (
