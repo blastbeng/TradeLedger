@@ -188,10 +188,35 @@ async def status():
         entry_copy["display"] = await _get_display_symbol(engine, entry["symbol"], entry.get("timeframe"))
         current_symbols.append(entry_copy)
 
+    # Fetch batch quotes for position symbols
+    pos_symbols = {sym.split("/")[0] for sym in engine.positions.keys()}
+    pos_quotes = {}
+    if pos_symbols:
+        try:
+            pos_quotes = await engine._market_data_manager._get_quotes_async(
+                list(pos_symbols), timeout=15.0
+            )
+        except Exception as e:
+            logger.warning(f"Status batch quote fetch failed for positions: {e}")
+
     positions = {}
     for sym, pos in engine.positions.items():
         pos_copy = dict(pos)
         pos_copy["display_symbol"] = await _get_display_symbol(engine, sym, pos.get("timeframe"))
+        base_sym = sym.split("/")[0]
+        ticker = pos_quotes.get(base_sym)
+        current_price = ticker.get("last") if ticker else None
+        pos_copy["current_price"] = current_price
+        if current_price is not None and pos.get("price") and pos.get("amount"):
+            pnl = (current_price - pos["price"]) * pos["amount"]
+            pnl_pct = ((current_price - pos["price"]) / pos["price"]) * 100
+            pos_copy["unrealized_pnl"] = pnl
+            pos_copy["unrealized_pnl_pct"] = pnl_pct
+            pos_copy["position_value"] = pos["amount"] * current_price
+        else:
+            pos_copy["unrealized_pnl"] = None
+            pos_copy["unrealized_pnl_pct"] = None
+            pos_copy["position_value"] = None
         positions[sym] = pos_copy
 
     balances = await run_in_threadpool(engine.trader.fetch_balance)
@@ -646,10 +671,35 @@ async def websocket_endpoint(websocket: WebSocket):
                         *[_build_symbol_entry(entry) for entry in engine.current_symbols]
                     ) if engine.current_symbols else []
 
-                    # Build positions with display_symbol (parallelized)
+                    # --- Fetch batch quotes for position symbols ---
+                    pos_symbols = {sym.split("/")[0] for sym in engine.positions.keys()}
+                    pos_quotes = {}
+                    if pos_symbols:
+                        try:
+                            pos_quotes = await engine._market_data_manager._get_quotes_async(
+                                list(pos_symbols), timeout=15.0
+                            )
+                        except Exception as e:
+                            logger.warning(f"WebSocket batch quote fetch failed for positions: {e}")
+
+                    # Build positions with display_symbol and P&L (parallelized)
                     async def _build_position_entry(sym, pos):
                         pos_copy = dict(pos)
                         pos_copy["display_symbol"] = await _get_display_symbol(engine, sym, pos.get("timeframe"))
+                        base_sym = sym.split("/")[0]
+                        ticker = pos_quotes.get(base_sym)
+                        current_price = ticker.get("last") if ticker else None
+                        pos_copy["current_price"] = current_price
+                        if current_price is not None and pos.get("price") and pos.get("amount"):
+                            pnl = (current_price - pos["price"]) * pos["amount"]
+                            pnl_pct = ((current_price - pos["price"]) / pos["price"]) * 100
+                            pos_copy["unrealized_pnl"] = pnl
+                            pos_copy["unrealized_pnl_pct"] = pnl_pct
+                            pos_copy["position_value"] = pos["amount"] * current_price
+                        else:
+                            pos_copy["unrealized_pnl"] = None
+                            pos_copy["unrealized_pnl_pct"] = None
+                            pos_copy["position_value"] = None
                         return sym, pos_copy
 
                     position_results = await asyncio.gather(
