@@ -259,12 +259,12 @@ class ModelTierManager:
             if ema_bullish != di_bullish and adx > settings.MODEL_TIER_ADX_STRONG:
                 conflict_score = max(conflict_score, 0.15)
         if conflicting_signals:
-            conflict_score = max(conflict_score, 0.10)
+            conflict_score = max(conflict_score, 0.05)
 
         market_score = 0.0
         if volatility_percentile is not None and (volatility_percentile > settings.MODEL_TIER_ATR_PERCENTILE_HIGH or volatility_percentile < settings.MODEL_TIER_ATR_PERCENTILE_LOW):
             market_score = max(market_score, 0.15)
-        if market_regime and any(kw in market_regime for kw in ("high volatility", "squeeze", "expansion", "ranging")):
+        if market_regime and any(kw in market_regime for kw in ("high volatility", "squeeze", "expansion")):
             market_score = max(market_score, 0.12)
         if market_breadth:
             pos_pct = market_breadth.get("positive_pct", 50)
@@ -287,7 +287,7 @@ class ModelTierManager:
         if drawdown_pct is not None and drawdown_pct > settings.MODEL_TIER_DRAWDOWN_PCT:
             portfolio_score = max(portfolio_score, 0.15)
         if unrealized_pnl is not None and unrealized_pnl < 0:
-            portfolio_score = max(portfolio_score, 0.10)
+            portfolio_score = max(portfolio_score, 0.05)
         if consecutive_losses >= settings.MODEL_TIER_CONSECUTIVE_LOSSES:
             portfolio_score = max(portfolio_score, 0.12)
 
