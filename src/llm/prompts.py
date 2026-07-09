@@ -15,6 +15,7 @@ from src.llm.prompt_utils import (
     _format_trade_pattern_analysis,
     _format_news_for_prompt,
     get_cached_news_summary,
+    _round_floats,
 )
 logger = logging.getLogger(__name__)
 from src.llm.system_prompt import build_system_prompt, SYSTEM_PROMPT_TEMPLATE
@@ -239,6 +240,8 @@ def build_strategy_prompt(
             val = ticker.get(k)
             if k in ("last", "bid", "ask") and isinstance(val, (int, float)):
                 _ticker_compact[k] = round(val, 2)
+            elif k in ("volume", "quoteVolume") and isinstance(val, (int, float)):
+                _ticker_compact[k] = round(val)
             else:
                 _ticker_compact[k] = val
     # Rename "percentage" to "change_24h" so the LLM understands what it represents
@@ -270,8 +273,9 @@ Current balances: {json.dumps(_balance_compact, separators=(',', ':'))}
     for p in open_positions:
         pos = {
             "symbol": p.get("symbol"),
-            "amount": p.get("amount"),
         }
+        _amt = p.get("amount")
+        pos["amount"] = round(_amt, 4) if isinstance(_amt, (int, float)) else _amt
         for key in ("price", "stop_loss", "take_profit"):
             val = p.get(key)
             if isinstance(val, (int, float)):
@@ -301,7 +305,7 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"CycleSpent:{cycle_spent:.0f},Remaining:{remaining_balance:.0f}\n"
         prompt += f"MaxTrade:{remaining_balance:.2f} (full remaining). position_size_fraction must not exceed remaining.\n"
     if global_risk_multiplier is not None and global_risk_multiplier < 1.0:
-        prompt += f"\n**GlobalRiskMult:{global_risk_multiplier}** (amount=frac×balance×mult)\n"
+        prompt += f"\n**GlobalRiskMult:{global_risk_multiplier:.2f}** (amount=frac×balance×mult)\n"
     # --- Queued orders for this symbol ---
     if queued_orders:
         symbol_queued = [q for q in queued_orders if q.get('symbol') == symbol]
@@ -338,7 +342,7 @@ Maximum symbols to trade: {max_symbols}
 
     # --- Volatility, order book imbalance, and position P&L context ---
     if atr is not None:
-        prompt += f"ATR(14,{assigned_timeframe or 'default'}):{atr:.4f}\n"
+        prompt += f"ATR(14,{assigned_timeframe or 'default'}):{atr:.2f}\n"
     if atr is not None and current_price is not None and current_price > 0:
         atr_pct = atr / current_price
         min_sl = min_stop_atr_mult * atr_pct
@@ -346,7 +350,7 @@ Maximum symbols to trade: {max_symbols}
     if atr_percentile is not None:
         prompt += f"ATR percentile (last 100 obs): {atr_percentile:.1f}%\n"
     if atr_multi_tf:
-        prompt += f"ATR across timeframes: {json.dumps(atr_multi_tf, separators=(',', ':'))}\n"
+        prompt += f"ATR across timeframes: {json.dumps(_round_floats(atr_multi_tf), separators=(',', ':'))}\n"
     # --- Transaction cost break-even calculation ---
     _is_btp = is_btp_isin(symbol)
     # Use the full remaining balance (or total balance) for fee break-even calculation
@@ -374,17 +378,17 @@ Maximum symbols to trade: {max_symbols}
         tp_pct = last_decision.get("take_profit_pct")
         psf = last_decision.get("position_size_fraction")
         parts = []
-        if sl_pct is not None: parts.append(f"SL={sl_pct}")
-        if tp_pct is not None: parts.append(f"TP={tp_pct}")
-        if psf is not None: parts.append(f"Size={psf}")
+        if sl_pct is not None: parts.append(f"SL={sl_pct:.2f}")
+        if tp_pct is not None: parts.append(f"TP={tp_pct:.2f}")
+        if psf is not None: parts.append(f"Size={psf:.2f}")
         if parts: prompt += f" ({','.join(parts)})"
         prompt += f" R:{last_decision.get('reasoning', '')[:80]}\n"
     if unrealized_pnl is not None and position_info:
         prompt += f"Current position unrealized P&L: {unrealized_pnl:.0f} {base_currency}\n"
         entry_price = position_info.get('price', 0)
         amount = position_info.get('amount', 0)
-        prompt += f"Position: entry {entry_price}, amount {amount}\n"
-        prompt += f"\n**You hold {amount:.6f} {base_symbol} @ {entry_price:.4f}.**\n"
+        prompt += f"Position: entry {entry_price:.2f}, amount {amount:.4f}\n"
+        prompt += f"\n**You hold {amount:.4f} {base_symbol} @ {entry_price:.2f}.**\n"
         prompt += "BUY = ADD to position (scale in). SELL = close ENTIRE position.\n"
         if entry_price > 0 and amount > 0:
             cost_basis = entry_price * amount
@@ -393,8 +397,8 @@ Maximum symbols to trade: {max_symbols}
                 prompt += f"Unrealized P&L: {pnl_pct:+.0f}%\n"
         current_sl = position_info.get('stop_loss')
         current_tp = position_info.get('take_profit')
-        if current_sl is not None: prompt += f"Current SL price: {current_sl:.6f}\n"
-        if current_tp is not None: prompt += f"Current TP price: {current_tp:.6f}\n"
+        if current_sl is not None: prompt += f"Current SL price: {current_sl:.2f}\n"
+        if current_tp is not None: prompt += f"Current TP price: {current_tp:.2f}\n"
         if current_price and current_price > 0:
             if current_sl is not None:
                 sl_distance_pct = ((current_price - current_sl) / current_price) * 100
@@ -406,7 +410,7 @@ Maximum symbols to trade: {max_symbols}
         if trailing_active:
             trailing_dist = position_info.get('trailing_stop_distance_pct')
             trailing_act = position_info.get('trailing_stop_activation_pct')
-            prompt += f"Trailing stop: enabled (dist={trailing_dist}, act={trailing_act})\n"
+            prompt += f"Trailing stop: enabled (dist={trailing_dist:.2f}, act={trailing_act:.2f})\n"
         max_hold = position_info.get('max_hold_time_seconds')
         if max_hold is not None and max_hold > 0:
             entry_ts = position_info.get('timestamp', 0) / 1000.0
@@ -551,7 +555,7 @@ Maximum symbols to trade: {max_symbols}
 
     # --- Aggregate sentiment summary ---
     if sentiment_trend is not None:
-        prompt += f"\nSentimentTrend: {sentiment_trend:+.4f} (delta compound since last cycle)\n"
+        prompt += f"\nSentimentTrend: {sentiment_trend:+.2f} (delta compound since last cycle)\n"
         prompt += "Set `news_sentiment_exit_threshold` (-1.0 to 0.0, MUST be negative) to auto-exit on negative sentiment. Omit to disable.\n"
     if volume_trend is not None:
         prompt += f"\nVolTrend: {volume_trend:.2f}x (current vs avg). >2.0=spike, <1.0=low.\n"
@@ -562,18 +566,18 @@ Maximum symbols to trade: {max_symbols}
     if donchian_channels:
         prompt += (
             f"\nDonchian ({assigned_timeframe or 'default'}): "
-            f"U={donchian_channels['upper']:.6f},M={donchian_channels['middle']:.6f},"
-            f"L={donchian_channels['lower']:.6f}\n"
+            f"U={donchian_channels['upper']:.2f},M={donchian_channels['middle']:.2f},"
+            f"L={donchian_channels['lower']:.2f}\n"
         )
 
     if parabolic_sar is not None:
-        prompt += f"\nSAR ({assigned_timeframe or 'default'}): {parabolic_sar:.6f}\n"
+        prompt += f"\nSAR ({assigned_timeframe or 'default'}): {parabolic_sar:.2f}\n"
 
     if vwap is not None:
-        prompt += f"\nVWAP ({assigned_timeframe or 'default'}): {vwap:.6f}\n"
+        prompt += f"\nVWAP ({assigned_timeframe or 'default'}): {vwap:.2f}\n"
 
     if daily_pivot_points:
-        prompt += f"\nPivots: P={daily_pivot_points['pivot']},R1={daily_pivot_points['r1']},R2={daily_pivot_points['r2']},S1={daily_pivot_points['s1']},S2={daily_pivot_points['s2']}\n"
+        prompt += f"\nPivots: P={daily_pivot_points['pivot']:.2f},R1={daily_pivot_points['r1']:.2f},R2={daily_pivot_points['r2']:.2f},S1={daily_pivot_points['s1']:.2f},S2={daily_pivot_points['s2']:.2f}\n"
 
     # --- News section (detailed articles) ---
     news_section = ""
@@ -626,9 +630,9 @@ Maximum symbols to trade: {max_symbols}
     if trading_paused:
         prompt += "\n**PAUSED:** BUY=notify only (not executed). SELL=executed if market open.\n"
     if performance:
-        stock_perf = performance.get("stock_performance", {}).get(symbol, {})
-        equity = performance.get("equity_curve", {})
-        strategy_perf = performance.get("strategy_performance", {})
+        stock_perf = _round_floats(performance.get("stock_performance", {}).get(symbol, {}))
+        equity = _round_floats(performance.get("equity_curve", {}))
+        strategy_perf = _round_floats(performance.get("strategy_performance", {}))
         parts = []
         if stock_perf:
             parts.append(f"StockPerf={json.dumps(stock_perf, separators=(',', ':'))}")
