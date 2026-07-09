@@ -498,7 +498,7 @@ Maximum symbols to trade: {max_symbols}
             prompt += (
                 f"\nHistOHLCV ({hist_summary['candle_count']}c,{assigned_timeframe or 'default'}):"
                 f"chg={hist_summary['change_pct']:.2f}%,H={hist_summary['high']:.2f},L={hist_summary['low']:.2f}\n"
-                f"Last20:avg={avg_close:.4f},max={max_close:.4f},min={min_close:.4f},vol={avg_volume:.0f},mom5={recent_momentum_pct:+.2f}%\n"
+                f"Last20:avg={avg_close:.2f},max={max_close:.2f},min={min_close:.2f},vol={avg_volume:.0f},mom5={recent_momentum_pct:+.2f}%\n"
             )
         prompt += (
             f"\n**Available Historical Data:** Up to {settings.OHLCV_RETENTION_DAYS} days on {assigned_timeframe or 'default'}.\n"
