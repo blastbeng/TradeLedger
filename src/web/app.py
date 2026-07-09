@@ -172,6 +172,10 @@ def get_engine():
 async def root():
     return FileResponse("src/web/static/index.html")
 
+@public_router.get("/sw.js")
+async def service_worker():
+    return FileResponse("src/web/static/sw.js", media_type="application/javascript")
+
 @http_router.get("/health")
 async def health():
     redis_ok = check_redis_connection()

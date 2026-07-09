@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>">
     <title>TradeLedger</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#0b0e14">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="TradeLedger">
+    <link rel="apple-touch-icon" href="/static/icon.svg">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         :root {
@@ -2298,6 +2305,11 @@
         }
 
         document.getElementById('btn-refresh-llm-metrics').addEventListener('click', fetchLLMMetrics);
+
+        // --- PWA: Register service worker for installability ---
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW registration failed:', err));
+        }
     </script>
 
     <div id="toast" style="visibility: hidden; min-width: 250px; margin-left: -125px; background-color: var(--card-bg); color: var(--text); text-align: center; border-radius: 6px; padding: 16px; position: fixed; z-index: 1001; left: 50%; bottom: 30px; border: 1px solid var(--border); box-shadow: var(--shadow);"></div>

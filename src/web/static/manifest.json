@@ -1,0 +1,19 @@
+{
+    "name": "Trade Ledger",
+    "short_name": "TradeLedger",
+    "description": "AI-powered trading bot dashboard",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": "#0b0e14",
+    "theme_color": "#0b0e14",
+    "orientation": "any",
+    "icons": [
+        {
+            "src": "/static/icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any maskable"
+        }
+    ]
+}
