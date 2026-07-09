@@ -22,6 +22,7 @@ def get_cached_llm_response(
     temperature: Optional[float] = None,
     symbol: Optional[str] = None,
     messages: Optional[List[Dict[str, str]]] = None,
+    request_type: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Get an LLM response, using Redis cache to avoid duplicate calls.
@@ -155,6 +156,7 @@ def get_cached_llm_response(
                             "cache_hit": 1,
                             "latency_ms": 0,
                             "error": None,
+                            "request_type": request_type,
                         })
                     except Exception as metric_err:
                         logger.warning("Failed to save cache hit metric: %s", metric_err)
@@ -240,6 +242,7 @@ def get_cached_llm_response(
                 "cache_hit": 0,
                 "latency_ms": latency_ms,
                 "error": str(e)[:500],
+                "request_type": request_type,
             })
         except Exception as metric_err:
             logger.warning("Failed to save primary error metric: %s", metric_err)
@@ -304,6 +307,7 @@ def get_cached_llm_response(
                             "cache_hit": 0,
                             "latency_ms": fallback_latency,
                             "error": str(fallback_e)[:500],
+                            "request_type": request_type,
                         })
                     except Exception as metric_err:
                         logger.warning("Failed to save fallback error metric: %s", metric_err)
@@ -395,6 +399,7 @@ def get_cached_llm_response(
                 "cache_hit": 0,
                 "latency_ms": (time.time() - start_time) * 1000,
                 "error": "LLM returned None response",
+                "request_type": request_type,
             })
         except Exception as metric_err:
             logger.warning("Failed to save None response metric: %s", metric_err)
@@ -414,6 +419,7 @@ def get_cached_llm_response(
             "cache_hit": 0,
             "latency_ms": latency_ms,
             "error": None,
+            "request_type": request_type,
         })
     except Exception as metric_err:
         logger.warning("Failed to save success metric: %s", metric_err)

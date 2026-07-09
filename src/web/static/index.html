@@ -2148,6 +2148,7 @@
                             html += `<strong>Provider:</strong> ${c.provider}\n`;
                             html += `<strong>Model:</strong> ${c.model}\n`;
                             html += `<strong>Type:</strong> ${c.model_type}\n`;
+                            html += `<strong>Request Type:</strong> ${c.request_type || '—'}\n`;
                             html += `<strong>Total Tokens:</strong> ${c.total_tokens.toLocaleString()}\n`;
                             html += `<strong>Cache Hit:</strong> ${c.cache_hit ? '✅' : '❌'}\n`;
                             html += `<strong>Latency (ms):</strong> ${c.latency_ms.toFixed(1)}\n`;

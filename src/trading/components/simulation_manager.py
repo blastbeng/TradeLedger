@@ -51,6 +51,7 @@ class SimulationManager:
                     temperature=temperature,
                     symbol=symbol,
                     messages=data.get("analysis_messages"),
+                    request_type="simulation_step1a",
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -104,6 +105,7 @@ class SimulationManager:
                     temperature=temperature,
                     symbol=symbol,
                     messages=variants_messages,
+                    request_type="simulation_step1b",
                 ),
                 timeout=settings.LLM_TIMEOUT
             )

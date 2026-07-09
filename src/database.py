@@ -203,6 +203,7 @@ def _migrate_db():
         ("discovered_symbols", "maturity", "ALTER TABLE discovered_symbols ADD COLUMN maturity TEXT"),
         ("discovered_symbols", "coupon", "ALTER TABLE discovered_symbols ADD COLUMN coupon REAL"),
         ("discovered_symbols", "country", "ALTER TABLE discovered_symbols ADD COLUMN country TEXT"),
+        ("llm_metrics", "request_type", "ALTER TABLE llm_metrics ADD COLUMN request_type TEXT"),
     ]
 
     max_retries = 3
@@ -427,7 +428,8 @@ def _get_init_statements() -> List[str]:
             total_tokens INTEGER NOT NULL DEFAULT 0,
             cache_hit INTEGER NOT NULL DEFAULT 0,
             latency_ms REAL NOT NULL DEFAULT 0,
-            error TEXT
+            error TEXT,
+            request_type TEXT
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp DESC)",
@@ -2082,8 +2084,8 @@ def save_llm_metrics(metrics: dict):
             INSERT INTO llm_metrics (
                 timestamp, provider, model, model_type,
                 prompt_tokens, completion_tokens, total_tokens,
-                cache_hit, latency_ms, error
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                cache_hit, latency_ms, error, request_type
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         conn.execute(sql, (
@@ -2097,6 +2099,7 @@ def save_llm_metrics(metrics: dict):
             1 if metrics.get("cache_hit") else 0,
             metrics.get("latency_ms", 0),
             metrics.get("error"),
+            metrics.get("request_type"),
         ))
         conn.commit()
     finally:
@@ -2143,7 +2146,7 @@ def get_llm_metrics_summary() -> dict:
         # Recent calls (last 20)
         recent_rows = conn.execute(
             "SELECT timestamp, provider, model, model_type, prompt_tokens, completion_tokens, "
-            "total_tokens, cache_hit, latency_ms, error "
+            "total_tokens, cache_hit, latency_ms, error, request_type "
             "FROM llm_metrics ORDER BY timestamp DESC LIMIT 20"
         ).fetchall()
         recent_calls = []
@@ -2159,6 +2162,7 @@ def get_llm_metrics_summary() -> dict:
                 "cache_hit": bool(r["cache_hit"]),
                 "latency_ms": r["latency_ms"],
                 "error": r["error"],
+                "request_type": r["request_type"],
             })
 
         return {

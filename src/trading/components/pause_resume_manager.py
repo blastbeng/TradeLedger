@@ -191,6 +191,7 @@ class PauseResumeManager:
                             {"role": "system", "content": compact_prompt(build_system_prompt())},
                             {"role": "user", "content": compact_prompt(prompt)},
                         ],
+                        request_type="pause_resume_decision",
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )

@@ -496,6 +496,7 @@ class BacktestManager:
                     symbol=symbol,
                     market_hash=market_hash,
                     messages=step2_messages,
+                    request_type="trading_decision_step2",
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -528,6 +529,7 @@ class BacktestManager:
                             symbol=symbol,
                             market_hash=market_hash,
                             messages=retry_messages,
+                            request_type="trading_decision_step2_retry",
                         ),
                         timeout=settings.LLM_TIMEOUT
                     )
@@ -768,6 +770,7 @@ class BacktestManager:
                     symbol=symbol,
                     market_hash=data.get("market_hash"),
                     messages=step2_messages,
+                    request_type="simulation_step2",
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -805,6 +808,7 @@ class BacktestManager:
                         symbol=symbol,
                         market_hash=data.get("market_hash"),
                         messages=retry_messages,
+                        request_type="simulation_step2_retry",
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
