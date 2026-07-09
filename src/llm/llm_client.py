@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from typing import Optional
+from typing import Optional, List, Dict
 
 import httpx
 
@@ -14,8 +14,8 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
                          base_url: str = None, api_key: str = None,
                          temperature: Optional[float] = None,
                          timeout: Optional[float] = None,
-                         messages: Optional[list[dict]] = None,
-                         add_cache_control: bool = False,
+                        messages: Optional[List[Dict[str, str]]] = None,
+                        add_cache_control: bool = False,
 ) -> str:
     """Send a prompt to the configured Ollama model and return the response text."""
     url = f"{(base_url or settings.OLLAMA_BASE_URL).rstrip('/')}/api/chat"
@@ -25,8 +25,8 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
         headers["Authorization"] = f"Bearer {effective_api_key}"
 
     if messages is not None:
-        # Use the provided message list directly
-        api_messages = messages
+        # Use the provided message list directly (copy to avoid mutation)
+        api_messages = [dict(msg) for msg in messages]
     else:
         api_messages = []
         if system_prompt:
@@ -103,8 +103,8 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
                          base_url: str = None, api_key: str = None,
                          temperature: Optional[float] = None,
                          timeout: Optional[float] = None,
-                         messages: Optional[list[dict]] = None,
-                         add_cache_control: bool = False,
+                        messages: Optional[List[Dict[str, str]]] = None,
+                        add_cache_control: bool = False,
 ) -> str:
     """Send a prompt to the configured OpenAI-compatible API and return the response text."""
     url = f"{(base_url or settings.OPENAI_BASE_URL).rstrip('/')}/chat/completions"
@@ -114,8 +114,9 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
         headers["Authorization"] = f"Bearer {effective_api_key}"
 
     if messages is not None:
-        # Use the provided message list directly
-        api_messages = messages
+        # Use the provided message list directly (copy dicts so add_cache_control
+        # doesn't mutate the caller's message objects, important for fallback reuse)
+        api_messages = [dict(msg) for msg in messages]
     else:
         api_messages = []
         if system_prompt:

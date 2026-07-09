@@ -1,7 +1,7 @@
 import hashlib
 import json
 import logging
-from typing import Optional
+from typing import Optional, List, Dict
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
 
@@ -19,7 +19,7 @@ def get_cached_llm_response(
     model_type: str = "actuator",
     temperature: Optional[float] = None,
     symbol: Optional[str] = None,
-    messages: Optional[list[str]] = None,
+    messages: Optional[List[Dict[str, str]]] = None,
 ) -> Optional[dict]:
     """
     Get an LLM response, using Redis cache to avoid duplicate calls.
@@ -101,12 +101,6 @@ def get_cached_llm_response(
     else:
         effective_timeout = settings.LLM_TIMEOUT
 
-    # Determine if prompt caching should be used for this provider
-    use_prompt_caching = (
-        settings.LLM_PROMPT_CACHING_ENABLED
-        and provider in settings.LLM_PROMPT_CACHING_PROVIDERS
-        and messages is not None  # only when we have a split message list
-    )
     # Determine whether to add the cache_control header (only for providers that support it)
     add_cache_control = (
         settings.LLM_PROMPT_CACHING_ENABLED
@@ -174,8 +168,8 @@ def get_cached_llm_response(
         api_messages = []
         if system_prompt:
             api_messages.append({"role": "system", "content": system_prompt})
-        for msg in messages:
-            api_messages.append({"role": "user", "content": msg})
+        # Use the provided message dicts directly (they already have role/content)
+        api_messages.extend(messages)
     else:
         api_messages = None  # will be built inside _get_*_response from prompt/system_prompt
 
