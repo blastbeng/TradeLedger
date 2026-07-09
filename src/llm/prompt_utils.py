@@ -180,7 +180,11 @@ def get_cached_news_summary(symbol: str, model_type: str = "weak") -> dict:
                 "that explains the overall sentiment and the main reason for it. "
                 "Do not include any other text."
             )
-            llm_result = get_cached_llm_response(compact_prompt(prompt), "", ttl=300, model_type=model_type, symbol=symbol)
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": compact_prompt(prompt)},
+            ]
+            llm_result = get_cached_llm_response("", "", ttl=300, model_type=model_type, symbol=symbol, messages=messages)
             summary_text = llm_result["response"].strip()
             if len(summary_text) > 120:
                 summary_text = summary_text[:117] + "..."

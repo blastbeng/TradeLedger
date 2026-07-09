@@ -31,7 +31,11 @@ def summarize_text(text: str, context: str = "general", max_length: int = 500) -
     )
 
     try:
-        summary = get_llm_response(prompt, system_prompt, model_type="weak")
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+        summary = get_llm_response("", "", model_type="weak", messages=messages)
         if summary and summary.strip():
             return summary.strip()
         return text
