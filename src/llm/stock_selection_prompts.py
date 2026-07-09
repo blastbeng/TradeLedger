@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 from src.config.settings import settings
 from src.database import get_news_for_symbols
 from src.exchanges.market_data import TIMEFRAME_MAP
-from src.llm.prompt_utils import _format_news_for_prompt, _format_trade_pattern_analysis
+from src.llm.prompt_utils import _format_news_for_prompt, _format_trade_pattern_analysis, _round_floats
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +60,13 @@ def build_stock_selection_prompt(
         if symbol in tickers:
             t = tickers[symbol]
             limits = market_limits.get(symbol, {})
+            _last = t.get("last")
+            _vol = t.get("quoteVolume")
             ticker_summary[symbol] = {
-                "last": t.get("last"),
+                "last": round(_last, 2) if isinstance(_last, (int, float)) else _last,
                 "percentage_24h": t.get("percentage"),
-                "volume": t.get("quoteVolume"),
-                "min_trade_cost": limits.get("min_cost"),  # now always a number
+                "volume": round(_vol) if isinstance(_vol, (int, float)) else _vol,
+                "min_trade_cost": limits.get("min_cost"),
                 "name": t.get("name"),
                 "coupon": t.get("coupon"),
                 "maturity": t.get("maturity"),
@@ -113,9 +115,13 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
             amount = pos.get("amount", "?")
             sl = pos.get("stop_loss", "?")
             tp = pos.get("take_profit", "?")
+            entry_str = f"{entry:.2f}" if isinstance(entry, (int, float)) else entry
+            amount_str = f"{amount:.4f}" if isinstance(amount, (int, float)) else amount
+            sl_str = f"{sl:.2f}" if isinstance(sl, (int, float)) else sl
+            tp_str = f"{tp:.2f}" if isinstance(tp, (int, float)) else tp
             prompt += (
-                f"  {sym}: entry={entry}, amount={amount}, "
-                f"stop_loss={sl}, take_profit={tp}\n"
+                f"  {sym}: entry={entry_str}, amount={amount_str}, "
+                f"stop_loss={sl_str}, take_profit={tp_str}\n"
             )
         prompt += (
             "When deciding to pause or resume trading, consider these open positions. "
@@ -206,12 +212,20 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
         prompt += "\nTrend quality scores (0-1, higher = cleaner trend; combines ADX strength, EMA alignment, RSI consistency, MACD direction, +DI/-DI confirmation):\n"
         for sym in available_symbols:
             if sym in symbol_trend_scores:
-                prompt += f"  {sym}: {symbol_trend_scores[sym]:.3f}\n"
+                prompt += f"  {sym}: {symbol_trend_scores[sym]:.2f}\n"
         prompt += "High trend quality (>0.7) = strong, clean trend suitable for momentum/breakout strategies. Low score (<0.3) = choppy or ranging, better for mean reversion or avoid.\n"
     if ohlcv_summary:
         filtered_ohlcv_summary = {}
         for sym, tfs in ohlcv_summary.items():
-            valid_tfs = {tf: data for tf, data in tfs.items() if data}
+            valid_tfs = {}
+            for tf, data in tfs.items():
+                if data:
+                    rounded_data = dict(data)
+                    if 'high' in rounded_data and isinstance(rounded_data['high'], (int, float)):
+                        rounded_data['high'] = round(rounded_data['high'], 2)
+                    if 'low' in rounded_data and isinstance(rounded_data['low'], (int, float)):
+                        rounded_data['low'] = round(rounded_data['low'], 2)
+                    valid_tfs[tf] = rounded_data
             if valid_tfs:
                 filtered_ohlcv_summary[sym] = valid_tfs
         if filtered_ohlcv_summary:
@@ -243,7 +257,7 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
         for sym_a, row in correlation_matrix.items():
             if sym_a not in candidate_set:
                 continue
-            trimmed[sym_a] = {sym_b: v for sym_b, v in row.items() if sym_b in candidate_set}
+            trimmed[sym_a] = {sym_b: round(v, 2) for sym_b, v in row.items() if sym_b in candidate_set}
         if trimmed:
             prompt += (
                 "\nPairwise correlation matrix (Pearson correlation of daily returns, range -1 to +1):\n"
@@ -262,12 +276,12 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
                 if ind.get('rsi') is not None:
                     tf_lines.append(f"    RSI(14)={ind['rsi']:.2f}")
                 if ind.get('macd') is not None:
-                    tf_lines.append(f"    MACD={ind['macd']:.4f} Signal={ind['macd_signal']:.4f} Hist={ind['macd_hist']:.4f}")
+                    tf_lines.append(f"    MACD={ind['macd']:.2f} Signal={ind['macd_signal']:.2f} Hist={ind['macd_hist']:.2f}")
                 if ind.get('bb_upper') is not None:
-                    tf_lines.append(f"    BB Upper={ind['bb_upper']:.4f} Middle={ind['bb_middle']:.4f} Lower={ind['bb_lower']:.4f}")
+                    tf_lines.append(f"    BB Upper={ind['bb_upper']:.2f} Middle={ind['bb_middle']:.2f} Lower={ind['bb_lower']:.2f}")
                 if ind.get('ema_9') is not None:
-                    ema9_str = f"EMA9={ind['ema_9']:.4f}"
-                    ema21_str = f" EMA21={ind['ema_21']:.4f}" if ind.get('ema_21') is not None else ""
+                    ema9_str = f"EMA9={ind['ema_9']:.2f}"
+                    ema21_str = f" EMA21={ind['ema_21']:.2f}" if ind.get('ema_21') is not None else ""
                     tf_lines.append(f"    {ema9_str}{ema21_str}")
                 if ind.get('stochastic_k') is not None:
                     d_str = f"{ind['stochastic_d']:.2f}" if ind['stochastic_d'] is not None else "N/A"
@@ -284,15 +298,15 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
                     tf_lines.append(f"    Williams %R(14)={ind['williams_r']:.2f}")
                 if ind.get('ichimoku') is not None:
                     ich = ind['ichimoku']
-                    tf_lines.append(f"    Ichimoku: Tenkan={ich['tenkan_sen']:.4f} Kijun={ich['kijun_sen']:.4f} SpanA={ich['senkou_span_a']:.4f} SpanB={ich['senkou_span_b']:.4f} Cloud={ich['cloud_bottom']:.4f}-{ich['cloud_top']:.4f}")
+                    tf_lines.append(f"    Ichimoku: Tenkan={ich['tenkan_sen']:.2f} Kijun={ich['kijun_sen']:.2f} SpanA={ich['senkou_span_a']:.2f} SpanB={ich['senkou_span_b']:.2f} Cloud={ich['cloud_bottom']:.2f}-{ich['cloud_top']:.2f}")
                 if ind.get('donchian_channels') is not None:
                     dc = ind['donchian_channels']
-                    tf_lines.append(f"    Donchian: Upper={dc['upper']:.4f} Middle={dc['middle']:.4f} Lower={dc['lower']:.4f}")
+                    tf_lines.append(f"    Donchian: Upper={dc['upper']:.2f} Middle={dc['middle']:.2f} Lower={dc['lower']:.2f}")
                 if ind.get('parabolic_sar') is not None:
-                    tf_lines.append(f"    SAR={ind['parabolic_sar']:.6f}")
+                    tf_lines.append(f"    SAR={ind['parabolic_sar']:.2f}")
                 if ind.get('keltner_channels') is not None:
                     kc = ind['keltner_channels']
-                    tf_lines.append(f"    Keltner: Upper={kc['upper']:.6f} Middle={kc['middle']:.6f} Lower={kc['lower']:.6f}")
+                    tf_lines.append(f"    Keltner: Upper={kc['upper']:.2f} Middle={kc['middle']:.2f} Lower={kc['lower']:.2f}")
 
                 if tf_lines:
                     lines.append(f"  [{tf}]")
@@ -300,7 +314,11 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
             if len(lines) > 1:
                 prompt += "\n".join(lines) + "\n"
     if market_trend:
-        prompt += f"\nOverall market trend ({market_trend['symbol']}): daily change {market_trend.get('change_24h')}%, last price {market_trend.get('last')}\n"
+        _mt_last = market_trend.get('last')
+        _mt_chg = market_trend.get('change_24h')
+        _mt_last_str = f"{_mt_last:.2f}" if isinstance(_mt_last, (int, float)) else _mt_last
+        _mt_chg_str = f"{_mt_chg:.2f}" if isinstance(_mt_chg, (int, float)) else _mt_chg
+        prompt += f"\nOverall market trend ({market_trend['symbol']}): daily change {_mt_chg_str}%, last price {_mt_last_str}\n"
     if session_info:
         prompt += f"\nCurrent UTC hour: {session_info['utc_hour']} ({session_info['session']} session)\n"
     # --- Market regime summary (based on breadth only, VIX not available) ---
@@ -316,7 +334,7 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
         prompt += "\nSentiment trend (change in compound score since last cycle):\n"
         for base, delta in sentiment_trend.items():
             if delta is not None:
-                prompt += f"  {base}: {delta:+.4f}\n"
+                prompt += f"  {base}: {delta:+.2f}\n"
     if news_section:
         prompt += f"\n{news_section}\n"
         prompt += (
@@ -326,9 +344,9 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
         )
     if performance:
         perf_lines = ["Historical Performance Data:"]
-        equity_curve = performance.get('equity_curve', {})
-        stock_perf = performance.get('stock_performance', {})
-        strategy_perf = performance.get('strategy_performance', {})
+        equity_curve = _round_floats(performance.get('equity_curve', {}))
+        stock_perf = _round_floats(performance.get('stock_performance', {}))
+        strategy_perf = _round_floats(performance.get('strategy_performance', {}))
 
         if equity_curve:
             perf_lines.append(f"Overall equity curve: {json.dumps(equity_curve, separators=(',', ':'))}")
@@ -340,7 +358,7 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
         if len(perf_lines) > 1:
             prompt += "\n".join(perf_lines) + "\n"
         if daily_pnl is not None:
-            prompt += f"Today's realized P&L: {daily_pnl:.4f} {base_currency}\n"
+            prompt += f"Today's realized P&L: {daily_pnl:.0f} {base_currency}\n"
         consecutive_losses = performance.get("equity_curve", {}).get("consecutive_losses", 0)
         if consecutive_losses > 0:
             prompt += f"⚠️ You have {consecutive_losses} consecutive losing trades. Consider pausing or reducing risk.\n"
@@ -352,8 +370,8 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
         daily_pnl = performance.get("equity_curve", {}).get("daily_pnl", 0.0)
         total_pnl = performance.get("equity_curve", {}).get("total_pnl", 0.0)
         prompt += (
-            f"\n**Account P&L**: Today's realized P&L = {daily_pnl:.4f} {base_currency}, "
-            f"Total realized P&L = {total_pnl:.4f} {base_currency}.\n"
+            f"\n**Account P&L**: Today's realized P&L = {daily_pnl:.0f} {base_currency}, "
+            f"Total realized P&L = {total_pnl:.0f} {base_currency}.\n"
         )
     if symbol_events:
         prompt += "\n**Upcoming Corporate Events (detected from news):**\n"
@@ -480,7 +498,11 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
             amount = pos.get("amount", "?")
             sl = pos.get("stop_loss", "?")
             tp = pos.get("take_profit", "?")
-            prompt += f"  {sym}: entry={entry}, amount={amount}, stop_loss={sl}, take_profit={tp}\n"
+            entry_str = f"{entry:.2f}" if isinstance(entry, (int, float)) else entry
+            amount_str = f"{amount:.4f}" if isinstance(amount, (int, float)) else amount
+            sl_str = f"{sl:.2f}" if isinstance(sl, (int, float)) else sl
+            tp_str = f"{tp:.2f}" if isinstance(tp, (int, float)) else tp
+            prompt += f"  {sym}: entry={entry_str}, amount={amount_str}, stop_loss={sl_str}, take_profit={tp_str}\n"
         prompt += "When deciding to pause or resume, consider these open positions.\n"
 
     # Add symbol tenure
@@ -501,9 +523,9 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
     # Add performance
     if performance:
         perf_lines = ["Historical Performance Data:"]
-        equity_curve = performance.get('equity_curve', {})
-        stock_perf = performance.get('stock_performance', {})
-        strategy_perf = performance.get('strategy_performance', {})
+        equity_curve = _round_floats(performance.get('equity_curve', {}))
+        stock_perf = _round_floats(performance.get('stock_performance', {}))
+        strategy_perf = _round_floats(performance.get('strategy_performance', {}))
 
         if equity_curve:
             perf_lines.append(f"Overall equity curve: {json.dumps(equity_curve, separators=(',', ':'))}")
@@ -515,7 +537,7 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
         if len(perf_lines) > 1:
             prompt += "\n".join(perf_lines) + "\n"
         if daily_pnl is not None:
-            prompt += f"Today's realized P&L: {daily_pnl:.4f} {base_currency}\n"
+            prompt += f"Today's realized P&L: {daily_pnl:.0f} {base_currency}\n"
         consecutive_losses = equity_curve.get("consecutive_losses", 0)
         if consecutive_losses > 0:
             prompt += f"⚠️ You have {consecutive_losses} consecutive losing trades. Consider pausing or reducing risk.\n"
@@ -530,7 +552,11 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
     if full_market_breadth:
         prompt += f"Full market breadth: {full_market_breadth.get('positive_pct', 50)}% positive\n"
     if market_trend:
-        prompt += f"\nOverall market trend ({market_trend['symbol']}): daily change {market_trend.get('change_24h')}%, last price {market_trend.get('last')}\n"
+        _mt_last = market_trend.get('last')
+        _mt_chg = market_trend.get('change_24h')
+        _mt_last_str = f"{_mt_last:.2f}" if isinstance(_mt_last, (int, float)) else _mt_last
+        _mt_chg_str = f"{_mt_chg:.2f}" if isinstance(_mt_chg, (int, float)) else _mt_chg
+        prompt += f"\nOverall market trend ({market_trend['symbol']}): daily change {_mt_chg_str}%, last price {_mt_last_str}\n"
     if session_info:
         prompt += f"\nCurrent UTC hour: {session_info['utc_hour']} ({session_info['session']} session)\n"
 
@@ -562,8 +588,8 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
         daily_pnl_val = performance.get("equity_curve", {}).get("daily_pnl", 0.0)
         total_pnl = performance.get("equity_curve", {}).get("total_pnl", 0.0)
         prompt += (
-            f"\n**Account P&L**: Today's realized P&L = {daily_pnl_val:.4f} {base_currency}, "
-            f"Total realized P&L = {total_pnl:.4f} {base_currency}.\n"
+            f"\n**Account P&L**: Today's realized P&L = {daily_pnl_val:.0f} {base_currency}, "
+            f"Total realized P&L = {total_pnl:.0f} {base_currency}.\n"
         )
 
     # Output format
