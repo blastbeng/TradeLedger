@@ -40,6 +40,18 @@ class ManualTradeRequest(BaseModel):
     money_spent: float
     fee: float = 0.0
 
+def _resolve_llm_role_settings(role: str):
+    """Resolve provider, model, and base URL for a given LLM role (mind, actuator, weak)."""
+    role_upper = role.upper()
+    provider = getattr(settings, f"LLM_{role_upper}_PROVIDER", "") or settings.LLM_PROVIDER
+    if provider == "ollama":
+        model = getattr(settings, f"OLLAMA_{role_upper}_MODEL", None)
+        url = getattr(settings, f"OLLAMA_{role_upper}_BASE_URL", None) or settings.OLLAMA_BASE_URL
+    else:
+        model = getattr(settings, f"OPENAI_{role_upper}_MODEL", None)
+        url = getattr(settings, f"OPENAI_{role_upper}_BASE_URL", None) or settings.OPENAI_BASE_URL
+    return provider, model, url
+
 async def verify_auth(request: Request):
     """Verify the user is authenticated via a session cookie."""
     if not settings.WEB_USERNAME or not settings.WEB_PASSWORD:
@@ -624,8 +636,23 @@ async def llm_metrics():
     """Return aggregated LLM metrics for the dashboard."""
     try:
         data = await run_in_threadpool(get_llm_metrics_summary)
-        data["mind_provider_url"] = getattr(settings, "LLM_MIND_BASE_URL", "") or getattr(settings, "LLM_BASE_URL", "")
-        data["actuator_provider_url"] = getattr(settings, "LLM_ACTUATOR_BASE_URL", "") or getattr(settings, "LLM_BASE_URL", "")
+        
+        mind_provider, mind_model, mind_url = _resolve_llm_role_settings("mind")
+        actuator_provider, actuator_model, actuator_url = _resolve_llm_role_settings("actuator")
+        weak_provider, weak_model, weak_url = _resolve_llm_role_settings("weak")
+        
+        data["mind_provider"] = mind_provider
+        data["mind_model"] = mind_model
+        data["mind_provider_url"] = mind_url or ""
+        
+        data["actuator_provider"] = actuator_provider
+        data["actuator_model"] = actuator_model
+        data["actuator_provider_url"] = actuator_url or ""
+        
+        data["weak_provider"] = weak_provider
+        data["weak_model"] = weak_model
+        data["weak_provider_url"] = weak_url or ""
+        
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
