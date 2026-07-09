@@ -183,10 +183,14 @@ class PauseResumeManager:
             try:
                 pause_result = await asyncio.wait_for(
                     asyncio.to_thread(
-                        get_cached_llm_response, compact_prompt(prompt), compact_prompt(build_system_prompt()), 120,
+                        get_cached_llm_response, "", "", 120,
                         model_type="actuator",
                         temperature=effective_temp,
                         market_hash=compute_market_hash({"pause_resume_prompt": prompt}),
+                        messages=[
+                            {"role": "system", "content": compact_prompt(build_system_prompt())},
+                            {"role": "user", "content": compact_prompt(prompt)},
+                        ],
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )

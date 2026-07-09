@@ -7,7 +7,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
 from src.llm.cache import get_cached_llm_response, compute_market_hash
-from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, BacktestPromptData
+from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, BacktestPromptData, build_analysis_messages
+from src.llm.backtest_prompts import build_backtest_variants_messages
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 
@@ -137,13 +138,15 @@ class LLMStepManager:
             step1a_result = await asyncio.wait_for(
                 asyncio.to_thread(
                     get_cached_llm_response,
-                    compact_prompt(analysis_prompt),
-                    system_prompt,
-                    60,
+                    "", "", 60,
                     market_hash=market_hash,
                     model_type=strategy_model_type,
                     temperature=effective_temp,
                     symbol=symbol,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": compact_prompt(analysis_prompt)},
+                    ],
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -164,11 +167,14 @@ class LLMStepManager:
                 retry_result = await asyncio.wait_for(
                     asyncio.to_thread(
                         get_cached_llm_response,
-                        compact_prompt(correction_prompt),
-                        system_prompt, 30,
+                        "", "", 30,
                         model_type="actuator",
                         temperature=effective_temp,
                         market_hash=market_hash,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": compact_prompt(correction_prompt)},
+                        ],
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
@@ -357,6 +363,14 @@ class LLMStepManager:
         )
         logger.info(f"LLM Step 1b variants prompt for {symbol}: {len(variants_prompt)} chars")
 
+        # Build messages for prompt caching (system + user)
+        variants_messages = await asyncio.to_thread(
+            build_backtest_variants_messages,
+            prompt_data
+        )
+        variants_messages[0]["content"] = compact_prompt(variants_messages[0]["content"])
+        variants_messages[-1]["content"] = compact_prompt(variants_messages[-1]["content"])
+
         # Use a different market hash for Step 1b (include analysis to differentiate)
         variants_market_hash = compute_market_hash({
             **market_snapshot,
@@ -368,13 +382,12 @@ class LLMStepManager:
             step1b_result = await asyncio.wait_for(
                 asyncio.to_thread(
                     get_cached_llm_response,
-                    compact_prompt(variants_prompt),
-                    compact_prompt(build_system_prompt()),
-                    60,
+                    "", "", 60,
                     market_hash=variants_market_hash,
                     model_type=strategy_model_type,
                     temperature=effective_temp,
                     symbol=symbol,
+                    messages=variants_messages,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -418,12 +431,14 @@ class LLMStepManager:
             try:
                 response2 = await asyncio.wait_for(
                     asyncio.to_thread(
-                        get_cached_llm_response, compact_prompt(correction_prompt),
-                        compact_prompt(build_system_prompt()),
-                        30,
+                        get_cached_llm_response, "", "", 30,
                         model_type="actuator",
                         temperature=effective_temp,
                         market_hash=variants_market_hash,
+                        messages=[
+                            {"role": "system", "content": compact_prompt(build_system_prompt())},
+                            {"role": "user", "content": compact_prompt(correction_prompt)},
+                        ],
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )

@@ -145,9 +145,13 @@ class ReevalResponseProcessor:
         try:
             correction_result = await asyncio.wait_for(
                 asyncio.to_thread(
-                    get_cached_llm_response, compact_prompt(correction_prompt), compact_prompt(build_system_prompt()), 120,
+                    get_cached_llm_response, "", "", 120,
                     model_type="actuator",
                     temperature=effective_temp,
+                    messages=[
+                        {"role": "system", "content": compact_prompt(build_system_prompt(task_type="stock_selection"))},
+                        {"role": "user", "content": compact_prompt(correction_prompt)},
+                    ],
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
