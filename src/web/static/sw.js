@@ -1,7 +1,5 @@
-const CACHE_NAME = 'trade-ledger-v1';
+const CACHE_NAME = 'trade-ledger-v2';
 const STATIC_ASSETS = [
-    '/',
-    '/static/index.html',
     '/static/manifest.json',
     '/static/icon.svg',
 ];
@@ -30,6 +28,26 @@ self.addEventListener('fetch', (event) => {
     // Skip API calls and WebSocket — always use network
     if (url.pathname.startsWith('/api/') || url.pathname === '/ws') return;
 
+    // Network-first for navigation requests (HTML pages) — ensures updates are always fetched
+    if (event.request.mode === 'navigate') {
+        event.respondWith(
+            fetch(event.request).then((response) => {
+                if (response.ok) {
+                    const responseClone = response.clone();
+                    caches.open(CACHE_NAME).then((cache) => {
+                        cache.put(event.request, responseClone);
+                    });
+                }
+                return response;
+            }).catch(() => {
+                return caches.match(event.request).then((cached) => {
+                    return cached || caches.match('/');
+                });
+            })
+        );
+        return;
+    }
+
     // Cache-first for static assets, network fallback
     event.respondWith(
         caches.match(event.request).then((cached) => {
@@ -43,9 +61,7 @@ self.addEventListener('fetch', (event) => {
                 }
                 return response;
             }).catch(() => {
-                if (event.request.mode === 'navigate') {
-                    return caches.match('/');
-                }
+                return caches.match('/');
             });
         })
     );
