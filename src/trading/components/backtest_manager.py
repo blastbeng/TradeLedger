@@ -15,7 +15,7 @@ from src.database import get_ohlcv, get_recent_backtest_result, save_backtest_re
 from src.exchanges.fees import calculate_transaction_costs
 from src.indicators import compute_atr_series, compute_adx_series, compute_rsi_series, compute_macd_series
 from src.llm.cache import get_cached_llm_response
-from src.llm.prompts import build_final_decision_prompt, compact_prompt, build_system_prompt
+from src.llm.backtest_prompts import build_final_decision_messages
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary, BacktestConfig
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm
@@ -461,7 +461,7 @@ class BacktestManager:
         historical_bt_results = await asyncio.to_thread(
             get_backtest_results_for_symbol, symbol, assigned_tf, 10
         )
-        step2_prompt = build_final_decision_prompt(
+        step2_messages = build_final_decision_messages(
             symbol=symbol,
             ticker=ticker,
             preliminary_decision={
@@ -480,7 +480,7 @@ class BacktestManager:
         # Append position info if exists
         if symbol in engine.positions:
             pos = engine.positions[symbol]
-            step2_prompt += (
+            step2_messages[-1]["content"] += (
                 f"\n**Existing Position:** You already hold {pos['amount']:.6f} "
                 f"at entry {pos['price']:.4f}. A BUY will ADD to this position (scale in).\n"
             )
@@ -490,13 +490,12 @@ class BacktestManager:
             step2_result = await asyncio.wait_for(
                 asyncio.to_thread(
                     get_cached_llm_response,
-                    compact_prompt(step2_prompt),
-                    compact_prompt(build_system_prompt()),
-                    60,
+                    "", "", 60,
                     model_type=strategy_model_type,
                     temperature=effective_temp,
                     symbol=symbol,
                     market_hash=market_hash,
+                    messages=step2_messages,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -510,22 +509,26 @@ class BacktestManager:
                 final_strategy = create_strategy_from_llm(step2_response)
             except ValueError:
                 # Retry with correction prompt
-                correction = (
+                correction_content = (
                     "Your previous response was not valid JSON. "
                     "Output ONLY a single JSON object. "
-                    "Here is the request:\n\n" + step2_prompt
+                    "Here is the request:\n\n" + step2_messages[-1]["content"]
                 )
+                retry_messages = [
+                    step2_messages[0],
+                    {"role": "user", "content": correction_content},
+                ]
                 try:
                     retry_result = await asyncio.wait_for(
                         asyncio.to_thread(
                             get_cached_llm_response,
-                            compact_prompt(correction),
-                            compact_prompt(build_system_prompt()), 30,
+                            "", "", 30,
                             model_type="actuator",
                             temperature=effective_temp,
                             symbol=symbol,
                             market_hash=market_hash,
-                            ),
+                            messages=retry_messages,
+                        ),
                         timeout=settings.LLM_TIMEOUT
                     )
                     final_strategy = create_strategy_from_llm(retry_result["response"])
@@ -730,7 +733,7 @@ class BacktestManager:
         temperature = data.get("temperature", 0.2)
 
         total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
-        step2_prompt = build_final_decision_prompt(
+        step2_messages = build_final_decision_messages(
             symbol=symbol,
             ticker=data["ticker"],
             preliminary_decision={
@@ -750,7 +753,7 @@ class BacktestManager:
         # Append position info if exists
         if symbol in engine.positions:
             pos = engine.positions[symbol]
-            step2_prompt += (
+            step2_messages[-1]["content"] += (
                 f"\n**Existing Position:** You already hold {pos['amount']:.6f} "
                 f"at entry {pos['price']:.4f}. A BUY will ADD to this position (scale in).\n"
             )
@@ -759,13 +762,12 @@ class BacktestManager:
             step2_result = await asyncio.wait_for(
                 asyncio.to_thread(
                     get_cached_llm_response,
-                    compact_prompt(step2_prompt),
-                    compact_prompt(build_system_prompt()),
-                    60,
+                    "", "", 60,
                     model_type=model_type,
                     temperature=temperature,
                     symbol=symbol,
                     market_hash=data.get("market_hash"),
+                    messages=step2_messages,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -784,21 +786,25 @@ class BacktestManager:
         except ValueError:
             # Retry with correction prompt
             logger.warning(f"Simulation Step 2 parse failed for {symbol}. Retrying.")
-            correction = (
+            correction_content = (
                 "Your previous response was not valid JSON. "
                 "Output ONLY a single JSON object. "
-                "Here is the request:\n\n" + step2_prompt
+                "Here is the request:\n\n" + step2_messages[-1]["content"]
             )
+            retry_messages = [
+                step2_messages[0],
+                {"role": "user", "content": correction_content},
+            ]
             try:
                 retry_result = await asyncio.wait_for(
                     asyncio.to_thread(
                         get_cached_llm_response,
-                        compact_prompt(correction),
-                        compact_prompt(build_system_prompt()), 30,
+                        "", "", 30,
                         model_type="actuator",
                         temperature=temperature,
                         symbol=symbol,
                         market_hash=data.get("market_hash"),
+                        messages=retry_messages,
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
