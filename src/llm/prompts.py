@@ -316,7 +316,9 @@ Maximum symbols to trade: {max_symbols}
                 side = q.get('side', '?').upper()
                 limit_price = q.get('limit_price')
                 age_sec = now - q.get('queued_at', 0) if q.get('queued_at') else 0
-                prompt += f"  {side} @ {limit_price} ({age_sec:.0f}s ago)\n"
+                age_min = int(age_sec / 60)
+                lp_str = f"{limit_price:.2f}" if isinstance(limit_price, (int, float)) else str(limit_price)
+                prompt += f"  {side} @ {lp_str} ({age_min}m ago)\n"
             prompt += "Do NOT output new BUY/SELL while queued order exists. Output HOLD to change.\n"
     base_symbol = symbol
     quote_currency = base_currency
@@ -522,9 +524,9 @@ Maximum symbols to trade: {max_symbols}
         _recent_compact = [
             {
                 "sym": t.get("symbol"),
-                "pnl": t.get("realized_pnl"),
+                "pnl": round(t.get("realized_pnl", 0), 2) if isinstance(t.get("realized_pnl"), (int, float)) else t.get("realized_pnl"),
                 "reason": t.get("exit_reason"),
-                "hold": t.get("hold_time_seconds"),
+                "hold": int(t.get("hold_time_seconds", 0) / 60) if t.get("hold_time_seconds") is not None else None,
             }
             for t in recent_trades
         ]
@@ -533,22 +535,22 @@ Maximum symbols to trade: {max_symbols}
     # --- Past trades for this symbol ---
     if past_trades:
         _past_compact = [
-            {"e": t.get("price", 0.0), "x": t.get("exit_price", 0.0), "pnl": t.get("realized_pnl", 0.0),
-             "r": t.get("exit_reason", ""), "h": t.get("hold_time_seconds"), "s": t.get("strategy_type", "")}
+            {"e": round(t.get("price", 0.0), 2), "x": round(t.get("exit_price", 0.0), 2), "pnl": round(t.get("realized_pnl", 0.0), 2),
+             "r": t.get("exit_reason", ""), "h": int(t.get("hold_time_seconds", 0) / 60) if t.get("hold_time_seconds") is not None else None, "s": t.get("strategy_type", "")}
             for t in past_trades
         ]
         prompt += f"\nPastTrades({symbol}): {json.dumps(_past_compact, separators=(',', ':'))}\n"
 
     if historical_backtest_results:
         _ht_compact = [
-            {"tf": bt.get('timeframe', '?'), "h": (time.time() - bt.get("created_at", 0)) / 3600,
+            {"tf": bt.get('timeframe', '?'), "h": int((time.time() - bt.get("created_at", 0)) / 3600),
              "SL": bt.get("variant_params", {}).get('stop_loss_pct', '?'),
              "TP": bt.get("variant_params", {}).get('take_profit_pct', '?'),
              "t": bt.get("stats", {}).get('total_trades', 0),
-             "wr": bt.get("stats", {}).get('win_rate', 0),
-             "pnl": bt.get("stats", {}).get('total_pnl_pct', 0),
-             "dd": bt.get("stats", {}).get('max_drawdown_pct', 0),
-             "pf": bt.get("stats", {}).get('profit_factor', 0)}
+             "wr": round(bt.get("stats", {}).get('win_rate', 0), 2),
+             "pnl": round(bt.get("stats", {}).get('total_pnl_pct', 0), 2),
+             "dd": round(bt.get("stats", {}).get('max_drawdown_pct', 0), 2),
+             "pf": round(bt.get("stats", {}).get('profit_factor', 0), 2)}
             for bt in historical_backtest_results
         ]
         prompt += f"\n**HistBT({symbol}):** {json.dumps(_ht_compact, separators=(',', ':'))}\n"
