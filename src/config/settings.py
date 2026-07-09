@@ -629,7 +629,7 @@ class Settings(BaseSettings):
     LLM_PROMPT_CACHING_PROVIDERS: list[str] = ["deepseek", "ollama", "openai"]
     # Providers that support the cache_control field (e.g., DeepSeek).
     # Only these providers will receive the cache_control header.
-    LLM_PROMPT_CACHING_CONTROL_PROVIDERS: list[str] = ["deepseek"]
+    LLM_PROMPT_CACHING_CONTROL_PROVIDERS: list[str] = []
 
     # Cache version key to invalidate LLM cache on settings reload.
     # Automatically generated on instantiation; changes when settings.reload() is called.

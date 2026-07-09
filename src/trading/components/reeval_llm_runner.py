@@ -50,7 +50,7 @@ class ReevalLLMRunner:
         Returns a list of parsed chunk result dicts.
         """
         engine = self.engine
-        system_prompt = compact_prompt(build_system_prompt())
+        system_prompt = compact_prompt(build_system_prompt(task_type="stock_selection"))
 
         CHUNK_SIZE = settings.LLM_CHUNK_SIZE
         chunk_results: List[Dict[str, Any]] = []
