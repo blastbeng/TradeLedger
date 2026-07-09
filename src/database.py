@@ -2165,6 +2165,39 @@ def get_llm_metrics_summary() -> dict:
                 "request_type": r["request_type"],
             })
 
+        # Period-based statistics (hour, day, week, month)
+        now_ts = time.time()
+        period_cutoffs = [
+            ("hour", now_ts - 3600),
+            ("day", now_ts - 86400),
+            ("week", now_ts - 604800),
+            ("month", now_ts - 2592000),
+        ]
+        period_stats = {}
+        for period_name, cutoff in period_cutoffs:
+            period_row = conn.execute(
+                _adapt_sql(
+                    "SELECT COUNT(*) as calls, "
+                    "COALESCE(SUM(total_tokens),0) as tokens, "
+                    "COALESCE(SUM(prompt_tokens),0) as prompt_tokens, "
+                    "COALESCE(SUM(completion_tokens),0) as completion_tokens, "
+                    "COALESCE(SUM(cache_hit),0) as cache_hits, "
+                    "COALESCE(AVG(latency_ms),0) as avg_latency "
+                    "FROM llm_metrics WHERE timestamp >= %s"
+                ),
+                (cutoff,)
+            ).fetchone()
+            p_calls = period_row["calls"] if period_row else 0
+            p_cache_hits = period_row["cache_hits"] if period_row else 0
+            period_stats[period_name] = {
+                "calls": p_calls,
+                "prompt_tokens": period_row["prompt_tokens"] if period_row else 0,
+                "completion_tokens": period_row["completion_tokens"] if period_row else 0,
+                "tokens": period_row["tokens"] if period_row else 0,
+                "cache_hit_rate": round((p_cache_hits / p_calls * 100) if p_calls > 0 else 0, 2),
+                "avg_latency_ms": round(period_row["avg_latency"], 2) if period_row and period_row["avg_latency"] else 0,
+            }
+
         return {
             "total_calls": total_calls,
             "total_prompt_tokens": total_prompt_tokens,
@@ -2173,6 +2206,7 @@ def get_llm_metrics_summary() -> dict:
             "cache_hit_rate": round(cache_hit_rate, 2),
             "per_model": per_model,
             "recent_calls": recent_calls,
+            "period_stats": period_stats,
         }
     finally:
         conn.close()

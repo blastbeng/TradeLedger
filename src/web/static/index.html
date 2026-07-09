@@ -479,6 +479,30 @@
             <div class="card card-full" id="llm-metrics-card">
                 <h2>🤖 LLM Metrics <button id="btn-refresh-llm-metrics" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Refresh</button></h2>
                 <div id="llm-metrics-summary" style="margin-bottom:16px; font-size:0.9rem;"></div>
+                <div id="llm-metrics-periods" style="margin-bottom:16px; display:grid; grid-template-columns: repeat(4, 1fr); gap:12px;">
+                    <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px;">
+                        <h4 style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:6px;">⏱️ Last Hour</h4>
+                        <div id="llm-period-hour" style="font-size:0.8rem; line-height:1.5;">—</div>
+                    </div>
+                    <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px;">
+                        <h4 style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:6px;">📅 Today (24h)</h4>
+                        <div id="llm-period-day" style="font-size:0.8rem; line-height:1.5;">—</div>
+                    </div>
+                    <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px;">
+                        <h4 style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:6px;">📆 This Week (7d)</h4>
+                        <div id="llm-period-week" style="font-size:0.8rem; line-height:1.5;">—</div>
+                    </div>
+                    <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px;">
+                        <h4 style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:6px;">🗓️ This Month (30d)</h4>
+                        <div id="llm-period-month" style="font-size:0.8rem; line-height:1.5;">—</div>
+                    </div>
+                </div>
+                <div style="margin-bottom:16px;">
+                    <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">📊 Calls & Tokens (last 24h, hourly)</h3>
+                    <div style="position:relative; width:100%; height:200px;">
+                        <canvas id="llm-metrics-chart"></canvas>
+                    </div>
+                </div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
                     <div>
                         <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">Per Model</h3>
@@ -1119,6 +1143,7 @@
         });
 
         let chartInstance = null;
+        let llmMetricsChart = null;
         let chartUpdateTimer = null;
         const modal = document.getElementById('chart-modal');
         const closeBtn = document.getElementById('close-modal');
@@ -2106,6 +2131,24 @@
                     <strong>Cache Hit Rate:</strong> ${data.cache_hit_rate.toFixed(1)}%
                 `;
 
+                // Period stats
+                if (data.period_stats) {
+                    const periods = ['hour', 'day', 'week', 'month'];
+                    const labels = { hour: 'Last Hour', day: 'Today (24h)', week: 'This Week (7d)', month: 'This Month (30d)' };
+                    for (const p of periods) {
+                        const el = document.getElementById(`llm-period-${p}`);
+                        if (el && data.period_stats[p]) {
+                            const ps = data.period_stats[p];
+                            el.innerHTML = `
+                                <strong>Calls:</strong> ${ps.calls}<br>
+                                <strong>Tokens:</strong> ${ps.tokens.toLocaleString()}<br>
+                                <strong>Cache Hit:</strong> ${ps.cache_hit_rate.toFixed(1)}%<br>
+                                <strong>Avg Latency:</strong> ${ps.avg_latency_ms.toFixed(0)}ms
+                            `;
+                        }
+                    }
+                }
+
                 // Per-model table
                 const perModelBody = document.querySelector('#llm-per-model-table tbody');
                 perModelBody.innerHTML = '';
@@ -2166,8 +2209,91 @@
                     cell.style.textAlign = 'center';
                     cell.style.color = 'var(--text-secondary)';
                 }
+
+                // Fetch timeseries and render chart
+                try {
+                    const tsResp = await fetch('/api/llm-metrics/timeseries?hours=24');
+                    if (tsResp.ok) {
+                        const tsData = await tsResp.json();
+                        renderLLMMetricsChart(tsData);
+                    }
+                } catch (e) {
+                    console.error('Failed to fetch LLM metrics timeseries', e);
+                }
             } catch (e) {
                 console.error('Failed to fetch LLM metrics', e);
+            }
+        }
+
+        function renderLLMMetricsChart(tsData) {
+            const canvas = document.getElementById('llm-metrics-chart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const labels = tsData.map(d => new Date(d.hour * 1000).toLocaleTimeString([], {hour: '2-digit'}));
+            const callsData = tsData.map(d => d.calls);
+            const tokensData = tsData.map(d => d.tokens);
+            const cacheHitData = tsData.map(d => d.cache_hit_rate);
+
+            if (llmMetricsChart) {
+                llmMetricsChart.data.labels = labels;
+                llmMetricsChart.data.datasets[0].data = callsData;
+                llmMetricsChart.data.datasets[1].data = tokensData;
+                llmMetricsChart.data.datasets[2].data = cacheHitData;
+                llmMetricsChart.update();
+            } else {
+                llmMetricsChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: 'Calls',
+                                data: callsData,
+                                backgroundColor: 'rgba(88,166,255,0.5)',
+                                borderColor: 'rgba(88,166,255,1)',
+                                borderWidth: 1,
+                                yAxisID: 'y',
+                                order: 2,
+                            },
+                            {
+                                label: 'Tokens',
+                                data: tokensData,
+                                type: 'line',
+                                borderColor: 'rgba(163,113,247,1)',
+                                backgroundColor: 'rgba(163,113,247,0.1)',
+                                tension: 0.3,
+                                fill: false,
+                                yAxisID: 'y1',
+                                order: 1,
+                            },
+                            {
+                                label: 'Cache Hit %',
+                                data: cacheHitData,
+                                type: 'line',
+                                borderColor: 'rgba(63,185,80,1)',
+                                backgroundColor: 'rgba(63,185,80,0.1)',
+                                tension: 0.3,
+                                fill: false,
+                                yAxisID: 'y2',
+                                order: 0,
+                            },
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: { display: true, labels: { color: '#8b949e', font: { size: 10 } } },
+                        },
+                        scales: {
+                            x: { ticks: { color: '#8b949e', font: { size: 9 }, maxTicksLimit: 12 } },
+                            y: { type: 'linear', position: 'left', ticks: { color: '#8b949e', font: { size: 9 } }, title: { display: true, text: 'Calls', color: '#8b949e', font: { size: 10 } } },
+                            y1: { type: 'linear', position: 'right', ticks: { color: '#8b949e', font: { size: 9 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Tokens', color: '#8b949e', font: { size: 10 } } },
+                            y2: { type: 'linear', position: 'right', ticks: { color: '#8b949e', font: { size: 9 }, callback: v => v + '%' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Cache %', color: '#8b949e', font: { size: 10 } }, offset: true },
+                        }
+                    }
+                });
             }
         }
 
