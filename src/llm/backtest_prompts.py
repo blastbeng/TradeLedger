@@ -333,7 +333,7 @@ def build_backtest_variants_messages(data: BacktestPromptData) -> List[Dict[str,
     """Build a list of messages (system + user) for prompt caching."""
     from src.llm.system_prompt import build_system_prompt
     return [
-        {"role": "system", "content": build_system_prompt()},
+        {"role": "system", "content": build_system_prompt(task_type="trading")},
         {"role": "user", "content": build_backtest_variants_prompt(data)},
     ]
 
@@ -351,7 +351,7 @@ def build_final_decision_messages(
     """Build a list of messages (system + user) for prompt caching."""
     from src.llm.system_prompt import build_system_prompt
     return [
-        {"role": "system", "content": build_system_prompt()},
+        {"role": "system", "content": build_system_prompt(task_type="trading")},
         {"role": "user", "content": build_final_decision_prompt(
             symbol=symbol,
             ticker=ticker,

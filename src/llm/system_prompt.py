@@ -197,11 +197,17 @@ def _compute_btp_fee_text() -> str:
   - **CRITICAL:** For BTPs, ensure your `take_profit_pct` is strictly greater than the total round-trip fee percentage. For a €1,000 BTP trade, total fees are ~€{trade_1000_total:.2f} ({trade_1000_pct:.2f}%), so `take_profit_pct` must be > {trade_1000_pct + 0.01:.2f}%. For a €10,000 BTP trade, total fees are ~€{trade_10000_total:.2f} ({trade_10000_pct:.2f}%), so `take_profit_pct` must be > {trade_10000_pct + 0.01:.2f}%."""
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(task_type: str = "trading") -> str:
     """Build the system prompt with current settings values.
 
     Called on demand so that settings.reload() picks up new fee values
     and max backtest variants without requiring a module reimport.
+
+    Args:
+        task_type: The type of task the LLM is being asked to perform.
+            "trading" — make a trading decision for a specific asset.
+            "stock_selection" — re-evaluate and select symbols to trade.
+            "news_summarization" — summarize news articles.
     """
     prompt = SYSTEM_PROMPT_TEMPLATE.replace(
         "__MAX_BACKTEST_VARIANTS__", str(settings.MAX_BACKTEST_VARIANTS)
@@ -209,4 +215,13 @@ def build_system_prompt() -> str:
     prompt = prompt.replace("__STOCK_FEE_SECTION__", _compute_stock_fee_text())
     prompt = prompt.replace("__BTP_FEE_SECTION__", _compute_btp_fee_text())
     prompt = prompt.replace("__ENTRY_CONDITION_MIN_TIMEOUT_MULT__", str(settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT))
-    return prompt
+
+    # Prepend task-specific role instruction
+    if task_type == "stock_selection":
+        role_instruction = "Your current task is to re-evaluate and select the best symbols to trade.\n\n"
+    elif task_type == "news_summarization":
+        role_instruction = "Your current task is to summarize news articles.\n\n"
+    else:  # trading
+        role_instruction = "Your current task is to make a trading decision (BUY, SELL, or HOLD) for a specific asset.\n\n"
+
+    return role_instruction + prompt

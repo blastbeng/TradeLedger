@@ -924,7 +924,7 @@ def build_analysis_prompt(data: StrategyPromptData) -> str:
 def build_strategy_messages(data: StrategyPromptData) -> List[Dict[str, str]]:
     """Build a list of messages (system + user) for prompt caching."""
     return [
-        {"role": "system", "content": build_system_prompt()},
+        {"role": "system", "content": build_system_prompt(task_type="trading")},
         {"role": "user", "content": build_strategy_prompt(data)},
     ]
 
@@ -932,7 +932,7 @@ def build_strategy_messages(data: StrategyPromptData) -> List[Dict[str, str]]:
 def build_analysis_messages(data: StrategyPromptData) -> List[Dict[str, str]]:
     """Build a list of messages (system + user) for prompt caching."""
     return [
-        {"role": "system", "content": build_system_prompt()},
+        {"role": "system", "content": build_system_prompt(task_type="trading")},
         {"role": "user", "content": build_analysis_prompt(data)},
     ]
 

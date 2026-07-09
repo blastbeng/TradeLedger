@@ -635,7 +635,7 @@ def build_stock_selection_messages(
     """Build a list of messages (system + user) for prompt caching."""
     from src.llm.system_prompt import build_system_prompt
     return [
-        {"role": "system", "content": build_system_prompt()},
+        {"role": "system", "content": build_system_prompt(task_type="stock_selection")},
         {"role": "user", "content": build_stock_selection_prompt(
             available_symbols=available_symbols,
             current_symbols=current_symbols,
@@ -662,7 +662,7 @@ def build_final_selection_messages(
     """Build a list of messages (system + user) for prompt caching."""
     from src.llm.system_prompt import build_system_prompt
     return [
-        {"role": "system", "content": build_system_prompt()},
+        {"role": "system", "content": build_system_prompt(task_type="stock_selection")},
         {"role": "user", "content": build_final_selection_prompt(
             chunk_results=chunk_results,
             current_symbols=current_symbols,
