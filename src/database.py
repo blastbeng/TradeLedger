@@ -415,6 +415,21 @@ def _get_init_statements() -> List[str]:
             limit_price REAL
         )
         """,
+        f"""
+        CREATE TABLE IF NOT EXISTS llm_metrics (
+            id {pk_type},
+            timestamp {float_type} NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            model_type TEXT NOT NULL,
+            prompt_tokens INTEGER NOT NULL DEFAULT 0,
+            completion_tokens INTEGER NOT NULL DEFAULT 0,
+            total_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_hit INTEGER NOT NULL DEFAULT 0,
+            latency_ms REAL NOT NULL DEFAULT 0,
+            error TEXT
+        )
+        """,
         "CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp DESC)",
         "CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol ON backtest_results(symbol)",
         "CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol_tf_hash ON backtest_results(symbol, timeframe, params_hash, created_at DESC)",
@@ -2049,6 +2064,112 @@ def get_btp_details_from_db(symbols: List[str]) -> Dict[str, Dict[str, Optional[
                 "name": row["name"],
             }
         return result
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# LLM Metrics helpers
+# ---------------------------------------------------------------------------
+
+@retry_on_db_lock()
+def save_llm_metrics(metrics: dict):
+    """Insert a row of LLM call metrics into the llm_metrics table."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            INSERT INTO llm_metrics (
+                timestamp, provider, model, model_type,
+                prompt_tokens, completion_tokens, total_tokens,
+                cache_hit, latency_ms, error
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+        )
+        conn.execute(sql, (
+            metrics.get("timestamp", time.time()),
+            metrics.get("provider", ""),
+            metrics.get("model", ""),
+            metrics.get("model_type", ""),
+            metrics.get("prompt_tokens", 0),
+            metrics.get("completion_tokens", 0),
+            metrics.get("total_tokens", 0),
+            1 if metrics.get("cache_hit") else 0,
+            metrics.get("latency_ms", 0),
+            metrics.get("error"),
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_llm_metrics_summary() -> dict:
+    """Return aggregated LLM metrics for the dashboard."""
+    conn = get_connection()
+    try:
+        # Total calls and tokens
+        row = conn.execute(
+            "SELECT COUNT(*) as total_calls, "
+            "COALESCE(SUM(prompt_tokens),0) as total_prompt_tokens, "
+            "COALESCE(SUM(completion_tokens),0) as total_completion_tokens, "
+            "COALESCE(SUM(total_tokens),0) as total_tokens, "
+            "COALESCE(SUM(cache_hit),0) as cache_hits "
+            "FROM llm_metrics"
+        ).fetchone()
+        total_calls = row["total_calls"] if row else 0
+        total_prompt_tokens = row["total_prompt_tokens"] if row else 0
+        total_completion_tokens = row["total_completion_tokens"] if row else 0
+        total_tokens = row["total_tokens"] if row else 0
+        cache_hits = row["cache_hits"] if row else 0
+        cache_hit_rate = (cache_hits / total_calls * 100) if total_calls > 0 else 0.0
+
+        # Per-model breakdown
+        per_model_rows = conn.execute(
+            "SELECT provider, model, model_type, COUNT(*) as calls, "
+            "SUM(total_tokens) as tokens, AVG(latency_ms) as avg_latency "
+            "FROM llm_metrics GROUP BY provider, model, model_type"
+        ).fetchall()
+        per_model = []
+        for r in per_model_rows:
+            per_model.append({
+                "provider": r["provider"],
+                "model": r["model"],
+                "model_type": r["model_type"],
+                "calls": r["calls"],
+                "tokens": r["tokens"],
+                "avg_latency_ms": round(r["avg_latency"], 2) if r["avg_latency"] else 0,
+            })
+
+        # Recent calls (last 20)
+        recent_rows = conn.execute(
+            "SELECT timestamp, provider, model, model_type, prompt_tokens, completion_tokens, "
+            "total_tokens, cache_hit, latency_ms, error "
+            "FROM llm_metrics ORDER BY timestamp DESC LIMIT 20"
+        ).fetchall()
+        recent_calls = []
+        for r in recent_rows:
+            recent_calls.append({
+                "timestamp": r["timestamp"],
+                "provider": r["provider"],
+                "model": r["model"],
+                "model_type": r["model_type"],
+                "prompt_tokens": r["prompt_tokens"],
+                "completion_tokens": r["completion_tokens"],
+                "total_tokens": r["total_tokens"],
+                "cache_hit": bool(r["cache_hit"]),
+                "latency_ms": r["latency_ms"],
+                "error": r["error"],
+            })
+
+        return {
+            "total_calls": total_calls,
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
+            "total_tokens": total_tokens,
+            "cache_hit_rate": round(cache_hit_rate, 2),
+            "per_model": per_model,
+            "recent_calls": recent_calls,
+        }
     finally:
         conn.close()
 
