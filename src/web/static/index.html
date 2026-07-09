@@ -2253,7 +2253,10 @@
             const canvas = document.getElementById('llm-metrics-chart');
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
-            const labels = tsData.map(d => new Date(d.hour * 1000).toLocaleTimeString([], {hour: '2-digit'}));
+            const labels = tsData.map(d => {
+                const ts = typeof d.hour === 'number' ? d.hour * 1000 : new Date(d.hour).getTime();
+                return new Date(ts).toLocaleTimeString([], {hour: '2-digit'});
+            });
             const callsData = tsData.map(d => d.calls);
             const tokensData = tsData.map(d => d.tokens);
             const cacheHitData = tsData.map(d => d.cache_hit_rate);
