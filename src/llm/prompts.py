@@ -921,3 +921,19 @@ def build_analysis_prompt(data: StrategyPromptData) -> str:
     return full_prompt + analysis_output
 
 
+def build_strategy_messages(data: StrategyPromptData) -> List[Dict[str, str]]:
+    """Build a list of messages (system + user) for prompt caching."""
+    return [
+        {"role": "system", "content": build_system_prompt()},
+        {"role": "user", "content": build_strategy_prompt(data)},
+    ]
+
+
+def build_analysis_messages(data: StrategyPromptData) -> List[Dict[str, str]]:
+    """Build a list of messages (system + user) for prompt caching."""
+    return [
+        {"role": "system", "content": build_system_prompt()},
+        {"role": "user", "content": build_analysis_prompt(data)},
+    ]
+
+

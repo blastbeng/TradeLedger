@@ -327,3 +327,39 @@ If ANY backtest variant confirms a strategy is viable, you may output your final
             "Please continue to analyze the market and generate signals as you normally would.\n"
         )
     return prompt
+
+
+def build_backtest_variants_messages(data: BacktestPromptData) -> List[Dict[str, str]]:
+    """Build a list of messages (system + user) for prompt caching."""
+    from src.llm.system_prompt import build_system_prompt
+    return [
+        {"role": "system", "content": build_system_prompt()},
+        {"role": "user", "content": build_backtest_variants_prompt(data)},
+    ]
+
+
+def build_final_decision_messages(
+    symbol: str,
+    ticker: Dict[str, Any],
+    preliminary_decision: Dict[str, Any],
+    backtest_results: List[Dict[str, Any]],
+    base_currency: str,
+    trading_paused: bool = False,
+    total_variants_proposed: Optional[int] = None,
+    historical_backtest_results: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, str]]:
+    """Build a list of messages (system + user) for prompt caching."""
+    from src.llm.system_prompt import build_system_prompt
+    return [
+        {"role": "system", "content": build_system_prompt()},
+        {"role": "user", "content": build_final_decision_prompt(
+            symbol=symbol,
+            ticker=ticker,
+            preliminary_decision=preliminary_decision,
+            backtest_results=backtest_results,
+            base_currency=base_currency,
+            trading_paused=trading_paused,
+            total_variants_proposed=total_variants_proposed,
+            historical_backtest_results=historical_backtest_results,
+        )},
+    ]
