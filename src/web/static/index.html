@@ -2103,10 +2103,7 @@
                 summaryDiv.innerHTML = `
                     <strong>Total Calls:</strong> ${data.total_calls} &nbsp;|&nbsp;
                     <strong>Total Tokens:</strong> ${data.total_tokens.toLocaleString()} (Prompt: ${data.total_prompt_tokens.toLocaleString()}, Completion: ${data.total_completion_tokens.toLocaleString()}) &nbsp;|&nbsp;
-                    <strong>Cache Hit Rate:</strong> ${data.cache_hit_rate.toFixed(1)}%<br>
-                    <strong>Mind Provider:</strong> ${data.mind_provider || 'N/A'} (${data.mind_model || 'N/A'}) - ${data.mind_provider_url || 'N/A'}<br>
-                    <strong>Actuator Provider:</strong> ${data.actuator_provider || 'N/A'} (${data.actuator_model || 'N/A'}) - ${data.actuator_provider_url || 'N/A'}<br>
-                    <strong>Weak Provider:</strong> ${data.weak_provider || 'N/A'} (${data.weak_model || 'N/A'}) - ${data.weak_provider_url || 'N/A'}
+                    <strong>Cache Hit Rate:</strong> ${data.cache_hit_rate.toFixed(1)}%
                 `;
 
                 // Per-model table
