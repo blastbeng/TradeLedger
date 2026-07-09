@@ -135,10 +135,7 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
                 prompt += f"  {sym}: {hours:.1f}h\n"
 
     prompt += f"""
-Available symbols with market data and minimum trade cost (in {base_currency}):
-{json.dumps(ticker_summary)}
-
-Select between {settings.MIN_SYMBOLS if settings.MIN_SYMBOLS > 0 else 0} and {max_symbols} assets (stocks, ETFs, or BTP bonds) to trade. The available symbols may include Italian BTP bonds identified by their ISIN (e.g., IT0001234567). The `name` field in the market data contains the bond's description, including maturity and coupon (e.g., 'Btp-1nv26 7,25%' means November 2026 maturity, 7.25% coupon). You can select them alongside stocks. If market conditions are extremely unfavorable (e.g., high losses, poor momentum, negative sentiment), you may select 0 assets to pause trading until the next evaluation. You MUST only select assets where your total available balance ({base_balance:.2f} {base_currency}) is greater than or equal to the asset's min_trade_cost. You may keep some current assets if they are still promising and meet the budget requirement, or replace them. **Prefer to keep assets that have been tracked for a while** – they have more historical data and the bot has already invested in learning their behaviour. Only drop an asset if it shows clear deterioration (e.g., negative momentum on all timeframes, poor win rate, or strongly negative sentiment). For assets already being tracked, re-evaluate their assigned timeframe. If the market regime has changed (e.g., a stock that was trending on 1d is now choppy and better suited to 1w), update the timeframe. If you change the timeframe for an asset with an open position, the bot will switch to managing the position using the new timeframe.
+Select {settings.MIN_SYMBOLS if settings.MIN_SYMBOLS > 0 else 0}-{max_symbols} assets to trade. BTP bonds (ISIN format, e.g., IT0001234567) included — `name` has maturity/coupon. Select 0 to pause if unfavorable. Balance ({base_balance:.2f} {base_currency}) must be >= min_trade_cost. Keep tracked assets unless clearly deteriorating. Update timeframe if regime changed (bot manages open positions on new TF).
 """
     if settings.MIN_SYMBOLS > 0:
         prompt += (
