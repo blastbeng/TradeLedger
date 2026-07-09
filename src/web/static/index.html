@@ -505,6 +505,31 @@
                     </select>
                 </div>
             </div>
+
+            <div class="card card-full" id="llm-metrics-card">
+                <h2>🤖 LLM Metrics <button id="btn-refresh-llm-metrics" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Refresh</button></h2>
+                <div id="llm-metrics-summary" style="margin-bottom:16px; font-size:0.9rem;"></div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+                    <div>
+                        <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">Per Model</h3>
+                        <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
+                            <table id="llm-per-model-table">
+                                <thead><tr><th>Provider</th><th>Model</th><th>Type</th><th>Calls</th><th>Tokens</th><th>Avg Latency (ms)</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">Recent Calls</h3>
+                        <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
+                            <table id="llm-recent-calls-table">
+                                <thead><tr><th>Time</th><th>Provider</th><th>Model</th><th>Type</th><th>Tokens</th><th>Cache</th><th>Latency (ms)</th><th>Error</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1417,6 +1442,7 @@
                 .catch(() => {});
             fetchMessages();
             fetchSignals(currentSignalsPage);
+            fetchLLMMetrics();
         }
 
         function startRefreshTimer() {
@@ -1490,6 +1516,7 @@
 
         startRefreshTimer();
         refreshData();  // immediate first load
+        fetchLLMMetrics(); // initial LLM metrics load
 
         document.getElementById('update-interval').addEventListener('change', (e) => {
             updateIntervalMs = parseInt(e.target.value, 10);
@@ -2045,6 +2072,75 @@
 
         // Initial request
         requestWakeLock();
+
+        // --- LLM Metrics ---
+        async function fetchLLMMetrics() {
+            try {
+                const resp = await fetch('/api/llm-metrics');
+                if (!resp.ok) throw new Error('Failed to fetch LLM metrics');
+                const data = await resp.json();
+
+                // Summary
+                const summaryDiv = document.getElementById('llm-metrics-summary');
+                summaryDiv.innerHTML = `
+                    <strong>Total Calls:</strong> ${data.total_calls} &nbsp;|&nbsp;
+                    <strong>Total Tokens:</strong> ${data.total_tokens.toLocaleString()} (Prompt: ${data.total_prompt_tokens.toLocaleString()}, Completion: ${data.total_completion_tokens.toLocaleString()}) &nbsp;|&nbsp;
+                    <strong>Cache Hit Rate:</strong> ${data.cache_hit_rate.toFixed(1)}%
+                `;
+
+                // Per-model table
+                const perModelBody = document.querySelector('#llm-per-model-table tbody');
+                perModelBody.innerHTML = '';
+                if (data.per_model && data.per_model.length > 0) {
+                    data.per_model.forEach(m => {
+                        const row = perModelBody.insertRow();
+                        row.insertCell().textContent = m.provider;
+                        row.insertCell().textContent = m.model;
+                        row.insertCell().textContent = m.model_type;
+                        row.insertCell().textContent = m.calls;
+                        row.insertCell().textContent = m.tokens.toLocaleString();
+                        row.insertCell().textContent = m.avg_latency_ms.toFixed(1);
+                    });
+                } else {
+                    const row = perModelBody.insertRow();
+                    const cell = row.insertCell();
+                    cell.colSpan = 6;
+                    cell.textContent = 'No data yet';
+                    cell.style.textAlign = 'center';
+                    cell.style.color = 'var(--text-secondary)';
+                }
+
+                // Recent calls table
+                const recentBody = document.querySelector('#llm-recent-calls-table tbody');
+                recentBody.innerHTML = '';
+                if (data.recent_calls && data.recent_calls.length > 0) {
+                    data.recent_calls.forEach(c => {
+                        const row = recentBody.insertRow();
+                        row.insertCell().textContent = new Date(c.timestamp * 1000).toLocaleTimeString();
+                        row.insertCell().textContent = c.provider;
+                        row.insertCell().textContent = c.model;
+                        row.insertCell().textContent = c.model_type;
+                        row.insertCell().textContent = c.total_tokens.toLocaleString();
+                        row.insertCell().textContent = c.cache_hit ? '✅' : '❌';
+                        row.insertCell().textContent = c.latency_ms.toFixed(1);
+                        const errCell = row.insertCell();
+                        errCell.textContent = c.error || '';
+                        if (c.error) errCell.style.color = 'var(--red)';
+                    });
+                } else {
+                    const row = recentBody.insertRow();
+                    const cell = row.insertCell();
+                    cell.colSpan = 8;
+                    cell.textContent = 'No recent calls';
+                    cell.style.textAlign = 'center';
+                    cell.style.color = 'var(--text-secondary)';
+                }
+            } catch (e) {
+                console.error('Failed to fetch LLM metrics', e);
+            }
+        }
+
+        document.getElementById('btn-refresh-llm-metrics').addEventListener('click', fetchLLMMetrics);
     </script>
 
     <div id="toast" style="visibility: hidden; min-width: 250px; margin-left: -125px; background-color: var(--card-bg); color: var(--text); text-align: center; border-radius: 6px; padding: 16px; position: fixed; z-index: 1001; left: 50%; bottom: 30px; border: 1px solid var(--border); box-shadow: var(--shadow);"></div>
