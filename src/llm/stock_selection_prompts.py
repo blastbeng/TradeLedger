@@ -619,3 +619,57 @@ Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_ris
 
 Output ONLY the raw JSON object."""
     return prompt
+
+
+def build_stock_selection_messages(
+    available_symbols: List[str],
+    current_symbols: List[Dict[str, str]],
+    max_symbols: int,
+    base_currency: str,
+    tickers: Dict[str, Any],
+    base_balance: float,
+    per_symbol_budget: float,
+    market_limits: Dict[str, Dict[str, Any]],
+    **kwargs
+) -> List[Dict[str, str]]:
+    """Build a list of messages (system + user) for prompt caching."""
+    from src.llm.system_prompt import build_system_prompt
+    return [
+        {"role": "system", "content": build_system_prompt()},
+        {"role": "user", "content": build_stock_selection_prompt(
+            available_symbols=available_symbols,
+            current_symbols=current_symbols,
+            max_symbols=max_symbols,
+            base_currency=base_currency,
+            tickers=tickers,
+            base_balance=base_balance,
+            per_symbol_budget=per_symbol_budget,
+            market_limits=market_limits,
+            **kwargs
+        )},
+    ]
+
+
+def build_final_selection_messages(
+    chunk_results: List[Dict[str, Any]],
+    current_symbols: List[Dict[str, str]],
+    max_symbols: int,
+    base_currency: str,
+    base_balance: float,
+    per_symbol_budget: float,
+    **kwargs
+) -> List[Dict[str, str]]:
+    """Build a list of messages (system + user) for prompt caching."""
+    from src.llm.system_prompt import build_system_prompt
+    return [
+        {"role": "system", "content": build_system_prompt()},
+        {"role": "user", "content": build_final_selection_prompt(
+            chunk_results=chunk_results,
+            current_symbols=current_symbols,
+            max_symbols=max_symbols,
+            base_currency=base_currency,
+            base_balance=base_balance,
+            per_symbol_budget=per_symbol_budget,
+            **kwargs
+        )},
+    ]
