@@ -265,7 +265,7 @@ Compare variants. Choose best-performing or combine insights. If all poor, outpu
         "Return JSON:\n"
         "- action: BUY|SELL|HOLD\n"
         "- confidence: float 0-1\n"
-        "- reasoning: str max 80 chars\n"
+        "- reasoning: str max 50 chars. Use abbreviations/symbols only (e.g., \"RSI<30+MACD↑|1Y↑\"). NO full sentences.\n"
         "- strategy: {type, parameters{stop_loss_pct,take_profit_pct,position_size_fraction,confidence_sizing_weight,trailing_stop,max_hold_time_seconds,cooldown_after_loss_seconds,backtest_entry_config(REQUIRED for BUY)}}\n"
         "- entry_condition: object (REQUIRED for BUY)\n"
         "- limit_price: float? (optional)\n"
