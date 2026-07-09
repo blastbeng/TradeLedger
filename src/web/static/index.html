@@ -2338,6 +2338,8 @@
                 llmMetricsChart.data.datasets[0].data = callsData;
                 llmMetricsChart.data.datasets[1].data = tokensData;
                 llmMetricsChart.data.datasets[2].data = cacheHitData;
+                llmMetricsChart.data.datasets[3].data = promptTokensData;
+                llmMetricsChart.data.datasets[4].data = completionTokensData;
                 llmMetricsChart.update();
             } else {
                 llmMetricsChart = new Chart(ctx, {
