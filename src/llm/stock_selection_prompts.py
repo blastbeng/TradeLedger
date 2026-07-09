@@ -134,8 +134,7 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
             if hours is not None:
                 prompt += f"  {sym}: {hours:.1f}h\n"
 
-    prompt += f"""
-Select {settings.MIN_SYMBOLS if settings.MIN_SYMBOLS > 0 else 0}-{max_symbols} assets to trade. BTP bonds (ISIN format, e.g., IT0001234567) included — `name` has maturity/coupon. Select 0 to pause if unfavorable. Balance ({base_balance:.2f} {base_currency}) must be >= min_trade_cost. Keep tracked assets unless clearly deteriorating. Update timeframe if regime changed (bot manages open positions on new TF).
+    prompt += f"""Select {settings.MIN_SYMBOLS if settings.MIN_SYMBOLS > 0 else 0}-{max_symbols} assets to trade. BTP bonds (ISIN format, e.g., IT0001234567) included — `name` has maturity/coupon. Select 0 to pause if unfavorable. Balance ({base_balance:.2f} {base_currency}) must be >= min_trade_cost. Keep tracked assets unless clearly deteriorating. Update timeframe if regime changed (bot manages open positions on new TF).
 """
     if settings.MIN_SYMBOLS > 0:
         prompt += (
@@ -145,50 +144,44 @@ Select {settings.MIN_SYMBOLS if settings.MIN_SYMBOLS > 0 else 0}-{max_symbols} a
             f"Do NOT select fewer than {settings.MIN_SYMBOLS} — the engine will override your selection and add more symbols automatically.\n"
         )
     prompt += f"""
+Return JSON:
+- "stocks":[{{"symbol","timeframe"({', '.join([repr(tf) for tf in available_timeframes])}),"sector","max_tenure_hours"?}}]
+- "max_stocks":int 0-{max_symbols} (=len(stocks))
+- "max_positions_per_sector":int 1-{max_symbols}
+- "skip_eval_price_change_atr_mult":float
+- "skip_eval_rsi_change":float
+- "skip_eval_rsi_oversold":float
+- "skip_eval_rsi_overbought":float
+- "skip_eval_macd_hist_change":float
+- "regime_adx_strong":float
+- "regime_adx_moderate":float
+- "regime_volatility_high_pct":float
+- "regime_volatility_low_pct":float
+- "regime_bb_squeeze_width":float
+- "regime_bb_expansion_width":float
+- "min_stop_loss_atr_mult":float
+- "min_max_hold_time_mult":float
+- "max_stop_loss_reviews":int 1-20
+- "max_take_profit_reviews":int 1-20
+- "max_partial_tp_reviews":int 1-20
+- "max_dust_sweep_reviews":int 1-20
+- "min_llm_pause_duration_seconds":int 300-14400
+- "pause_max_consecutive_keep":int 1-10
+- "pause_force_resume_risk_multiplier":float 0.0-1.0
+- "max_portfolio_exposure_pct":float 0.0-1.0
+- "max_portfolio_stop_risk_pct":float 0.0-1.0
+- "min_risk_reward_ratio":float
+- "confidence_rejection_threshold":float 0.0-1.0
+- "limit_price_max_distance_pct":float? 0.0-1.0
+- "min_viable_trade_amount":float?
+- "reasoning":str max 80 chars
+- "stock_revaluation_interval_seconds":int? >=3600
+- "pause_trading":bool?
+- "pause_reason":str?
+- "pause_duration_seconds":int?
 
-Each symbol can only appear once in your selection. Choose the single best timeframe for each stock based on the multi-timeframe OHLCV data.
-
-**Output ONLY the raw JSON object as specified.**
-
-Return a JSON object with the following fields:
-- `"stocks"`: Array of objects with `"symbol"`, `"timeframe"` (one of: {', '.join([repr(tf) for tf in available_timeframes])}), `"sector"`, and optional `"max_tenure_hours"` (float).
-- `"max_stocks"`: Integer 0-{max_symbols}. Must equal length of `"stocks"`. Set high (up to {max_symbols}) when opportunities exist.
-- `"max_positions_per_sector"`: Integer 1-{max_symbols}. Max open positions per sector.
-- `"skip_eval_price_change_atr_mult"`: Float (e.g., 0.5). Min price change (ATR%) to trigger LLM eval.
-- `"skip_eval_rsi_change"`: Float (e.g., 5.0). Min RSI change to trigger LLM eval.
-- `"skip_eval_rsi_oversold"`: Float (e.g., 30.0). RSI level below which LLM eval is always triggered.
-- `"skip_eval_rsi_overbought"`: Float (e.g., 70.0). RSI level above which LLM eval is always triggered.
-- `"skip_eval_macd_hist_change"`: Float (e.g., 0.0005). Min MACD histogram change to trigger LLM eval.
-- `"regime_adx_strong"`: Float (e.g., 40.0). ADX level for strong trend.
-- `"regime_adx_moderate"`: Float (e.g., 25.0). ADX level for moderate trend.
-- `"regime_volatility_high_pct"`: Float (e.g., 80.0). ATR percentile for high volatility.
-- `"regime_volatility_low_pct"`: Float (e.g., 20.0). ATR percentile for low volatility.
-- `"regime_bb_squeeze_width"`: Float (e.g., 0.02). Bollinger Band width for squeeze.
-- `"regime_bb_expansion_width"`: Float (e.g., 0.08). Bollinger Band width for expansion.
-- `"min_stop_loss_atr_mult"`: Float (e.g., 1.5). Min stop-loss as ATR% multiple.
-- `"min_max_hold_time_mult"`: Float (e.g., 2.0). Min max_hold_time as candle timeframe multiple.
-- `"max_stop_loss_reviews"`: Integer 1-20. Max LLM reviews on stop-loss trigger.
-- `"max_take_profit_reviews"`: Integer 1-20. Max LLM reviews on take-profit trigger.
-- `"max_partial_tp_reviews"`: Integer 1-20. Max LLM reviews on partial take-profit trigger.
-- `"max_dust_sweep_reviews"`: Integer 1-20. Max LLM reviews on dust sweep trigger.
-- `"min_llm_pause_duration_seconds"`: Integer 300-14400. Min pause duration before resume.
-- `"pause_max_consecutive_keep"`: Integer 1-10. Max consecutive "keep paused" before force-resume.
-- `"pause_force_resume_risk_multiplier"`: Float 0.0-1.0. Risk multiplier on force-resume.
-- `"max_portfolio_exposure_pct"`: Float 0.0-1.0. Max portfolio value deployed.
-- `"max_portfolio_stop_risk_pct"`: Float 0.0-1.0. Max total stop-loss risk as portfolio %.
-- `"min_risk_reward_ratio"`: Positive number (e.g., 1.5). Min reward:risk ratio.
-- `"confidence_rejection_threshold"`: Float 0.0-1.0. Min confidence for trade execution.
-- `"limit_price_max_distance_pct"`: Optional Float 0.0-1.0. Max limit price distance from bid/ask.
-- `"min_viable_trade_amount"`: Optional positive number. Suggested min trade amount in {base_currency}.
-- `"reasoning"`: VERY short (max 80 chars). Format: "Strong trends + positive sentiment". No full sentences.
-
-You may optionally include the following fields:
-- "stock_revaluation_interval_seconds" (integer >= 3600, i.e., at least 1 hour) to change how often the bot re-evaluates the stock list. The bot also re-evaluates automatically before market open and when unusual market conditions are detected (significant news, extreme indicators, unusually active market).
-- "pause_trading" (boolean): true to pause trading, false to resume. Always include "pause_reason" (string) when setting pause_trading. You may also set "pause_duration_seconds" (positive integer) to auto-resume after a delay.
-
-Example: {{"stocks": [{{"symbol": "ENI.MI/EUR", "timeframe": "1Y", "sector": "Energy", "max_tenure_hours": 8760}}, {{"symbol": "ENEL.MI/EUR", "timeframe": "6M", "sector": "Utilities"}}, {{"symbol": "STM.MI/EUR", "timeframe": "3Y", "sector": "Technology"}}], "max_stocks": 3, "max_positions_per_sector": 2, "skip_eval_price_change_atr_mult": 0.5, "skip_eval_rsi_change": 5.0, "skip_eval_rsi_oversold": 30.0, "skip_eval_rsi_overbought": 70.0, "skip_eval_macd_hist_change": 0.0005, "regime_adx_strong": 40.0, "regime_adx_moderate": 25.0, "regime_volatility_high_pct": 80.0, "regime_volatility_low_pct": 20.0, "regime_bb_squeeze_width": 0.02, "regime_bb_expansion_width": 0.08, "min_stop_loss_atr_mult": 1.5, "min_max_hold_time_mult": 1.5, "max_stop_loss_reviews": 3, "max_take_profit_reviews": 3, "min_llm_pause_duration_seconds": 3600, "pause_max_consecutive_keep": 3, "pause_force_resume_risk_multiplier": 0.3, "max_partial_tp_reviews": 3, "max_dust_sweep_reviews": 3, "reasoning": "ENI shows strong uptrend on 1Y with high volume; ENEL has bullish MACD crossover on 6M.", "stock_revaluation_interval_seconds": 300, "max_portfolio_exposure_pct": 0.8, "max_portfolio_stop_risk_pct": 0.1, "min_risk_reward_ratio": 1.5, "confidence_rejection_threshold": 0.4, "limit_price_max_distance_pct": 0.05, "pause_trading": false, "pause_reason": "Market conditions are favorable"}}
-
-Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_risk_pct` to at least **0.1** unless you have a very strong reason to be more conservative. Higher limits allow the bot to take more positions simultaneously and capture more opportunities. Do not unnecessarily restrict capital deployment."""
+Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy","max_tenure_hours":8760}},{{"symbol":"ENEL.MI/EUR","timeframe":"6M","sector":"Utilities"}}],"max_stocks":2,"max_positions_per_sector":2,"skip_eval_price_change_atr_mult":0.5,"skip_eval_rsi_change":5.0,"skip_eval_rsi_oversold":30.0,"skip_eval_rsi_overbought":70.0,"skip_eval_macd_hist_change":0.0005,"regime_adx_strong":40.0,"regime_adx_moderate":25.0,"regime_volatility_high_pct":80.0,"regime_volatility_low_pct":20.0,"regime_bb_squeeze_width":0.02,"regime_bb_expansion_width":0.08,"min_stop_loss_atr_mult":1.5,"min_max_hold_time_mult":1.5,"max_stop_loss_reviews":3,"max_take_profit_reviews":3,"min_llm_pause_duration_seconds":3600,"pause_max_consecutive_keep":3,"pause_force_resume_risk_multiplier":0.3,"max_partial_tp_reviews":3,"max_dust_sweep_reviews":3,"reasoning":"ENI strong 1Y uptrend; ENEL bullish MACD 6M","stock_revaluation_interval_seconds":3600,"max_portfolio_exposure_pct":0.8,"max_portfolio_stop_risk_pct":0.1,"min_risk_reward_ratio":1.5,"confidence_rejection_threshold":0.4,"limit_price_max_distance_pct":0.05,"pause_trading":false,"pause_reason":"Favorable"}}
+"""
     # --- Enhanced pause/resume guidance ---
     if trading_paused:
         prompt += (
@@ -575,44 +568,42 @@ Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols
 
     # Output format
     prompt += f"""
-Return a JSON object with the following fields:
-- `"stocks"`: Array of objects with `"symbol"`, `"timeframe"` (one of: {', '.join([repr(tf) for tf in available_timeframes])}), `"sector"`, and optional `"max_tenure_hours"`.
-- `"max_stocks"`: Integer 0-{max_symbols}. Must equal length of `"stocks"`.
-- `"max_positions_per_sector"`: Integer 1-{max_symbols}. Max open positions per sector.
-- `"reasoning"`: VERY short (max 80 chars). No full sentences.
-- `"skip_eval_price_change_atr_mult"`: Float (e.g., 0.5). Min price change (ATR%) to trigger LLM eval.
-- `"skip_eval_rsi_change"`: Float (e.g., 5.0). Min RSI change to trigger LLM eval.
-- `"skip_eval_rsi_oversold"`: Float (e.g., 30.0). RSI level below which LLM eval is always triggered.
-- `"skip_eval_rsi_overbought"`: Float (e.g., 70.0). RSI level above which LLM eval is always triggered.
-- `"skip_eval_macd_hist_change"`: Float (e.g., 0.0005). Min MACD histogram change to trigger LLM eval.
-- `"regime_adx_strong"`: Float (e.g., 40.0). ADX level for strong trend.
-- `"regime_adx_moderate"`: Float (e.g., 25.0). ADX level for moderate trend.
-- `"regime_volatility_high_pct"`: Float (e.g., 80.0). ATR percentile for high volatility.
-- `"regime_volatility_low_pct"`: Float (e.g., 20.0). ATR percentile for low volatility.
-- `"regime_bb_squeeze_width"`: Float (e.g., 0.02). Bollinger Band width for squeeze.
-- `"regime_bb_expansion_width"`: Float (e.g., 0.08). Bollinger Band width for expansion.
-- `"min_stop_loss_atr_mult"`: Float (e.g., 1.5). Min stop-loss as ATR% multiple.
-- `"min_max_hold_time_mult"`: Float (e.g., 2.0). Min max_hold_time as candle timeframe multiple.
-- `"max_stop_loss_reviews"`: Integer 1-20. Max LLM reviews on stop-loss trigger.
-- `"max_take_profit_reviews"`: Integer 1-20. Max LLM reviews on take-profit trigger.
-- `"max_partial_tp_reviews"`: Integer 1-20. Max LLM reviews on partial take-profit trigger.
-- `"max_dust_sweep_reviews"`: Integer 1-20. Max LLM reviews on dust sweep trigger.
-- `"min_llm_pause_duration_seconds"`: Integer 300-14400. Min pause duration before resume.
-- `"pause_max_consecutive_keep"`: Integer 1-10. Max consecutive "keep paused" before force-resume.
-- `"pause_force_resume_risk_multiplier"`: Float 0.0-1.0. Risk multiplier on force-resume.
-- `"max_portfolio_exposure_pct"`: Float 0.0-1.0. Max portfolio value deployed.
-- `"max_portfolio_stop_risk_pct"`: Float 0.0-1.0. Max total stop-loss risk as portfolio %.
-- `"min_risk_reward_ratio"`: Positive number (e.g., 1.5). Min reward:risk ratio.
-- `"confidence_rejection_threshold"`: Float 0.0-1.0. Min confidence for trade execution.
-- `"limit_price_max_distance_pct"`: Optional Float 0.0-1.0. Max limit price distance from bid/ask.
-- `"min_viable_trade_amount"`: Optional positive number. Suggested min trade amount in {base_currency}.
-- `"stock_revaluation_interval_seconds"`: Optional integer >= 3600.
-- `"pause_trading"`: Optional boolean.
-- `"pause_reason"`: Optional string.
-- `"pause_duration_seconds"`: Optional positive integer.
-- `"global_risk_multiplier"`: Optional Float 0.0-1.0.
-
-Set `max_portfolio_exposure_pct` to at least **0.8** and `max_portfolio_stop_risk_pct` to at least **0.1** unless you have a very strong reason to be more conservative.
+Return JSON:
+- "stocks":[{{"symbol","timeframe"({', '.join([repr(tf) for tf in available_timeframes])}),"sector","max_tenure_hours"?}}]
+- "max_stocks":int 0-{max_symbols} (=len(stocks))
+- "max_positions_per_sector":int 1-{max_symbols}
+- "reasoning":str max 80 chars
+- "skip_eval_price_change_atr_mult":float
+- "skip_eval_rsi_change":float
+- "skip_eval_rsi_oversold":float
+- "skip_eval_rsi_overbought":float
+- "skip_eval_macd_hist_change":float
+- "regime_adx_strong":float
+- "regime_adx_moderate":float
+- "regime_volatility_high_pct":float
+- "regime_volatility_low_pct":float
+- "regime_bb_squeeze_width":float
+- "regime_bb_expansion_width":float
+- "min_stop_loss_atr_mult":float
+- "min_max_hold_time_mult":float
+- "max_stop_loss_reviews":int 1-20
+- "max_take_profit_reviews":int 1-20
+- "max_partial_tp_reviews":int 1-20
+- "max_dust_sweep_reviews":int 1-20
+- "min_llm_pause_duration_seconds":int 300-14400
+- "pause_max_consecutive_keep":int 1-10
+- "pause_force_resume_risk_multiplier":float 0.0-1.0
+- "max_portfolio_exposure_pct":float 0.0-1.0
+- "max_portfolio_stop_risk_pct":float 0.0-1.0
+- "min_risk_reward_ratio":float
+- "confidence_rejection_threshold":float 0.0-1.0
+- "limit_price_max_distance_pct":float? 0.0-1.0
+- "min_viable_trade_amount":float?
+- "stock_revaluation_interval_seconds":int? >=3600
+- "pause_trading":bool?
+- "pause_reason":str?
+- "pause_duration_seconds":int?
+- "global_risk_multiplier":float? 0.0-1.0
 
 Output ONLY the raw JSON object."""
     return prompt
