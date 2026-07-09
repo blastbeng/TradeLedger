@@ -2129,7 +2129,10 @@ def get_llm_metrics_summary() -> dict:
         # Per-model breakdown
         per_model_rows = conn.execute(
             "SELECT provider, model, model_type, COUNT(*) as calls, "
-            "SUM(total_tokens) as tokens, AVG(latency_ms) as avg_latency "
+            "SUM(total_tokens) as tokens, "
+            "SUM(prompt_tokens) as prompt_tokens, "
+            "SUM(completion_tokens) as completion_tokens, "
+            "AVG(latency_ms) as avg_latency "
             "FROM llm_metrics GROUP BY provider, model, model_type"
         ).fetchall()
         per_model = []
@@ -2140,6 +2143,8 @@ def get_llm_metrics_summary() -> dict:
                 "model_type": r["model_type"],
                 "calls": r["calls"],
                 "tokens": r["tokens"],
+                "prompt_tokens": r["prompt_tokens"] or 0,
+                "completion_tokens": r["completion_tokens"] or 0,
                 "avg_latency_ms": round(r["avg_latency"], 2) if r["avg_latency"] else 0,
             })
 
@@ -2224,6 +2229,8 @@ def get_llm_metrics_timeseries(hours: int = 24) -> List[Dict[str, Any]]:
                     date_trunc('hour', to_timestamp(timestamp)) AS hour,
                     COUNT(*) as calls,
                     SUM(total_tokens) as tokens,
+                    SUM(prompt_tokens) as prompt_tokens,
+                    SUM(completion_tokens) as completion_tokens,
                     AVG(latency_ms) as avg_latency,
                     SUM(cache_hit) as cache_hits
                 FROM llm_metrics
@@ -2240,6 +2247,8 @@ def get_llm_metrics_timeseries(hours: int = 24) -> List[Dict[str, Any]]:
                     (CAST(timestamp / 3600 AS INTEGER) * 3600) AS hour,
                     COUNT(*) as calls,
                     SUM(total_tokens) as tokens,
+                    SUM(prompt_tokens) as prompt_tokens,
+                    SUM(completion_tokens) as completion_tokens,
                     AVG(latency_ms) as avg_latency,
                     SUM(cache_hit) as cache_hits
                 FROM llm_metrics
@@ -2258,6 +2267,8 @@ def get_llm_metrics_timeseries(hours: int = 24) -> List[Dict[str, Any]]:
                 "hour": hour_ts,
                 "calls": calls,
                 "tokens": row["tokens"],
+                "prompt_tokens": row["prompt_tokens"] or 0,
+                "completion_tokens": row["completion_tokens"] or 0,
                 "avg_latency_ms": round(row["avg_latency"], 2) if row["avg_latency"] else 0,
                 "cache_hit_rate": round((cache_hits / calls * 100) if calls > 0 else 0, 1),
             })

@@ -532,7 +532,7 @@
                         <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">Per Model</h3>
                         <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
                             <table id="llm-per-model-table">
-                                <thead><tr><th>Provider</th><th>Model</th><th>Type</th><th>Calls</th><th>Tokens</th><th>Avg Latency (ms)</th></tr></thead>
+                                <thead><tr><th>Provider</th><th>Model</th><th>Type</th><th>Calls</th><th>Prompt</th><th>Completion</th><th>Total</th><th>Avg Latency (ms)</th></tr></thead>
                                 <tbody></tbody>
                             </table>
                         </div>
@@ -802,7 +802,7 @@
                 } else {
                     const row = perfBody.insertRow();
                     const cell = row.insertCell();
-                    cell.colSpan = 6;
+                    cell.colSpan = 8;
                     cell.textContent = '📭 No closed sell trades yet';
                     cell.style.textAlign = 'center';
                     cell.style.color = 'var(--text-secondary)';
@@ -2232,6 +2232,8 @@
                             el.innerHTML = `
                                 <strong>Calls:</strong> ${ps.calls}<br>
                                 <strong>Tokens:</strong> ${ps.tokens.toLocaleString()}<br>
+                                <strong>Prompt:</strong> ${ps.prompt_tokens.toLocaleString()}<br>
+                                <strong>Completion:</strong> ${ps.completion_tokens.toLocaleString()}<br>
                                 <strong>Cache Hit:</strong> ${ps.cache_hit_rate.toFixed(1)}%<br>
                                 <strong>Avg Latency:</strong> ${ps.avg_latency_ms.toFixed(0)}ms
                             `;
@@ -2249,6 +2251,8 @@
                         row.insertCell().textContent = m.model;
                         row.insertCell().textContent = m.model_type;
                         row.insertCell().textContent = m.calls;
+                        row.insertCell().textContent = m.prompt_tokens.toLocaleString();
+                        row.insertCell().textContent = m.completion_tokens.toLocaleString();
                         row.insertCell().textContent = m.tokens.toLocaleString();
                         row.insertCell().textContent = m.avg_latency_ms.toFixed(1);
                     });
@@ -2325,6 +2329,8 @@
             });
             const callsData = tsData.map(d => d.calls);
             const tokensData = tsData.map(d => d.tokens);
+            const promptTokensData = tsData.map(d => d.prompt_tokens || 0);
+            const completionTokensData = tsData.map(d => d.completion_tokens || 0);
             const cacheHitData = tsData.map(d => d.cache_hit_rate);
 
             if (llmMetricsChart) {
@@ -2369,6 +2375,28 @@
                                 fill: false,
                                 yAxisID: 'y2',
                                 order: 0,
+                            },
+                            {
+                                label: 'Prompt Tokens',
+                                data: promptTokensData,
+                                type: 'line',
+                                borderColor: 'rgba(248,81,73,1)',
+                                backgroundColor: 'rgba(248,81,73,0.1)',
+                                tension: 0.3,
+                                fill: false,
+                                yAxisID: 'y1',
+                                order: 1,
+                            },
+                            {
+                                label: 'Completion Tokens',
+                                data: completionTokensData,
+                                type: 'line',
+                                borderColor: 'rgba(210,153,34,1)',
+                                backgroundColor: 'rgba(210,153,34,0.1)',
+                                tension: 0.3,
+                                fill: false,
+                                yAxisID: 'y1',
+                                order: 1,
                             },
                         ]
                     },
