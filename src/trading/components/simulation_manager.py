@@ -6,7 +6,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
 from src.llm.cache import get_cached_llm_response, compute_market_hash
-from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, BacktestPromptData, StrategyPromptData
+from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, build_analysis_messages, BacktestPromptData, StrategyPromptData
+from src.llm.backtest_prompts import build_backtest_variants_messages
 from src.strategies.llm_parser import create_strategy_from_llm
 
 try:
@@ -44,12 +45,12 @@ class SimulationManager:
             step1a_result = await asyncio.wait_for(
                 asyncio.to_thread(
                     get_cached_llm_response,
-                    compact_prompt(data["analysis_prompt"]),
-                    compact_prompt(build_system_prompt()), 60,
+                    "", "", 60,
                     market_hash=market_hash,
                     model_type=model_type,
                     temperature=temperature,
                     symbol=symbol,
+                    messages=data.get("analysis_messages"),
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -88,8 +89,8 @@ class SimulationManager:
             has_position=data.get("has_position", False),
             historical_backtest_results=data.get("historical_backtest_results"),
         )
-        variants_prompt = await asyncio.to_thread(
-            build_backtest_variants_prompt,
+        variants_messages = await asyncio.to_thread(
+            build_backtest_variants_messages,
             prompt_data
         )
 
@@ -97,12 +98,12 @@ class SimulationManager:
             step1b_result = await asyncio.wait_for(
                 asyncio.to_thread(
                     get_cached_llm_response,
-                    compact_prompt(variants_prompt),
-                    compact_prompt(build_system_prompt()), 60,
+                    "", "", 60,
                     market_hash=compute_market_hash({"step": "1b", "analysis": analysis}),
                     model_type=model_type,
                     temperature=temperature,
                     symbol=symbol,
+                    messages=variants_messages,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -390,6 +391,7 @@ class SimulationManager:
             aggregate_sentiment=aggregate_sentiment,
         )
         analysis_prompt, market_snapshot, market_hash = await self.sp.build_analysis_prompt_and_snapshot(prompt_data)
+        analysis_messages = build_analysis_messages(prompt_data)
 
         strategy_model_type, effective_temp = self.sp.model_tier_manager.compute_model_tier_and_temperature(
             atr=atr,
@@ -451,4 +453,5 @@ class SimulationManager:
             "min_hold_time_mult": sim_min_hold_time_mult,
             "has_position": symbol in engine.positions,
             "historical_backtest_results": historical_backtest_results,
+            "analysis_messages": analysis_messages,
         }
