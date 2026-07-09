@@ -204,19 +204,21 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
     raise RuntimeError("OpenAI request failed after all retries")
 
 
-def get_llm_response(prompt: str, system_prompt: str = "", model_type: str = "actuator", symbol: Optional[str] = None) -> str:
+def get_llm_response(prompt: str, system_prompt: str = "", model_type: str = "actuator", symbol: Optional[str] = None, messages: Optional[List[Dict[str, str]]] = None) -> str:
     """Send a prompt to the configured LLM provider and return the response text.
 
     Uses Redis caching with a 5-minute TTL (keyed by prompt + system prompt).
     model_type: "mind" for complex reasoning, "actuator" for fast time‑critical decisions.
     symbol: Optional symbol/ticker for semantic cache generalization.
+    messages: Optional list of message dicts (role/content) for multi-turn conversations.
+    When provided, the cache key is based on the messages list instead of the prompt.
 
     Note: get_cached_llm_response now returns a dict with "response", "provider", "model".
     This function returns only the response text for backward compatibility.
     """
     from src.llm.cache import get_cached_llm_response  # local import to avoid circular dependency at module level
 
-    result = get_cached_llm_response(prompt, system_prompt, ttl=300, model_type=model_type, symbol=symbol)
+    result = get_cached_llm_response(prompt, system_prompt, ttl=300, model_type=model_type, symbol=symbol, messages=messages)
     if result is None:
         # This should not happen because the underlying raw call raises on failure,
         # but guard against unexpected None.
