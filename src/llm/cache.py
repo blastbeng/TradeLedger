@@ -383,6 +383,21 @@ def get_cached_llm_response(
 
     if response_text is None:
         logger.warning("LLM returned None response; not caching.")
+        try:
+            save_llm_metrics({
+                "timestamp": time.time(),
+                "provider": used_provider,
+                "model": used_model,
+                "model_type": model_type,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cache_hit": 0,
+                "latency_ms": (time.time() - start_time) * 1000,
+                "error": "LLM returned None response",
+            })
+        except Exception as metric_err:
+            logger.warning("Failed to save None response metric: %s", metric_err)
         return None
 
     # Record success metric (primary or fallback)
