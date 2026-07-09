@@ -10,6 +10,17 @@ from src.llm.cache import get_cached_llm_response
 logger = logging.getLogger(__name__)
 
 
+def _round_floats(obj, decimals=2):
+    """Recursively round all floats in nested dicts/lists to improve cache stability."""
+    if isinstance(obj, float):
+        return round(obj, decimals)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, decimals) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_round_floats(item, decimals) for item in obj]
+    return obj
+
+
 def _timeframe_to_seconds(tf: str) -> int:
     """Convert a timeframe string (e.g., '5m', '1h') to seconds."""
     match = re.match(r'^(\d+)([mhdwMY])$', tf)
@@ -43,9 +54,9 @@ def _summarize_ohlcv(candles: List[List]) -> Optional[Dict[str, Any]]:
     change_pct = ((close_price - open_price) / open_price) * 100 if open_price else 0.0
     return {
         "change_pct": round(change_pct, 2),
-        "high": high,
-        "low": low,
-        "volume": volume,
+        "high": round(high, 2),
+        "low": round(low, 2),
+        "volume": round(volume),
         "candle_count": len(candles),
         "start_time": candles[0][0],
         "end_time": candles[-1][0],
