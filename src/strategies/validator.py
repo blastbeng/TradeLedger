@@ -101,6 +101,9 @@ def _validate_signal_impl(
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config: logic must be 'and' or 'or'")
 
         # Determine stop-loss method (default "fixed")
+        # Read take-profit values early so default stop-loss consistency checks can use them
+        tp = params.get("take_profit_pct")
+        tp_atr = params.get("take_profit_atr_multiple")
         stop_method = params.get("stop_loss_method", "fixed")
         if stop_method not in ("fixed", "atr_multiple"):
             return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_method")
@@ -184,8 +187,6 @@ def _validate_signal_impl(
                     else:
                         params["max_hold_time_seconds"] = 2_592_000  # 30 days
                     logger.info(f"Validator: defaulting max_hold_time_seconds to {params['max_hold_time_seconds']} for {symbol}")
-        tp = params.get("take_profit_pct")
-        tp_atr = params.get("take_profit_atr_multiple")
         tp_valid = tp is not None and isinstance(tp, (int, float)) and (0 < tp < 10.0)
         tp_atr_valid = tp_atr is not None and isinstance(tp_atr, (int, float)) and tp_atr > 0
         if not tp_valid and not tp_atr_valid:
