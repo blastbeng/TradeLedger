@@ -350,6 +350,9 @@
             <button id="btn-logout" title="Logout" style="background: none; border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; margin-right: 8px;">
                 Logout
             </button>
+            <button id="btn-install-app" title="Install App" style="display:none; background: var(--accent); color: #fff; border: none; padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; margin-right: 8px;">
+                📲 Install App
+            </button>
             <button id="theme-toggle" title="Toggle theme" style="background: none; border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 1rem;">
                 🌙
             </button>
@@ -2319,6 +2322,35 @@
         }
 
         document.getElementById('btn-refresh-llm-metrics').addEventListener('click', fetchLLMMetrics);
+
+        // --- PWA: Custom install button ---
+        let deferredInstallPrompt = null;
+        const installBtn = document.getElementById('btn-install-app');
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredInstallPrompt = e;
+            if (installBtn) installBtn.style.display = 'inline-block';
+        });
+
+        if (installBtn) {
+            installBtn.addEventListener('click', async () => {
+                if (deferredInstallPrompt) {
+                    deferredInstallPrompt.prompt();
+                    const { outcome } = await deferredInstallPrompt.userChoice;
+                    if (outcome === 'accepted') {
+                        console.log('PWA installed');
+                    }
+                    installBtn.style.display = 'none';
+                    deferredInstallPrompt = null;
+                }
+            });
+        }
+
+        window.addEventListener('appinstalled', () => {
+            if (installBtn) installBtn.style.display = 'none';
+            deferredInstallPrompt = null;
+        });
 
         // --- PWA: Register service worker for installability ---
         if ('serviceWorker' in navigator) {

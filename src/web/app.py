@@ -10,7 +10,7 @@ import uuid
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Response, APIRouter, Body
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from src.config.settings import settings
 # Ready for next request
 from src.utils.redis_client import get_redis_client, check_redis_connection
@@ -175,6 +175,47 @@ async def root():
 @public_router.get("/sw.js")
 async def service_worker():
     return FileResponse("src/web/static/sw.js", media_type="application/javascript")
+
+@public_router.get("/icon-{size}.png")
+async def icon_png(size: int):
+    """Generate PNG PWA icons on-the-fly (Chrome Android requires PNG icons for installability)."""
+    try:
+        from PIL import Image, ImageDraw
+        import io
+        
+        size = max(48, min(size, 512))
+        
+        img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        radius = size // 6
+        bg = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(bg)
+        draw.rounded_rectangle([0, 0, size-1, size-1], radius=radius, fill=(11, 14, 20, 255))
+        img = bg
+        
+        draw = ImageDraw.Draw(img)
+        margin = size // 6
+        x0, y0 = margin, size - margin
+        x1, y1 = size // 3, size // 2
+        x2, y2 = size // 2, size * 2 // 3
+        x3, y3 = size - margin, margin
+        
+        line_width = max(2, size // 32)
+        draw.line([(x0, y0), (x1, y1), (x2, y2), (x3, y3)], fill=(88, 166, 255, 255), width=line_width)
+        
+        dot_radius = max(3, size // 40)
+        for px, py in [(x0, y0), (x1, y1), (x2, y2), (x3, y3)]:
+            draw.ellipse([px-dot_radius, py-dot_radius, px+dot_radius, py+dot_radius], fill=(63, 185, 80, 255))
+        
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        return Response(content=buf.read(), media_type="image/png")
+    except ImportError:
+        import base64
+        transparent_png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+        )
+        return Response(content=transparent_png, media_type="image/png")
 
 @http_router.get("/health")
 async def health():
