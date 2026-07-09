@@ -123,6 +123,7 @@ class BacktestManager:
         tf_seconds_bt = engine._timeframe_to_seconds(assigned_tf)
         max_possible_candles = (settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds_bt
         MIN_STATISTICALLY_SIGNIFICANT_CANDLES = 50
+        MIN_BACKTEST_CANDLES = 50
         fallback_tf = None
         if max_possible_candles < MIN_STATISTICALLY_SIGNIFICANT_CANDLES:
             # Try to fall back to a shorter timeframe that has enough candles
@@ -171,7 +172,6 @@ class BacktestManager:
                 )
 
         # --- Skip backtesting if the assigned timeframe has too few candles ---
-        MIN_BACKTEST_CANDLES = 50
         if bt_candles is None or len(bt_candles) < MIN_BACKTEST_CANDLES:
             return None, (
                 f"Insufficient data for backtest for {assigned_tf} (need ≥{MIN_BACKTEST_CANDLES} candles, "
