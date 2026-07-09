@@ -624,6 +624,9 @@ class Settings(BaseSettings):
     # Enable automatic fallback to the other LLM provider if the primary fails.
     # Default: True to ensure the bot remains operational if the primary LLM provider fails.
     LLM_FALLBACK_ENABLED: bool = True
+    # Prompt caching for DeepSeek (and other providers that support it)
+    LLM_PROMPT_CACHING_ENABLED: bool = True
+    LLM_PROMPT_CACHING_PROVIDERS: list[str] = ["deepseek"]
 
     # Cache version key to invalidate LLM cache on settings reload.
     # Automatically generated on instantiation; changes when settings.reload() is called.
@@ -703,6 +706,16 @@ class Settings(BaseSettings):
     def validate_llm_mind_model_threshold(cls, v: float) -> float:
         if v < 0.05 or v > 0.95:
             raise ValueError("LLM_MIND_MODEL_THRESHOLD must be between 0.05 and 0.95")
+        return v
+
+    @field_validator("LLM_PROMPT_CACHING_ENABLED")
+    @classmethod
+    def validate_llm_prompt_caching_enabled(cls, v: bool) -> bool:
+        return v
+
+    @field_validator("LLM_PROMPT_CACHING_PROVIDERS")
+    @classmethod
+    def validate_llm_prompt_caching_providers(cls, v: list[str]) -> list[str]:
         return v
 
     @staticmethod
