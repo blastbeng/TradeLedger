@@ -684,9 +684,17 @@ class BacktestManager:
                     logger.info(f"Backtest variant {i+1}/{len(variants_to_test)} for {symbol}: insufficient data")
 
             # Build combined backtest summary for notifications
-            combined_bt_summary = " | ".join(
-                f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
-            ) if backtest_results else "No backtest performed"
+            summaries = []
+            for i, r in enumerate(backtest_results):
+                if r.get("stats"):
+                    summaries.append(f"V{i+1}: {r['summary']}")
+                elif any(br.get("stats") for br in backtest_results):
+                    summaries.append(f"V{i+1}: skipped")
+            
+            if not summaries:
+                combined_bt_summary = "Backtest skipped: insufficient data"
+            else:
+                combined_bt_summary = " | ".join(summaries)
 
             signal, llm_provider, llm_model = await self.run_step2_llm_call(
                 symbol=symbol,
@@ -857,8 +865,16 @@ class BacktestManager:
             is_btp=data["is_btp"],
         )
 
-        combined_bt_summary = " | ".join(
-            f"V{i+1}: {r['summary']}" for i, r in enumerate(backtest_results)
-        ) if backtest_results else "No backtest performed"
+        summaries = []
+        for i, r in enumerate(backtest_results):
+            if r.get("stats"):
+                summaries.append(f"V{i+1}: {r['summary']}")
+            elif any(br.get("stats") for br in backtest_results):
+                summaries.append(f"V{i+1}: skipped")
+        
+        if not summaries:
+            combined_bt_summary = "Backtest skipped: insufficient data"
+        else:
+            combined_bt_summary = " | ".join(summaries)
 
         return backtest_results, combined_bt_summary
