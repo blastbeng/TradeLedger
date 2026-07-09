@@ -197,7 +197,7 @@ def get_cached_llm_response(
                 model=model, base_url=base_url, api_key=api_key,
                 temperature=temperature, timeout=effective_timeout,
                 messages=api_messages,
-                enable_prompt_caching=False,  # Ollama doesn't support it
+                add_cache_control=add_cache_control,
             )
 
         
