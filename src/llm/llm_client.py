@@ -92,10 +92,13 @@ def _get_ollama_response(prompt: str, system_prompt: str = "", model: str = None
     raise RuntimeError("Ollama request failed after all retries")
 
 
-def _get_openai_response(prompt: str, system_prompt: str = "", model: str = None,
+def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str = None,
                          base_url: str = None, api_key: str = None,
                          temperature: Optional[float] = None,
-                         timeout: Optional[float] = None) -> str:
+                         timeout: Optional[float] = None,
+                         messages: Optional[list[dict]] = None,
+                         enable_prompt_caching: bool = False,
+) -> str:
     """Send a prompt to the configured OpenAI-compatible API and return the response text."""
     url = f"{(base_url or settings.OPENAI_BASE_URL).rstrip('/')}/chat/completions"
     headers = {"Content-Type": "application/json"}
@@ -103,14 +106,29 @@ def _get_openai_response(prompt: str, system_prompt: str = "", model: str = None
     if effective_api_key:
         headers["Authorization"] = f"Bearer {effective_api_key}"
 
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
+    if messages is not None:
+        # Use the provided message list directly
+        api_messages = messages
+    else:
+        api_messages = []
+        if system_prompt:
+            api_messages.append({"role": "system", "content": system_prompt})
+        api_messages.append({"role": "user", "content": prompt})
+
+    # Add cache_control to system message and first user message when caching is enabled
+    if enable_prompt_caching:
+        for msg in api_messages:
+            if msg["role"] == "system":
+                msg["cache_control"] = {"type": "ephemeral"}
+                break
+        for msg in api_messages:
+            if msg["role"] == "user":
+                msg["cache_control"] = {"type": "ephemeral"}
+                break
 
     payload = {
         "model": model or settings.OPENAI_MODEL,
-        "messages": messages,
+        "messages": api_messages,
         "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
     }
 
@@ -131,6 +149,7 @@ def _get_openai_response(prompt: str, system_prompt: str = "", model: str = None
                     return response.json()
 
             data = _do_request()
+
                                                                                                                                                                                                                                                                                    
             # Validate response structure                                                                                                                                                                                                                                          
             if "choices" not in data or not data["choices"]:                                                                                                                                                                                                                       
@@ -140,6 +159,7 @@ def _get_openai_response(prompt: str, system_prompt: str = "", model: str = None
                 )                                                                                                                                                                                                                                                                  
                 raise RuntimeError(f"OpenAI API returned unexpected format: missing 'choices'. Response: {str(data)[:500]}")                                                                                                                                                       
                                                                                                                                                                                                                                                                                    
+
             content = data["choices"][0]["message"]["content"]                                                                                                                                                                                                                     
             logger.info("LLM response (openai): %.500s...", content)                                                                                                                                                                                                               
             return content
