@@ -1,12 +1,37 @@
+import logging
 from .base import Signal
 from typing import Dict, Any, Optional
 
 from src.utils.symbol_utils import is_btp_isin
 
+logger = logging.getLogger(__name__)
+
 VALID_STRATEGY_TYPES = {"momentum", "mean_reversion", "breakout", "swing", "position"}
 
 
 def validate_signal(
+    signal: Signal,
+    market_data: Optional[Dict[str, Any]] = None,
+    atr: Optional[float] = None,
+    price: Optional[float] = None,
+    spread_pct: Optional[float] = None,
+    timeframe_seconds: Optional[int] = None,
+    min_stop_atr_mult: float = 1.0,
+    min_hold_time_mult: float = 1.0,
+    global_min_risk_reward_ratio: Optional[float] = None,
+    symbol: Optional[str] = None,
+) -> Signal:
+    """Wrapper that logs validation rejections before delegating to _validate_signal_impl."""
+    result = _validate_signal_impl(
+        signal, market_data, atr, price, spread_pct, timeframe_seconds,
+        min_stop_atr_mult, min_hold_time_mult, global_min_risk_reward_ratio, symbol,
+    )
+    if result.action == "HOLD" and signal.action in ("BUY", "SELL") and result.reasoning:
+        logger.warning(f"Validator: {signal.action}→HOLD for {symbol}: {result.reasoning}")
+    return result
+
+
+def _validate_signal_impl(
     signal: Signal,
     market_data: Optional[Dict[str, Any]] = None,
     atr: Optional[float] = None,

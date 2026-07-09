@@ -1478,7 +1478,13 @@ class SignalProcessor:
             if rsi is not None and (rsi < rsi_oversold or rsi > rsi_overbought):
                 return False
             # MACD histogram direction change? (harder to detect without previous sign – skip for simplicity)
+            # Ensure we still evaluate at least once per strategy interval
+            # even if no significant changes are detected
+            if now - last_time >= effective_interval:
+                logger.info(f"Forcing LLM eval for {symbol}: interval elapsed ({now - last_time:.0f}s >= {effective_interval:.0f}s)")
+                return False
             # Otherwise, no strong signal → skip
+            logger.info(f"Skipping LLM eval for {symbol}: no significant market changes detected (rsi={rsi})")
             return True
 
         # Have an open position – skip if price far from stop/tp and indicators calm

@@ -127,7 +127,7 @@ class LLMStepManager:
             pass
 
         if cb_active:
-            logger.warning(f"LLM circuit breaker active for {symbol}, skipping LLM call.")
+            logger.error(f"LLM circuit breaker ACTIVE for {symbol} — all signals will be fallback HOLD. Check LLM connectivity.")
             # Clear _force_eval to break the retry loop
             async with engine._eval_state_lock:
                 engine._force_eval.pop(symbol, None)
@@ -175,6 +175,8 @@ class LLMStepManager:
                 analysis_result = self.sp._parse_analysis_response(retry_result["response"])
                 llm_provider = retry_result["provider"]
                 llm_model = retry_result["model"]
+            if analysis_result is not None:
+                logger.info(f"Step 1a result for {symbol}: action={analysis_result.get('action')}, confidence={analysis_result.get('confidence', 0):.2f}")
             # Reset consecutive LLM failure counter on success
             try:
                 await asyncio.to_thread(engine.redis.delete, "llm:consecutive_failures")
@@ -254,22 +256,29 @@ class LLMStepManager:
             llm_model = "default_hold"
             combined_bt_summary = ""
             _skip_backtest = True
-        # If analysis says HOLD with no position, skip parameter selection entirely
+        # If analysis says HOLD with no position, only skip backtesting if confidence is very high
         elif analysis_result.get("action") == "HOLD" and not has_position:
-            logger.info(f"Step 1a analysis returned HOLD with no position for {symbol}. Skipping Step 1b.")
-            # Create a minimal preliminary signal for the notification flow
-            preliminary_signal = Signal(
-                action="HOLD",
-                confidence=analysis_result.get("confidence", 0.0),
-                reasoning=analysis_result.get("reasoning", ""),
-            )
-            preliminary_signal.model_type = strategy_model_type
-            preliminary_signal.llm_provider = llm_provider or "fallback"
-            preliminary_signal.llm_model = llm_model or "default_hold"
-            # Skip backtests and Step 2 — go directly to notification
-            signal = preliminary_signal
-            combined_bt_summary = ""
-            _skip_backtest = True
+            hold_confidence = analysis_result.get("confidence", 0.0)
+            if hold_confidence >= 0.85:
+                logger.info(f"Step 1a analysis returned HOLD with high confidence ({hold_confidence:.2f}) and no position for {symbol}. Skipping Step 1b.")
+                # Create a minimal preliminary signal for the notification flow
+                preliminary_signal = Signal(
+                    action="HOLD",
+                    confidence=hold_confidence,
+                    reasoning=analysis_result.get("reasoning", ""),
+                )
+                preliminary_signal.model_type = strategy_model_type
+                preliminary_signal.llm_provider = llm_provider or "fallback"
+                preliminary_signal.llm_model = llm_model or "default_hold"
+                # Skip backtests and Step 2 — go directly to notification
+                signal = preliminary_signal
+                combined_bt_summary = ""
+                _skip_backtest = True
+            else:
+                logger.info(f"Step 1a returned HOLD with low confidence ({hold_confidence:.2f}) for {symbol}. Proceeding to Step 1b/Step 2 with backtests.")
+                signal = None
+                combined_bt_summary = ""
+                _skip_backtest = False
         else:
             signal = None
             combined_bt_summary = ""

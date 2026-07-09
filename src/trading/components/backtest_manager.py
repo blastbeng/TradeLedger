@@ -484,6 +484,7 @@ class BacktestManager:
 
             if final_strategy is not None:
                 signal = final_strategy.generate_signal({})
+                logger.info(f"Step 2 final decision for {symbol}: action={signal.action}, confidence={signal.confidence:.2f}")
                 signal.model_type = strategy_model_type
                 signal.llm_provider = llm_provider
                 signal.llm_model = llm_model
