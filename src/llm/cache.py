@@ -371,6 +371,7 @@ def get_cached_llm_response(
                             "cache_hit": 0,
                             "latency_ms": fallback_latency,
                             "error": str(fallback_e)[:500],
+                            "request_type": request_type,
                         })
                     except Exception as metric_err:
                         logger.warning("Failed to save fallback error metric: %s", metric_err)
