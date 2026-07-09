@@ -59,73 +59,32 @@ def _format_raw_candles_compact(candles: List[List], max_candles: int = 200) -> 
 
 
 def _format_trade_pattern_analysis(analysis: Optional[Dict[str, Any]]) -> str:
-    """Format trade pattern analysis into a human-readable string for the LLM prompt."""
+    """Format trade pattern analysis into a compact string for the LLM prompt."""
     if not analysis:
         return ""
 
-    lines = ["**Trade Pattern Analysis (learn from your past decisions):**"]
+    lines = ["**Trade Pattern Analysis:**"]
 
-    if analysis.get("best_entry_conditions"):
-        lines.append("Best entry conditions by win rate:")
-        for item in analysis["best_entry_conditions"]:
-            lines.append(
-                f"  - {item['condition']}: {item['win_rate']*100:.0f}% win rate "
-                f"({item['trades']} trades, avg P&L {item['avg_pnl']*100:+.2f}%)"
-            )
+    def _fmt_items(label: str, items: list, key: str):
+        if items:
+            parts = [f"{i[key]}:{i['win_rate']*100:.0f}%WR,{i['trades']}t,{i['avg_pnl']*100:+.2f}%" for i in items[:5]]
+            lines.append(f"{label}: {' | '.join(parts)}")
 
-    if analysis.get("best_timeframes"):
-        lines.append("Best timeframes by win rate:")
-        for item in analysis["best_timeframes"]:
-            lines.append(
-                f"  - {item['timeframe']}: {item['win_rate']*100:.0f}% win rate "
-                f"({item['trades']} trades, avg P&L {item['avg_pnl']*100:+.2f}%)"
-            )
-
-    if analysis.get("best_exit_reasons"):
-        lines.append("Exit reason performance:")
-        for item in analysis["best_exit_reasons"]:
-            lines.append(
-                f"  - {item['exit_reason']}: {item['win_rate']*100:.0f}% win rate "
-                f"({item['trades']} trades, avg P&L {item['avg_pnl']*100:+.2f}%)"
-            )
-
-    if analysis.get("best_confidence_ranges"):
-        lines.append("Best confidence ranges:")
-        for item in analysis["best_confidence_ranges"]:
-            lines.append(
-                f"  - {item['range']}: {item['win_rate']*100:.0f}% win rate "
-                f"({item['trades']} trades, avg P&L {item['avg_pnl']*100:+.2f}%)"
-            )
-
-    if analysis.get("best_symbols"):
-        lines.append("Best performing symbols:")
-        for item in analysis["best_symbols"]:
-            lines.append(
-                f"  - {item['symbol']}: {item['win_rate']*100:.0f}% win rate "
-                f"({item['trades']} trades, avg P&L {item['avg_pnl']*100:+.2f}%)"
-            )
-
-    if analysis.get("worst_symbols"):
-        lines.append("Worst performing symbols (consider avoiding or being more cautious):")
-        for item in analysis["worst_symbols"]:
-            lines.append(
-                f"  - {item['symbol']}: {item['win_rate']*100:.0f}% win rate "
-                f"({item['trades']} trades, avg P&L {item['avg_pnl']*100:+.2f}%)"
-            )
+    _fmt_items("BestEntry", analysis.get("best_entry_conditions", []), "condition")
+    _fmt_items("BestTF", analysis.get("best_timeframes", []), "timeframe")
+    _fmt_items("BestExit", analysis.get("best_exit_reasons", []), "exit_reason")
+    _fmt_items("BestConf", analysis.get("best_confidence_ranges", []), "range")
+    _fmt_items("BestSym", analysis.get("best_symbols", []), "symbol")
+    _fmt_items("WorstSym", analysis.get("worst_symbols", []), "symbol")
 
     avg_win = analysis.get("avg_hold_time_winning")
     avg_loss = analysis.get("avg_hold_time_losing")
     if avg_win is not None or avg_loss is not None:
         win_str = f"{avg_win/3600:.1f}h" if avg_win is not None else "N/A"
         loss_str = f"{avg_loss/3600:.1f}h" if avg_loss is not None else "N/A"
-        lines.append(f"Average hold time: winning trades {win_str}, losing trades {loss_str}")
+        lines.append(f"HoldTime: W={win_str},L={loss_str}")
 
-    lines.append(
-        "\nUse this data to calibrate your decisions. Favor conditions, timeframes, "
-        "and parameters that have historically worked well. Avoid or be more cautious "
-        "with conditions and symbols that have historically performed poorly."
-    )
-
+    lines.append("Favor high-WR conditions/timeframes. Avoid low-WR symbols.")
     return "\n".join(lines)
 
 
