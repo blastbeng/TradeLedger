@@ -365,13 +365,10 @@ class SignalProcessor:
             logger.info(f"Skipping LLM for {symbol}: market unchanged, no strong signals.")
             async with engine._eval_state_lock:
                 engine._force_eval.pop(symbol, None)
-            # Update snapshot so price/indicator change checks use recent data
-            engine._last_eval_snapshot[symbol] = {
-                "timestamp": time.time(),
-                "price": ctx["current_price"],
-                "rsi": ctx["rsi"],
-                "macd_hist": ctx["macd_hist"],
-            }
+            # Do NOT update the snapshot timestamp here — it must only be updated
+            # after a real LLM call (done in LLMStepManager._update_last_eval_snapshot).
+            # Updating it on skip would reset the clock and defeat the time-based
+            # fallback that ensures periodic re-evaluation.
             return None
 
         strategy_model_type, effective_temp = self.model_tier_manager.compute_model_tier_and_temperature(
