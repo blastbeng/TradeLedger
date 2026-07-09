@@ -2355,9 +2355,33 @@
             deferredInstallPrompt = null;
         });
 
-        // --- PWA: Register service worker for installability ---
+        // --- PWA: Register service worker with auto-update ---
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW registration failed:', err));
+            navigator.serviceWorker.register('/sw.js').then(registration => {
+                // Detect new service worker and force it to take control immediately
+                registration.addEventListener('update', () => {
+                    const newWorker = registration.installing;
+                    if (newWorker) {
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                // New SW installed — tell it to skip waiting
+                                newWorker.postMessage({ type: 'SKIP_WAITING' });
+                            }
+                        });
+                    }
+                });
+                // Also check every 60s for updates
+                setInterval(() => registration.update(), 60000);
+            }).catch(err => console.error('SW registration failed:', err));
+
+            // Auto-reload when the new service worker takes control
+            let refreshing = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (!refreshing) {
+                    refreshing = true;
+                    window.location.reload();
+                }
+            });
         }
     </script>
 

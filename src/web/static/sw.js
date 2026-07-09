@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trade-ledger-v2';
+const CACHE_NAME = 'trade-ledger-v3';
 const STATIC_ASSETS = [
     '/static/manifest.json',
     '/static/icon.svg',
@@ -20,6 +20,12 @@ self.addEventListener('activate', (event) => {
         })
     );
     self.clients.claim();
+});
+
+self.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+        self.skipWaiting();
+    }
 });
 
 self.addEventListener('fetch', (event) => {
