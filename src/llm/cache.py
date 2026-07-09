@@ -19,6 +19,7 @@ def get_cached_llm_response(
     model_type: str = "actuator",
     temperature: Optional[float] = None,
     symbol: Optional[str] = None,
+    messages: Optional[list[str]] = None,
 ) -> Optional[dict]:
     """
     Get an LLM response, using Redis cache to avoid duplicate calls.
@@ -100,8 +101,25 @@ def get_cached_llm_response(
     else:
         effective_timeout = settings.LLM_TIMEOUT
 
+    # Determine if prompt caching should be used for this provider
+    use_prompt_caching = (
+        settings.LLM_PROMPT_CACHING_ENABLED
+        and provider in settings.LLM_PROMPT_CACHING_PROVIDERS
+        and messages is not None  # only when we have a split message list
+    )
+
     # Build cache key
-    if market_hash:
+    if messages is not None:
+        # Build a deterministic key from the message list + system prompt
+        key_data = json.dumps(
+            {"messages": messages, "system": system_prompt, "model_type": model_type,
+             "provider": provider, "model": model,
+             "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE,
+             "cache_version": settings.LLM_CACHE_VERSION},
+            sort_keys=True
+        )
+        cache_key = f"llm:{hashlib.sha256(key_data.encode()).hexdigest()}"
+    elif market_hash:
         sys_hash = hashlib.sha256(system_prompt.encode()).hexdigest()[:16] if system_prompt else "none"
         cache_key = f"llm:{settings.LLM_CACHE_VERSION}:{provider}:{model}:{model_type}:market:{market_hash}:sys:{sys_hash}:t{cache_temp if cache_temp is not None else 'def'}"
     else:
@@ -145,6 +163,16 @@ def get_cached_llm_response(
                 "\n... [TRUNCATED DUE TO CONTEXT WINDOW LIMIT] ...\n" +
                 prompt[-keep_end:]
             )
+
+    if messages is not None:
+        api_messages = []
+        if system_prompt:
+            api_messages.append({"role": "system", "content": system_prompt})
+        for msg in messages:
+            api_messages.append({"role": "user", "content": msg})
+    else:
+        api_messages = None  # will be built inside _get_*_response from prompt/system_prompt
+
     # --- Primary call ---
     response_text = None
     used_provider = provider
@@ -153,10 +181,25 @@ def get_cached_llm_response(
     try:
         if provider == "openai":
             from src.llm.llm_client import _get_openai_response
-            response_text = _get_openai_response(prompt, system_prompt, model=model, base_url=base_url, api_key=api_key, temperature=temperature, timeout=effective_timeout)
+            response_text = _get_openai_response(
+                prompt=prompt if messages is None else "",
+                system_prompt=system_prompt if messages is None else "",
+                model=model, base_url=base_url, api_key=api_key,
+                temperature=temperature, timeout=effective_timeout,
+                messages=api_messages,
+                enable_prompt_caching=use_prompt_caching,
+            )
         else:
             from src.llm.llm_client import _get_ollama_response
-            response_text = _get_ollama_response(prompt, system_prompt, model=model, base_url=base_url, api_key=api_key, temperature=temperature, timeout=effective_timeout)
+            response_text = _get_ollama_response(
+                prompt=prompt if messages is None else "",
+                system_prompt=system_prompt if messages is None else "",
+                model=model, base_url=base_url, api_key=api_key,
+                temperature=temperature, timeout=effective_timeout,
+                messages=api_messages,
+                enable_prompt_caching=False,  # Ollama doesn't support it
+            )
+
         
         if not response_text or not response_text.strip():
             raise RuntimeError("LLM returned an empty response")
@@ -192,12 +235,15 @@ def get_cached_llm_response(
                 try:
                     from src.llm.llm_client import _get_openai_response
                     response_text = _get_openai_response(
-                        prompt, system_prompt,
+                        prompt=prompt if messages is None else "",
+                        system_prompt=system_prompt if messages is None else "",
                         model=fallback_model,
                         base_url=fallback_base_url,
                         api_key=fallback_api_key,
                         temperature=temperature,
                         timeout=effective_timeout,
+                        messages=api_messages,
+                        enable_prompt_caching=use_prompt_caching,
                     )
                     used_provider = "openai"
                     used_model = fallback_model
@@ -233,12 +279,15 @@ def get_cached_llm_response(
                 try:
                     from src.llm.llm_client import _get_ollama_response
                     response_text = _get_ollama_response(
-                        prompt, system_prompt,
+                        prompt=prompt if messages is None else "",
+                        system_prompt=system_prompt if messages is None else "",
                         model=fallback_model,
                         base_url=fallback_base_url,
                         api_key=fallback_api_key,
                         temperature=temperature,
                         timeout=effective_timeout,
+                        messages=api_messages,
+                        enable_prompt_caching=False,
                     )
                     used_provider = "ollama"
                     used_model = fallback_model
