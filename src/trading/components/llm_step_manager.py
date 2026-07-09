@@ -147,6 +147,7 @@ class LLMStepManager:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": compact_prompt(analysis_prompt)},
                     ],
+                    request_type="trading_decision_step1a",
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -175,6 +176,7 @@ class LLMStepManager:
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": compact_prompt(correction_prompt)},
                         ],
+                        request_type="trading_decision_step1a_retry",
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )
@@ -386,6 +388,7 @@ class LLMStepManager:
                     temperature=effective_temp,
                     symbol=symbol,
                     messages=variants_messages,
+                    request_type="trading_decision_step1b",
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -437,6 +440,7 @@ class LLMStepManager:
                             {"role": "system", "content": compact_prompt(build_system_prompt())},
                             {"role": "user", "content": compact_prompt(correction_prompt)},
                         ],
+                        request_type="trading_decision_step1b_retry",
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )

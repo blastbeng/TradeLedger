@@ -145,6 +145,7 @@ class ReevalLLMRunner:
                                 model_type="mind",
                                 temperature=effective_temp,
                                 messages=chunk_messages,
+                                request_type="symbol_reeval_chunk",
                             ),
                             timeout=settings.LLM_TIMEOUT
                         )
@@ -185,6 +186,7 @@ class ReevalLLMRunner:
                                     get_cached_llm_response, "", "", 120,
                                     model_type="actuator", temperature=effective_temp,
                                     messages=correction_messages,
+                                    request_type="symbol_reeval_chunk_retry",
                                 ),
                                 timeout=settings.LLM_TIMEOUT
                             )
@@ -283,6 +285,7 @@ class ReevalLLMRunner:
                             model_type="mind",
                             temperature=effective_temp,
                             messages=final_messages,
+                            request_type="symbol_reeval_final",
                         ),
                         timeout=settings.LLM_TIMEOUT
                     )
