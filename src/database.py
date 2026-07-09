@@ -2174,6 +2174,60 @@ def get_llm_metrics_summary() -> dict:
         conn.close()
 
 
+def get_llm_metrics_timeseries(hours: int = 24) -> List[Dict[str, Any]]:
+    """Return hourly aggregated LLM metrics for the last N hours."""
+    conn = get_connection()
+    try:
+        cutoff = time.time() - hours * 3600
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                """
+                SELECT
+                    date_trunc('hour', to_timestamp(timestamp)) AS hour,
+                    COUNT(*) as calls,
+                    SUM(total_tokens) as tokens,
+                    AVG(latency_ms) as avg_latency,
+                    SUM(cache_hit) as cache_hits
+                FROM llm_metrics
+                WHERE timestamp >= %s
+                GROUP BY hour
+                ORDER BY hour ASC
+                """
+            )
+        else:
+            # SQLite: group by integer division of timestamp / 3600
+            sql = _adapt_sql(
+                """
+                SELECT
+                    (CAST(timestamp / 3600 AS INTEGER) * 3600) AS hour,
+                    COUNT(*) as calls,
+                    SUM(total_tokens) as tokens,
+                    AVG(latency_ms) as avg_latency,
+                    SUM(cache_hit) as cache_hits
+                FROM llm_metrics
+                WHERE timestamp >= %s
+                GROUP BY hour
+                ORDER BY hour ASC
+                """
+            )
+        rows = conn.execute(sql, (cutoff,)).fetchall()
+        result = []
+        for row in rows:
+            hour_ts = row["hour"]
+            calls = row["calls"]
+            cache_hits = row["cache_hits"]
+            result.append({
+                "hour": hour_ts,
+                "calls": calls,
+                "tokens": row["tokens"],
+                "avg_latency_ms": round(row["avg_latency"], 2) if row["avg_latency"] else 0,
+                "cache_hit_rate": round((cache_hits / calls * 100) if calls > 0 else 0, 1),
+            })
+        return result
+    finally:
+        conn.close()
+
+
 def close_pool():
     """Close the PostgreSQL connection pool if it exists."""
     global _pg_pool
