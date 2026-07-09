@@ -60,7 +60,14 @@ def _validate_signal_impl(
         # Validate backtest_entry_config (only required for BUY signals)
         if signal.action == "BUY":
             if "backtest_entry_config" not in params:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Missing required parameter: backtest_entry_config")
+                # Default to a simple EMA trend filter
+                params["backtest_entry_config"] = {
+                    "ema_period": 21,
+                    "ema_direction": "above",
+                    "min_adx": 20,
+                    "logic": "and",
+                }
+                logger.info(f"Validator: defaulting backtest_entry_config for {symbol}")
             bec = params["backtest_entry_config"]
             if not isinstance(bec, dict):
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_entry_config (must be a dict)")
@@ -101,7 +108,8 @@ def _validate_signal_impl(
         if stop_method == "atr_multiple":
             # stop_loss_atr_multiple is required
             if "stop_loss_atr_multiple" not in params:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Missing stop_loss_atr_multiple for atr_multiple method")
+                params["stop_loss_atr_multiple"] = 2.0
+                logger.info(f"Validator: defaulting stop_loss_atr_multiple to 2.0 for {symbol}")
             atr_mult = params["stop_loss_atr_multiple"]
             if not isinstance(atr_mult, (int, float)) or atr_mult <= 0:
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_atr_multiple")
@@ -124,10 +132,19 @@ def _validate_signal_impl(
                     return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_pct")
         else:  # "fixed"
             if "stop_loss_pct" not in params:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Missing required parameter: stop_loss_pct")
-            sl = params["stop_loss_pct"]
-            if not isinstance(sl, (int, float)) or not (0 < sl < 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_pct")
+                # Default to a sensible value based on ATR if available
+                if atr is not None and price is not None and price > 0 and atr > 0:
+                    sl = (2.0 * atr) / price  # 2x ATR as default
+                    params["stop_loss_pct"] = sl
+                    logger.info(f"Validator: computed default stop_loss_pct={sl:.4f} from ATR for {symbol}")
+                else:
+                    sl = 0.05  # 5% default
+                    params["stop_loss_pct"] = sl
+                    logger.info(f"Validator: using default stop_loss_pct={sl} for {symbol}")
+            else:
+                sl = params["stop_loss_pct"]
+                if not isinstance(sl, (int, float)) or not (0 < sl < 1.0):
+                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_pct")
 
         # Enforce minimum fixed stop-loss relative to ATR (if ATR and price are available)
         if stop_method == "fixed" and atr is not None and price is not None and price > 0 and atr > 0:
@@ -147,17 +164,39 @@ def _validate_signal_impl(
                     )
                 )
 
-        # The rest of the required parameters remain unchanged
-        required = ["take_profit_pct", "trailing_stop", "position_size_fraction", "max_hold_time_seconds"]
+        # take_profit_pct is validated separately below (may use take_profit_atr_multiple instead)
+        required = ["trailing_stop", "position_size_fraction", "max_hold_time_seconds"]
         for key in required:
             if key not in params:
-                return Signal(action="HOLD", confidence=0.0, reasoning=f"Missing required parameter: {key}")
+                if key == "trailing_stop":
+                    params["trailing_stop"] = False
+                    logger.info(f"Validator: defaulting trailing_stop to False for {symbol}")
+                elif key == "position_size_fraction":
+                    params["position_size_fraction"] = 0.1
+                    logger.info(f"Validator: defaulting position_size_fraction to 0.1 for {symbol}")
+                elif key == "max_hold_time_seconds":
+                    # Default to a reasonable multiple of the timeframe
+                    if timeframe_seconds is not None:
+                        params["max_hold_time_seconds"] = min(int(timeframe_seconds * 10), 157_680_000)
+                    else:
+                        params["max_hold_time_seconds"] = 2_592_000  # 30 days
+                    logger.info(f"Validator: defaulting max_hold_time_seconds to {params['max_hold_time_seconds']} for {symbol}")
         tp = params.get("take_profit_pct")
         tp_atr = params.get("take_profit_atr_multiple")
         tp_valid = tp is not None and isinstance(tp, (int, float)) and (0 < tp < 10.0)
         tp_atr_valid = tp_atr is not None and isinstance(tp_atr, (int, float)) and tp_atr > 0
         if not tp_valid and not tp_atr_valid:
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid or missing take_profit_pct or take_profit_atr_multiple")
+            # Default take_profit_pct based on ATR if available
+            if atr is not None and price is not None and price > 0 and atr > 0:
+                tp = (3.0 * atr) / price  # 3x ATR as default
+                params["take_profit_pct"] = tp
+                tp_valid = True
+                logger.info(f"Validator: computed default take_profit_pct={tp:.4f} from ATR for {symbol}")
+            else:
+                tp = 0.10  # 10% default
+                params["take_profit_pct"] = tp
+                tp_valid = True
+                logger.info(f"Validator: using default take_profit_pct={tp} for {symbol}")
         # When using ATR-based take-profit, take_profit_pct is used as a fallback.
         # If the LLM omitted it, compute a default from the ATR multiplier or use a sensible default.
         if tp_atr_valid and not tp_valid:
