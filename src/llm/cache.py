@@ -41,7 +41,10 @@ def get_cached_llm_response(
     redis_client = get_redis_client()
 
     if ttl is None:
-        ttl = settings.LLM_CACHE_TTL
+        if model_type == "mind":
+            ttl = settings.LLM_MIND_CACHE_TTL
+        else:
+            ttl = settings.LLM_CACHE_TTL
 
 
     # Determine effective provider and model for the primary choice

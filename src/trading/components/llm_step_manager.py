@@ -138,9 +138,9 @@ class LLMStepManager:
             step1a_result = await asyncio.wait_for(
                 asyncio.to_thread(
                     get_cached_llm_response,
-                    "", "", 60,
+                    "", "", None,
                     market_hash=market_hash,
-                    model_type=strategy_model_type,
+                    model_type="actuator",
                     temperature=effective_temp,
                     symbol=symbol,
                     messages=[
@@ -168,7 +168,7 @@ class LLMStepManager:
                 retry_result = await asyncio.wait_for(
                     asyncio.to_thread(
                         get_cached_llm_response,
-                        "", "", 30,
+                        "", "", None,
                         model_type="actuator",
                         temperature=effective_temp,
                         market_hash=market_hash,
@@ -382,7 +382,7 @@ class LLMStepManager:
             step1b_result = await asyncio.wait_for(
                 asyncio.to_thread(
                     get_cached_llm_response,
-                    "", "", 60,
+                    "", "", None,
                     market_hash=variants_market_hash,
                     model_type=strategy_model_type,
                     temperature=effective_temp,
@@ -432,7 +432,7 @@ class LLMStepManager:
             try:
                 response2 = await asyncio.wait_for(
                     asyncio.to_thread(
-                        get_cached_llm_response, "", "", 30,
+                        get_cached_llm_response, "", "", None,
                         model_type="actuator",
                         temperature=effective_temp,
                         market_hash=variants_market_hash,

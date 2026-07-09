@@ -702,7 +702,7 @@ class Settings(BaseSettings):
     # required to trigger the "mind" model. Lower values = more frequent use
     # of the "mind" model (higher cost/quality); higher values = more frequent
     # use of the "actuator" model (lower cost/faster).
-    LLM_MIND_MODEL_THRESHOLD: float = 0.65
+    LLM_MIND_MODEL_THRESHOLD: float = 0.75
 
     @field_validator("LLM_MIND_MODEL_THRESHOLD")
     @classmethod
@@ -834,6 +834,15 @@ class Settings(BaseSettings):
     def validate_llm_cache_ttl(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("LLM_CACHE_TTL must be positive")
+        return v
+
+    LLM_MIND_CACHE_TTL: int = 3600
+
+    @field_validator("LLM_MIND_CACHE_TTL")
+    @classmethod
+    def validate_llm_mind_cache_ttl(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("LLM_MIND_CACHE_TTL must be positive")
         return v
 
     ORPHANED_ORDER_TIMEOUT_SECONDS: float = 600.0
