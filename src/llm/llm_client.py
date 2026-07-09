@@ -16,8 +16,8 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
                          timeout: Optional[float] = None,
                         messages: Optional[List[Dict[str, str]]] = None,
                         add_cache_control: bool = False,
-) -> str:
-    """Send a prompt to the configured Ollama model and return the response text."""
+) -> dict:
+    """Send a prompt to the configured Ollama model and return a dict with 'content' and 'usage'."""
     url = f"{(base_url or settings.OLLAMA_BASE_URL).rstrip('/')}/api/chat"
     headers = {"Content-Type": "application/json"}
     effective_api_key = api_key or settings.OLLAMA_API_KEY
@@ -67,8 +67,29 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
                 raise RuntimeError(f"Ollama API returned unexpected format: missing 'message.content'. Response: {str(data)[:500]}")                                                                                                                                               
                                                                                                                                                                                                                                                                                    
             content = data["message"]["content"]                                                                                                                                                                                                                                   
-            logger.info("LLM response (ollama): %.500s...", content)                                                                                                                                                                                                               
-            return content
+            logger.info("LLM response (ollama): %.500s...", content)
+
+            # Extract token usage from Ollama response (prompt_eval_count / eval_count)
+            prompt_eval_count = data.get("prompt_eval_count")
+            eval_count = data.get("eval_count")
+            if prompt_eval_count is not None and eval_count is not None:
+                prompt_tokens = prompt_eval_count
+                completion_tokens = eval_count
+            else:
+                # Fallback to rough estimate
+                from src.llm.cache import estimate_tokens
+                prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+                completion_tokens = estimate_tokens(content)
+            total_tokens = prompt_tokens + completion_tokens
+
+            return {
+                "content": content,
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                }
+            }
         except httpx.HTTPStatusError as e:
             if e.response.status_code not in (429, 500, 502, 503, 504):
                 logger.error(
@@ -105,8 +126,8 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
                          timeout: Optional[float] = None,
                         messages: Optional[List[Dict[str, str]]] = None,
                         add_cache_control: bool = False,
-) -> str:
-    """Send a prompt to the configured OpenAI-compatible API and return the response text."""
+) -> dict:
+    """Send a prompt to the configured OpenAI-compatible API and return a dict with 'content' and 'usage'."""
     url = f"{(base_url or settings.OPENAI_BASE_URL).rstrip('/')}/chat/completions"
     headers = {"Content-Type": "application/json"}
     effective_api_key = api_key or settings.OPENAI_API_KEY
@@ -171,8 +192,22 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
 
 
             content = data["choices"][0]["message"]["content"]                                                                                                                                                                                                                     
-            logger.info("LLM response (openai): %.500s...", content)                                                                                                                                                                                                               
-            return content
+            logger.info("LLM response (openai): %.500s...", content)
+
+            # Extract token usage from the API response
+            usage_data = data.get("usage", {})
+            prompt_tokens = usage_data.get("prompt_tokens", 0)
+            completion_tokens = usage_data.get("completion_tokens", 0)
+            total_tokens = usage_data.get("total_tokens", 0)
+
+            return {
+                "content": content,
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                }
+            }
         except httpx.HTTPStatusError as e:
             # Log the full response body for non-retryable errors (especially 400)
             if e.response.status_code not in (429, 500, 502, 503, 504):

@@ -1,9 +1,11 @@
 import hashlib
 import json
 import logging
+import time
 from typing import Optional, List, Dict
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
+from src.database import save_llm_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +142,22 @@ def get_cached_llm_response(
                 data = json.loads(cached)
                 if isinstance(data, dict) and "response" in data:
                     logger.info("LLM cache hit: key=%.32s, model_type=%s", cache_key, model_type)
+                    # Record cache hit metric
+                    try:
+                        save_llm_metrics({
+                            "timestamp": time.time(),
+                            "provider": data.get("provider", provider),
+                            "model": data.get("model", model),
+                            "model_type": model_type,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "total_tokens": 0,
+                            "cache_hit": 1,
+                            "latency_ms": 0,
+                            "error": None,
+                        })
+                    except Exception as metric_err:
+                        logger.warning("Failed to save cache hit metric: %s", metric_err)
                     return data
             except (json.JSONDecodeError, TypeError):
                 pass  # fall through to re-fetch
@@ -177,11 +195,13 @@ def get_cached_llm_response(
     response_text = None
     used_provider = provider
     used_model = model
+    usage = None
 
+    start_time = time.time()
     try:
         if provider == "openai":
             from src.llm.llm_client import _get_openai_response
-            response_text = _get_openai_response(
+            result = _get_openai_response(
                 prompt=prompt if messages is None else "",
                 system_prompt=system_prompt if messages is None else "",
                 model=model, base_url=base_url, api_key=api_key,
@@ -191,7 +211,7 @@ def get_cached_llm_response(
             )
         else:
             from src.llm.llm_client import _get_ollama_response
-            response_text = _get_ollama_response(
+            result = _get_ollama_response(
                 prompt=prompt if messages is None else "",
                 system_prompt=system_prompt if messages is None else "",
                 model=model, base_url=base_url, api_key=api_key,
@@ -200,10 +220,30 @@ def get_cached_llm_response(
                 add_cache_control=add_cache_control,
             )
 
+        response_text = result["content"]
+        usage = result.get("usage", {})
         
         if not response_text or not response_text.strip():
             raise RuntimeError("LLM returned an empty response")
     except Exception as e:
+        latency_ms = (time.time() - start_time) * 1000
+        # Record error metric for primary call
+        try:
+            save_llm_metrics({
+                "timestamp": time.time(),
+                "provider": provider,
+                "model": model,
+                "model_type": model_type,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cache_hit": 0,
+                "latency_ms": latency_ms,
+                "error": str(e)[:500],
+            })
+        except Exception as metric_err:
+            logger.warning("Failed to save primary error metric: %s", metric_err)
+
         logger.error("LLM primary call failed (provider=%s, model=%s, model_type=%s): %s", provider, model, model_type, e, exc_info=True)
         if not settings.LLM_FALLBACK_ENABLED:
             logger.warning(
@@ -232,9 +272,10 @@ def get_cached_llm_response(
                     "Ollama call failed (%s). Falling back to OpenAI-compatible provider "
                     "for %s role (model=%s).", e, model_type, fallback_model
                 )
+                fallback_start = time.time()
                 try:
                     from src.llm.llm_client import _get_openai_response
-                    response_text = _get_openai_response(
+                    result = _get_openai_response(
                         prompt=prompt if messages is None else "",
                         system_prompt=system_prompt if messages is None else "",
                         model=fallback_model,
@@ -245,9 +286,27 @@ def get_cached_llm_response(
                         messages=api_messages,
                         add_cache_control=add_cache_control,
                     )
+                    response_text = result["content"]
+                    usage = result.get("usage", {})
                     used_provider = "openai"
                     used_model = fallback_model
                 except Exception as fallback_e:
+                    fallback_latency = (time.time() - fallback_start) * 1000
+                    try:
+                        save_llm_metrics({
+                            "timestamp": time.time(),
+                            "provider": "openai",
+                            "model": fallback_model,
+                            "model_type": model_type,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "total_tokens": 0,
+                            "cache_hit": 0,
+                            "latency_ms": fallback_latency,
+                            "error": str(fallback_e)[:500],
+                        })
+                    except Exception as metric_err:
+                        logger.warning("Failed to save fallback error metric: %s", metric_err)
                     logger.error("OpenAI fallback also failed: %s", fallback_e, exc_info=True)
                     raise
             else:
@@ -276,9 +335,10 @@ def get_cached_llm_response(
                     "OpenAI call failed (%s). Falling back to Ollama provider "
                     "for %s role (model=%s).", e, model_type, fallback_model
                 )
+                fallback_start = time.time()
                 try:
                     from src.llm.llm_client import _get_ollama_response
-                    response_text = _get_ollama_response(
+                    result = _get_ollama_response(
                         prompt=prompt if messages is None else "",
                         system_prompt=system_prompt if messages is None else "",
                         model=fallback_model,
@@ -289,9 +349,27 @@ def get_cached_llm_response(
                         messages=api_messages,
                         add_cache_control=add_cache_control,
                     )
+                    response_text = result["content"]
+                    usage = result.get("usage", {})
                     used_provider = "ollama"
                     used_model = fallback_model
                 except Exception as fallback_e:
+                    fallback_latency = (time.time() - fallback_start) * 1000
+                    try:
+                        save_llm_metrics({
+                            "timestamp": time.time(),
+                            "provider": "ollama",
+                            "model": fallback_model,
+                            "model_type": model_type,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "total_tokens": 0,
+                            "cache_hit": 0,
+                            "latency_ms": fallback_latency,
+                            "error": str(fallback_e)[:500],
+                        })
+                    except Exception as metric_err:
+                        logger.warning("Failed to save fallback error metric: %s", metric_err)
                     logger.error("Ollama fallback also failed: %s", fallback_e, exc_info=True)
                     raise
             else:
@@ -306,6 +384,24 @@ def get_cached_llm_response(
     if response_text is None:
         logger.warning("LLM returned None response; not caching.")
         return None
+
+    # Record success metric (primary or fallback)
+    latency_ms = (time.time() - start_time) * 1000
+    try:
+        save_llm_metrics({
+            "timestamp": time.time(),
+            "provider": used_provider,
+            "model": used_model,
+            "model_type": model_type,
+            "prompt_tokens": usage.get("prompt_tokens", 0) if usage else 0,
+            "completion_tokens": usage.get("completion_tokens", 0) if usage else 0,
+            "total_tokens": usage.get("total_tokens", 0) if usage else 0,
+            "cache_hit": 0,
+            "latency_ms": latency_ms,
+            "error": None,
+        })
+    except Exception as metric_err:
+        logger.warning("Failed to save success metric: %s", metric_err)
 
     logger.debug("LLM response cached: %.500s...", response_text)
     # Store in cache as JSON
