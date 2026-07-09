@@ -108,7 +108,36 @@ You will operate in two steps:
 2. **Step 2:** Receive ALL backtest results and make your final decision (BUY, SELL, HOLD). Compare variants and choose the best-performing one to inform your final parameters.
 
 ## Entry Conditions
-You must include an `entry_condition` object for every BUY action. The strategy prompt provides full details and examples.
+You MUST include an `entry_condition` object in your JSON output for every BUY action. This tells the bot the **exact moment** to enter the trade. If you omit this field, the trade will be executed immediately at the current market price. The object must have a `"type"` field and, except for `"delay"`, a `"timeout_seconds"` field.
+Supported types:
+- `"limit_price"`: wait for the price to drop to or below `"price"`.
+  Example: {"type": "limit_price", "price": 1.23, "timeout_seconds": 3600}
+- `"rsi_threshold"`: wait for RSI(14) to fall below `"rsi_below"`.
+  Example: {"type": "rsi_threshold", "rsi_below": 30, "timeout_seconds": 7200}
+- `"delay"`: simply wait `"delay_seconds"` before executing.
+  Example: {"type": "delay", "delay_seconds": 3600}
+- `"indicator_combo"`: wait until ALL listed indicator conditions are met.
+  Supported indicators: `rsi`, `macd`, `macd_signal`, `macd_hist`, `bb_upper`, `bb_middle`, `bb_lower`, `ema_9`, `ema_21`, `stochastic_k`, `stochastic_d`, `adx`, `plus_di`, `minus_di`, `obv`, `mfi`, `cci`, `williams_r`, `parabolic_sar`, `atr`.
+  Example: {"type": "indicator_combo", "conditions": [ {"indicator": "rsi", "threshold": 30, "direction": "below"}, {"indicator": "macd_hist", "threshold": 0, "direction": "above"} ], "timeout_seconds": 7200}
+If a timeout expires without the condition being met, the trade is skipped entirely.
+**Important:** The engine enforces a minimum timeout of 300 seconds or __ENTRY_CONDITION_MIN_TIMEOUT_MULT__× the candle timeframe, whichever is larger. Set `timeout_seconds` to at least this value, and prefer longer timeouts for higher timeframes (e.g., 3600–7200 s for 1d candles).
+For 1w candles, consider timeouts of 86400–604800 s (1–7 days); for 1M candles, 604800–2592000 s (1–4 weeks).
+
+## Strategy Output Format
+**Output ONLY the raw JSON object as specified.**
+
+Return a JSON object with these **required** fields:
+- `action`: one of BUY, SELL, HOLD
+- `confidence`: a float between 0.0 and 1.0
+- `reasoning`: a string explaining **why** you chose this action and this confidence level. Include the key factors (indicators, sentiment, market regime, etc.) that led to your decision. You MUST also include the decided price (the current market price or your specified `limit_price`) in the reasoning message.
+- `strategy`: an object containing `type` (string) and `parameters` (object).
+  The `parameters` object MUST include ALL required trading parameters:
+  `stop_loss_pct`, `take_profit_pct`, `position_size_fraction`, `confidence_sizing_weight`, `trailing_stop`, `max_hold_time_seconds`, `cooldown_after_loss_seconds`, `backtest_period_days`,
+  and `backtest_entry_config` (REQUIRED for BUY actions — the same entry logic object used in your backtest variants), etc.
+- `backtest_variants`: a JSON array of objects, each containing a complete set of strategy parameters for backtesting. Each variant MUST include at minimum: `stop_loss_pct`, `take_profit_pct`, `max_hold_time_seconds`, `trailing_stop`, `position_size_fraction`, and `backtest_period_days`. You decide how many variants to return (minimum 1, recommended 3–5). Each variant should explore a different hypothesis (e.g., tight vs wide stop, short vs long hold, trailing on vs off, etc.). The engine will run a backtest for EACH variant and present ALL results in Step 2.
+- `entry_condition`: REQUIRED for every BUY action. An object specifying the exact moment to enter the trade (see Entry Conditions section above for format).
+- `limit_price`: optional, a specific limit price for the order.
+- `time_in_force`: optional, "day" or "gtc". Default "day".
 
 """
 
@@ -179,4 +208,5 @@ def build_system_prompt() -> str:
     )
     prompt = prompt.replace("__STOCK_FEE_SECTION__", _compute_stock_fee_text())
     prompt = prompt.replace("__BTP_FEE_SECTION__", _compute_btp_fee_text())
+    prompt = prompt.replace("__ENTRY_CONDITION_MIN_TIMEOUT_MULT__", str(settings.ENTRY_CONDITION_MIN_TIMEOUT_MULT))
     return prompt
