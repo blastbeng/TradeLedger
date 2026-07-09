@@ -10,10 +10,13 @@ from src.config.settings import settings
 logger = logging.getLogger(__name__)
 
 
-def _get_ollama_response(prompt: str, system_prompt: str = "", model: str = None,
+def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str = None,
                          base_url: str = None, api_key: str = None,
                          temperature: Optional[float] = None,
-                         timeout: Optional[float] = None) -> str:
+                         timeout: Optional[float] = None,
+                         messages: Optional[list[dict]] = None,
+                         enable_prompt_caching: bool = False,
+) -> str:
     """Send a prompt to the configured Ollama model and return the response text."""
     url = f"{(base_url or settings.OLLAMA_BASE_URL).rstrip('/')}/api/chat"
     headers = {"Content-Type": "application/json"}
@@ -21,14 +24,18 @@ def _get_ollama_response(prompt: str, system_prompt: str = "", model: str = None
     if effective_api_key:
         headers["Authorization"] = f"Bearer {effective_api_key}"
 
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
+    if messages is not None:
+        # Use the provided message list directly
+        api_messages = messages
+    else:
+        api_messages = []
+        if system_prompt:
+            api_messages.append({"role": "system", "content": system_prompt})
+        api_messages.append({"role": "user", "content": prompt})
 
     payload = {
         "model": model or settings.OLLAMA_MODEL,
-        "messages": messages,
+        "messages": api_messages,
         "stream": False,
         "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
     }
