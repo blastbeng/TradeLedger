@@ -65,6 +65,12 @@ class _PgConnectionWrapper:
         return getattr(self._conn, name)
 
     def close(self):
+        # Ensure any pending transaction is rolled back before returning to pool
+        # This prevents "INTRANS" state leaks when exceptions occur before commit()
+        try:
+            self._conn.rollback()
+        except Exception:
+            pass  # Ignore rollback errors (e.g., no transaction in progress)
         try:
             self._pool.putconn(self._conn)
         except Exception as e:
