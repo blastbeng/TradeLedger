@@ -306,6 +306,11 @@ class BacktestManager:
             backtest_stats["assigned_timeframe"] = assigned_tf
             bt_entry_config_used = bt_entry_config is not None and isinstance(bt_entry_config, dict) and len(bt_entry_config) > 0
             bt_summary = format_backtest_summary(backtest_stats, entry_config_used=bt_entry_config_used)
+            if fallback_tf is not None:
+                bt_summary = (
+                    f"⚠️ NOTE: Backtest run on fallback timeframe {fallback_tf} instead of assigned {assigned_tf} "
+                    f"due to insufficient data.\n" + bt_summary
+                )
 
             if len(bt_candles) >= settings.WALK_FORWARD_CANDLE_THRESHOLD:
                 wf_stats = await asyncio.to_thread(

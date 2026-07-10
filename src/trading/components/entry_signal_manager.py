@@ -22,6 +22,14 @@ class EntrySignalManager:
         """Return True if a favourable entry condition is detected for the symbol.
         Uses recent OHLCV data from the database and compares with previous state."""
         engine = self.engine
+        
+        # Clean up stale entry signal state for symbols no longer tracked
+        active_symbols = {entry["symbol"] for entry in engine.current_symbols}
+        active_symbols.update(engine.positions.keys())
+        stale_keys = [s for s in engine._entry_signal_state if s not in active_symbols]
+        for s in stale_keys:
+            engine._entry_signal_state.pop(s, None)
+
         # Fetch pre-computed indicators from DB
         ind = await asyncio.to_thread(get_indicators, symbol, timeframe)
 

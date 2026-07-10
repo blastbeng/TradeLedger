@@ -352,11 +352,7 @@ class SymbolReevaluator:
         # Recompute per-symbol budget with the effective max
         per_symbol_budget = base_balance / engine.effective_max_symbols
 
-        # No hardcoded minimum viable trade amount gate.
-        # The LLM decides position sizes dynamically based on all available parameters.
-        # The only hard limits are exchange minimums (min_order_size, min_order_cost),
-        # which are checked at order execution time.
-        min_viable_amount = 0.0
+        min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
 
         logger.info("Re-evaluation step 10/12: Computing correlation matrix and performance metrics...")
         correlation_matrix = await self.data_fetcher.get_or_compute_correlation_matrix(
