@@ -745,6 +745,9 @@ class TelegramBot:
                 news_name = await self.engine._market_data_manager.get_stock_name(symbol)
                 news_display = self.engine._format_symbol_display(symbol, news_name, news_tf)
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+                articles = await asyncio.to_thread(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
+                if not articles:
+                    continue
                 try:
                     news_data = await asyncio.to_thread(get_cached_news_summary, symbol)
                     summary_text = html.escape(news_data["summary"])

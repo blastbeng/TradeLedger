@@ -16,7 +16,7 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
-from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics
+from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol
 from typing import Optional
 from pydantic import BaseModel
 
@@ -393,6 +393,10 @@ async def news():
 
     async def _fetch_news_entry(entry):
         symbol = entry["symbol"]
+        base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+        articles = await run_in_threadpool(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
+        if not articles:
+            return None
         try:
             news_data = await run_in_threadpool(get_cached_news_summary, symbol)
             summary = news_data["summary"]
@@ -405,7 +409,7 @@ async def news():
     # Filter out entries with no news or error summaries
     filtered_result = [
         item for item in result
-        if item.get("summary") and item["summary"] != "Could not generate summary."
+        if item and item.get("summary") and item["summary"] != "Could not generate summary."
     ]
     return filtered_result
 
