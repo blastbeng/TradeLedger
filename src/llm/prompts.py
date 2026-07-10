@@ -16,6 +16,7 @@ from src.llm.prompt_utils import (
     _format_news_for_prompt,
     get_cached_news_summary,
     _round_floats,
+    _to_toon,
 )
 logger = logging.getLogger(__name__)
 from src.llm.system_prompt import build_system_prompt, SYSTEM_PROMPT_TEMPLATE
@@ -250,8 +251,8 @@ def build_strategy_prompt(
         _ticker_compact["change_24h"] = _pct
     _balance_compact = {k: round(v, 2) if isinstance(v, (int, float)) else v for k, v in balance.items()}
     prompt = f"""Symbol: {symbol}
-Current ticker: {json.dumps(_ticker_compact, separators=(',', ':'))}
-Current balances: {json.dumps(_balance_compact, separators=(',', ':'))}
+Current ticker: {_to_toon(_ticker_compact)}
+Current balances: {_to_toon(_balance_compact)}
 """
     # Explicitly highlight the 24h change so the LLM uses it in its analysis
     _change_24h = ticker.get("percentage")
@@ -491,7 +492,7 @@ Maximum symbols to trade: {max_symbols}
                 
 
                 if not ind_compact: continue
-                ind_lines.append(f"[{tf}] {json.dumps(ind_compact, separators=(',', ':'))}")
+                ind_lines.append(f"[{tf}] {_to_toon(ind_compact)}")
         if ind_lines:
             prompt += "\nComputed indicators per timeframe:\n" + "\n".join(ind_lines) + "\n"
     elif raw_candles:

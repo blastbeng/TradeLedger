@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 from src.config.settings import settings
 from src.utils.symbol_utils import is_btp_isin
-from src.llm.prompt_utils import _timeframe_to_seconds, _round_floats
+from src.llm.prompt_utils import _timeframe_to_seconds, _round_floats, _to_toon
 
 logger = logging.getLogger(__name__)
 

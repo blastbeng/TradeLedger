@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import toon
 from typing import List, Dict, Any, Optional
 from src.config.settings import settings
 from src.database import get_news_for_symbol
@@ -19,6 +20,11 @@ def _round_floats(obj, decimals=2):
     if isinstance(obj, list):
         return [_round_floats(item, decimals) for item in obj]
     return obj
+
+
+def _to_toon(obj: Any) -> str:
+    """Serialize a Python object to TOON format using the python-toon library."""
+    return toon.dumps(obj)
 
 
 def _timeframe_to_seconds(tf: str) -> int:

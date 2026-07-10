@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 from src.config.settings import settings
 from src.database import get_news_for_symbols
 from src.exchanges.market_data import TIMEFRAME_MAP
-from src.llm.prompt_utils import _format_news_for_prompt, _format_trade_pattern_analysis, _round_floats
+from src.llm.prompt_utils import _format_news_for_prompt, _format_trade_pattern_analysis, _round_floats, _to_toon
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +102,8 @@ def build_stock_selection_prompt(
 Your available {base_currency} balance: {base_balance:.2f}
 Maximum number of stocks to trade: {max_symbols}
 Reference equal-share budget per stock (suggestion only — you decide actual allocations): {per_symbol_budget:.2f} {base_currency}
-Available timeframes: {json.dumps(available_timeframes)}
-Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols) if current_symbols else "None"}
+Available timeframes: {_to_toon(available_timeframes)}
+Currently tracked stocks (with assigned timeframes): {_to_toon(current_symbols) if current_symbols else "None"}
 
 **Capital Allocation:** When you select many tickers, you can and should potentially use all of the available balance ({base_balance:.2f} {base_currency}) across your trading decisions. Do not artificially restrict yourself to the equal-share budget if you have high conviction in specific setups."""
 
@@ -463,11 +463,11 @@ Current base currency: {base_currency}
 Your available {base_currency} balance: {base_balance:.2f}
 Maximum number of stocks to trade: {max_symbols}
 Reference equal-share budget per stock (suggestion only): {per_symbol_budget:.2f} {base_currency}
-Available timeframes: {json.dumps(available_timeframes, separators=(',', ':'))}
-Currently tracked stocks (with assigned timeframes): {json.dumps(current_symbols, separators=(',', ':')) if current_symbols else "None"}
+Available timeframes: {_to_toon(available_timeframes)}
+Currently tracked stocks (with assigned timeframes): {_to_toon(current_symbols) if current_symbols else "None"}
 
 **Combined Shortlist from All Batches (deduplicated):**
-{json.dumps(shortlist, separators=(',', ':'))}
+{_to_toon(shortlist)}
 
 """
     if available_timeframes_by_symbol:
