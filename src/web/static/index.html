@@ -2204,15 +2204,19 @@
         let wakeLock = null;
 
         async function requestWakeLock() {
-            if ('wakeLock' in navigator) {
+            if ('wakeLock' in navigator && document.visibilityState === 'visible') {
                 try {
                     wakeLock = await navigator.wakeLock.request('screen');
                     console.log('Wake Lock acquired');
                     wakeLock.addEventListener('release', () => {
                         console.log('Wake Lock released');
+                        wakeLock = null;
                     });
                 } catch (err) {
-                    console.error(`Wake Lock error: ${err.name}, ${err.message}`);
+                    // Safely ignore NotAllowedError when the page is not visible
+                    if (err.name !== 'NotAllowedError') {
+                        console.error(`Wake Lock error: ${err.name}, ${err.message}`);
+                    }
                 }
             }
         }
