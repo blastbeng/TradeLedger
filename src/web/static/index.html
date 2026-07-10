@@ -527,10 +527,10 @@
                         <canvas id="llm-metrics-chart"></canvas>
                     </div>
                 </div>
-                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px;">
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
                     <div>
                         <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">Per Model</h3>
-                        <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
+                        <div class="table-wrapper" style="max-height:160px; overflow-y:auto;">
                             <table id="llm-per-model-table">
                                 <thead><tr><th>Type</th><th>Calls</th><th>Prompt</th><th>Completion</th><th>Total</th><th>Avg Latency (ms)</th></tr></thead>
                                 <tbody></tbody>
@@ -539,7 +539,7 @@
                     </div>
                     <div>
                         <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">Recent Calls</h3>
-                        <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
+                        <div class="table-wrapper" style="max-height:160px; overflow-y:auto;">
                             <table id="llm-recent-calls-table">
                                 <thead><tr><th>Time</th><th>Model</th><th>Type</th><th>Latency (ms)</th></tr></thead>
                                 <tbody></tbody>
