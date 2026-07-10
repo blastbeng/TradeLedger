@@ -976,6 +976,22 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
                 with _rss_cache_lock:
                     _rss_cache[feed_url] = (time.time(), feed_content)
 
+        except httpx.HTTPStatusError as e:
+            _handle_feed_failure(feed_url)
+            if e.response.status_code == 404:
+                logger.warning(f"RSS feed not found (404): {feed_url}")
+            elif e.response.status_code == 403:
+                logger.warning(f"RSS feed access forbidden (403): {feed_url}")
+            else:
+                logger.warning(f"RSS fetch failed for {feed_url}: {e}")
+            continue
+        except Exception as e:
+            _handle_feed_failure(feed_url)
+            logger.warning(f"RSS fetch failed for {feed_url}: {e}")
+            continue
+
+        # --- Parse and process entries (parsing errors do NOT count toward disable) ---
+        try:
             feed = feedparser.parse(feed_content)
             for entry in feed.entries:
                 title = entry.get("title", "")
@@ -1013,17 +1029,8 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
                     "summary": summary[:300],
                     "sentiment": sentiment,
                 })
-        except httpx.HTTPStatusError as e:
-            _handle_feed_failure(feed_url)
-            if e.response.status_code == 404:
-                logger.warning(f"RSS feed not found (404): {feed_url}")
-            elif e.response.status_code == 403:
-                logger.warning(f"RSS feed access forbidden (403): {feed_url}")
-            else:
-                logger.warning(f"RSS fetch failed for {feed_url}: {e}")
         except Exception as e:
-            _handle_feed_failure(feed_url)
-            logger.warning(f"RSS fetch failed for {feed_url}: {e}")
+            logger.warning(f"RSS parse/processing failed for {feed_url}: {e}")
     logger.debug(f"RSS total articles for {symbol}: {len(articles)}")
     return articles
 
@@ -1174,6 +1181,13 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache
                 # Reset consecutive failure counter on success
                 _feed_fail_counts.pop(feed_url, None)
 
+            except Exception as e:
+                _handle_feed_failure(feed_url)
+                logger.debug(f"Ticker discovery from RSS feed {feed_url} failed: {e}")
+                continue
+
+            # --- Parse and scan for tickers (parsing errors do NOT count toward disable) ---
+            try:
                 feed = feedparser.parse(feed_content)
                 for entry in feed.entries:
                     title = entry.get("title", "") or ""
@@ -1189,8 +1203,7 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache
                     if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
                         break
             except Exception as e:
-                _handle_feed_failure(feed_url)
-                logger.debug(f"Ticker discovery from RSS feed {feed_url} failed: {e}")
+                logger.debug(f"RSS parse/processing failed for {feed_url}: {e}")
             if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
                 break
 
