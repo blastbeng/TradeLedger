@@ -498,7 +498,7 @@ def _stringify_keys(obj):
 def _normalize_for_hash(obj, depth=0):
     """Recursively normalize data for stable hashing.
     
-    - Rounds floats to 12 decimal places to reduce noise from tiny price changes while preserving precision for very small indicator values (e.g., MACD histogram).
+    - Rounds floats to 3 significant figures (percentage-based rounding) to treat small absolute changes on high-priced assets as insignificant while preserving precision for low-priced assets.
     - Excludes keys containing 'timestamp', 'time', 'fetched_at', 'created_at',
       'published_at', 'last_eval', 'last_auto_resume' (volatile fields that
       change every cycle but don't affect trading decisions).
