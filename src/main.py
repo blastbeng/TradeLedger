@@ -50,13 +50,17 @@ class JsonFormatter(logging.Formatter):
 
         return _json.dumps(log_entry, default=str)
 
-class HealthEndpointFilter(logging.Filter):
-    """Suppress uvicorn access logs for /health."""
+class UvicornAccessFilter(logging.Filter):
+    """Suppress uvicorn access logs for /health and downgrade access logs to DEBUG."""
     def filter(self, record):
         # Uvicorn access logs store the request details in record.args
         # Checking the formatted message is the most reliable way to match the path
         if '/health' in record.getMessage():
             return False
+        # Downgrade INFO access logs to DEBUG so they don't clutter INFO output
+        if record.levelno == logging.INFO:
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
         return True
 
 # Set root logger level without adding a default plain-text StreamHandler
@@ -214,7 +218,7 @@ async def main():
     # Add the health endpoint filter
     log_config["filters"] = {
         "health_filter": {
-            "()": "src.main.HealthEndpointFilter"
+            "()": "src.main.UvicornAccessFilter"
         }
     }
     log_config["loggers"]["uvicorn.access"]["filters"] = ["health_filter"]
