@@ -1693,33 +1693,37 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             )
             rows = conn.execute(sql, (full_pairs,)).fetchall()
         else:
-            placeholders = ",".join(["?" for _ in full_pairs])
-            sql = _adapt_sql(
-                f"""
-                WITH RankedCandles AS (
-                    SELECT symbol, close, volume, timestamp, timeframe,
-                           ROW_NUMBER() OVER (PARTITION BY symbol, timeframe ORDER BY timestamp DESC) as rn
-                    FROM market_data
-                    WHERE symbol IN ({placeholders})
-                ),
-                LatestTimeframe AS (
-                    SELECT symbol, timeframe
-                    FROM (
-                        SELECT symbol, timeframe, timestamp,
-                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as tf_rn
-                        FROM RankedCandles
-                        WHERE rn = 1
-                    ) t
-                    WHERE tf_rn = 1
+            rows = []
+            chunk_size = 500
+            for i in range(0, len(full_pairs), chunk_size):
+                chunk = full_pairs[i:i + chunk_size]
+                placeholders = ",".join(["?" for _ in chunk])
+                sql = _adapt_sql(
+                    f"""
+                    WITH RankedCandles AS (
+                        SELECT symbol, close, volume, timestamp, timeframe,
+                               ROW_NUMBER() OVER (PARTITION BY symbol, timeframe ORDER BY timestamp DESC) as rn
+                        FROM market_data
+                        WHERE symbol IN ({placeholders})
+                    ),
+                    LatestTimeframe AS (
+                        SELECT symbol, timeframe
+                        FROM (
+                            SELECT symbol, timeframe, timestamp,
+                                   ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as tf_rn
+                            FROM RankedCandles
+                            WHERE rn = 1
+                        ) t
+                        WHERE tf_rn = 1
+                    )
+                    SELECT r.symbol, r.close, r.volume, r.timestamp, r.timeframe
+                    FROM RankedCandles r
+                    JOIN LatestTimeframe l ON r.symbol = l.symbol AND r.timeframe = l.timeframe
+                    WHERE r.rn <= 2
+                    ORDER BY r.symbol, r.timestamp DESC
+                    """
                 )
-                SELECT r.symbol, r.close, r.volume, r.timestamp, r.timeframe
-                FROM RankedCandles r
-                JOIN LatestTimeframe l ON r.symbol = l.symbol AND r.timeframe = l.timeframe
-                WHERE r.rn <= 2
-                ORDER BY r.symbol, r.timestamp DESC
-                """
-            )
-            rows = conn.execute(sql, full_pairs).fetchall()
+                rows.extend(conn.execute(sql, chunk).fetchall())
 
         result = {}
         for row in rows:
@@ -1767,22 +1771,25 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 )
                 daily_rows = conn.execute(sql_daily, (daily_pairs,)).fetchall()
             else:
-                placeholders = ",".join(["?" for _ in daily_pairs])
-                sql_daily = _adapt_sql(
-                    f"""
-                    WITH RankedDaily AS (
-                        SELECT symbol, close, timestamp,
-                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
-                        FROM market_data
-                        WHERE symbol IN ({placeholders}) AND timeframe = '1d'
+                daily_rows = []
+                for i in range(0, len(daily_pairs), chunk_size):
+                    chunk = daily_pairs[i:i + chunk_size]
+                    placeholders = ",".join(["?" for _ in chunk])
+                    sql_daily = _adapt_sql(
+                        f"""
+                        WITH RankedDaily AS (
+                            SELECT symbol, close, timestamp,
+                                   ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
+                            FROM market_data
+                            WHERE symbol IN ({placeholders}) AND timeframe = '1d'
+                        )
+                        SELECT symbol, close, timestamp
+                        FROM RankedDaily
+                        WHERE rn <= 2
+                        ORDER BY symbol, timestamp DESC
+                        """
                     )
-                    SELECT symbol, close, timestamp
-                    FROM RankedDaily
-                    WHERE rn <= 2
-                    ORDER BY symbol, timestamp DESC
-                    """
-                )
-                daily_rows = conn.execute(sql_daily, daily_pairs).fetchall()
+                    daily_rows.extend(conn.execute(sql_daily, chunk).fetchall())
 
             # Build a dict: base_symbol -> previous daily close (2nd latest 1d candle)
             daily_seen: set = set()
