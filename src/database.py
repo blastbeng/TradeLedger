@@ -27,7 +27,13 @@ if _backend == "postgresql":
     from psycopg_pool import ConnectionPool
 
     _pg_pool = ConnectionPool(
-        conninfo=f"host={settings.DB_HOST} port={settings.DB_PORT} dbname={settings.DB_NAME} user={settings.DB_USER} password={settings.DB_PASSWORD}",
+        kwargs={
+            "host": settings.DB_HOST,
+            "port": settings.DB_PORT,
+            "dbname": settings.DB_NAME,
+            "user": settings.DB_USER,
+            "password": settings.DB_PASSWORD,
+        },
         min_size=2,
         max_size=20,
         open=True,
