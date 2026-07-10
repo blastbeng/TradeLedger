@@ -16,7 +16,7 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
-from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries
+from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics
 from typing import Optional
 from pydantic import BaseModel
 
@@ -700,6 +700,18 @@ async def llm_metrics():
         data["weak_provider_url"] = weak_url or ""
         
         return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@http_router.post("/api/llm-metrics/reset", dependencies=[Depends(verify_csrf)])
+async def llm_metrics_reset():
+    """Wipe all LLM metrics from the database and Redis."""
+    try:
+        await run_in_threadpool(reset_llm_metrics)
+        # Clear any Redis-based metrics caches if they exist
+        redis = get_redis_client()
+        await asyncio.to_thread(redis.delete, "llm:metrics:summary", "llm:metrics:timeseries")
+        return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

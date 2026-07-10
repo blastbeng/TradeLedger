@@ -501,7 +501,7 @@
             </div>
 
             <div class="card card-full" id="llm-metrics-card">
-                <h2>🤖 LLM Metrics <button id="btn-refresh-llm-metrics" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Refresh</button></h2>
+                <h2>🤖 LLM Metrics <button id="btn-reset-llm-metrics" style="margin-left:12px; background:var(--red); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🗑️ Reset</button></h2>
                 <div id="llm-metrics-summary" style="margin-bottom:16px; font-size:0.9rem;"></div>
                 <div id="llm-metrics-periods" style="margin-bottom:16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px;">
                     <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px;">
@@ -2438,7 +2438,21 @@
             }
         }
 
-        document.getElementById('btn-refresh-llm-metrics').addEventListener('click', fetchLLMMetrics);
+        document.getElementById('btn-reset-llm-metrics').addEventListener('click', async () => {
+            if (!confirm('Are you sure you want to wipe all LLM metrics? This cannot be undone.')) return;
+            try {
+                const resp = await fetch('/api/llm-metrics/reset', { method: 'POST' });
+                if (resp.ok) {
+                    showToast('LLM metrics reset successfully.');
+                    fetchLLMMetrics();
+                } else {
+                    const err = await resp.json();
+                    showToast('Error: ' + (err.detail || 'Failed to reset metrics'));
+                }
+            } catch (e) {
+                showToast('Error: ' + e.message);
+            }
+        });
 
         // --- PWA: Custom install button ---
         let deferredInstallPrompt = null;

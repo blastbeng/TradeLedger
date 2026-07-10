@@ -2106,6 +2106,17 @@ def save_llm_metrics(metrics: dict):
         conn.close()
 
 
+@retry_on_db_lock()
+def reset_llm_metrics():
+    """Delete all rows from the llm_metrics table."""
+    conn = get_connection()
+    try:
+        conn.execute(_adapt_sql("DELETE FROM llm_metrics"))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_llm_metrics_summary() -> dict:
     """Return aggregated LLM metrics for the dashboard."""
     conn = get_connection()
