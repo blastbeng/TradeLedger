@@ -1463,9 +1463,14 @@ class TradingEngine:
                 # prevents those fallback prices from being saved to the
                 # quotes table, leaving it stale when yfinance is down.
                 plain_assets = await self._market_data_manager.get_tradable_assets()
-                if plain_assets:
+                etf_symbols = await self._market_data_manager.get_etf_symbols()
+                btp_bonds = await self._market_data_manager.get_btp_bonds()
+                btp_isins = [b["isin"] for b in btp_bonds if b.get("isin")]
+
+                all_quote_symbols = plain_assets + etf_symbols + btp_isins
+                if all_quote_symbols:
                     # Fetch quotes in batches to avoid yfinance timeouts on large symbol lists
-                    await self._market_data_manager._get_quotes_batched(plain_assets, timeout_per_chunk=180.0)
+                    await self._market_data_manager._get_quotes_batched(all_quote_symbols, timeout_per_chunk=180.0)
                     self._portfolio_exposure_cache = None
             except Exception as e:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)

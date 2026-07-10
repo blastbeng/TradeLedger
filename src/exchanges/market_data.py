@@ -284,7 +284,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         for sym in bi_symbols:
             bi_quote = get_borsa_italiana_quote(sym)
             if bi_quote and bi_quote.get("last") is not None:
-                result[sym].update(bi_quote)
+                result.setdefault(sym, {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}).update(bi_quote)
                 logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
 
     if not missing_symbols:
