@@ -104,7 +104,7 @@ class RiskManager:
             with engine._trade_history_lock:
                 trades_snapshot = list(engine.trade_history)
             # Compute drawdown based on realized equity (initial balance + realized P&L)
-            # to avoid pausing on temporary unrealized dips in medium/long-term trading.
+            # plus current unrealized P&L to catch deep drawdowns from open positions.
             initial_balance = settings.PAPER_INITIAL_BALANCE
             cumulative_pnl = 0.0
             peak_equity = initial_balance
@@ -119,6 +119,26 @@ class RiskManager:
                         dd_pct = (peak_equity - current_equity) / peak_equity
                         if dd_pct > max_dd_pct:
                             max_dd_pct = dd_pct
+
+            # Include unrealized P&L from open positions in the current equity
+            unrealized_pnl = 0.0
+            if engine.positions:
+                pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
+                for symbol, pos in engine.positions.items():
+                    t = pos_tickers.get(symbol)
+                    current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
+                    amount = pos.get('amount', 0.0)
+                    entry_price = pos.get('price', 0.0)
+                    unrealized_pnl += (current_price - entry_price) * amount
+
+            current_equity = initial_balance + cumulative_pnl + unrealized_pnl
+            if current_equity > peak_equity:
+                peak_equity = current_equity
+            if peak_equity > 0:
+                dd_pct = (peak_equity - current_equity) / peak_equity
+                if dd_pct > max_dd_pct:
+                    max_dd_pct = dd_pct
+
             drawdown_pct = max_dd_pct
 
             paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
