@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
-from src.database import get_ohlcv, get_indicators_for_symbols, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols
+from src.database import get_ohlcv, get_indicators_for_symbols, get_aggregate_sentiment_for_symbols
 from src.exchanges.market_data import get_quotes_cached
 
 try:
