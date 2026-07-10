@@ -1478,6 +1478,11 @@ class SignalProcessor:
                     rsi_overbought = float(raw)
             except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
+            # Sanity-check: if thresholds are degenerate, fall back to defaults
+            if rsi_oversold <= 0 or rsi_oversold >= 50:
+                rsi_oversold = 30.0
+            if rsi_overbought >= 100 or rsi_overbought <= 50:
+                rsi_overbought = 70.0
             if rsi is not None and (rsi < rsi_oversold or rsi > rsi_overbought):
                 return False
             # MACD histogram direction change? (harder to detect without previous sign – skip for simplicity)

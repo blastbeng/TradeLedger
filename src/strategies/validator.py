@@ -342,7 +342,7 @@ def _validate_signal_impl(
         if mrr is None and global_min_risk_reward_ratio is not None:
             mrr = global_min_risk_reward_ratio
         if mrr is not None:
-            if not isinstance(mrr, (int, float)) or mrr <= 0:
+            if not isinstance(mrr, (int, float)) or mrr < 0:
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid min_risk_reward_ratio")
             # Enforce the ratio if both sl and tp are available
             if sl is not None and tp is not None:
@@ -352,7 +352,7 @@ def _validate_signal_impl(
                 else:
                     actual_ratio = tp / sl
                 
-                if actual_ratio < mrr:
+                if mrr > 0 and actual_ratio < mrr:
                     return Signal(
                         action="HOLD",
                         confidence=0.0,
@@ -460,12 +460,12 @@ def _validate_signal_impl(
 
         if "global_risk_multiplier" in params:
             grm = params["global_risk_multiplier"]
-            if not isinstance(grm, (int, float)) or grm <= 0:
+            if not isinstance(grm, (int, float)) or grm < 0:
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid global_risk_multiplier")
 
         if "position_size_multiplier" in params:
             psm = params["position_size_multiplier"]
-            if not isinstance(psm, (int, float)) or psm <= 0:
+            if not isinstance(psm, (int, float)) or psm < 0:
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid position_size_multiplier")
 
         if "confidence_sizing_weight" in params:

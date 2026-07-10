@@ -123,6 +123,7 @@ class BuyExecutor:
                 confidence_sizing_weight = 0.0
         if confidence_sizing_weight > 0 and signal.confidence < 1.0:
             confidence_multiplier = 1.0 - confidence_sizing_weight * (1.0 - signal.confidence)
+            confidence_multiplier = max(confidence_multiplier, 0.01)  # floor to prevent zeroing
             desired_amount *= confidence_multiplier
             logger.info(
                 f"Confidence sizing applied: weight={confidence_sizing_weight}, "
@@ -386,7 +387,7 @@ class BuyExecutor:
         if per_symbol_mult is not None:
             try:
                 per_symbol_mult = float(per_symbol_mult)
-                if 0.0 <= per_symbol_mult <= 1.0:
+                if 0.0 < per_symbol_mult <= 1.0:
                     desired_amount *= per_symbol_mult
             except (ValueError, TypeError):
                 pass
