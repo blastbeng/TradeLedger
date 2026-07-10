@@ -22,19 +22,15 @@ _placeholder = "%s"                    # will be converted to "?" for sqlite
 _pg_pool = None
 
 if _backend == "postgresql":
-    import psycopg2
-    import psycopg2.extras
-    import psycopg2.pool
-    import psycopg2.errors
+    import psycopg
+    from psycopg import rows as pg_rows
+    from psycopg_pool import ConnectionPool
 
-    _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-        minconn=2,
-        maxconn=20,
-        host=settings.DB_HOST,
-        port=settings.DB_PORT,
-        dbname=settings.DB_NAME,
-        user=settings.DB_USER,
-        password=settings.DB_PASSWORD,
+    _pg_pool = ConnectionPool(
+        conninfo=f"host={settings.DB_HOST} port={settings.DB_PORT} dbname={settings.DB_NAME} user={settings.DB_USER} password={settings.DB_PASSWORD}",
+        min_size=2,
+        max_size=20,
+        open=True,
     )
     _placeholder = "%s"
 else:
@@ -49,18 +45,19 @@ def _adapt_sql(sql: str) -> str:
 
 
 class _PgConnectionWrapper:
-    """Wraps a psycopg2 connection so that close() returns it to the pool."""
-    def __init__(self, conn):
+    """Wraps a psycopg3 connection so that close() returns it to the pool."""
+    def __init__(self, conn, pool):
         self._conn = conn
-        # Use RealDictCursor for dict-like row access
-        self._conn.cursor_factory = psycopg2.extras.RealDictCursor
+        self._pool = pool
+        # Use dict_row for dict-like row access (replaces RealDictCursor)
+        self._conn.row_factory = pg_rows.dict_row
 
     def __getattr__(self, name):
         return getattr(self._conn, name)
 
     def close(self):
         try:
-            _pg_pool.putconn(self._conn)
+            self._pool.putconn(self._conn)
         except Exception:
             pass
 
@@ -74,14 +71,10 @@ class _PgConnectionWrapper:
         return self._conn.cursor()
 
     def execute(self, sql, params=None):
-        cur = self._conn.cursor()
-        cur.execute(sql, params)
-        return cur
+        return self._conn.execute(sql, params)
 
     def executemany(self, sql, params_list):
-        cur = self._conn.cursor()
-        cur.executemany(sql, params_list)
-        return cur
+        return self._conn.executemany(sql, params_list)
 
 
 _sqlite_local = threading.local()
@@ -117,7 +110,7 @@ def get_connection():
     """Return a database connection appropriate for the current backend."""
     if _backend == "postgresql":
         conn = _pg_pool.getconn()
-        return _PgConnectionWrapper(conn)
+        return _PgConnectionWrapper(conn, _pg_pool)
     else:
         if not hasattr(_sqlite_local, 'connection'):
             os.makedirs(os.path.dirname(settings.DATABASE_PATH), exist_ok=True)
@@ -154,8 +147,8 @@ def retry_on_db_lock(max_retries=3, initial_delay=0.5):
                     raise
                 except Exception as e:
                     # Retry on PostgreSQL deadlock (40P01) or serialization failure (40001)
-                    pgcode = getattr(e, 'pgcode', None)
-                    if pgcode in ('40P01', '40001'):
+                    sqlstate = getattr(e.diag, 'sqlstate', None) if hasattr(e, 'diag') else None
+                    if sqlstate in ('40P01', '40001'):
                         last_exc = e
                         if attempt < max_retries:
                             delay = initial_delay * (2 ** attempt)
@@ -2372,6 +2365,6 @@ def close_pool():
     """Close the PostgreSQL connection pool if it exists."""
     global _pg_pool
     if _pg_pool is not None:
-        _pg_pool.closeall()
+        _pg_pool.close()
         _pg_pool = None
         logger.info("PostgreSQL connection pool closed.")
