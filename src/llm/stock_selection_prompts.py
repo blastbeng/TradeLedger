@@ -229,7 +229,7 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
             if valid_tfs:
                 filtered_ohlcv_summary[sym] = valid_tfs
         if filtered_ohlcv_summary:
-            prompt += f"\nMulti-timeframe OHLCV summary (price change %, high, low, volume):\n{json.dumps(filtered_ohlcv_summary, separators=(',', ':'))}\n"
+            prompt += f"\nMulti-timeframe OHLCV summary (price change %, high, low, volume):\n{_to_toon(filtered_ohlcv_summary)}\n"
         else:
             prompt += (
                 "\n**Note:** No OHLCV data is available for any candidate symbol. "
@@ -261,7 +261,7 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
         if trimmed:
             prompt += (
                 "\nPairwise correlation matrix (Pearson correlation of daily returns, range -1 to +1):\n"
-                f"{json.dumps(trimmed, separators=(',', ':'))}\n"
+                f"{_to_toon(trimmed)}\n"
             )
     if symbol_indicators:
         prompt += "\nTechnical indicators for candidate assets (stocks, ETFs, BTPs):\n"
