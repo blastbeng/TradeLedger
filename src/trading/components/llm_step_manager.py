@@ -140,7 +140,7 @@ class LLMStepManager:
                     get_cached_llm_response,
                     "", "", None,
                     market_hash=market_hash,
-                    model_type="actuator",
+                    model_type=strategy_model_type,
                     temperature=effective_temp,
                     symbol=symbol,
                     messages=[
@@ -169,7 +169,7 @@ class LLMStepManager:
                     asyncio.to_thread(
                         get_cached_llm_response,
                         "", "", None,
-                        model_type="actuator",
+                        model_type=strategy_model_type,
                         temperature=effective_temp,
                         market_hash=market_hash,
                         messages=[
