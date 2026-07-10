@@ -224,12 +224,14 @@ async def health():
     llm_health = await run_in_threadpool(check_llm_health)
     mind_ok = llm_health.get("mind", {}).get("status") == "connected"
     actuator_ok = llm_health.get("actuator", {}).get("status") == "connected"
-    all_ok = redis_ok and mind_ok and actuator_ok
+    weak_ok = llm_health.get("weak", {}).get("status") == "connected"
+    all_ok = redis_ok and mind_ok and actuator_ok and weak_ok
     return {
         "status": "ok" if all_ok else "degraded",
         "redis": "connected" if redis_ok else "disconnected",
         "llm_mind": llm_health.get("mind", {}),
         "llm_actuator": llm_health.get("actuator", {}),
+        "llm_weak": llm_health.get("weak", {}),
     }
 
 @http_router.get("/api/status")
