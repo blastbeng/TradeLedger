@@ -532,7 +532,7 @@
                         <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">Per Model</h3>
                         <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
                             <table id="llm-per-model-table">
-                                <thead><tr><th>Provider</th><th>Model</th><th>Type</th><th>Calls</th><th>Prompt</th><th>Completion</th><th>Total</th><th>Avg Latency (ms)</th></tr></thead>
+                                <thead><tr><th>Type</th><th>Calls</th><th>Prompt</th><th>Completion</th><th>Total</th><th>Avg Latency (ms)</th></tr></thead>
                                 <tbody></tbody>
                             </table>
                         </div>
@@ -2245,16 +2245,34 @@
                 const perModelBody = document.querySelector('#llm-per-model-table tbody');
                 perModelBody.innerHTML = '';
                 if (data.per_model && data.per_model.length > 0) {
+                    const aggregated = {};
                     data.per_model.forEach(m => {
+                        if (!aggregated[m.model_type]) {
+                            aggregated[m.model_type] = {
+                                model_type: m.model_type,
+                                calls: 0,
+                                prompt_tokens: 0,
+                                completion_tokens: 0,
+                                tokens: 0,
+                                total_latency: 0
+                            };
+                        }
+                        const agg = aggregated[m.model_type];
+                        agg.calls += m.calls;
+                        agg.prompt_tokens += m.prompt_tokens;
+                        agg.completion_tokens += m.completion_tokens;
+                        agg.tokens += m.tokens;
+                        agg.total_latency += m.avg_latency_ms * m.calls;
+                    });
+
+                    Object.values(aggregated).forEach(m => {
                         const row = perModelBody.insertRow();
-                        row.insertCell().textContent = m.provider;
-                        row.insertCell().textContent = m.model;
                         row.insertCell().textContent = m.model_type;
                         row.insertCell().textContent = m.calls;
                         row.insertCell().textContent = m.prompt_tokens.toLocaleString();
                         row.insertCell().textContent = m.completion_tokens.toLocaleString();
                         row.insertCell().textContent = m.tokens.toLocaleString();
-                        row.insertCell().textContent = m.avg_latency_ms.toFixed(1);
+                        row.insertCell().textContent = (m.total_latency / m.calls).toFixed(1);
                     });
                 } else {
                     const row = perModelBody.insertRow();
