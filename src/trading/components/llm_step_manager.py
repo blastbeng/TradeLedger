@@ -433,7 +433,7 @@ class LLMStepManager:
                 response2 = await asyncio.wait_for(
                     asyncio.to_thread(
                         get_cached_llm_response, "", "", None,
-                        model_type="actuator",
+                        model_type=strategy_model_type,
                         temperature=effective_temp,
                         market_hash=variants_market_hash,
                         messages=[
