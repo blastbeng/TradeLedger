@@ -1004,6 +1004,12 @@ class TelegramBot:
                             model_name = settings.OLLAMA_MIND_MODEL
                         else:
                             model_name = settings.OPENAI_MIND_MODEL
+                    elif model == "weak":
+                        provider_name = settings.LLM_WEAK_PROVIDER or settings.LLM_PROVIDER
+                        if provider_name == "ollama":
+                            model_name = settings.OLLAMA_WEAK_MODEL
+                        else:
+                            model_name = settings.OPENAI_WEAK_MODEL
                     else:
                         provider_name = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
                         if provider_name == "ollama":
