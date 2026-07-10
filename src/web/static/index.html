@@ -522,7 +522,27 @@
                     </div>
                 </div>
                 <div style="margin-bottom:16px;">
-                    <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">📊 Calls &amp; Tokens (last 24h, hourly)</h3>
+                    <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">📊 Calls &amp; Tokens</h3>
+                    <div style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:12px; align-items:flex-end;">
+                        <div>
+                            <label for="llm-chart-period" style="margin-right:8px; font-size:0.9rem;">Period:</label>
+                            <select id="llm-chart-period" style="background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px;">
+                                <option value="hour">Hourly</option>
+                                <option value="day" selected>Daily</option>
+                                <option value="week">Weekly</option>
+                                <option value="month">Monthly</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="llm-chart-from" style="margin-right:8px; font-size:0.9rem;">From:</label>
+                            <input type="date" id="llm-chart-from" style="background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px;">
+                        </div>
+                        <div>
+                            <label for="llm-chart-to" style="margin-right:8px; font-size:0.9rem;">To:</label>
+                            <input type="date" id="llm-chart-to" style="background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px;">
+                        </div>
+                        <button id="llm-chart-apply" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.9rem;">Apply</button>
+                    </div>
                     <div style="position:relative; width:100%; height:300px;" class="llm-chart-container">
                         <canvas id="llm-metrics-chart"></canvas>
                     </div>
@@ -2323,19 +2343,33 @@
                 }
 
                 // Fetch timeseries and render chart
-                try {
-                    const tsResp = await fetch('/api/llm-metrics/timeseries?hours=24');
-                    if (tsResp.ok) {
-                        const tsData = await tsResp.json();
-                        renderLLMMetricsChart(tsData);
-                    }
-                } catch (e) {
-                    console.error('Failed to fetch LLM metrics timeseries', e);
-                }
+                await fetchLLMMetricsChart();
             } catch (e) {
                 console.error('Failed to fetch LLM metrics', e);
             }
         }
+
+        async function fetchLLMMetricsChart() {
+            const period = document.getElementById('llm-chart-period')?.value || 'day';
+            const fromDate = document.getElementById('llm-chart-from')?.value;
+            const toDate = document.getElementById('llm-chart-to')?.value;
+            
+            let url = `/api/llm-metrics/timeseries?period=${period}`;
+            if (fromDate) url += `&from_date=${fromDate}`;
+            if (toDate) url += `&to_date=${toDate}`;
+
+            try {
+                const tsResp = await fetch(url);
+                if (tsResp.ok) {
+                    const tsData = await tsResp.json();
+                    renderLLMMetricsChart(tsData);
+                }
+            } catch (e) {
+                console.error('Failed to fetch LLM metrics timeseries', e);
+            }
+        }
+
+        document.getElementById('llm-chart-apply').addEventListener('click', fetchLLMMetricsChart);
 
         function renderLLMMetricsChart(tsData) {
             const canvas = document.getElementById('llm-metrics-chart');
