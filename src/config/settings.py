@@ -697,6 +697,46 @@ class Settings(BaseSettings):
         Settings.parse_temperature_range(v)  # raises ValueError if invalid
         return v
 
+    # Fallback provider settings (empty = use global LLM_FALLBACK_PROVIDER)
+    LLM_FALLBACK_PROVIDER: str = ""
+    LLM_MIND_FALLBACK_PROVIDER: str = ""
+    LLM_ACTUATOR_FALLBACK_PROVIDER: str = ""
+    LLM_WEAK_FALLBACK_PROVIDER: str = ""
+
+    # OpenAI fallback settings (empty or None = use global OPENAI_FALLBACK_*)
+    OPENAI_FALLBACK_MODEL: Optional[str] = None
+    OPENAI_FALLBACK_BASE_URL: Optional[str] = None
+    OPENAI_FALLBACK_API_KEY: Optional[str] = None
+
+    OPENAI_MIND_FALLBACK_MODEL: Optional[str] = None
+    OPENAI_MIND_FALLBACK_BASE_URL: Optional[str] = None
+    OPENAI_MIND_FALLBACK_API_KEY: Optional[str] = None
+
+    OPENAI_ACTUATOR_FALLBACK_MODEL: Optional[str] = None
+    OPENAI_ACTUATOR_FALLBACK_BASE_URL: Optional[str] = None
+    OPENAI_ACTUATOR_FALLBACK_API_KEY: Optional[str] = None
+
+    OPENAI_WEAK_FALLBACK_MODEL: Optional[str] = None
+    OPENAI_WEAK_FALLBACK_BASE_URL: Optional[str] = None
+    OPENAI_WEAK_FALLBACK_API_KEY: Optional[str] = None
+
+    # Ollama fallback settings (empty or None = use global OLLAMA_FALLBACK_*)
+    OLLAMA_FALLBACK_MODEL: Optional[str] = None
+    OLLAMA_FALLBACK_BASE_URL: Optional[str] = None
+    OLLAMA_FALLBACK_API_KEY: Optional[str] = None
+
+    OLLAMA_MIND_FALLBACK_MODEL: Optional[str] = None
+    OLLAMA_MIND_FALLBACK_BASE_URL: Optional[str] = None
+    OLLAMA_MIND_FALLBACK_API_KEY: Optional[str] = None
+
+    OLLAMA_ACTUATOR_FALLBACK_MODEL: Optional[str] = None
+    OLLAMA_ACTUATOR_FALLBACK_BASE_URL: Optional[str] = None
+    OLLAMA_ACTUATOR_FALLBACK_API_KEY: Optional[str] = None
+
+    OLLAMA_WEAK_FALLBACK_MODEL: Optional[str] = None
+    OLLAMA_WEAK_FALLBACK_BASE_URL: Optional[str] = None
+    OLLAMA_WEAK_FALLBACK_API_KEY: Optional[str] = None
+
     # Threshold for choosing the "mind" model tier over "actuator".
     # Represents the minimum normalized weighted complexity score (0.0 to 1.0)
     # required to trigger the "mind" model. Lower values = more frequent use
