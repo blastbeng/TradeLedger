@@ -51,11 +51,14 @@ class JsonFormatter(logging.Formatter):
         return _json.dumps(log_entry, default=str)
 
 class UvicornAccessFilter(logging.Filter):
-    """Suppress uvicorn access logs for /health and downgrade access logs to DEBUG."""
+    """Suppress uvicorn access logs for /health and non-DEBUG levels."""
     def filter(self, record):
         # Uvicorn access logs store the request details in record.args
         # Checking the formatted message is the most reliable way to match the path
         if '/health' in record.getMessage():
+            return False
+        # Drop access logs entirely unless LOG_LEVEL is DEBUG
+        if settings.LOG_LEVEL.upper() != "DEBUG":
             return False
         # Downgrade INFO access logs to DEBUG so they don't clutter INFO output
         if record.levelno == logging.INFO:
