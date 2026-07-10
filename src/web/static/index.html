@@ -481,7 +481,7 @@
             </div>
 
             <div class="card card-full">
-                <h2>📰 News <button id="btn-refresh-news" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Refresh</button></h2>
+                <h2>📰 News</h2>
                 <div id="news" style="max-height: 400px; overflow-y: auto;">-</div>
             </div>
 
@@ -1519,6 +1519,26 @@
             }
         }
 
+        async function fetchNews() {
+            const newsDiv = document.getElementById('news');
+            try {
+                const resp = await fetch('/api/news');
+                const news = await resp.json();
+                if (news && news.length > 0) {
+                    let html = '';
+                    for (const item of news) {
+                        html += `<strong>📰 ${item.display_symbol || item.symbol}</strong><br>${item.summary}<br><br>`;
+                    }
+                    newsDiv.innerHTML = html;
+                } else {
+                    newsDiv.textContent = 'No news available.';
+                }
+            } catch (e) {
+                console.error('Failed to load news', e);
+                newsDiv.textContent = 'Failed to load news.';
+            }
+        }
+
         // --- Logs card ---
         async function fetchLogs() {
             const container = document.getElementById('logs-content');
@@ -1582,6 +1602,7 @@
             fetchMessages();
             fetchSignals(currentSignalsPage);
             fetchLLMMetrics();
+            fetchNews();
         }
 
         function startRefreshTimer() {
@@ -2005,26 +2026,6 @@
                     }
                 }
             });
-        });
-        document.getElementById('btn-refresh-news').addEventListener('click', () => {
-            const newsDiv = document.getElementById('news');
-            newsDiv.textContent = 'Loading...';
-            fetch('/api/news')
-                .then(res => res.json())
-                .then(news => {
-                    if (news && news.length > 0) {
-                        let html = '';
-                        for (const item of news) {
-                            html += `<strong>📰 ${item.display_symbol || item.symbol}</strong><br>${item.summary}<br><br>`;
-                        }
-                        newsDiv.innerHTML = html;
-                    } else {
-                        newsDiv.textContent = 'No news available.';
-                    }
-                })
-                .catch(() => {
-                    newsDiv.textContent = 'Failed to load news.';
-                });
         });
 
         async function fetchSimPrices(symbols) {

@@ -402,7 +402,12 @@ async def news():
         return {"symbol": symbol, "display_symbol": display, "summary": summary}
 
     result = await asyncio.gather(*[_fetch_news_entry(entry) for entry in symbols])
-    return list(result)
+    # Filter out entries with no news or error summaries
+    filtered_result = [
+        item for item in result
+        if item.get("summary") and item["summary"] != "Could not generate summary."
+    ]
+    return filtered_result
 
 @http_router.get("/api/messages")
 async def messages():
