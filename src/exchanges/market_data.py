@@ -265,6 +265,28 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         except (RuntimeError, ValueError, KeyError, OSError) as e:
             logger.warning(f"get_quotes: DB close price fallback failed: {e}")
 
+    # --- Try Borsa Italiana first for symbols with known ISINs ---
+    # Borsa Italiana is the primary source for Italian market quotes.
+    # yfinance is only a fallback for symbols without an ISIN.
+    from src.database import get_isin_from_db
+    bi_symbols = []
+    no_isin_symbols = []
+    for sym in missing_symbols:
+        db_lookup_symbol = sym
+        if settings.TICKER_SUFFIX and db_lookup_symbol.endswith(settings.TICKER_SUFFIX):
+            db_lookup_symbol = db_lookup_symbol[:-len(settings.TICKER_SUFFIX)]
+        if get_isin_from_db(db_lookup_symbol):
+            bi_symbols.append(sym)
+        else:
+            no_isin_symbols.append(sym)
+
+    if bi_symbols:
+        for sym in bi_symbols:
+            bi_quote = get_borsa_italiana_quote(sym)
+            if bi_quote and bi_quote.get("last") is not None:
+                result[sym].update(bi_quote)
+                logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
+
     if not missing_symbols:
         # All symbols got prices from cache/DB — cache and return
         quotes_to_save = {}
@@ -288,7 +310,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
 
     # Filter out BTP ISINs as they are not supported by yfinance and should be served from DB
-    stock_symbols = [s for s in missing_symbols if not is_btp_isin(s)]
+    stock_symbols = [s for s in no_isin_symbols if not is_btp_isin(s)]
 
     # --- Batch fetch ALL price data using yf.download (single HTTP request) ---
     # This replaces the slow sequential fast_info calls that caused timeouts.
@@ -376,14 +398,15 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 result[sym].update(iex_quote)
                 logger.debug(f"get_quotes: IEX Cloud provided quote for {sym}")
 
-    # --- Try Borsa Italiana for Italian stocks AND BTPs still missing valid prices ---
+    # --- Try Borsa Italiana for BTPs and any remaining symbols still missing valid prices ---
     missing_after_iex = [
         sym for sym in missing_symbols
         if result.get(sym, {}).get("last") is None
     ]
     if missing_after_iex:
-        # Limit to 5 symbols to avoid excessive API calls
-        for sym in missing_after_iex[:5]:
+        # Only try symbols not already attempted via Borsa Italiana
+        bi_fallback = [s for s in missing_after_iex if s not in bi_symbols]
+        for sym in bi_fallback[:5]:
             bi_quote = get_borsa_italiana_quote(sym)
             if bi_quote:
                 result[sym].update(bi_quote)
