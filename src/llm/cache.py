@@ -522,6 +522,8 @@ def _normalize_for_hash(obj, depth=0):
     if isinstance(obj, float):
         if obj == 0:
             return 0.0
+        if math.isnan(obj) or math.isinf(obj):
+            return obj
         # Percentage-based rounding: round to 3 significant figures
         # to treat small absolute changes on high-priced assets as insignificant.
         decimals = 2 - int(math.floor(math.log10(abs(obj))))
