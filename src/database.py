@@ -88,7 +88,8 @@ class _PgConnectionWrapper:
         return self._conn.execute(sql, params)
 
     def executemany(self, sql, params_list):
-        return self._conn.executemany(sql, params_list)
+        with self._conn.cursor() as cur:
+            cur.executemany(sql, params_list)
 
 
 _sqlite_local = threading.local()
