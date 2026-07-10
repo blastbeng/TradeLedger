@@ -1110,25 +1110,12 @@ class RiskManager:
                     logger.info(f"Stop-loss order {sl_order_id} filled for {symbol}, processing native fill.")
                     await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
                 else:
-                    # Stop-loss not yet filled — cancel it and execute manual sell
-                    try:
-                        await asyncio.to_thread(engine.trader.cancel_order, sl_order_id)
-                    except Exception:
-                        pass
-                    async with engine._queued_orders_lock:
-                        engine.queued_orders = [
-                            q for q in engine.queued_orders
-                            if q.get("order_id") != sl_order_id
-                        ]
-                    async with engine._positions_lock:
-                        pos.pop("stop_loss_order_id", None)
-                        pos.pop("stop_loss_order_type", None)
-                        pos.pop("_native_stop_price", None)
-                    await self.event_bus.publish(
-                        "execute_signal",
-                        symbol,
-                        Signal(action="SELL", confidence=1.0, reasoning="Stop-loss triggered (risk check)"),
-                        exit_reason="stop_loss"
+                    # Stop-loss not yet filled — leave the native stop order active
+                    # to avoid a worse fill from a manual market sell. The queued
+                    # order polling loop will process the fill when it occurs.
+                    logger.info(
+                        f"Stop price reached for {symbol}, waiting for native "
+                        f"stop-loss order {sl_order_id} to fill."
                     )
             return True  # position has been closed, move to next
 
