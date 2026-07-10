@@ -10,7 +10,7 @@ import uvicorn
 import uvicorn.config
 from src.web.app import app
 from src.config.settings import settings
-from src.database import init_db, get_telegram_chat_id, set_telegram_chat_id
+from src.database import init_db, get_telegram_chat_id, set_telegram_chat_id, close_pool
 from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.trading.engine import TradingEngine
 from src.news.fetcher import test_rss_feeds
@@ -326,6 +326,9 @@ async def main():
     # Stop the server
     server.should_exit = True
     await server_task
+
+    # Close the database connection pool
+    close_pool()
 
 if __name__ == "__main__":
     asyncio.run(main())
