@@ -27,6 +27,11 @@ if _backend == "postgresql":
     from psycopg import rows as pg_rows
     from psycopg_pool import ConnectionPool
 
+    def _configure_connection(conn):
+        """Validate connection without leaving an open transaction."""
+        # ping() sends a simple protocol-level ping, no transaction started
+        conn.ping()
+
     _pg_pool = ConnectionPool(
         kwargs={
             "host": settings.DB_HOST,
@@ -34,14 +39,14 @@ if _backend == "postgresql":
             "dbname": settings.DB_NAME,
             "user": settings.DB_USER,
             "password": settings.DB_PASSWORD,
+            "autocommit": True,  # run health check in autocommit mode
         },
         min_size=5,
         max_size=20,
         timeout=30.0,
         max_idle=60.0,
         reconnect_timeout=300.0,
-        # Validate connection before use to prevent stale socket warnings
-        configure=lambda conn: conn.execute("SELECT 1"),
+        configure=_configure_connection,
         open=True,
     )
     _placeholder = "%s"
