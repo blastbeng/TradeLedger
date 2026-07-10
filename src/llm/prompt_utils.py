@@ -24,7 +24,7 @@ def _round_floats(obj, decimals=2):
 
 def _to_toon(obj: Any) -> str:
     """Serialize a Python object to TOON format using the python-toon library."""
-    return toon.dumps(obj)
+    return toon.encode(obj)
 
 
 def _timeframe_to_seconds(tf: str) -> int:
