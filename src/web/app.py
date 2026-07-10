@@ -571,16 +571,9 @@ async def restart():
 
 @http_router.get("/api/config")
 def config():
-    mind_provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
-    actuator_provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
-    if mind_provider == "ollama":
-        mind_model = settings.OLLAMA_MIND_MODEL
-    else:
-        mind_model = settings.OPENAI_MIND_MODEL
-    if actuator_provider == "ollama":
-        actuator_model = settings.OLLAMA_ACTUATOR_MODEL
-    else:
-        actuator_model = settings.OPENAI_ACTUATOR_MODEL
+    mind_provider, mind_model, _ = _resolve_llm_role_settings("mind")
+    actuator_provider, actuator_model, _ = _resolve_llm_role_settings("actuator")
+    weak_provider, weak_model, _ = _resolve_llm_role_settings("weak")
 
     return {
         "trading_mode": settings.TRADING_MODE,
@@ -590,6 +583,8 @@ def config():
         "llm_mind_model": mind_model,
         "llm_actuator_provider": actuator_provider,
         "llm_actuator_model": actuator_model,
+        "llm_weak_provider": weak_provider,
+        "llm_weak_model": weak_model,
         "web_port": settings.WEB_PORT,
     }
 
