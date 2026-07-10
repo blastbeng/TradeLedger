@@ -527,8 +527,8 @@
                         <div>
                             <label for="llm-chart-period" style="margin-right:8px; font-size:0.9rem;">Period:</label>
                             <select id="llm-chart-period" style="background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px;">
-                                <option value="hour">Hourly</option>
-                                <option value="day" selected>Daily</option>
+                                <option value="hour" selected>Hourly</option>
+                                <option value="day">Daily</option>
                                 <option value="week">Weekly</option>
                                 <option value="month">Monthly</option>
                             </select>
@@ -2350,7 +2350,7 @@
         }
 
         async function fetchLLMMetricsChart() {
-            const period = document.getElementById('llm-chart-period')?.value || 'day';
+            const period = document.getElementById('llm-chart-period')?.value || 'hour';
             const fromDate = document.getElementById('llm-chart-from')?.value;
             const toDate = document.getElementById('llm-chart-to')?.value;
             
