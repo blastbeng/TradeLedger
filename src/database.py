@@ -29,8 +29,9 @@ if _backend == "postgresql":
 
     def _configure_connection(conn):
         """Validate connection without leaving an open transaction."""
-        # ping() sends a simple protocol-level ping, no transaction started
-        conn.ping()
+        # Use execute with autocommit=True (set in kwargs below) - no transaction started
+        # This works on all psycopg3 versions
+        conn.execute("SELECT 1")
 
     _pg_pool = ConnectionPool(
         kwargs={
@@ -39,7 +40,7 @@ if _backend == "postgresql":
             "dbname": settings.DB_NAME,
             "user": settings.DB_USER,
             "password": settings.DB_PASSWORD,
-            "autocommit": True,  # run health check in autocommit mode
+            "autocommit": True,  # Health check runs in autocommit mode
         },
         min_size=5,
         max_size=20,
