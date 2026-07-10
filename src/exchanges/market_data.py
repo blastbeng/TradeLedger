@@ -321,7 +321,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             for sym in stock_symbols:
                 try:
                     if len(stock_symbols) > 1:
-                        if batch_hist is None or batch_hist.empty or sym not in batch_hist.columns.levels[1]:
+                        if batch_hist is None or batch_hist.empty or sym not in batch_hist.columns.levels[0]:
                             continue
                         sym_data = batch_hist[sym]
                     else:
