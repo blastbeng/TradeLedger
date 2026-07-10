@@ -26,6 +26,13 @@ class RiskManager:
         self.event_bus = event_bus
         self.event_bus.subscribe("check_risk_management", self.check_risk_management)
         self.event_bus.subscribe("record_position_pnl_snapshots", self.record_position_pnl_snapshots)
+        self.event_bus.subscribe("update_native_stop_order", self._handle_update_native_stop_order)
+
+    async def _handle_update_native_stop_order(self, symbol: str) -> None:
+        """Event handler to immediately update native stop order for a symbol."""
+        engine = self.engine
+        if symbol in engine.positions:
+            await self.update_native_stop_order(symbol, engine.positions[symbol])
 
     async def record_position_pnl_snapshots(self):
         """Record P&L snapshots for all open positions to the database."""

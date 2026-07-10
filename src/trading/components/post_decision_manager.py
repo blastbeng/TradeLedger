@@ -350,6 +350,7 @@ class PostDecisionManager:
                         "update_position_params",
                         symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
                     )
+                    await self.event_bus.publish("update_native_stop_order", symbol)
                     engine._state_dirty = True
                 if engine.notifier:
                     await engine.notifier.send_notification(
