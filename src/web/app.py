@@ -716,10 +716,10 @@ async def llm_metrics_reset():
         raise HTTPException(status_code=500, detail=str(e))
 
 @http_router.get("/api/llm-metrics/timeseries")
-async def llm_metrics_timeseries(hours: int = 24):
-    """Return hourly aggregated LLM metrics for charting."""
+async def llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = None, to_date: Optional[str] = None):
+    """Return aggregated LLM metrics for charting based on period and date range."""
     try:
-        return await run_in_threadpool(get_llm_metrics_timeseries, hours)
+        return await run_in_threadpool(get_llm_metrics_timeseries, period, from_date, to_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

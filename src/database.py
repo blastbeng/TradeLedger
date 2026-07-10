@@ -4,6 +4,7 @@ import os
 import logging
 import time
 import functools
+from datetime import datetime
 import hashlib
 import threading
 from typing import Dict, List, Any, Optional
@@ -2278,16 +2279,36 @@ def get_llm_metrics_summary() -> dict:
         conn.close()
 
 
-def get_llm_metrics_timeseries(hours: int = 24) -> List[Dict[str, Any]]:
-    """Return hourly aggregated LLM metrics for the last N hours."""
+def get_llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = None, to_date: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return aggregated LLM metrics for charting based on period and date range."""
     conn = get_connection()
     try:
-        cutoff = time.time() - hours * 3600
+        now_ts = time.time()
+        if from_date:
+            cutoff = datetime.strptime(from_date, "%Y-%m-%d").timestamp()
+        else:
+            if period == "hour":
+                cutoff = now_ts - 24 * 3600
+            elif period == "day":
+                cutoff = now_ts - 30 * 86400
+            elif period == "week":
+                cutoff = now_ts - 12 * 604800
+            elif period == "month":
+                cutoff = now_ts - 365 * 86400
+            else:
+                cutoff = now_ts - 24 * 3600
+
+        if to_date:
+            end_ts = datetime.strptime(to_date, "%Y-%m-%d").timestamp() + 86400
+        else:
+            end_ts = now_ts
+
         if _backend == "postgresql":
+            trunc = period if period in ("hour", "day", "week", "month") else "hour"
             sql = _adapt_sql(
-                """
+                f"""
                 SELECT
-                    date_trunc('hour', to_timestamp(timestamp)) AS hour,
+                    EXTRACT(EPOCH FROM date_trunc('{trunc}', to_timestamp(timestamp))) AS hour,
                     COUNT(*) as calls,
                     SUM(total_tokens) as tokens,
                     SUM(prompt_tokens) as prompt_tokens,
@@ -2295,17 +2316,26 @@ def get_llm_metrics_timeseries(hours: int = 24) -> List[Dict[str, Any]]:
                     AVG(latency_ms) as avg_latency,
                     SUM(cache_hit) as cache_hits
                 FROM llm_metrics
-                WHERE timestamp >= %s
+                WHERE timestamp >= %s AND timestamp <= %s
                 GROUP BY hour
                 ORDER BY hour ASC
                 """
             )
         else:
-            # SQLite: group by integer division of timestamp / 3600
+            if period == "hour":
+                divisor = 3600
+            elif period == "day":
+                divisor = 86400
+            elif period == "week":
+                divisor = 604800
+            elif period == "month":
+                divisor = 2592000  # Approximate month as 30 days
+            else:
+                divisor = 3600
             sql = _adapt_sql(
-                """
+                f"""
                 SELECT
-                    (CAST(timestamp / 3600 AS INTEGER) * 3600) AS hour,
+                    (CAST(timestamp / {divisor} AS INTEGER) * {divisor}) AS hour,
                     COUNT(*) as calls,
                     SUM(total_tokens) as tokens,
                     SUM(prompt_tokens) as prompt_tokens,
@@ -2313,12 +2343,12 @@ def get_llm_metrics_timeseries(hours: int = 24) -> List[Dict[str, Any]]:
                     AVG(latency_ms) as avg_latency,
                     SUM(cache_hit) as cache_hits
                 FROM llm_metrics
-                WHERE timestamp >= %s
+                WHERE timestamp >= %s AND timestamp <= %s
                 GROUP BY hour
                 ORDER BY hour ASC
                 """
             )
-        rows = conn.execute(sql, (cutoff,)).fetchall()
+        rows = conn.execute(sql, (cutoff, end_ts)).fetchall()
         result = []
         for row in rows:
             hour_ts = row["hour"]
