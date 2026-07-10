@@ -429,8 +429,10 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     prev_close = db_change_data[sym].get("prev_close")
                     if prev_close and prev_close > 0:
                         last = result[sym]["last"]
-                        result[sym]["change_24h"] = last - prev_close
-                        result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
+                        if result[sym].get("change_24h") is None:
+                            result[sym]["change_24h"] = last - prev_close
+                        if result[sym].get("percentage") is None:
+                            result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
         except (RuntimeError, ValueError, KeyError, OSError) as e:
             logger.warning(f"Failed to recompute change_24h/percentage from DB candles: {e}")
 
@@ -583,8 +585,10 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                     prev_close = db_change_data[sym].get("prev_close")
                     if prev_close and prev_close > 0:
                         last = result[sym]["last"]
-                        result[sym]["change_24h"] = last - prev_close
-                        result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
+                        if result[sym].get("change_24h") is None:
+                            result[sym]["change_24h"] = last - prev_close
+                        if result[sym].get("percentage") is None:
+                            result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
         except (RuntimeError, ValueError, KeyError, OSError) as e:
             logger.warning(f"get_quotes_cached: Failed to recompute change_24h/percentage from DB candles: {e}")
 
