@@ -179,21 +179,20 @@ class ReevalDataFetcher:
 
         # Apply sentiment filter if configured
         if settings.SYMBOL_SELECTION_MIN_SENTIMENT > -1.0 and settings.NEWS_ENABLED:
-            candidate_pairs = available_pairs
-            async def _fetch_sentiment_filter(sym):
-                try:
-                    base_symbol = sym.split("/")[0] if "/" in sym else sym
-                    agg = await asyncio.to_thread(get_aggregate_sentiment_from_db, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
-                    if agg and agg["avg_compound"] >= settings.SYMBOL_SELECTION_MIN_SENTIMENT:
-                        return sym
-                    elif not agg:
-                        return sym
-                    return None
-                except Exception:
-                    return sym
-            sentiment_filter_tasks = [_fetch_sentiment_filter(sym) for sym in candidate_pairs]
-            sentiment_filter_results = await asyncio.gather(*sentiment_filter_tasks)
-            sample_pairs = [sym for sym in sentiment_filter_results if sym is not None]
+            batch_sentiment = await asyncio.to_thread(
+                get_aggregate_sentiment_for_symbols, available_pairs, settings.NEWS_CACHE_TTL_SECONDS
+            )
+            sample_pairs = []
+            for sym in available_pairs:
+                agg = batch_sentiment.get(sym)
+                if not agg:
+                    sample_pairs.append(sym)
+                else:
+                    try:
+                        if agg["avg_compound"] >= settings.SYMBOL_SELECTION_MIN_SENTIMENT:
+                            sample_pairs.append(sym)
+                    except (KeyError, TypeError):
+                        sample_pairs.append(sym)
         else:
             sample_pairs = available_pairs
 
