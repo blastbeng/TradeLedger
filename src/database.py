@@ -1414,6 +1414,49 @@ def get_latest_ohlcv_timestamp(symbol: str, timeframe: str) -> Optional[int]:
         conn.close()
 
 
+def get_latest_ohlcv_timestamps_batch(pairs: List[str], timeframes: List[str]) -> Dict[str, Dict[str, Optional[int]]]:
+    """Batch fetch the latest OHLCV timestamp for multiple symbols and timeframes in a single query."""
+    if not pairs or not timeframes:
+        return {}
+
+    result = {pair: {tf: None for tf in timeframes} for pair in pairs}
+
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                """
+                SELECT symbol, timeframe, MAX(timestamp) AS latest_ts
+                FROM market_data
+                WHERE symbol = ANY(%s) AND timeframe = ANY(%s)
+                GROUP BY symbol, timeframe
+                """
+            )
+            rows = conn.execute(sql, (pairs, timeframes)).fetchall()
+        else:
+            pair_placeholders = ",".join(["?" for _ in pairs])
+            tf_placeholders = ",".join(["?" for _ in timeframes])
+            sql = _adapt_sql(
+                f"""
+                SELECT symbol, timeframe, MAX(timestamp) AS latest_ts
+                FROM market_data
+                WHERE symbol IN ({pair_placeholders}) AND timeframe IN ({tf_placeholders})
+                GROUP BY symbol, timeframe
+                """
+            )
+            rows = conn.execute(sql, pairs + timeframes).fetchall()
+
+        for row in rows:
+            sym = row["symbol"]
+            tf = row["timeframe"]
+            latest_ts = row["latest_ts"]
+            if sym in result and tf in result[sym]:
+                result[sym][tf] = latest_ts
+        return result
+    finally:
+        conn.close()
+
+
 @retry_on_db_lock()
 def save_indicators(symbol: str, timeframe: str, timestamp: int, indicators: Dict[str, Any]):
     """Save computed indicators for a symbol/timeframe (upsert — one row per symbol/timeframe)."""

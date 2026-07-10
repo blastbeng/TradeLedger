@@ -58,7 +58,7 @@ from src.utils.redis_client import get_redis_client, check_redis_connection, is_
 from src.utils.symbol_utils import is_btp_isin
 from src.utils.task_supervisor import TaskSupervisor
 from src.utils.event_bus import EventBus
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, get_latest_ohlcv_timestamps_batch, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data
 from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.buy_executor import BuyExecutor
 from src.trading.components.exit_order_manager import ExitOrderManager
@@ -1338,30 +1338,32 @@ class TradingEngine:
                 start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
 
                 # Prioritize symbols with missing or stale data for configured timeframes
-                async def _get_stale_timeframes(pair: str) -> List[str]:
-                    """Return list of timeframes that are missing or stale for a pair."""
+                loop = asyncio.get_running_loop()
+                latest_timestamps = await loop.run_in_executor(
+                    self._db_executor,
+                    get_latest_ohlcv_timestamps_batch,
+                    all_pairs,
+                    settings.OHLCV_TIMEFRAMES
+                )
+
+                pairs_with_stale_data = []
+                pairs_complete = []
+                now_ms = int(time.time() * 1000)
+
+                for pair in all_pairs:
                     stale_tfs = []
-                    now_ms = int(time.time() * 1000)
-                    loop = asyncio.get_running_loop()
                     for tf in settings.OHLCV_TIMEFRAMES:
-                        latest_ts = await loop.run_in_executor(self._db_executor, get_latest_ohlcv_timestamp, pair, tf)
+                        latest_ts = latest_timestamps.get(pair, {}).get(tf)
                         if latest_ts is None:
                             stale_tfs.append(tf)
                         else:
                             interval_ms = self._timeframe_to_ms(tf)
                             if latest_ts < now_ms - interval_ms:
                                 stale_tfs.append(tf)
-                    return stale_tfs
-
-                # Limit concurrency of DB checks to avoid exhausting the connection pool
-                tf_check_concurrency = asyncio.Semaphore(20)
-                async def _limited_tf_check(pair: str) -> Tuple[str, List[str]]:
-                    async with tf_check_concurrency:
-                        return pair, await _get_stale_timeframes(pair)
-
-                tf_checks = await asyncio.gather(*[_limited_tf_check(pair) for pair in all_pairs])
-                pairs_with_stale_data = [(pair, tfs) for pair, tfs in tf_checks if tfs]
-                pairs_complete = [pair for pair, tfs in tf_checks if not tfs]
+                    if stale_tfs:
+                        pairs_with_stale_data.append((pair, stale_tfs))
+                    else:
+                        pairs_complete.append(pair)
 
                 random.shuffle(pairs_with_stale_data)
                 if pairs_with_stale_data:
