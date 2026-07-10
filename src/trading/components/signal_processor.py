@@ -409,6 +409,7 @@ class SignalProcessor:
             strategy_model_type=strategy_model_type, effective_temp=effective_temp,
             current_price=ctx["current_price"], rsi=ctx["rsi"], macd_hist=ctx["macd_hist"],
             is_critical=is_critical, critical_reason=critical_reason,
+            tf_seconds=tf_seconds,
         )
         if _should_return:
             return None
@@ -1399,6 +1400,11 @@ class SignalProcessor:
         snapshot = engine._last_eval_snapshot.get(symbol)
         if snapshot is None:
             # First evaluation – must call
+            return False
+
+        # If the timeframe has changed, the old snapshot is stale and
+        # cannot be compared against the new timeframe's indicators.
+        if snapshot.get("timeframe_seconds") != timeframe_seconds:
             return False
 
         now = time.time()

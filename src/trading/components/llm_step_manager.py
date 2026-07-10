@@ -37,12 +37,13 @@ class LLMStepManager:
         signal.llm_model = "default_hold"
         return signal
 
-    def _update_last_eval_snapshot(self, symbol: str, price: float, rsi: Optional[float], macd_hist: Optional[float]):
+    def _update_last_eval_snapshot(self, symbol: str, price: float, rsi: Optional[float], macd_hist: Optional[float], tf_seconds: int):
         self.engine._last_eval_snapshot[symbol] = {
             "timestamp": time.time(),
             "price": price,
             "rsi": rsi,
             "macd_hist": macd_hist,
+            "timeframe_seconds": tf_seconds,
         }
 
     async def _increment_llm_failures(self) -> None:
@@ -105,6 +106,7 @@ class LLMStepManager:
         macd_hist: Optional[float],
         is_critical: bool,
         critical_reason: Optional[str],
+        tf_seconds: int,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str], bool]:
         """Run the Step 1a LLM call and handle timeouts/retries.
 
@@ -191,7 +193,7 @@ class LLMStepManager:
             except (ConnectionError, TimeoutError, OSError):
                 pass
             # Update snapshot after a real LLM call
-            self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist)
+            self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist, tf_seconds)
             async with engine._eval_state_lock:
                 engine._force_eval.pop(symbol, None)
         except asyncio.TimeoutError:
