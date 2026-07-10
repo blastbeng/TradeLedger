@@ -92,6 +92,9 @@ else:
 # Suppress urllib3 warnings (e.g., "Connection pool is full, discarding connection")
 logging.getLogger("urllib3").setLevel(logging.ERROR)
 
+# Suppress asyncio socket warnings (e.g., "socket.send() raised exception")
+logging.getLogger("asyncio").setLevel(logging.ERROR)
+
 # --- Redis log handler for the web dashboard ---
 class RedisLogHandler(logging.Handler):
     """Push log records to a Redis list for the web dashboard.

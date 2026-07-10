@@ -84,6 +84,8 @@ def get_redis_client() -> redis.Redis:
             socket_timeout=5,           # seconds – max time for any Redis command
             socket_connect_timeout=5,   # seconds – max time to establish connection
             max_connections=50,
+            health_check_interval=30,   # ping every 30s to detect stale connections
+            retry_on_timeout=True,      # retry on timeout
         )
     return _redis_client
 

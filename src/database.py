@@ -40,6 +40,8 @@ if _backend == "postgresql":
         timeout=30.0,
         max_idle=60.0,
         reconnect_timeout=300.0,
+        # Validate connection before use to prevent stale socket warnings
+        configure=lambda conn: conn.execute("SELECT 1"),
         open=True,
     )
     _placeholder = "%s"

@@ -39,6 +39,9 @@ class TelegramBot:
         else:
             logger.warning("TELEGRAM_CHAT_ID not set. Bot will not respond to any chat.")
         self.app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+        # Reduce long-polling connection churn to avoid asyncio socket warnings
+        self.app.updater.poll_interval = 5.0   # default 0.0 (aggressive)
+        self.app.updater.poll_timeout = 30.0   # default 10.0
         self._register_handlers()
         self.keyboard = ReplyKeyboardMarkup(
             [
