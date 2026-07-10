@@ -205,7 +205,7 @@ async def main():
     log_config["formatters"]["access"] = {
         "()": "src.main.JsonFormatter",
     }
-    log_config["loggers"]["uvicorn.access"]["level"] = "DEBUG"
+    log_config["loggers"]["uvicorn.access"]["level"] = settings.LOG_LEVEL.upper()
     log_config["loggers"]["uvicorn"]["level"] = settings.LOG_LEVEL.upper()
 
     # Remove root logger from uvicorn's config to prevent dictConfig from
