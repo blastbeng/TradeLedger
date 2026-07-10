@@ -814,7 +814,8 @@ class RiskManager:
                     if engine.notifier:
                         await engine.notifier.send_notification(
                             f"🔸 Partial TP level {i} triggered for {display_symbol} – consulting LLM...",
-                            summary={"symbol": symbol, "action": "HOLD", "reason": f"Partial TP level {i} triggered – awaiting LLM"}
+                            summary={"symbol": symbol, "action": "HOLD", "reason": f"Partial TP level {i} triggered – awaiting LLM"},
+                            disable_notification=False
                         )
                     break  # only handle one new trigger per cycle; others will be picked up after LLM responds
         else:
@@ -845,7 +846,8 @@ class RiskManager:
                         if engine.notifier:
                             await engine.notifier.send_notification(
                                 f"🔸 Partial TP triggered for {display_symbol} – consulting LLM...",
-                                summary={"symbol": symbol, "action": "HOLD", "reason": "Partial TP triggered – awaiting LLM"}
+                                summary={"symbol": symbol, "action": "HOLD", "reason": "Partial TP triggered – awaiting LLM"},
+                                disable_notification=False
                             )
 
     async def check_dust_sweep(
@@ -909,7 +911,8 @@ class RiskManager:
                     if engine.notifier:
                         await engine.notifier.send_notification(
                             f"🧹 Dust sweep triggered for {display_symbol} – consulting LLM...",
-                            summary={"symbol": symbol, "action": "HOLD", "reason": "Dust sweep triggered – awaiting LLM"}
+                            summary={"symbol": symbol, "action": "HOLD", "reason": "Dust sweep triggered – awaiting LLM"},
+                            disable_notification=False
                         )
         else:
             # If dust was previously triggered but condition no longer holds, clear it
@@ -961,7 +964,8 @@ class RiskManager:
                             "symbol": symbol,
                             "action": "HOLD",
                             "reason": "Max hold time expired – awaiting LLM decision",
-                        }
+                        },
+                        disable_notification=False
                     )
                 return True
         return False
@@ -1096,7 +1100,8 @@ class RiskManager:
                             "symbol": symbol,
                             "action": "CANCEL",
                             "reason": "Stop triggered, OCO pair cancelled (risk check)",
-                        }
+                        },
+                        disable_notification=False
                     )
                 # Process the stop-loss order: check if it has already filled
                 # (race condition prevention — the order may have filled between
@@ -1181,7 +1186,8 @@ class RiskManager:
                             "symbol": symbol,
                             "action": "CANCEL",
                             "reason": "Take-profit reached, OCO pair cancelled (risk check)",
-                        }
+                        },
+                        disable_notification=False
                     )
                 # Process the take-profit order: check if it has already
                 # filled (race condition prevention — the order may have
@@ -1293,7 +1299,8 @@ class RiskManager:
                             "action": "HOLD",
                             "reason": "Stop-loss triggered – awaiting LLM decision",
                             "price": current_price,
-                        }
+                        },
+                        disable_notification=False
                     )
             else:
                 # Already waiting for LLM; do nothing (avoid re-triggering)
@@ -1363,7 +1370,8 @@ class RiskManager:
                         "action": "HOLD",
                         "reason": "Take-profit triggered – awaiting LLM decision",
                         "price": current_price,
-                    }
+                    },
+                    disable_notification=False
                 )
         else:
             # Already waiting for LLM; do nothing

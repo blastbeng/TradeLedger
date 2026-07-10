@@ -954,7 +954,7 @@ class TelegramBot:
         
         return f"{prefix}{total_trades} trades, {win_rate*100:.0f}% win ({wins}W/{losses}L)"
 
-    async def send_notification(self, message: str, summary: dict = None):
+    async def send_notification(self, message: str, summary: dict = None, disable_notification: bool = True):
         """Send a notification to the stored chat ID and optionally log a summary."""
         # Capture full stacktrace for error notifications if an exception is active.
         # This must be done at the very start, before any try/except blocks in this
@@ -1037,14 +1037,11 @@ class TelegramBot:
             for attempt in range(1, max_retries + 1):
                 try:
                     # --- Determine if notification should be silent ---
-                    disable_notification = False
-                    if settings.TRADING_MODE == "paper":
-                        # In paper mode, all notifications are silent
-                        disable_notification = True
-                    elif settings.TRADING_MODE == "notify":
-                        # In notify mode, only BUY/SELL signals are audible; everything else is silent
-                        if action not in ("BUY", "SELL"):
-                            disable_notification = True
+                    # All notifications are silent by default.
+                    # Only BUY, SELL, and ERROR actions ring the phone, unless
+                    # explicitly overridden by the caller via disable_notification=False.
+                    if action in ("BUY", "SELL", "ERROR"):
+                        disable_notification = False
 
                     chunks = self._split_text(message)
                     for chunk in chunks:
