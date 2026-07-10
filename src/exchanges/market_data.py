@@ -353,6 +353,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                         last = sym_data["Close"].iloc[-1]
                         if last is not None and not pd.isna(last) and last > 0:
                             result[sym]["last"] = float(last)
+                            result[sym]["last_update"] = int(time.time() * 1000)
+                            result[sym]["source"] = "yfinance"
                         vol = sym_data["Volume"].iloc[-1] if "Volume" in sym_data.columns else None
                         if vol is not None and not pd.isna(vol):
                             result[sym]["volume"] = float(vol)
