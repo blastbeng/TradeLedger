@@ -601,28 +601,28 @@ class RiskManager:
                         # which have enough data points to capture intra-check price spikes
                         # that the ticker alone would miss (risk checks run every ~4h).
                         ohlcv_tf = "1d" if tf_secs >= 2_592_000 else tf
+                        # Throttle OHLCV fetches: only fetch every ~10% of the
+                        # timeframe interval, clamped between 5 min and 1 hour.
+                        # For very long timeframes, fetch every 4 hours (14400s)
+                        # since risk checks run every ~4h.
                         if tf_secs >= 2_592_000:
-                            if last_check_ts == 0:
-                                async with engine._positions_lock:
-                                    pos["_last_trailing_check_ts"] = now_ts
+                            fetch_interval = 14400
                         else:
-                            # Throttle OHLCV fetches: only fetch every ~10% of the
-                            # timeframe interval, clamped between 5 min and 1 hour.
                             fetch_interval = max(300, min(3600, int(tf_secs * 0.1)))
-                            # On first check (last_check_ts == 0), initialize
-                            # timestamp but don't fetch (avoids using pre-entry
-                            # candles, matching the original _load_state behavior).
-                            if last_check_ts == 0:
-                                async with engine._positions_lock:
-                                    pos["_last_trailing_check_ts"] = now_ts
-                            elif (now_ts - last_check_ts) >= fetch_interval:
-                                since_ms = int(last_check_ts * 1000)
-                                db_candles = await asyncio.to_thread(get_ohlcv, symbol, ohlcv_tf, since_ms=since_ms, limit=200)
-                                if db_candles:
-                                    candle_high = max(c["high"] for c in db_candles)
-                                    candidate_prices.append(candle_high)
-                                async with engine._positions_lock:
-                                    pos["_last_trailing_check_ts"] = now_ts
+                        # On first check (last_check_ts == 0), initialize
+                        # timestamp but don't fetch (avoids using pre-entry
+                        # candles, matching the original _load_state behavior).
+                        if last_check_ts == 0:
+                            async with engine._positions_lock:
+                                pos["_last_trailing_check_ts"] = now_ts
+                        elif (now_ts - last_check_ts) >= fetch_interval:
+                            since_ms = int(last_check_ts * 1000)
+                            db_candles = await asyncio.to_thread(get_ohlcv, symbol, ohlcv_tf, since_ms=since_ms, limit=200)
+                            if db_candles:
+                                candle_high = max(c["high"] for c in db_candles)
+                                candidate_prices.append(candle_high)
+                            async with engine._positions_lock:
+                                pos["_last_trailing_check_ts"] = now_ts
                     except Exception as e:
                         logger.debug(f"Failed to fetch OHLCV for trailing stop on {symbol}: {e}")
 
