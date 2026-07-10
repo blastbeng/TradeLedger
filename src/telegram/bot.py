@@ -232,6 +232,7 @@ class TelegramBot:
         msg = "<b>📊 Current Status</b>\n\n"
         mind_provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
         actuator_provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
+        weak_provider = settings.LLM_WEAK_PROVIDER or settings.LLM_PROVIDER
         if mind_provider == "ollama":
             mind_model = settings.OLLAMA_MIND_MODEL
         else:
@@ -240,8 +241,13 @@ class TelegramBot:
             actuator_model = settings.OLLAMA_ACTUATOR_MODEL
         else:
             actuator_model = settings.OPENAI_ACTUATOR_MODEL
+        if weak_provider == "ollama":
+            weak_model = settings.OLLAMA_WEAK_MODEL
+        else:
+            weak_model = settings.OPENAI_WEAK_MODEL
         msg += f"<b>🧠 LLM Mind:</b> {mind_provider} / {mind_model}\n"
-        msg += f"<b>🧠 LLM Actuator:</b> {actuator_provider} / {actuator_model}\n\n"
+        msg += f"<b>🧠 LLM Actuator:</b> {actuator_provider} / {actuator_model}\n"
+        msg += f"<b>🧠 LLM Weak:</b> {weak_provider} / {weak_model}\n\n"
         msg += "<b>📈 Tracked Tickers:</b>\n"
         if symbols:
             for entry in symbols:
