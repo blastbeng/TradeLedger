@@ -290,7 +290,7 @@ Current balances: {_to_toon(_balance_compact)}
             "sl": pos["stop_loss"],
             "tp": pos["take_profit"],
         })
-    prompt += f"""Open positions: {json.dumps(_positions_compact, separators=(',', ':'))}
+    prompt += f"""Open positions: {_to_toon(_positions_compact)}
 Total available {base_currency} balance: {base_balance:.2f}
 Suggested equal share per symbol: {per_symbol_budget:.2f} {base_currency}
 Maximum symbols to trade: {max_symbols}
@@ -353,7 +353,7 @@ Maximum symbols to trade: {max_symbols}
     if atr_percentile is not None:
         prompt += f"ATR percentile (last 100 obs): {atr_percentile:.1f}%\n"
     if atr_multi_tf:
-        prompt += f"ATR across timeframes: {json.dumps(_round_floats(atr_multi_tf), separators=(',', ':'))}\n"
+        prompt += f"ATR across timeframes: {_to_toon(_round_floats(atr_multi_tf))}\n"
     # --- Transaction cost break-even calculation ---
     _is_btp = is_btp_isin(symbol)
     # Use per_symbol_budget as the representative trade size — the LLM typically
@@ -544,7 +544,7 @@ Maximum symbols to trade: {max_symbols}
             }
             for t in recent_trades
         ]
-        prompt += f"\nRecentTrades: {json.dumps(_recent_compact, separators=(',', ':'))}\n"
+        prompt += f"\nRecentTrades: {_to_toon(_recent_compact)}\n"
 
     # --- Past trades for this symbol ---
     if past_trades:
@@ -553,7 +553,7 @@ Maximum symbols to trade: {max_symbols}
              "r": t.get("exit_reason", ""), "h": int(t.get("hold_time_seconds", 0) / 60) if t.get("hold_time_seconds") is not None else None, "s": t.get("strategy_type", "")}
             for t in past_trades
         ]
-        prompt += f"\nPastTrades({symbol}): {json.dumps(_past_compact, separators=(',', ':'))}\n"
+        prompt += f"\nPastTrades({symbol}): {_to_toon(_past_compact)}\n"
 
     if historical_backtest_results:
         _ht_compact = [
@@ -567,7 +567,7 @@ Maximum symbols to trade: {max_symbols}
              "pf": round(bt.get("stats", {}).get('profit_factor', 0), 2)}
             for bt in historical_backtest_results
         ]
-        prompt += f"\n**HistBT({symbol}):** {json.dumps(_ht_compact, separators=(',', ':'))}\n"
+        prompt += f"\n**HistBT({symbol}):** {_to_toon(_ht_compact)}\n"
 
     # --- Aggregate sentiment summary ---
     if sentiment_trend is not None:
@@ -651,11 +651,11 @@ Maximum symbols to trade: {max_symbols}
         strategy_perf = _round_floats(performance.get("strategy_performance", {}))
         parts = []
         if stock_perf:
-            parts.append(f"StockPerf={json.dumps(stock_perf, separators=(',', ':'))}")
+            parts.append(f"StockPerf={_to_toon(stock_perf)}")
         if equity:
-            parts.append(f"Equity={json.dumps(equity, separators=(',', ':'))}")
+            parts.append(f"Equity={_to_toon(equity)}")
         if strategy_perf:
-            parts.append(f"StratPerf={json.dumps(strategy_perf, separators=(',', ':'))}")
+            parts.append(f"StratPerf={_to_toon(strategy_perf)}")
         if parts:
             prompt += "\n" + " | ".join(parts) + "\n"
         daily_pnl = equity.get("daily_pnl", 0.0)

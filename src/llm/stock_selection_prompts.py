@@ -349,11 +349,11 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
         strategy_perf = _round_floats(performance.get('strategy_performance', {}))
 
         if equity_curve:
-            perf_lines.append(f"Overall equity curve: {json.dumps(equity_curve, separators=(',', ':'))}")
+            perf_lines.append(f"Overall equity curve: {_to_toon(equity_curve)}")
         if stock_perf:
-            perf_lines.append(f"Per-stock performance (win rate, avg P&L, total trades): {json.dumps(stock_perf, separators=(',', ':'))}")
+            perf_lines.append(f"Per-stock performance (win rate, avg P&L, total trades): {_to_toon(stock_perf)}")
         if strategy_perf:
-            perf_lines.append(f"Per-strategy performance: {json.dumps(strategy_perf, separators=(',', ':'))}")
+            perf_lines.append(f"Per-strategy performance: {_to_toon(strategy_perf)}")
 
         if len(perf_lines) > 1:
             prompt += "\n".join(perf_lines) + "\n"
@@ -528,11 +528,11 @@ Currently tracked stocks (with assigned timeframes): {_to_toon(current_symbols) 
         strategy_perf = _round_floats(performance.get('strategy_performance', {}))
 
         if equity_curve:
-            perf_lines.append(f"Overall equity curve: {json.dumps(equity_curve, separators=(',', ':'))}")
+            perf_lines.append(f"Overall equity curve: {_to_toon(equity_curve)}")
         if stock_perf:
-            perf_lines.append(f"Per-stock performance (win rate, avg P&L, total trades): {json.dumps(stock_perf, separators=(',', ':'))}")
+            perf_lines.append(f"Per-stock performance (win rate, avg P&L, total trades): {_to_toon(stock_perf)}")
         if strategy_perf:
-            perf_lines.append(f"Per-strategy performance: {json.dumps(strategy_perf, separators=(',', ':'))}")
+            perf_lines.append(f"Per-strategy performance: {_to_toon(strategy_perf)}")
 
         if len(perf_lines) > 1:
             prompt += "\n".join(perf_lines) + "\n"
