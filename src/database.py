@@ -2392,11 +2392,10 @@ def get_pool_stats() -> dict:
     if _pg_pool is None:
         return {"status": "not_initialized"}
     try:
-        return {
-            "status": "active",
-            "min_size": _pg_pool._min_size,
-            "max_size": _pg_pool._max_size,
-            "available": _pg_pool._nconns,
-        }
+        stats = _pg_pool.get_stats()
+        stats["status"] = "active"
+        stats["min_size"] = _pg_pool._min_size
+        stats["max_size"] = _pg_pool._max_size
+        return stats
     except Exception:
         return {"status": "unknown"}
