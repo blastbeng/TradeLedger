@@ -281,24 +281,38 @@ def get_cached_llm_response(
             )
             raise
 
-        if provider == "ollama":
-            # --- Fallback to OpenAI-compatible provider ---
+        # Determine fallback provider
+        if model_type == "mind":
+            fallback_provider = settings.LLM_MIND_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+        elif model_type == "weak":
+            fallback_provider = settings.LLM_WEAK_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+        else:
+            fallback_provider = settings.LLM_ACTUATOR_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+
+        if not fallback_provider:
+            logger.warning(
+                "LLM primary call failed and no fallback provider configured. "
+                "Original error: %s", e
+            )
+            raise
+
+        if fallback_provider == "openai":
             if model_type == "mind":
-                fallback_model = settings.OPENAI_MIND_MODEL
-                fallback_base_url = settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL
-                fallback_api_key = settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY
+                fallback_model = settings.OPENAI_MIND_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+                fallback_base_url = settings.OPENAI_MIND_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
+                fallback_api_key = settings.OPENAI_MIND_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
             elif model_type == "weak":
-                fallback_model = settings.OPENAI_WEAK_MODEL
-                fallback_base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
-                fallback_api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
+                fallback_model = settings.OPENAI_WEAK_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+                fallback_base_url = settings.OPENAI_WEAK_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
+                fallback_api_key = settings.OPENAI_WEAK_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
             else:
-                fallback_model = settings.OPENAI_ACTUATOR_MODEL
-                fallback_base_url = settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL
-                fallback_api_key = settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY
+                fallback_model = settings.OPENAI_ACTUATOR_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+                fallback_base_url = settings.OPENAI_ACTUATOR_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
+                fallback_api_key = settings.OPENAI_ACTUATOR_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
 
             if fallback_api_key or fallback_base_url:
                 logger.warning(
-                    "Ollama call failed (%s). Falling back to OpenAI-compatible provider "
+                    "Primary LLM call failed (%s). Falling back to OpenAI-compatible provider "
                     "for %s role (model=%s).", e, model_type, fallback_model
                 )
                 fallback_start = time.time()
@@ -341,28 +355,27 @@ def get_cached_llm_response(
                     raise
             else:
                 logger.warning(
-                    "Ollama call failed and no OpenAI fallback credentials configured. "
+                    "Fallback provider is openai but no API key or base URL configured. "
                     "Original error: %s", e
                 )
                 raise
-        elif provider == "openai":
-            # --- Fallback to Ollama provider ---
+        elif fallback_provider == "ollama":
             if model_type == "mind":
-                fallback_model = settings.OLLAMA_MIND_MODEL
-                fallback_base_url = settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL
-                fallback_api_key = settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY
+                fallback_model = settings.OLLAMA_MIND_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+                fallback_base_url = settings.OLLAMA_MIND_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
+                fallback_api_key = settings.OLLAMA_MIND_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
             elif model_type == "weak":
-                fallback_model = settings.OLLAMA_WEAK_MODEL
-                fallback_base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
-                fallback_api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
+                fallback_model = settings.OLLAMA_WEAK_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+                fallback_base_url = settings.OLLAMA_WEAK_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
+                fallback_api_key = settings.OLLAMA_WEAK_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
             else:
-                fallback_model = settings.OLLAMA_ACTUATOR_MODEL
-                fallback_base_url = settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL
-                fallback_api_key = settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY
+                fallback_model = settings.OLLAMA_ACTUATOR_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+                fallback_base_url = settings.OLLAMA_ACTUATOR_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
+                fallback_api_key = settings.OLLAMA_ACTUATOR_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
 
             if fallback_base_url:
                 logger.warning(
-                    "OpenAI call failed (%s). Falling back to Ollama provider "
+                    "Primary LLM call failed (%s). Falling back to Ollama provider "
                     "for %s role (model=%s).", e, model_type, fallback_model
                 )
                 fallback_start = time.time()
@@ -405,7 +418,7 @@ def get_cached_llm_response(
                     raise
             else:
                 logger.warning(
-                    "OpenAI call failed and no Ollama fallback base URL configured. "
+                    "Fallback provider is ollama but no base URL configured. "
                     "Original error: %s", e
                 )
                 raise
