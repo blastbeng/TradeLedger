@@ -69,12 +69,6 @@ def _summarize_ohlcv(candles: List[List]) -> Optional[Dict[str, Any]]:
     }
 
 
-def _format_raw_candles_compact(candles: List[List], max_candles: int = 200) -> str:
-    """Return a compact JSON array of the last max_candles candles."""
-    truncated = candles[-max_candles:] if len(candles) > max_candles else candles
-    return json.dumps(truncated)
-
-
 def _format_trade_pattern_analysis(analysis: Optional[Dict[str, Any]]) -> str:
     """Format trade pattern analysis into a compact string for the LLM prompt."""
     if not analysis:
