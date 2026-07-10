@@ -332,7 +332,7 @@ def _validate_signal_impl(
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid trailing_stop_activation_pct")
         if "max_risk_per_trade_pct" in params:
             mrp = params["max_risk_per_trade_pct"]
-            if not isinstance(mrp, (int, float)) or not (0 < mrp <= 1.0):
+            if not isinstance(mrp, (int, float)) or not (0 <= mrp <= 1.0):
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_risk_per_trade_pct")
         if "min_profit_per_trade" in params:
             mpp = params["min_profit_per_trade"]
@@ -405,22 +405,22 @@ def _validate_signal_impl(
 
         if "max_unrealized_loss_pct" in params:
             mul = params["max_unrealized_loss_pct"]
-            if not isinstance(mul, (int, float)) or mul <= 0:
+            if not isinstance(mul, (int, float)) or mul < 0:
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_unrealized_loss_pct")
 
         if "max_portfolio_risk_pct" in params:
             mpr = params["max_portfolio_risk_pct"]
-            if not isinstance(mpr, (int, float)) or not (0 < mpr <= 1.0):
+            if not isinstance(mpr, (int, float)) or not (0 <= mpr <= 1.0):
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_risk_pct")
 
         if "max_portfolio_exposure_pct" in params:
             mpe = params["max_portfolio_exposure_pct"]
-            if not isinstance(mpe, (int, float)) or not (0 < mpe <= 1.0):
+            if not isinstance(mpe, (int, float)) or not (0 <= mpe <= 1.0):
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_exposure_pct")
 
         if "max_portfolio_stop_risk_pct" in params:
             mps = params["max_portfolio_stop_risk_pct"]
-            if not isinstance(mps, (int, float)) or not (0 < mps <= 1.0):
+            if not isinstance(mps, (int, float)) or not (0 <= mps <= 1.0):
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_stop_risk_pct")
 
         if "direction" in params:
