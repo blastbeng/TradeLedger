@@ -596,9 +596,11 @@ class RiskManager:
                         last_check_ts = pos.get("_last_trailing_check_ts", 0)
                         tf_secs = engine._timeframe_to_seconds(tf)
                         now_ts = time.time()
-                        # Skip OHLCV fetch for very long timeframes (>= 1 month).
-                        # OHLCV data is too sparse (2-10 candles) to provide meaningful
-                        # intra-check price spikes. The ticker price alone is sufficient.
+                        # For very long timeframes (>= 1 month), the assigned timeframe's
+                        # OHLCV is too sparse (2-10 candles).  Instead, fetch daily candles
+                        # which have enough data points to capture intra-check price spikes
+                        # that the ticker alone would miss (risk checks run every ~4h).
+                        ohlcv_tf = "1d" if tf_secs >= 2_592_000 else tf
                         if tf_secs >= 2_592_000:
                             if last_check_ts == 0:
                                 async with engine._positions_lock:
@@ -615,7 +617,7 @@ class RiskManager:
                                     pos["_last_trailing_check_ts"] = now_ts
                             elif (now_ts - last_check_ts) >= fetch_interval:
                                 since_ms = int(last_check_ts * 1000)
-                                db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, since_ms=since_ms, limit=200)
+                                db_candles = await asyncio.to_thread(get_ohlcv, symbol, ohlcv_tf, since_ms=since_ms, limit=200)
                                 if db_candles:
                                     candle_high = max(c["high"] for c in db_candles)
                                     candidate_prices.append(candle_high)

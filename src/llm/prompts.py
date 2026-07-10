@@ -355,23 +355,36 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"ATR across timeframes: {json.dumps(_round_floats(atr_multi_tf), separators=(',', ':'))}\n"
     # --- Transaction cost break-even calculation ---
     _is_btp = is_btp_isin(symbol)
-    # Use the full remaining balance (or total balance) for fee break-even calculation
-    # so the LLM understands it can use more than the per-symbol budget if needed.
-    trade_value = remaining_balance if remaining_balance is not None and remaining_balance > 0 else base_balance
+    # Use per_symbol_budget as the representative trade size — the LLM typically
+    # trades a fraction of the full balance, and fixed fees make small trades
+    # proportionally more expensive.
+    trade_value = per_symbol_budget if per_symbol_budget is not None and per_symbol_budget > 0 else (remaining_balance if remaining_balance is not None and remaining_balance > 0 else base_balance)
     if trade_value > 0:
         if _is_btp:
             if settings.BTP_IS_PRIMARY_ISSUANCE:
                 total_fees = 0.0
+                prompt += f"\n**Fees:** Primary issuance — zero fees.\n"
             else:
                 buy_fee = max(settings.BTP_MIN_FEE, trade_value * settings.BTP_FEE_PERC)
                 sell_fee = max(settings.BTP_MIN_FEE, trade_value * settings.BTP_FEE_PERC)
                 total_fees = buy_fee + sell_fee
+                break_even_pct = total_fees / trade_value
+                prompt += (
+                    f"\n**Fees:** FeePerc={settings.BTP_FEE_PERC*100:.2f}%,MinFee={settings.BTP_MIN_FEE:.2f}. "
+                    f"Round-trip@{trade_value:.0f}={total_fees:.2f} ({break_even_pct*100:.2f}%). "
+                    f"Smaller trades → higher % due to min fee. TP must be > {break_even_pct*100:.2f}%.\n"
+                )
         else:
             buy_fee = max(settings.STOCK_FEE_MIN, trade_value * settings.STOCK_FEE_PERC) + settings.STOCK_FEE_FIXED + (trade_value * settings.TOBIN_TAX_RATE)
             sell_fee = max(settings.STOCK_FEE_MIN, trade_value * settings.STOCK_FEE_PERC) + settings.STOCK_FEE_FIXED
             total_fees = buy_fee + sell_fee
-        break_even_pct = total_fees / trade_value
-        prompt += f"\n**Fees:** Round-trip={total_fees:.2f} ({break_even_pct*100:.2f}%). TP must be > {break_even_pct*100:.2f}%.\n"
+            break_even_pct = total_fees / trade_value
+            prompt += (
+                f"\n**Fees:** Perc={settings.STOCK_FEE_PERC*100:.2f}%,Min={settings.STOCK_FEE_MIN:.2f},"
+                f"Fixed={settings.STOCK_FEE_FIXED:.2f},Tobin={settings.TOBIN_TAX_RATE*100:.2f}%. "
+                f"Round-trip@{trade_value:.0f}={total_fees:.2f} ({break_even_pct*100:.2f}%). "
+                f"Smaller trades → higher % due to fixed+min fees. TP must be > {break_even_pct*100:.2f}%.\n"
+            )
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)
