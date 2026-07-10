@@ -58,9 +58,9 @@ Return JSON with required fields:
 - `action`: BUY, SELL, HOLD
 - `confidence`: 0.0-1.0
 - `reasoning`: Max 50 chars, abbreviations only (e.g., "RSI<30+MACD↑|1Y↑").
-- `strategy`: {"type": str, "parameters": obj} (must include all required trading params + `backtest_entry_config` for BUY).
-- `backtest_variants`: Array of param objects (min 1, rec 3-5).
-- `entry_condition`: Required for BUY.
+- `strategy`: {"type": str, "parameters": obj}. For BUY, must include all required trading params + `backtest_entry_config`. For HOLD, omit `parameters` or leave it empty to save tokens.
+- `backtest_variants`: Array of param objects (min 1, rec 3-5). Omit entirely for HOLD.
+- `entry_condition`: Required for BUY. Omit for HOLD/SELL.
 - `limit_price`, `time_in_force`: Optional.
 """
 
