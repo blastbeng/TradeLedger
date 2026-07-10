@@ -285,6 +285,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             bi_quote = get_borsa_italiana_quote(sym)
             if bi_quote and bi_quote.get("last") is not None:
                 result.setdefault(sym, {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}).update(bi_quote)
+                result[sym]["last_update"] = int(time.time() * 1000)
+                result[sym]["source"] = "borsa_italiana"
                 logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
 
     if not missing_symbols:
@@ -386,6 +388,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             av_quote = get_alphavantage_quote(sym)
             if av_quote:
                 result[sym].update(av_quote)
+                result[sym]["last_update"] = int(time.time() * 1000)
+                result[sym]["source"] = "alphavantage"
                 logger.debug(f"get_quotes: Alpha Vantage provided quote for {sym}")
 
     # --- Try IEX Cloud for stocks still missing valid prices ---
@@ -398,6 +402,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             iex_quote = get_iex_quote(sym)
             if iex_quote:
                 result[sym].update(iex_quote)
+                result[sym]["last_update"] = int(time.time() * 1000)
+                result[sym]["source"] = "iex"
                 logger.debug(f"get_quotes: IEX Cloud provided quote for {sym}")
 
     # --- Try Borsa Italiana for BTPs and any remaining symbols still missing valid prices ---
@@ -412,6 +418,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             bi_quote = get_borsa_italiana_quote(sym)
             if bi_quote:
                 result[sym].update(bi_quote)
+                result[sym]["last_update"] = int(time.time() * 1000)
+                result[sym]["source"] = "borsa_italiana"
                 logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
 
     # --- Final pass: compute change_24h and percentage from DB daily candles ---
