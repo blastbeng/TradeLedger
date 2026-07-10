@@ -379,7 +379,7 @@ class BuyExecutor:
 
         # Apply global risk multiplier to desired amount (scales all positions)
         global_mult = await engine._get_global_risk_multiplier()
-        if global_mult is not None and 0.0 <= global_mult <= 1.0:
+        if global_mult is not None and 0.0 < global_mult <= 1.0:
             desired_amount *= global_mult
 
         # Apply per-symbol position size multiplier to desired amount
