@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import re
+import math
 import time
 from typing import Optional, List, Dict
 from src.config.settings import settings
@@ -519,8 +520,12 @@ def _normalize_for_hash(obj, depth=0):
     if isinstance(obj, list):
         return [_normalize_for_hash(item, depth + 1) for item in obj]
     if isinstance(obj, float):
-        # Round to 2 decimal places to improve cache hit rate for trading data
-        return round(obj, 2)
+        if obj == 0:
+            return 0.0
+        # Percentage-based rounding: round to 3 significant figures
+        # to treat small absolute changes on high-priced assets as insignificant.
+        decimals = 2 - int(math.floor(math.log10(abs(obj))))
+        return round(obj, decimals)
     if obj is None:
         return "null"
     return obj
