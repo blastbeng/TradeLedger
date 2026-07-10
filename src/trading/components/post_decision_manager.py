@@ -160,46 +160,6 @@ class PostDecisionManager:
         if engine.notifier:
             emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⏸️"}.get(validated.action, "❓")
             paused_tag = " (PAUSED)" if data.trading_paused and validated.action == "BUY" else ""
-            # Build a short indicator summary
-            ind_parts = []
-            if data.rsi is not None:
-                ind_parts.append(f"RSI={data.rsi:.1f}")
-            if data.macd is not None and data.macd_signal is not None:
-                ind_parts.append(f"MACD={data.macd:.4f}/{data.macd_signal:.4f}")
-                if data.macd_hist is not None:
-                    ind_parts.append(f"Hist={data.macd_hist:.4f}")
-            if data.bb_upper is not None:
-                ind_parts.append(f"BB={data.bb_lower:.2f}/{data.bb_middle:.2f}/{data.bb_upper:.2f}")
-            if data.ema_9 is not None and data.ema_21 is not None:
-                ind_parts.append(f"EMA9/21={data.ema_9:.2f}/{data.ema_21:.2f}")
-            if data.stochastic_k is not None:
-                ind_parts.append(f"StochK={data.stochastic_k:.1f}")
-                if data.stochastic_d is not None:
-                    ind_parts.append(f"StochD={data.stochastic_d:.1f}")
-            if data.adx is not None:
-                ind_parts.append(f"ADX={data.adx:.1f}")
-                if data.plus_di is not None and data.minus_di is not None:
-                    ind_parts.append(f"+DI={data.plus_di:.1f}/-DI={data.minus_di:.1f}")
-            if data.atr is not None:
-                ind_parts.append(f"ATR={data.atr:.4f}")
-            if data.obv is not None:
-                ind_parts.append(f"OBV={data.obv:.2f}")
-            if data.mfi is not None:
-                ind_parts.append(f"MFI={data.mfi:.2f}")
-            if data.cci is not None:
-                ind_parts.append(f"CCI={data.cci:.2f}")
-            if data.williams_r is not None:
-                ind_parts.append(f"WR={data.williams_r:.2f}")
-            if data.ichimoku is not None:
-                ind_parts.append(f"Ichi T={data.ichimoku['tenkan_sen']:.2f}/K={data.ichimoku['kijun_sen']:.2f}")
-                ind_parts.append(f"Cloud={data.ichimoku['cloud_bottom']:.2f}-{data.ichimoku['cloud_top']:.2f}")
-            if data.donchian_channels is not None:
-                ind_parts.append(f"Donch={data.donchian_channels['lower']:.2f}/{data.donchian_channels['middle']:.2f}/{data.donchian_channels['upper']:.2f}")
-            if data.parabolic_sar is not None:
-                ind_parts.append(f"SAR={data.parabolic_sar:.4f}")
-            if data.keltner_channels is not None:
-                ind_parts.append(f"Kelt={data.keltner_channels['lower']:.4f}/{data.keltner_channels['middle']:.4f}/{data.keltner_channels['upper']:.4f}")
-            indicator_str = " | ".join(ind_parts) if ind_parts else "No indicators (insufficient OHLCV data)"
             sentiment_str = await self._get_sentiment_str(data.symbol)
             reasoning_str = f" – {validated.reasoning}" if validated.reasoning else ""
             msg = f"{emoji} {data.display_symbol}: {validated.action} (confidence: {validated.confidence:.2f}){reasoning_str}{paused_tag}"
@@ -207,7 +167,6 @@ class PostDecisionManager:
                 msg += f"\n{sentiment_str}"
             if getattr(validated, 'backtest_summary', None):
                 msg += f"\n📈 Backtest: {validated.backtest_summary}"
-            msg += f"\n📊 {indicator_str}"
             # Build summary dict for logging
             decision_summary = {
                 "symbol": data.symbol,
