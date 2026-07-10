@@ -935,9 +935,6 @@ class BuyExecutor:
                 "confidence": signal.confidence,
                 "reason": signal.reasoning[:200],
                 "strategy_type": signal.strategy_type,
-                "indicators": {
-                    "atr": atr,
-                },
             }
             if signal.model_type:
                 buy_summary["model_type"] = signal.model_type

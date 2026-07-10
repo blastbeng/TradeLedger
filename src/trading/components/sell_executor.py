@@ -453,9 +453,6 @@ class SellExecutor:
                     "exit_reason": exit_reason,
                     "realized_pnl": realized_pnl,
                     "strategy_type": signal.strategy_type,
-                    "indicators": {
-                        "atr": atr,
-                    },
                 }
                 if signal.model_type:
                     sell_summary["model_type"] = signal.model_type
@@ -636,7 +633,6 @@ class SellExecutor:
                 "exit_reason": exit_reason,
                 "realized_pnl": realized_pnl,
                 "strategy_type": signal_dict.get('strategy_type'),
-                "indicators": {"atr": queued.get('atr')},
             }
             if signal_dict.get('model_type'):
                 sell_summary["model_type"] = signal_dict.get('model_type')
