@@ -34,8 +34,11 @@ if _backend == "postgresql":
             "user": settings.DB_USER,
             "password": settings.DB_PASSWORD,
         },
-        min_size=2,
+        min_size=5,
         max_size=20,
+        timeout=30.0,
+        max_idle=60.0,
+        reconnect_timeout=300.0,
         open=True,
     )
     _placeholder = "%s"
@@ -64,8 +67,13 @@ class _PgConnectionWrapper:
     def close(self):
         try:
             self._pool.putconn(self._conn)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to return connection to pool: {e}")
+            # Try to close the connection directly as fallback
+            try:
+                self._conn.close()
+            except Exception:
+                pass
 
     def commit(self):
         self._conn.commit()
@@ -2371,6 +2379,24 @@ def close_pool():
     """Close the PostgreSQL connection pool if it exists."""
     global _pg_pool
     if _pg_pool is not None:
-        _pg_pool.close()
+        try:
+            _pg_pool.close()
+        except Exception as e:
+            logger.warning(f"Error closing connection pool: {e}")
         _pg_pool = None
         logger.info("PostgreSQL connection pool closed.")
+
+
+def get_pool_stats() -> dict:
+    """Return current connection pool statistics for monitoring."""
+    if _pg_pool is None:
+        return {"status": "not_initialized"}
+    try:
+        return {
+            "status": "active",
+            "min_size": _pg_pool._min_size,
+            "max_size": _pg_pool._max_size,
+            "available": _pg_pool._nconns,
+        }
+    except Exception:
+        return {"status": "unknown"}
