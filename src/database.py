@@ -8,6 +8,7 @@ from datetime import datetime
 import hashlib
 import threading
 from typing import Dict, List, Any, Optional
+from contextlib import contextmanager
 
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
@@ -140,6 +141,26 @@ def get_connection():
             conn.execute("PRAGMA journal_mode=WAL")
             _sqlite_local.connection = _SqliteConnectionWrapper(conn)
         return _sqlite_local.connection
+
+
+@contextmanager
+def get_connection_ctx():
+    """Context manager for database connections.
+    
+    For PostgreSQL: gets a connection from the pool and returns it on exit.
+    For SQLite: returns the thread-local connection (no-op on exit).
+    
+    Usage:
+        with get_connection_ctx() as conn:
+            conn.execute(...)
+            conn.commit()
+    """
+    conn = get_connection()
+    try:
+        yield conn
+    finally:
+        if _backend == "postgresql":
+            conn.close()
 
 
 def _normalize_symbol(symbol: str) -> str:
