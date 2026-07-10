@@ -50,10 +50,12 @@ def get_cached_llm_response(
     ttl: time-to-live in seconds (default 30 minutes).
     model_type: "mind" for complex reasoning, "actuator" for fast time‑critical decisions.
 
-    When the primary provider is "ollama" and the call fails, automatically
-    falls back to the OpenAI-compatible endpoint (which can be OpenRouter)
-    using the per-role settings, but only if the OpenAI API key or base URL
-    for that role is configured.
+    When the primary provider call fails, automatically falls back to the
+    configured fallback provider (if any) using the per-role fallback settings
+    (e.g., LLM_MIND_FALLBACK_PROVIDER, OPENAI_MIND_FALLBACK_MODEL, etc.).
+    If no fallback provider is configured for the role, the global
+    LLM_FALLBACK_PROVIDER is used. If no fallback is configured at all,
+    the original error is re-raised.
     """
     redis_client = get_redis_client()
 
