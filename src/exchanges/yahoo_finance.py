@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yfinance as yf
 
@@ -131,3 +131,40 @@ def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"Yahoo Finance fundamentals failed for {base}: {e}")
         return None
+
+
+def get_yahoo_dividends(symbol: str) -> List[Dict[str, Any]]:
+    """Fetch dividend history from Yahoo Finance for a US stock/ETF.
+    Returns a list of dicts with keys 'date' (ISO string) and 'amount' (float).
+    """
+    if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
+        return []
+
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+    base = base.lstrip('$')
+
+    redis_client = get_redis_client()
+    cache_key = f"yahoo_dividends:{base}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    try:
+        ticker = yf.Ticker(base, session=_get_yf_session())
+        divs = ticker.dividends
+        if divs is None or divs.empty:
+            return []
+        result = []
+        for date, amount in divs.items():
+            result.append({"date": date.strftime("%Y-%m-%d"), "amount": float(amount)})
+        try:
+            redis_client.set(cache_key, json.dumps(result), ex=86400)
+        except Exception:
+            pass
+        return result
+    except Exception as e:
+        logger.warning(f"Yahoo Finance dividends failed for {base}: {e}")
+        return []
