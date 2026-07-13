@@ -963,10 +963,10 @@ class RiskManager:
                     await self.event_bus.publish("sweep_dust", symbol)
                     return True
                 else:
-                    async with engine._positions_lock:
+                    async with self.shared_state._positions_lock:
                         pos["_dust_sweep_triggered"] = True
                         pos["_dust_sweep_review_count"] = review_count
-                    engine._last_strategy_eval.pop(symbol, None)
+                    self.shared_state._last_strategy_eval.pop(symbol, None)
                     logger.info(f"Dust condition triggered for {symbol} – asking LLM (review {review_count})")
                     if engine.notifier:
                         await engine.notifier.send_notification(
@@ -977,7 +977,7 @@ class RiskManager:
         else:
             # If dust was previously triggered but condition no longer holds, clear it
             if not is_dust:
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     pos.pop("_dust_sweep_triggered", None)
                     pos.pop("_dust_sweep_review_count", None)
                     pos.pop("_dust_keep_since", None)
