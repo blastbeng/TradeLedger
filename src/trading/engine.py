@@ -166,7 +166,10 @@ class TradingEngine:
         self._rebalance_reeval: bool = False
         self._running = True
         self._settings_reload_event = asyncio.Event()
-        settings.register_reload_callback(self._settings_reload_event.set)
+        def _reload_callback():
+            self._settings_reload_event.set()
+            self._on_settings_reload()
+        settings.register_reload_callback(_reload_callback)
         self._last_state_save = 0
         self._last_eval_snapshot = self.shared_state._last_eval_snapshot
         self._last_decisions = self.shared_state._last_decisions
@@ -607,6 +610,12 @@ class TradingEngine:
         for task in (sleep_task, reload_task):
             if not task.done():
                 task.cancel()
+
+    def _on_settings_reload(self):
+        """Update cached settings values when settings are reloaded."""
+        self.base_currency = settings.BASE_CURRENCY
+        self.max_symbols = settings.MAX_SYMBOLS
+        self.effective_max_symbols = self.max_symbols
 
     async def _periodic_reconcile(self):
         """Run position reconciliation every 5 minutes (medium/long-term)."""
