@@ -24,6 +24,7 @@ class SellExecutor:
         self.engine = engine
         self.event_bus = event_bus
         self._order_executor = order_executor
+        self.event_bus.subscribe("handle_queued_sell_fill", self.handle_queued_sell_fill)
 
     async def execute_sell(
         self,

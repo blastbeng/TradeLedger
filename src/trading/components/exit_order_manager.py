@@ -26,6 +26,7 @@ class ExitOrderManager:
         self.event_bus.subscribe("place_exit_orders", self.place_exit_orders)
         self.event_bus.subscribe("replace_native_stop_order", self.replace_native_stop_order)
         self.event_bus.subscribe("process_native_exit_fill", self.process_native_exit_fill)
+        self.event_bus.subscribe("check_and_cancel_oco_on_stop_trigger", self.check_and_cancel_oco_on_stop_trigger)
 
     def compute_exit_order_prices(
         self,
@@ -585,7 +586,7 @@ class ExitOrderManager:
                     'status': 'closed',
                     'timestamp': int(time.time() * 1000),
                 }
-                await self.engine._order_executor._sell_executor.handle_queued_sell_fill(trade_dict, queued, partial=False)
+                await self.event_bus.request("handle_queued_sell_fill", trade_dict, queued, partial=False)
 
         # Cancel the OCO pair if it still exists
         oco_pair_id = queued.get("oco_pair") if queued else None
