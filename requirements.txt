@@ -12,6 +12,7 @@ pydantic-settings>=2.0.0
 tweepy>=4.14.0
 praw>=7.7.1
 feedparser>=6.0.0
+langdetect>=1.0.9
 git+https://github.com/cjhutto/vaderSentiment.git
 git+https://github.com/ranaroussi/yfinance.git
 pandas>=2.0.0
