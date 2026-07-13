@@ -902,7 +902,7 @@ class TradingEngine:
         if not settings.PORTFOLIO_REBALANCE_ENABLED:
             logger.info("Portfolio rebalance is disabled (PORTFOLIO_REBALANCE_ENABLED=False). Task sleeping.")
             while self._running:
-                await asyncio.sleep(3600)
+                await self._interruptible_sleep(3600)
             return
         await asyncio.sleep(3600)  # initial delay
         while self._running:
@@ -1220,7 +1220,7 @@ class TradingEngine:
         if not settings.NEWS_ENABLED:
             logger.info("News is disabled (NEWS_ENABLED=False). Fast news refresh task sleeping.")
             while self._running:
-                await asyncio.sleep(3600)
+                await self._interruptible_sleep(3600)
             return
         # Fetch immediately on startup, then periodically
         while self._running:
@@ -1250,7 +1250,7 @@ class TradingEngine:
         if not settings.NEWS_ENABLED:
             logger.info("News is disabled (NEWS_ENABLED=False). News cache refresh task sleeping.")
             while self._running:
-                await asyncio.sleep(3600)
+                await self._interruptible_sleep(3600)
             return
         try:
             from src.news.fetcher import fetch_news_for_symbol
@@ -1524,7 +1524,7 @@ class TradingEngine:
         if not settings.NEWS_ENABLED:
             logger.info("News is disabled (NEWS_ENABLED=False). Full news download task sleeping.")
             while self._running:
-                await asyncio.sleep(3600)
+                await self._interruptible_sleep(3600)
             return
         await asyncio.sleep(180)  # initial delay to let the engine settle
         while self._running:
