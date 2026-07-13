@@ -43,6 +43,7 @@ class MarketDataManager:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self.event_bus.subscribe("get_stock_name", self.get_stock_name)
         self.event_bus.subscribe("get_tradable_assets", self.get_tradable_assets)
@@ -512,15 +513,15 @@ class MarketDataManager:
     async def _get_all_position_tickers(self) -> Dict[str, Dict[str, Any]]:
         """Fetch tickers for all open positions, batching missing ones into a single API call."""
         engine = self.engine
-        engine._portfolio_exposure_cache = None
+        self.shared_state._portfolio_exposure_cache = None
         tickers: Dict[str, Dict[str, Any]] = {}
         missing: List[str] = []
-        for sym in engine.positions:
+        for sym in self.shared_state.positions:
             missing.append(sym.split("/")[0])
         if missing:
             try:
                 raw = await self._get_quotes_batched(missing, timeout_per_chunk=45.0)
-                for sym in engine.positions:
+                for sym in self.shared_state.positions:
                     base = sym.split("/")[0]
                     if base in raw:
                         tickers[sym] = raw[base]
@@ -535,15 +536,15 @@ class MarketDataManager:
         blocking the default asyncio thread pool with slow yfinance requests.
         """
         engine = self.engine
-        engine._portfolio_exposure_cache = None
+        self.shared_state._portfolio_exposure_cache = None
         tickers: Dict[str, Dict[str, Any]] = {}
         missing: List[str] = []
-        for sym in engine.positions:
+        for sym in self.shared_state.positions:
             missing.append(sym.split("/")[0])
         if missing:
             try:
                 raw = get_quotes_cached(missing)
-                for sym in engine.positions:
+                for sym in self.shared_state.positions:
                     base = sym.split("/")[0]
                     if base in raw:
                         tickers[sym] = raw[base]
