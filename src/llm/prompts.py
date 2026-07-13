@@ -109,6 +109,7 @@ class StrategyPromptData:
     max_portfolio_stop_risk_pct: Optional[float] = None
     trade_pattern_analysis: Optional[Dict[str, Any]] = None
     symbol_event: Optional[Dict[str, Any]] = None
+    upcoming_earnings: Optional[str] = None
     queued_orders: Optional[List[Dict[str, Any]]] = None
     fundamentals: Optional[Dict[str, Any]] = None
     aggregate_sentiment: Optional[Dict[str, Any]] = None
@@ -212,6 +213,7 @@ def build_strategy_prompt(
     max_portfolio_stop_risk_pct = data.max_portfolio_stop_risk_pct
     trade_pattern_analysis = data.trade_pattern_analysis
     symbol_event = data.symbol_event
+    upcoming_earnings = data.upcoming_earnings
     queued_orders = data.queued_orders
     fundamentals = data.fundamentals
     vwap = data.vwap
@@ -717,6 +719,9 @@ Maximum symbols to trade: {max_symbols}
         )
     if symbol_event and symbol_event.get("has_event"):
         prompt += f"\n**⚠️ Event({symbol}):** {', '.join(symbol_event.get('event_types', []))} [{', '.join(symbol_event.get('keywords', [])[:5])}]\n"
+    if upcoming_earnings:
+        prompt += f"\n**📅 Upcoming Earnings:** {upcoming_earnings}\n"
+        prompt += "Warning: Earnings can cause significant price gaps. Consider reducing position size or tightening stop loss.\n"
     return prompt
 
 

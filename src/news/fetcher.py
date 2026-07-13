@@ -535,6 +535,28 @@ def detect_upcoming_events(symbol: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def get_upcoming_earnings(symbol: str) -> Optional[str]:
+    """Fetch the next earnings date for a symbol using yfinance."""
+    from src.exchanges.yf_session import _get_yf_session, _check_yf_circuit
+    if not _check_yf_circuit():
+        return None
+    try:
+        import yfinance as yf
+        base = symbol.split('/')[0]
+        ticker = yf.Ticker(base, session=_get_yf_session())
+        cal = ticker.calendar
+        if cal and 'Earnings Date' in cal:
+            earnings_date = cal['Earnings Date']
+            if isinstance(earnings_date, list):
+                if not earnings_date:
+                    return None
+                earnings_date = earnings_date[0]
+            return earnings_date.strftime('%Y-%m-%d')
+    except Exception:
+        pass
+    return None
+
+
 def _source_fingerprint() -> str:
     """Create a short fingerprint of the current source configuration for cache key."""
     raw = f"{_get_enabled_sources()}:{settings.NEWS_MAX_ARTICLES_PER_SYMBOL}"

@@ -1504,14 +1504,11 @@ class SignalProcessor:
         # Always call if enough time has passed (3× the effective interval)
         # For medium/long-term, be more patient before forcing an evaluation
         effective_interval = timeframe_seconds * settings.STRATEGY_INTERVAL_MULTIPLIER
-        # Cap the safety net at the configured max skip interval so the bot
-        # never skips LLM evaluations indefinitely, even for very long
-        # timeframes (e.g., 1Y where 3× the interval would be ~3 years).
         # Cap the safety net at a value proportional to the timeframe,
         # but never less than the configured MAX_SKIP_INTERVAL_SECONDS.
         # This prevents excessively frequent forced evaluations for long
         # timeframes (e.g., 1Y candles should not be forced every 7 days).
-        max_skip = settings.MAX_SKIP_INTERVAL_SECONDS
+        max_skip = max(settings.MAX_SKIP_INTERVAL_SECONDS, effective_interval)
         if now - last_time > min(3 * effective_interval, max_skip):
             return False
 
