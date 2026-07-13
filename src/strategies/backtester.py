@@ -24,7 +24,7 @@ def _compute_intesa_fees(trade_value: float, side: str, is_btp: bool = False) ->
         return commission  # no fixed fee, no Tobin tax
     commission = max(settings.STOCK_FEE_MIN, trade_value * settings.STOCK_FEE_PERC)
     fixed_fee = settings.STOCK_FEE_FIXED
-    tobin_tax = trade_value * settings.TOBIN_TAX_RATE if side == "buy" else 0.0
+    tobin_tax = trade_value * settings.TOBIN_TAX_RATE if side.upper() == "BUY" else 0.0
     return commission + fixed_fee + tobin_tax
 
 
