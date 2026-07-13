@@ -1457,8 +1457,8 @@ class SignalProcessor:
         """Return True if it's safe to skip the LLM call and just HOLD."""
         engine = self.engine
         # If a force evaluation was requested (entry signal detected), never skip
-        async with engine._eval_state_lock:
-            force_eval = engine._force_eval.get(symbol, False)
+        async with self.shared_state._eval_state_lock:
+            force_eval = self.shared_state._force_eval.get(symbol, False)
         if force_eval:
             return False
         # Never skip critical situations (max hold, stop-loss, take-profit triggered)
@@ -1470,7 +1470,7 @@ class SignalProcessor:
         # back to a fixed percentage threshold so the skip logic still works
         # and we don't waste LLM calls every cycle.
 
-        snapshot = engine._last_eval_snapshot.get(symbol)
+        snapshot = self.shared_state._last_eval_snapshot.get(symbol)
         if snapshot is None:
             # First evaluation – must call
             return False
