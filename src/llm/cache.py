@@ -4,6 +4,7 @@ import logging
 import re
 import math
 import time
+from datetime import datetime, timezone
 from typing import Optional, List, Dict
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
@@ -133,6 +134,16 @@ def get_cached_llm_response(
         and provider in settings.LLM_PROMPT_CACHING_CONTROL_PROVIDERS
         and messages is not None
     )
+
+    # When market is closed (not in pre-market), use fallback models only to save tokens
+    if not _should_use_primary_model():
+        fb_provider, fb_model, fb_base_url, fb_api_key = _get_fallback_provider_config(model_type)
+        if fb_provider and fb_model:
+            logger.info("Market is closed - using fallback model only (provider=%s, model=%s, model_type=%s)", fb_provider, fb_model, model_type)
+            provider = fb_provider
+            model = fb_model
+            base_url = fb_base_url
+            api_key = fb_api_key
 
     # Build cache key
     if messages is not None:
@@ -544,3 +555,76 @@ def compute_market_hash(data: dict) -> str:
     safe_data = _stringify_keys(normalized)
     serialized = json.dumps(safe_data, sort_keys=True, default=str)
     return hashlib.sha256(serialized.encode()).hexdigest()
+
+
+def _should_use_primary_model() -> bool:
+    """Check if primary models should be used based on market status.
+
+    Returns True if market is open or in pre-market session (within 60 mins of open).
+    Returns False if market is closed (use fallback models only to save tokens).
+    Defaults to True if market status cannot be determined.
+    """
+    try:
+        redis_client = get_redis_client()
+        market_closed = redis_client.get("trading:market_closed")
+        if not market_closed:
+            return True  # Market is open
+
+        # Market is closed - check if we're in pre-market (within 60 mins of open)
+        next_open_raw = redis_client.get("trading:market_next_open")
+        if next_open_raw:
+            next_open_str = next_open_raw.decode() if isinstance(next_open_raw, bytes) else next_open_raw
+            next_open_dt = datetime.fromisoformat(next_open_str)
+            now = datetime.now(timezone.utc)
+            time_to_open = (next_open_dt - now).total_seconds()
+            if 0 < time_to_open <= 3600:  # within 60 minutes of open
+                return True  # pre-market - use primary models
+
+        return False  # market closed - use fallback only
+    except Exception:
+        return True  # Default to primary if we can't determine market status
+
+
+def _get_fallback_provider_config(model_type: str):
+    """Return (provider, model, base_url, api_key) for the fallback configuration.
+
+    Returns (None, None, None, None) if no fallback is configured.
+    """
+    if model_type == "mind":
+        fallback_provider = settings.LLM_MIND_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+    elif model_type == "weak":
+        fallback_provider = settings.LLM_WEAK_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+    else:
+        fallback_provider = settings.LLM_ACTUATOR_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+
+    if not fallback_provider:
+        return (None, None, None, None)
+
+    if fallback_provider == "openai":
+        if model_type == "mind":
+            fb_model = settings.OPENAI_MIND_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fb_base_url = settings.OPENAI_MIND_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
+            fb_api_key = settings.OPENAI_MIND_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
+        elif model_type == "weak":
+            fb_model = settings.OPENAI_WEAK_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fb_base_url = settings.OPENAI_WEAK_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
+            fb_api_key = settings.OPENAI_WEAK_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
+        else:
+            fb_model = settings.OPENAI_ACTUATOR_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fb_base_url = settings.OPENAI_ACTUATOR_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
+            fb_api_key = settings.OPENAI_ACTUATOR_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
+    else:  # ollama
+        if model_type == "mind":
+            fb_model = settings.OLLAMA_MIND_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fb_base_url = settings.OLLAMA_MIND_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
+            fb_api_key = settings.OLLAMA_MIND_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
+        elif model_type == "weak":
+            fb_model = settings.OLLAMA_WEAK_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fb_base_url = settings.OLLAMA_WEAK_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
+            fb_api_key = settings.OLLAMA_WEAK_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
+        else:
+            fb_model = settings.OLLAMA_ACTUATOR_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fb_base_url = settings.OLLAMA_ACTUATOR_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
+            fb_api_key = settings.OLLAMA_ACTUATOR_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
+
+    return (fallback_provider, fb_model, fb_base_url, fb_api_key)
