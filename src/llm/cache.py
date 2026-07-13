@@ -4,6 +4,7 @@ import logging
 import re
 import math
 import time
+import concurrent.futures
 from datetime import datetime, timezone
 from typing import Optional, List, Dict
 from src.config.settings import settings
@@ -92,8 +93,8 @@ def _split_and_merge_prompt(
     weak_provider, weak_model, weak_base_url, weak_api_key = _get_weak_model_config()
     weak_max_tokens = _get_max_input_tokens(weak_provider, "weak", False)
 
-    # The chunk limit must fit within the weak model's context window
-    chunk_limit = int(weak_max_tokens * 0.7)
+    # The chunk limit must fit within the weak model's context window, leaving room for instructions
+    chunk_limit = int(weak_max_tokens * 0.6)
 
     def _split_text(text: str, limit: int) -> List[str]:
         """Recursively split text by paragraphs, lines, and words to fit within limit."""
@@ -142,8 +143,7 @@ def _split_and_merge_prompt(
     paragraphs = prompt.split('\n\n')
     chunks = _aggregate_chunks(paragraphs, chunk_limit)
 
-    summaries = []
-    for i, chunk in enumerate(chunks):
+    def _summarize_chunk(i: int, chunk: str) -> str:
         logger.info("Summarizing chunk %d/%d using weak model...", i + 1, len(chunks))
         summary_prompt = (
             f"You are processing part {i+1} of {len(chunks)} of a large market analysis prompt. "
@@ -153,9 +153,9 @@ def _split_and_merge_prompt(
         )
         
         try:
-            # Use a fixed low temperature and default timeout for summarization
+            # Use a fixed low temperature and capped timeout for summarization
             summary_temperature = 0.1
-            summary_timeout = settings.LLM_TIMEOUT
+            summary_timeout = min(settings.LLM_TIMEOUT, 60.0)
             
             # Call the LLM to summarize the chunk
             if weak_provider == "openai":
@@ -186,11 +186,29 @@ def _split_and_merge_prompt(
                     add_cache_control=False,
                     thinking_enabled=False,
                 )
-            summaries.append(result["content"])
+            return result["content"]
         except Exception as e:
             logger.error("Failed to summarize chunk %d: %s. Truncating instead.", i + 1, e)
             # If summarization fails, truncate the chunk to fit the original model's limit
-            summaries.append(chunk[:max_input_tokens * 4])
+            return chunk[:max_input_tokens * 4]
+
+    # Summarize chunks in parallel using a thread pool
+    summaries = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(chunks))) as executor:
+        future_to_chunk = {
+            executor.submit(_summarize_chunk, i, chunk): i
+            for i, chunk in enumerate(chunks)
+        }
+        # Collect results in order
+        results = [None] * len(chunks)
+        for future in concurrent.futures.as_completed(future_to_chunk):
+            idx = future_to_chunk[future]
+            try:
+                results[idx] = future.result()
+            except Exception as e:
+                logger.error("Chunk %d summarization failed unexpectedly: %s", idx, e)
+                results[idx] = chunks[idx][:max_input_tokens * 4]
+        summaries = [r for r in results if r is not None]
     
     # Combine summaries into a new prompt
     merged_prompt = (
