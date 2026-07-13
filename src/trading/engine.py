@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from src.config.settings import settings
 from src.exchanges.market_data import get_tradable_assets, get_quotes, get_quotes_cached, get_multi_timeframe_bars, get_bars_range, discover_btp_bonds, discover_italian_ucits_etfs, _get_yf_session, _check_yf_circuit
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals, get_yahoo_dividends
+from src.exchanges.yf_session import _invalidate_yf_session
 from src.trading.paper_trader import PaperTrader
 from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import (
@@ -616,6 +617,9 @@ class TradingEngine:
         self.base_currency = settings.BASE_CURRENCY
         self.max_symbols = settings.MAX_SYMBOLS
         self.effective_max_symbols = self.max_symbols
+        self._symbol_reevaluation_interval = settings.SYMBOL_REEVALUATION_INTERVAL
+        # Invalidate yfinance session so it's recreated with new proxy settings
+        _invalidate_yf_session()
 
     async def _periodic_reconcile(self):
         """Run position reconciliation every 5 minutes (medium/long-term)."""
@@ -1645,12 +1649,12 @@ class TradingEngine:
 
     async def _fetch_dividends_loop(self):
         """Periodically fetch and store dividends for tracked symbols."""
-        await asyncio.sleep(300)  # initial delay 5 minutes
+        await self._interruptible_sleep(300)  # initial delay 5 minutes
         while self._running:
             try:
                 symbols = [entry["symbol"] for entry in self.current_symbols]
                 if not symbols:
-                    await asyncio.sleep(3600)
+                    await self._interruptible_sleep(3600)
                     continue
                 # Only fetch for non-BTP symbols (BTPs use coupons, not dividends)
                 stock_symbols = [s for s in symbols if not is_btp_isin(s.split("/")[0])]
@@ -1668,7 +1672,7 @@ class TradingEngine:
                 await loop.run_in_executor(self._db_executor, cleanup_old_dividends, 365)
             except Exception as e:
                 logger.error(f"Dividend fetch loop error: {type(e).__name__}: {e}", exc_info=True)
-            await asyncio.sleep(86400)  # daily
+            await self._interruptible_sleep(86400)  # daily
 
     def _daily_realized_pnl(self) -> float:
         """Return the sum of realized P&L for trades closed today (UTC)."""
