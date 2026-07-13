@@ -617,7 +617,9 @@ class RiskManager:
         news_threshold = pos.get("news_sentiment_exit_threshold")
         if news_threshold is not None and settings.NEWS_ENABLED:
             pos_tf = pos.get("timeframe")
-            if pos_tf and engine._timeframe_to_seconds(pos_tf) >= settings.NEWS_SENTIMENT_EXIT_TF_SECONDS:
+            tf_seconds = engine._timeframe_to_seconds(pos_tf) if pos_tf else 0
+            
+            if tf_seconds >= settings.NEWS_SENTIMENT_EXIT_TF_SECONDS_MEDIUM:
                 logger.debug(
                     f"Skipping news sentiment exit for {symbol}: "
                     f"long-term timeframe ({pos_tf}) ignores short-term sentiment."
@@ -628,6 +630,18 @@ class RiskManager:
                 # almost certainly not the LLM's intent.  Only negative
                 # compound scores should trigger a sentiment-based exit.
                 effective_threshold = min(float(news_threshold), 0.0)
+                
+                # For medium-term timeframes (1 week to 30 days), apply a stricter
+                # (more negative) threshold to avoid exiting on mild sentiment shifts.
+                if tf_seconds >= settings.NEWS_SENTIMENT_EXIT_TF_SECONDS:
+                    effective_threshold = min(
+                        float(news_threshold) * settings.NEWS_SENTIMENT_EXIT_MEDIUM_THRESHOLD_MULTIPLIER,
+                        0.0
+                    )
+                    logger.debug(
+                        f"Applying stricter sentiment exit threshold for {symbol} "
+                        f"(medium-term timeframe {pos_tf}): {effective_threshold:.2f}"
+                    )
                 try:
                     agg = await engine._get_cached_sentiment(symbol)
                     if agg and agg["avg_compound"] < effective_threshold:
