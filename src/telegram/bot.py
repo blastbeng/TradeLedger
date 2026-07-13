@@ -118,6 +118,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("sell", self.cmd_sell))
         self.app.add_handler(CommandHandler("backfill", self.cmd_backfill))
         self.app.add_handler(CommandHandler("signals", self.cmd_signals))
+        self.app.add_handler(CommandHandler("reset", self.cmd_reset))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_button))
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -214,6 +215,13 @@ class TelegramBot:
             summary={"action": "RESUME", "reason": "Manual resume"}
         )
         await update.message.reply_text("Trading resumed.", reply_markup=self.keyboard)
+
+    async def cmd_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._is_authorized(update):
+            return
+        await update.message.reply_text("♻️ Resetting trading state...", reply_markup=self.keyboard)
+        await self.engine.reset_paper_trading_state()
+        await update.message.reply_text("✅ Trading state has been reset.", reply_markup=self.keyboard)
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
