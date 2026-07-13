@@ -447,10 +447,14 @@ Maximum symbols to trade: {max_symbols}
             prompt += f"Max hold: {max_hold:.0f}s total, {int(remaining // 60)}m remaining\n"
 
     # --- Multi-timeframe OHLCV summary and indicators ---
+    long_term_timeframes = {"1w", "1M", "3M", "6M", "1Y", "3Y", "5Y"}
+    is_long_term = assigned_timeframe in long_term_timeframes
     if multi_tf_raw_candles:
         tf_summaries = []
         for tf in settings.OHLCV_TIMEFRAMES:
             if tf in multi_tf_raw_candles:
+                if is_long_term and tf in ("1h", "1d"):
+                    continue
                 summary = _summarize_ohlcv(multi_tf_raw_candles[tf])
                 if summary:
                     tf_summaries.append(
@@ -463,6 +467,8 @@ Maximum symbols to trade: {max_symbols}
         ind_lines = []
         for tf in settings.OHLCV_TIMEFRAMES:
             if tf in multi_tf_indicators:
+                if is_long_term and tf in ("1h", "1d"):
+                    continue
                 ind = multi_tf_indicators[tf]
                 ind_compact = {}
                 if ind.get('rsi') is not None: ind_compact['rsi'] = round(ind['rsi'], 2)
