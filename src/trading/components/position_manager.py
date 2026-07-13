@@ -292,7 +292,7 @@ class PositionManager:
             'initial_balance': engine.initial_balance,
             'total_pnl': pnl,
             'total_pnl_pct': pnl_pct,
-            'open_positions_count': len(engine.positions),
+            'open_positions_count': len(self.shared_state.positions),
             'total_exposure': exposure,
             'base_currency': engine.base_currency,
             'max_drawdown_pct': max_drawdown_pct,
