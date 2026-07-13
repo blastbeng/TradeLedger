@@ -1089,6 +1089,14 @@ class Settings(BaseSettings):
     # News sentiment exit timeframe threshold (seconds) - long-term timeframes ignore short-term sentiment
     NEWS_SENTIMENT_EXIT_TF_SECONDS: int = 604_800  # 1 week
 
+    # Medium-term threshold (seconds) - timeframes >= this value ignore sentiment entirely.
+    # Timeframes between NEWS_SENTIMENT_EXIT_TF_SECONDS and this value use a stricter threshold.
+    NEWS_SENTIMENT_EXIT_TF_SECONDS_MEDIUM: int = 2_592_000  # 30 days
+
+    # Multiplier applied to the sentiment exit threshold for medium-term timeframes.
+    # Makes the threshold more negative to require stronger negative sentiment for an exit.
+    NEWS_SENTIMENT_EXIT_MEDIUM_THRESHOLD_MULTIPLIER: float = 1.5
+
     # Walk-forward backtest candle threshold
     WALK_FORWARD_CANDLE_THRESHOLD: int = 100
 
