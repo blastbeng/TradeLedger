@@ -13,11 +13,13 @@ class TaskSupervisor:
         name: str,
         max_restarts: int = 5,
         restart_delay: float = 5.0,
+        cooling_off_period: float = 300.0,
     ):
         self.coro_factory = coro_factory
         self.name = name
         self.max_restarts = max_restarts
         self.restart_delay = restart_delay
+        self.cooling_off_period = cooling_off_period
         self._task: Optional[asyncio.Task] = None
         self._restart_count = 0
         self._running = True
@@ -53,19 +55,24 @@ class TaskSupervisor:
                 self.last_failure_time = time.time()
                 self.last_exception = str(e)
                 if self._restart_count > self.max_restarts:
-                    logger.critical(f"Task {self.name} exceeded max_restarts ({self.max_restarts}). Aborting supervisor.")
-                    self.is_healthy = False
-                    self._running = False
+                    logger.critical(
+                        f"Task {self.name} exceeded max_restarts ({self.max_restarts}). "
+                        f"Entering cooling off period for {self.cooling_off_period}s before retrying."
+                    )
                     if self._notifier:
                         try:
                             asyncio.create_task(self._notifier.send_notification(
-                                f"🚨 Background task '{self.name}' has exceeded max restarts ({self.max_restarts}) and is aborting. "
+                                f"⚠️ Background task '{self.name}' has exceeded max restarts ({self.max_restarts}) "
+                                f"and is entering a {self.cooling_off_period}s cooling off period. "
                                 f"Last error: {str(e)[:200]}",
-                                summary={"action": "CRITICAL", "reason": f"Task {self.name} aborted after max restarts"}
+                                summary={"action": "WARNING", "reason": f"Task {self.name} cooling off after max restarts"}
                             ))
                         except Exception:
                             pass
-                    raise
+                    await asyncio.sleep(self.cooling_off_period)
+                    self._restart_count = 0
+                    logger.info(f"Cooling off period ended for task {self.name}. Retrying.")
+                    continue
                 logger.info(f"Restarting task {self.name} in {self.restart_delay}s (attempt {self._restart_count}/{self.max_restarts})")
                 await asyncio.sleep(self.restart_delay)
 
