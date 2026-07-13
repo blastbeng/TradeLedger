@@ -24,6 +24,7 @@ class SimulationManager:
     def __init__(self, signal_processor):
         self.sp = signal_processor
         self.engine = signal_processor.engine
+        self.shared_state = self.engine.shared_state
 
     async def run_simulation_step1(
         self,
@@ -124,7 +125,7 @@ class SimulationManager:
     async def prepare_simulation_data(self, symbol: str) -> Dict[str, Any]:
         """Fetch all necessary data and build the strategy prompt for simulation."""
         engine = self.engine
-        symbol_entry = next((e for e in engine.current_symbols if e["symbol"] == symbol), None)
+        symbol_entry = next((e for e in self.shared_state.current_symbols if e["symbol"] == symbol), None)
         if not symbol_entry:
             return {"error": f"Symbol {symbol} not found in current_symbols"}
 
@@ -170,7 +171,7 @@ class SimulationManager:
         daily_pivot_points = symbol_data["daily_pivot_points"]
         per_symbol_budget = base_balance / engine.effective_max_symbols if engine.effective_max_symbols > 0 else 0.0
 
-        open_positions = [pos for pos in engine.positions.values() if pos.get("symbol") == symbol]
+        open_positions = [pos for pos in self.shared_state.positions.values() if pos.get("symbol") == symbol]
 
         _ctx = await self.sp.gather_prompt_context(
             symbol=symbol,
@@ -264,8 +265,8 @@ class SimulationManager:
         partial_tp_triggered_levels = []
         dust_sweep_triggered = False
         dust_sweep_review_count = 0
-        if symbol in engine.positions:
-            pos = engine.positions[symbol]
+        if symbol in self.shared_state.positions:
+            pos = self.shared_state.positions[symbol]
             max_hold_expired = pos.get("_max_hold_expired", False)
             max_hold_expired_count = pos.get("_max_hold_expired_count", 0)
             stop_loss_triggered = pos.get("_stop_loss_triggered", False)
@@ -284,7 +285,7 @@ class SimulationManager:
             if raw: min_viable_amount = float(raw)
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError): pass
 
-        remaining = max(0.0, base_balance - engine._cycle_spent)
+        remaining = max(0.0, base_balance - self.shared_state._cycle_spent)
 
         perf = await engine.event_bus.request("compute_performance_metrics")
         trade_pattern_analysis = await engine.event_bus.request("compute_trade_pattern_analysis")
@@ -341,9 +342,9 @@ class SimulationManager:
             historical_ohlcv=historical_ohlcv,
             min_order_amount=min_order_amount,
             min_order_cost=min_order_cost,
-            all_symbols=engine.current_symbols,
+            all_symbols=self.shared_state.current_symbols,
             past_trades=past_trades,
-            cycle_spent=engine._cycle_spent,
+            cycle_spent=self.shared_state._cycle_spent,
             remaining_balance=remaining,
             market_regime=market_regime,
             multi_tf_raw_candles=multi_tf_raw_candles,
@@ -351,7 +352,7 @@ class SimulationManager:
             session_info=session_info,
             sentiment_trend=sentiment_trend_val,
             volume_trend=volume_trend_val,
-            market_breadth=getattr(engine, '_market_breadth', None),
+            market_breadth=self.shared_state._market_breadth,
             full_market_breadth=full_market_breadth,
             atr_percentile=atr_percentile,
             global_risk_multiplier=global_risk_mult,
@@ -375,16 +376,16 @@ class SimulationManager:
             portfolio_exposure_pct=portfolio_exposure_pct,
             portfolio_stop_risk_pct=portfolio_stop_risk_pct,
             portfolio_total_value=portfolio_total_value,
-            portfolio_open_count=len(engine.positions),
+            portfolio_open_count=len(self.shared_state.positions),
             portfolio_available_capital=portfolio_available_capital,
-            last_decision=engine._last_decisions.get(symbol),
+            last_decision=self.shared_state._last_decisions.get(symbol),
             minutes_to_market_close=minutes_to_market_close,
-            current_strategy_interval_seconds=engine._strategy_intervals.get(symbol, engine._timeframe_to_seconds(assigned_tf)),
+            current_strategy_interval_seconds=self.shared_state._strategy_intervals.get(symbol, engine._timeframe_to_seconds(assigned_tf)),
             max_portfolio_exposure_pct=max_port_exp,
             max_portfolio_stop_risk_pct=max_port_risk,
             trade_pattern_analysis=trade_pattern_analysis,
             symbol_event=symbol_event,
-            queued_orders=engine.queued_orders,
+            queued_orders=self.shared_state.queued_orders,
             fundamentals=fundamentals,
             min_hold_time_mult=sim_min_hold_time_mult,
             min_stop_atr_mult=sim_min_stop_atr_mult,
@@ -416,7 +417,7 @@ class SimulationManager:
             williams_r=williams_r,
             ichimoku=ichimoku,
             market_regime=market_regime,
-            market_breadth=getattr(engine, '_market_breadth', None),
+            market_breadth=self.shared_state._market_breadth,
             full_market_breadth=full_market_breadth,
             sentiment_trend_val=sentiment_trend_val,
             volume_trend_val=volume_trend_val,
@@ -430,7 +431,7 @@ class SimulationManager:
             fundamentals=fundamentals,
             consecutive_losses=perf.get("equity_curve", {}).get("consecutive_losses", 0),
             current_price=current_price,
-            num_candidates=len(engine.current_symbols),
+            num_candidates=len(self.shared_state.current_symbols),
         )
 
         return {
@@ -453,7 +454,7 @@ class SimulationManager:
             "global_risk_multiplier": global_risk_mult,
             "min_stop_atr_mult": sim_min_stop_atr_mult,
             "min_hold_time_mult": sim_min_hold_time_mult,
-            "has_position": symbol in engine.positions,
+            "has_position": symbol in self.shared_state.positions,
             "historical_backtest_results": historical_backtest_results,
             "analysis_messages": analysis_messages,
         }
