@@ -278,15 +278,15 @@ class RiskManager:
         engine = self.engine
         try:
             # Skip if there is already a queued order for this symbol
-            async with engine._queued_orders_lock:
-                has_queued = any(q['symbol'] == symbol for q in engine.queued_orders)
+            async with self.shared_state._queued_orders_lock:
+                has_queued = any(q['symbol'] == symbol for q in self.shared_state.queued_orders)
             if has_queued:
                 return
 
             # --- Retry deferred dust sweep if market is now open ---
             if pos.get("_dust_sweep_pending") and await engine._is_market_open():
                 logger.info(f"Retrying deferred dust sweep for {symbol} (market is now open).")
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     pos.pop("_dust_sweep_pending", None)
                 await self.event_bus.publish("sweep_dust", symbol)
                 return
@@ -299,7 +299,7 @@ class RiskManager:
             # --- Staleness guard: skip risk checks if the quote is too stale ---
             pos_tf = pos.get("timeframe")
             if not pos_tf:
-                for entry in engine.current_symbols:
+                for entry in self.shared_state.current_symbols:
                     if entry["symbol"] == symbol:
                         pos_tf = entry.get("timeframe")
                         break
@@ -414,7 +414,7 @@ class RiskManager:
 
         pos_tf = pos.get("timeframe")
         if not pos_tf:
-            for entry in self.engine.current_symbols:
+            for entry in self.shared_state.current_symbols:
                 if entry["symbol"] == symbol:
                     pos_tf = entry.get("timeframe")
                     break
