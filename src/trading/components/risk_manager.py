@@ -82,6 +82,9 @@ class RiskManager:
         # --- Portfolio-level drawdown circuit breaker ---
         await self._check_portfolio_drawdown_circuit_breaker()
 
+        # --- Portfolio-level loss cooldown ---
+        await self._check_portfolio_loss_cooldown()
+
         # Read LLM-decided review limits from Redis once (before the per-position loop)
         _review_limits = await self.read_review_limits()
         max_sl_reviews = _review_limits["max_sl_reviews"]
@@ -185,6 +188,50 @@ class RiskManager:
                     )
         except Exception as e:
             logger.error(f"Failed to compute portfolio drawdown for circuit breaker: {e}")
+
+    async def _check_portfolio_loss_cooldown(self) -> None:
+        """Check for consecutive losses and trigger a portfolio-level cooldown."""
+        engine = self.engine
+        if not is_redis_available():
+            return
+
+        # Check if currently in a portfolio cooldown
+        source_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
+        source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
+        paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
+
+        if source == "portfolio_cooldown" and paused:
+            # Cooldown is active, it will expire automatically due to TTL
+            return
+
+        max_consec_losses = settings.PORTFOLIO_COOLDOWN_MAX_CONSEC_LOSSES
+        cooldown_seconds = settings.PORTFOLIO_COOLDOWN_SECONDS
+
+        with engine._trade_history_lock:
+            trades_snapshot = list(engine.trade_history)
+
+        consec_losses = 0
+        for trade in reversed(trades_snapshot):
+            if trade.get("side") == "sell":
+                if trade.get("realized_pnl", 0.0) < 0:
+                    consec_losses += 1
+                else:
+                    break
+
+        if consec_losses >= max_consec_losses:
+            logger.warning(
+                f"Portfolio loss cooldown triggered: {consec_losses} consecutive losses. "
+                f"Pausing trading for {cooldown_seconds} seconds."
+            )
+            await asyncio.to_thread(engine.redis.set, "trading:paused", "1", ex=cooldown_seconds)
+            await asyncio.to_thread(engine.redis.set, "trading:pause_source", "portfolio_cooldown", ex=cooldown_seconds)
+            await asyncio.to_thread(engine.redis.set, "trading:pause_reason", f"Portfolio cooldown after {consec_losses} consecutive losses", ex=cooldown_seconds)
+            
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"🧊 Portfolio cooldown triggered after {consec_losses} consecutive losses. Trading paused for {cooldown_seconds // 60} minutes.",
+                    summary={"action": "PAUSE", "reason": "Portfolio loss cooldown"}
+                )
 
     async def _fetch_risk_tickers(self) -> Dict[str, Dict[str, Any]]:
         """Batch-fetch tickers for all open positions for risk checks."""

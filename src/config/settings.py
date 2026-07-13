@@ -208,6 +208,25 @@ class Settings(BaseSettings):
             raise ValueError("PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT must be between 0 and 100")
         return v
 
+    # Portfolio-level cooldown after consecutive losses
+    PORTFOLIO_COOLDOWN_MAX_CONSEC_LOSSES: int = 5
+
+    @field_validator("PORTFOLIO_COOLDOWN_MAX_CONSEC_LOSSES")
+    @classmethod
+    def validate_portfolio_cooldown_max_consec_losses(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("PORTFOLIO_COOLDOWN_MAX_CONSEC_LOSSES must be >= 1")
+        return v
+
+    PORTFOLIO_COOLDOWN_SECONDS: int = 3600  # 1 hour
+
+    @field_validator("PORTFOLIO_COOLDOWN_SECONDS")
+    @classmethod
+    def validate_portfolio_cooldown_seconds(cls, v: int) -> int:
+        if v < 60:
+            raise ValueError("PORTFOLIO_COOLDOWN_SECONDS must be >= 60")
+        return v
+
     # Minimum LLM pause duration (seconds) – LLM cannot resume before this
     MIN_LLM_PAUSE_DURATION: int = 1800
 
