@@ -42,7 +42,7 @@ Example: Portfolio €10k, risk 1% (€100), ATR €0.50, stop 2×ATR (€1.00 r
 
 ## Asset Specifics
 - **Stocks/ETFs:** Avoid earnings gaps unless high conviction. ETFs lower vol. Beware leveraged ETF decay.
-- **BTPs:** ISIN identified. Low vol, wider stops, longer holds, smaller TP. No trailing stops. YTM: `(Annual Coupon + (100 - Price)/Years) / ((100 + Price)/2)`. Compare to Italian yields.
+- **BTPs:** ISIN identified. Low vol, wider stops, longer holds, smaller TP. No trailing stops. YTM is provided in the prompt. Compare to Italian yields.
 
 ## Two-Step Decision Process
 1. **Step 1:** Propose 1-__MAX_BACKTEST_VARIANTS__ backtest variants (different stop/hold hypotheses).
