@@ -840,13 +840,13 @@ class RiskManager:
                     if time.time() - entry_ts > max_time:
                         logger.info(f"Partial TP level {i} for {symbol} expired (max {max_time}s). Cancelling.")
                         triggered.append(i)
-                        async with engine._positions_lock:
+                        async with self.shared_state._positions_lock:
                             pos["partial_tp_levels_triggered"] = triggered
                         continue
                 if current_price >= entry_price * (1 + lvl_pct):
                     # --- Instead of executing immediately, set a trigger flag for LLM review ---
                     # Check if we are already waiting for LLM on this level
-                    async with engine._positions_lock:
+                    async with self.shared_state._positions_lock:
                         triggered_levels = pos.setdefault("_partial_tp_triggered_levels", [])
                         already_pending = i in triggered_levels
                         review_count = pos.get("_partial_tp_review_count", 0) + 1
@@ -858,18 +858,18 @@ class RiskManager:
                         logger.info(f"Partial TP level {i} for {symbol}: max reviews reached, executing.")
                         await self.event_bus.publish("execute_partial_tp_level", symbol, i, current_price, None, ticker)
                         # After execution, the level is marked triggered; clear the review flags for this level
-                        async with engine._positions_lock:
+                        async with self.shared_state._positions_lock:
                             pos.pop("_partial_tp_triggered", None)
                             pos.pop("_partial_tp_review_count", None)
                             pos["_partial_tp_triggered_levels"] = [x for x in pos.get("_partial_tp_triggered_levels", []) if x != i]
                         continue
 
                     # Set trigger and ask LLM
-                    async with engine._positions_lock:
+                    async with self.shared_state._positions_lock:
                         pos["_partial_tp_triggered"] = True
                         pos["_partial_tp_review_count"] = review_count
                         triggered_levels.append(i)
-                    engine._last_strategy_eval.pop(symbol, None)  # force immediate re‑eval
+                    self.shared_state._last_strategy_eval.pop(symbol, None)  # force immediate re‑eval
                     logger.info(f"Partial TP level {i} triggered for {symbol} – asking LLM (review {review_count})")
                     if engine.notifier:
                         await engine.notifier.send_notification(
@@ -894,14 +894,14 @@ class RiskManager:
                     if review_count > max_partial_tp_reviews:
                         logger.info(f"Single partial TP for {symbol}: max reviews reached, executing.")
                         await self.event_bus.publish("execute_partial_tp_single", symbol, current_price, None, ticker)
-                        async with engine._positions_lock:
+                        async with self.shared_state._positions_lock:
                             pos.pop("_partial_tp_triggered_single", None)
                             pos.pop("_partial_tp_single_review_count", None)
                     else:
-                        async with engine._positions_lock:
+                        async with self.shared_state._positions_lock:
                             pos["_partial_tp_triggered_single"] = True
                             pos["_partial_tp_single_review_count"] = review_count
-                        engine._last_strategy_eval.pop(symbol, None)
+                        self.shared_state._last_strategy_eval.pop(symbol, None)
                         logger.info(f"Single partial TP triggered for {symbol} – asking LLM (review {review_count})")
                         if engine.notifier:
                             await engine.notifier.send_notification(
