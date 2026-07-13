@@ -661,7 +661,7 @@ def get_multi_timeframe_bars(
 
     # Format symbol for Yahoo Finance: BTP ISINs are used as-is, stocks get TICKER_SUFFIX if missing
     yf_symbol = symbol
-    if not re.match(r'^IT[A-Z0-9]{10}$', symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
+    if not BTPPolicy.is_btp(symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
         yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
 
     redis_client = get_redis_client()
@@ -723,7 +723,7 @@ def get_multi_timeframe_bars(
         yf_candles: List[List] = []
         if not _check_yf_circuit():
             yf_symbol = symbol
-            if not re.match(r'^IT[A-Z0-9]{10}$', symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
+            if not BTPPolicy.is_btp(symbol) and settings.TICKER_SUFFIX and not symbol.endswith(settings.TICKER_SUFFIX):
                 yf_symbol = f"{symbol}{settings.TICKER_SUFFIX}"
 
             try:

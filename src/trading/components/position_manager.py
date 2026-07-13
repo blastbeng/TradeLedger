@@ -1075,7 +1075,7 @@ class PositionManager:
                     base = symbol.split("/")[0]
                     is_btp = BTPPolicy.is_btp(base)
                     if is_btp:
-                        close_price = 100.0  # par value for delisted BTPs
+                        close_price = BTPPolicy.PAR_VALUE  # par value for delisted BTPs
                         close_cost = pos["amount"] * close_price
                         from src.exchanges.fees import calculate_transaction_costs
                         costs = calculate_transaction_costs("SELL", close_price, pos["amount"], symbol=symbol)
