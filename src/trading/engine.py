@@ -2056,6 +2056,7 @@ class TradingEngine:
     async def _redis_health_check_loop(self):
         """Periodically check Redis connection and alert on state changes."""
         await asyncio.sleep(30)
+        last_degraded_notify_time = 0.0
         while self._running:
             was_available = is_redis_available()
             loop = asyncio.get_running_loop()
@@ -2068,6 +2069,7 @@ class TradingEngine:
                         "⚠️ Redis connection lost. The bot is now running in degraded mode (caching disabled).",
                         summary={"action": "ERROR", "reason": "Redis connection lost"}
                     )
+                last_degraded_notify_time = time.time()
             elif not was_available and is_available:
                 logger.info("Redis connection restored. Caching resumed.")
                 if self.notifier:
@@ -2075,6 +2077,15 @@ class TradingEngine:
                         "✅ Redis connection restored. Caching resumed.",
                         summary={"action": "INFO", "reason": "Redis connection restored"}
                     )
+            elif not is_available:
+                # Periodic reminder every 6 hours if still in degraded mode
+                if time.time() - last_degraded_notify_time >= 21600:
+                    if self.notifier:
+                        await self.notifier.send_notification(
+                            "⚠️ Redis is still unavailable. The bot remains in degraded mode (caching disabled).",
+                            summary={"action": "ERROR", "reason": "Redis still unavailable"}
+                        )
+                    last_degraded_notify_time = time.time()
             await asyncio.sleep(60)
 
     async def _health_check_loop(self):

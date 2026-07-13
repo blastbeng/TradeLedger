@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, Response
 from src.config.settings import settings
 # Ready for next request
-from src.utils.redis_client import get_redis_client, check_redis_connection
+from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
 from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics
@@ -310,6 +310,7 @@ async def status():
         "paused": paused,
         "market_open": market_open,
         "queued_orders": queued_orders_payload,
+        "redis_available": is_redis_available(),
     }
 
 @http_router.get("/api/trades")
@@ -874,6 +875,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             "pause_info": pause_info,
                             "queued_orders": queued_orders_payload,
                             "market_open": market_open,
+                            "redis_available": is_redis_available(),
                         }
                         _ws_payload_cache = payload
                         _ws_payload_cache_time = now
