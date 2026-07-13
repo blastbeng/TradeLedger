@@ -45,6 +45,13 @@ class SymbolReevaluator:
         self.notifier = ReevalNotifier(engine, event_bus)
         self.event_bus.subscribe("reevaluate_symbols_impl", self.reevaluate_symbols_impl)
         self.event_bus.subscribe("check_market_conditions", self.market_condition_monitor.check_market_conditions)
+        self._step = 0
+        self._total_steps = 12
+
+    def _log_step(self, message: str, *args):
+        """Logs the current re-evaluation step with an auto-incrementing counter."""
+        self._step += 1
+        logger.info(f"Re-evaluation step {self._step}/{self._total_steps}: {message}", *args)
 
     async def check_cooldown_and_reset(
         self, force: bool
@@ -69,7 +76,7 @@ class SymbolReevaluator:
             )
         async with self.shared_state._cycle_spent_lock:
             self.shared_state._cycle_spent = queued_buy_total
-        logger.info("Re-evaluation step 1/12: Checking cooldown and fetching asset lists...")
+        self._log_step("Checking cooldown and fetching asset lists...")
 
         # Respect triggered re-evaluation cooldown for market-condition triggers only.
         # Pre-market re-evaluations are always allowed (they are time-critical).
@@ -310,6 +317,8 @@ class SymbolReevaluator:
     async def reevaluate_symbols_impl(self, force: bool = False):
         """Main re-evaluation orchestration: fetch assets, quotes, indicators,
         run LLM chunked evaluation, final selection, and post-selection cleanup."""
+        self._step = 0
+        self._total_steps = 12
         engine = self.engine
         _cooldown_result = await self.check_cooldown_and_reset(force)
         if _cooldown_result is None:
@@ -325,7 +334,7 @@ class SymbolReevaluator:
         if _quotes_result is None:
             return
         balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs, btp_ytm = _quotes_result
-        logger.info("Re-evaluation step 6/12: Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
+        self._log_step("Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
         news_sentiment, sentiment_trend, market_trend = await self.data_fetcher.fetch_news_sentiment_and_trends(
             sample_pairs, tickers
         )
@@ -335,10 +344,10 @@ class SymbolReevaluator:
         # Background tasks (_download_all_assets_data_loop) keep the DB populated.
         # This avoids blocking reevaluation on slow API calls.
         sorted_by_vol = sample_pairs
-        logger.info("Re-evaluation step 7/12: Fetching OHLCV from DB for %d symbols...", len(sorted_by_vol))
+        self._log_step("Fetching OHLCV from DB for %d symbols...", len(sorted_by_vol))
         ohlcv_data, available_timeframes_by_symbol = await self.data_fetcher.fetch_ohlcv_from_db(sorted_by_vol)
 
-        logger.info("Re-evaluation step 8/12: Batch-fetching indicators for %d symbols...", len(sorted_by_vol))
+        self._log_step("Batch-fetching indicators for %d symbols...", len(sorted_by_vol))
         symbol_indicators, symbol_trend_scores = await self.data_fetcher.fetch_indicators_and_trend_scores(
             sorted_by_vol, sample_pairs
         )
@@ -356,7 +365,7 @@ class SymbolReevaluator:
 
         min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
 
-        logger.info("Re-evaluation step 10/12: Computing correlation matrix and performance metrics...")
+        self._log_step("Computing correlation matrix and performance metrics...")
         correlation_matrix = await self.data_fetcher.get_or_compute_correlation_matrix(
             ohlcv_data, sorted_by_vol
         )
