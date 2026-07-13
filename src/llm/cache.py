@@ -70,19 +70,55 @@ def _split_and_merge_prompt(
         max_input_tokens
     )
 
-    # Split the prompt by paragraphs (double newlines)
-    paragraphs = prompt.split('\n\n')
+    # Reserve 30% for summary instructions and completion
+    chunk_limit = int(max_input_tokens * 0.7)
 
-    chunks = []
-    current_chunk = ""
-    for para in paragraphs:
-        if estimate_tokens(current_chunk + para) > max_input_tokens * 0.8 and current_chunk:
+    def _split_text(text: str, limit: int) -> List[str]:
+        """Recursively split text by paragraphs, lines, and words to fit within limit."""
+        if estimate_tokens(text) <= limit:
+            return [text]
+        
+        # Try splitting by double newlines (paragraphs)
+        parts = text.split('\n\n')
+        if len(parts) > 1:
+            return _aggregate_chunks(parts, limit)
+        
+        # Try splitting by single newlines (lines)
+        parts = text.split('\n')
+        if len(parts) > 1:
+            return _aggregate_chunks(parts, limit)
+        
+        # Try splitting by words
+        words = text.split(' ')
+        if len(words) > 1:
+            return _aggregate_chunks(words, limit, separator=' ')
+        
+        # If it's a single huge word, just truncate it
+        return [text[:limit * 4]]  # 4 chars per token approx
+
+    def _aggregate_chunks(parts: List[str], limit: int, separator: str = '\n\n') -> List[str]:
+        """Aggregate parts into chunks that fit within the limit."""
+        chunks = []
+        current_chunk = ""
+        for part in parts:
+            candidate = current_chunk + separator + part if current_chunk else part
+            if estimate_tokens(candidate) > limit and current_chunk:
+                chunks.append(current_chunk)
+                # If the part itself is too large, split it recursively
+                if estimate_tokens(part) > limit:
+                    chunks.extend(_split_text(part, limit))
+                    current_chunk = ""
+                else:
+                    current_chunk = part
+            else:
+                current_chunk = candidate
+        if current_chunk:
             chunks.append(current_chunk)
-            current_chunk = para
-        else:
-            current_chunk += "\n\n" + para if current_chunk else para
-    if current_chunk:
-        chunks.append(current_chunk)
+        return chunks
+
+    # Initial split by paragraphs
+    paragraphs = prompt.split('\n\n')
+    chunks = _aggregate_chunks(paragraphs, chunk_limit)
 
     summaries = []
     for i, chunk in enumerate(chunks):
@@ -93,7 +129,7 @@ def _split_and_merge_prompt(
             f"Preserve all important numbers, dates, and entity names.\n\n"
             f"Chunk:\n{chunk}"
         )
-
+        
         # Call the LLM to summarize the chunk
         if provider == "openai":
             from src.llm.llm_client import _get_openai_response
@@ -123,16 +159,16 @@ def _split_and_merge_prompt(
                 add_cache_control=False,
                 thinking_enabled=False,
             )
-
+        
         summaries.append(result["content"])
-
+    
     # Combine summaries into a new prompt
     merged_prompt = (
         "The following is a merged summary of a large market analysis prompt. "
         "Use this information to make your trading decision.\n\n"
         + "\n\n".join(summaries)
     )
-
+    
     return merged_prompt
 
 
@@ -358,6 +394,8 @@ def get_cached_llm_response(
                 "Messages size (~%d tokens) exceeds context window limit (%d). Splitting and merging...",
                 total_tokens, effective_limit
             )
+            # Copy messages to avoid mutating the caller's list
+            messages = [dict(msg) for msg in messages]
             # Assume the last message is the user prompt that needs splitting
             if messages and messages[-1]["role"] == "user":
                 user_content = messages[-1]["content"]
