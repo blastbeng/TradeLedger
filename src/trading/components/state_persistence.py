@@ -95,24 +95,14 @@ class StatePersistence:
     async def save_state(self, force: bool = False):
         """Persist current symbols, positions, and trade history to SQLite.
 
-        Uses a lock to serialize concurrent calls and a debounce flag to
-        coalesce multiple save requests into fewer DB write batches.
-
-        When *force* is True, the method waits for the lock instead of
-        debouncing, guaranteeing the state is flushed even if another
-        save is in progress.
+        Uses a lock to serialize concurrent calls. The debounce flag has been
+        removed to ensure state changes are persisted immediately, preventing
+        data loss if the process crashes between setting the pending flag and
+        the actual save.
         """
         engine = self.engine
-        if self.shared_state._state_lock.locked():
-            if not force:
-                self.shared_state._state_save_pending = True
-                return
-
         async with self.shared_state._state_lock:
             await self._save_state_impl()
-            while self.shared_state._state_save_pending:
-                self.shared_state._state_save_pending = False
-                await self._save_state_impl()
 
     async def _save_state_impl(self):
         """Actual state persistence (must be called under _state_lock)."""
