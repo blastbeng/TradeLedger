@@ -4,8 +4,11 @@ Handles saving and loading trading engine state to/from the database.
 Extracted from TradingEngine to reduce class size and improve maintainability.
 """
 import asyncio
+import atexit
 import dataclasses as _dc
 import logging
+import signal
+import sys
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -27,6 +30,48 @@ class StatePersistence:
         self.event_bus = event_bus
         self.event_bus.subscribe("save_state", self.save_state)
         self.event_bus.subscribe("get_pause_status", self.get_pause_status)
+
+        # Register handlers to flush state on shutdown/crash
+        atexit.register(self._sync_save_state)
+        signal.signal(signal.SIGTERM, self._handle_signal)
+        signal.signal(signal.SIGINT, self._handle_signal)
+
+    def _handle_signal(self, signum, frame):
+        """Handle termination signals by flushing state before exiting."""
+        logger.info(f"Received signal {signum}, flushing state to database...")
+        self._sync_save_state()
+        sys.exit(0)
+
+    def _sync_save_state(self):
+        """Synchronously save state to prevent data loss on crash/shutdown."""
+        engine = self.engine
+        try:
+            save_trading_state("current_symbols", engine.current_symbols)
+            save_trading_state("positions", dict(engine.positions))
+            save_trading_state("queued_orders", engine.queued_orders)
+            save_trading_state("recent_signals", engine.recent_signals)
+
+            pending_entries_serializable = {}
+            for symbol, entry in engine._pending_entries.items():
+                pending_entries_serializable[symbol] = {
+                    "signal": asdict(entry["signal"]),
+                    "deadline": entry["deadline"],
+                    "timeframe": entry["timeframe"],
+                    "condition": entry["condition"],
+                }
+            save_trading_state("pending_entries", pending_entries_serializable)
+            save_trading_state("symbol_first_seen", engine._symbol_first_seen)
+            save_trading_state("entry_signal_state", engine._entry_signal_state)
+            save_trading_state("last_eval_snapshot", engine._last_eval_snapshot)
+            save_trading_state("force_eval", engine._force_eval)
+            save_trading_state("force_eval_time", engine._force_eval_time)
+            save_trading_state("strategy_intervals", engine._strategy_intervals)
+            save_trading_state("last_decisions", engine._last_decisions)
+            save_trading_state("last_loss_time", engine.last_loss_time)
+            save_trading_state("cooldown_durations", engine.cooldown_durations)
+            save_trading_state("global_risk_multiplier", engine._global_risk_multiplier)
+        except Exception as e:
+            logger.critical(f"Failed to save state on exit: {e}", exc_info=True)
 
     async def save_state(self, force: bool = False):
         """Persist current symbols, positions, and trade history to SQLite.
