@@ -178,13 +178,15 @@ def backtest_strategy(
     if not candles or len(candles) < settings.BACKTEST_MIN_CANDLES:
         return _empty_result()
 
+    overrides = {}
     if config.stop_loss_pct is None or config.stop_loss_pct <= 0:
-        config.stop_loss_pct = 0.02
+        overrides["stop_loss_pct"] = 0.02
     if config.take_profit_pct is None or config.take_profit_pct <= 0:
-        config.take_profit_pct = 0.05
-
+        overrides["take_profit_pct"] = 0.05
     if config.direction not in ("long", "short", "both"):
-        config.direction = "long"
+        overrides["direction"] = "long"
+    if overrides:
+        config = replace(config, **overrides)
 
     if not config.backtest_entry_config:
         result = _empty_result()
