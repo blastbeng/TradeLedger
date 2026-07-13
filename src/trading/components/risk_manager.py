@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from src.config.settings import settings
 from src.database import insert_position_pnl_snapshot, get_indicators, get_latest_ohlcv_timestamp, get_ohlcv
 from src.strategies.base import Signal
-from src.utils.symbol_utils import is_btp_isin
+from src.utils.btp_policy import BTPPolicy
 from src.utils.redis_client import is_redis_available
 from src.exchanges.fees import calculate_transaction_costs
 
@@ -490,7 +490,7 @@ class RiskManager:
 
     def _get_hard_max_loss_pct(self, symbol: str, pos: Dict[str, Any]) -> float:
         """Determine the hard max loss percentage based on asset type and timeframe."""
-        _is_btp = is_btp_isin(symbol)
+        _is_btp = BTPPolicy.is_btp(symbol)
         default_loss = settings.BTP_HARD_MAX_LOSS_PCT if _is_btp else settings.HARD_MAX_LOSS_PCT
 
         pos_tf = pos.get("timeframe")
@@ -500,33 +500,22 @@ class RiskManager:
                     pos_tf = entry.get("timeframe")
                     break
 
-        tf_loss = 0.0
         if _is_btp:
-            if pos_tf == "1h":
-                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_1H
-            elif pos_tf == "1d":
-                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_1D
-            elif pos_tf == "1w":
-                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_1W
-            elif pos_tf == "1M":
-                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_1M
-            elif pos_tf == "3M":
-                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_3M
-            elif pos_tf in ("6M", "1Y", "3Y", "5Y"):
-                tf_loss = settings.BTP_HARD_MAX_LOSS_PCT_6M_1Y
-        else:
-            if pos_tf == "1h":
-                tf_loss = settings.HARD_MAX_LOSS_PCT_1H
-            elif pos_tf == "1d":
-                tf_loss = settings.HARD_MAX_LOSS_PCT_1D
-            elif pos_tf == "1w":
-                tf_loss = settings.HARD_MAX_LOSS_PCT_1W
-            elif pos_tf == "1M":
-                tf_loss = settings.HARD_MAX_LOSS_PCT_1M
-            elif pos_tf == "3M":
-                tf_loss = settings.HARD_MAX_LOSS_PCT_3M
-            elif pos_tf in ("6M", "1Y", "3Y", "5Y"):
-                tf_loss = settings.HARD_MAX_LOSS_PCT_6M_1Y
+            return BTPPolicy.get_hard_max_loss_pct(symbol, pos_tf)
+
+        tf_loss = 0.0
+        if pos_tf == "1h":
+            tf_loss = settings.HARD_MAX_LOSS_PCT_1H
+        elif pos_tf == "1d":
+            tf_loss = settings.HARD_MAX_LOSS_PCT_1D
+        elif pos_tf == "1w":
+            tf_loss = settings.HARD_MAX_LOSS_PCT_1W
+        elif pos_tf == "1M":
+            tf_loss = settings.HARD_MAX_LOSS_PCT_1M
+        elif pos_tf == "3M":
+            tf_loss = settings.HARD_MAX_LOSS_PCT_3M
+        elif pos_tf in ("6M", "1Y", "3Y", "5Y"):
+            tf_loss = settings.HARD_MAX_LOSS_PCT_6M_1Y
 
         return tf_loss if tf_loss > 0 else default_loss
 
@@ -681,7 +670,7 @@ class RiskManager:
         fixed-percentage trailing stops, and the stop-loss price update.
         """
         engine = self.engine
-        _ts_is_btp = is_btp_isin(symbol)
+        _ts_is_btp = BTPPolicy.is_btp(symbol)
 
         # Warn if a BTP position has trailing_stop enabled (not supported by Intesa Sanpaolo Investo)
         if _ts_is_btp and pos.get("trailing_stop") and not pos.get("_ts_btp_warned"):
@@ -1586,8 +1575,8 @@ class RiskManager:
                 # Compute exact break-even price that covers actual exit fees
                 # BTPs have different fee structures, so we only apply the buffer
                 # to non-BTP assets.
-                if is_btp_isin(symbol):
-                    breakeven_price = entry_price
+                if BTPPolicy.is_btp(symbol):
+                    breakeven_price = BTPPolicy.compute_breakeven_price(symbol, entry_price, pos.get("amount", 0.0))
                 else:
                     amount = pos.get("amount", 0.0)
                     if amount > 0:

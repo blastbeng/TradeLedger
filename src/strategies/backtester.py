@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional, List
 
 from src.indicators import compute_ema
 from src.config.settings import settings
+from src.utils.btp_policy import BTPPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,7 @@ logger = logging.getLogger(__name__)
 def _compute_intesa_fees(trade_value: float, side: str, is_btp: bool = False) -> float:
     """Compute Intesa Sanpaolo Investo fees for a trade."""
     if is_btp:
-        commission = max(settings.BTP_MIN_FEE, trade_value * settings.BTP_FEE_PERC)
-        return commission  # no fixed fee, no Tobin tax
+        return BTPPolicy.compute_fees(side, trade_value)
     commission = max(settings.STOCK_FEE_MIN, trade_value * settings.STOCK_FEE_PERC)
     fixed_fee = settings.STOCK_FEE_FIXED
     tobin_tax = trade_value * settings.TOBIN_TAX_RATE if side.upper() == "BUY" else 0.0

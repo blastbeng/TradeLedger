@@ -2,7 +2,7 @@ import logging
 from .base import Signal
 from typing import Dict, Any, Optional
 
-from src.utils.symbol_utils import is_btp_isin
+from src.utils.btp_policy import BTPPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -274,7 +274,7 @@ def _validate_signal_impl(
         if not isinstance(trailing, bool):
             return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop must be boolean")
         if trailing:
-            if symbol and is_btp_isin(symbol):
+            if symbol and not BTPPolicy.supports_trailing_stop(symbol):
                 return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")
             tsd = params.get("trailing_stop_distance_pct")
             ts_atr = params.get("trailing_stop_atr_multiple")
@@ -510,7 +510,7 @@ def _validate_signal_impl(
             if sl is not None and tp <= sl:
                 return Signal(action="HOLD", confidence=0.0, reasoning="take_profit_pct must be greater than stop_loss_pct")
         if trailing:
-            if symbol and is_btp_isin(symbol):
+            if symbol and not BTPPolicy.supports_trailing_stop(symbol):
                 return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")
             tsd = params.get("trailing_stop_distance_pct")
             if tsd is not None and sl is not None and tsd >= sl:

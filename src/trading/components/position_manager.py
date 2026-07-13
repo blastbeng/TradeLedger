@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from src.config.settings import settings
 from src.database import insert_trade, get_total_dividends_for_symbol, get_total_dividends_for_symbols
 from src.strategies.base import Signal
-from src.utils.symbol_utils import is_btp_isin
+from src.utils.btp_policy import BTPPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class PositionManager:
         # so we don't spam warnings on every risk check cycle.
         for sym, pos in self.shared_state.positions.items():
             base = sym.split("/")[0]
-            if is_btp_isin(base) and pos.get("trailing_stop") and "_ts_btp_warned" not in pos:
+            if BTPPolicy.is_btp(base) and pos.get("trailing_stop") and "_ts_btp_warned" not in pos:
                 pos["_ts_btp_warned"] = True
 
     async def compute_portfolio_exposure_summary(self, base_balance: float) -> Dict[str, float]:
@@ -706,25 +706,26 @@ class PositionManager:
                 pos["take_profit"] = current_price * (1 + tp_pct)
 
         # --- BTP take-profit cap: enforce smaller targets for bonds ---
-        if is_btp_isin(symbol) and pos.get("take_profit") and current_price > 0:
+        if BTPPolicy.is_btp(symbol) and pos.get("take_profit") and current_price > 0:
             tp_pct = (pos["take_profit"] - current_price) / current_price
-            if tp_pct > settings.BTP_MAX_TAKE_PROFIT_PCT:
-                capped_tp = current_price * (1 + settings.BTP_MAX_TAKE_PROFIT_PCT)
+            max_tp = BTPPolicy.get_max_take_profit_pct(symbol)
+            if max_tp is not None and tp_pct > max_tp:
+                capped_tp = current_price * (1 + max_tp)
                 logger.info(
                     f"BTP take-profit capped for {symbol}: {tp_pct:.4%} -> "
-                    f"{settings.BTP_MAX_TAKE_PROFIT_PCT:.4%} (price {pos['take_profit']:.4f} -> {capped_tp:.4f})"
+                    f"{max_tp:.4%} (price {pos['take_profit']:.4f} -> {capped_tp:.4f})"
                 )
                 pos["take_profit"] = capped_tp
 
         # --- Trailing stop ---
         if "trailing_stop" in params:
-            _upd_is_btp = is_btp_isin(symbol)
+            _upd_is_btp = BTPPolicy.is_btp(symbol)
             if _upd_is_btp and params["trailing_stop"]:
                 logger.warning(
                     f"LLM set trailing_stop=true for BTP {symbol} in position update, but trailing stops "
                     f"are not supported for BTPs. Forcing trailing_stop=false."
                 )
-                pos["trailing_stop"] = False
+                pos["trailing_stop"] = BTPPolicy.supports_trailing_stop(symbol)
             else:
                 pos["trailing_stop"] = params["trailing_stop"]
         if "trailing_stop_distance_pct" in params:
@@ -889,7 +890,7 @@ class PositionManager:
         async with self.shared_state._positions_lock:
             self.shared_state.positions.pop(symbol, None)
 
-        par_value = 100.0
+        par_value = BTPPolicy.PAR_VALUE
         cost = pos["amount"] * par_value
         from src.exchanges.fees import calculate_transaction_costs
         costs = calculate_transaction_costs("SELL", par_value, pos["amount"], symbol=symbol)
@@ -954,7 +955,7 @@ class PositionManager:
         for entry in list(self.shared_state.current_symbols):
             symbol = entry["symbol"]
             base = symbol.split("/")[0]
-            if not is_btp_isin(base):
+            if not BTPPolicy.is_btp(base):
                 continue
             maturity_str = btp_maturity_map.get(base)
             if maturity_str is None:
@@ -1072,7 +1073,7 @@ class PositionManager:
                         pos = self.shared_state.positions.pop(symbol)
                     cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
                     base = symbol.split("/")[0]
-                    is_btp = is_btp_isin(base)
+                    is_btp = BTPPolicy.is_btp(base)
                     if is_btp:
                         close_price = 100.0  # par value for delisted BTPs
                         close_cost = pos["amount"] * close_price

@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any
-from src.utils.symbol_utils import is_btp_isin
+from src.utils.btp_policy import BTPPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +28,9 @@ def calculate_transaction_costs(operation_type: str, stock_price: float, quantit
     gross_value = stock_price * quantity
 
     # --- BTP Bond Fee Logic ---
-    is_btp = is_btp_isin(symbol)
+    is_btp = BTPPolicy.is_btp(symbol)
     if is_btp:
-        if settings.BTP_IS_PRIMARY_ISSUANCE:
-            bank_fee = 0.0
-        else:
-            raw_fee = gross_value * settings.BTP_FEE_PERC
-            bank_fee = max(raw_fee, settings.BTP_MIN_FEE)
+        bank_fee = BTPPolicy.compute_fees(operation_type, gross_value)
         
         # Sovereign bonds are exempt from Tobin tax
         tobin_tax = 0.0

@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional, Tuple
 from src.config.settings import settings
 from src.database import insert_trade
 from src.strategies.base import Signal
-from src.utils.symbol_utils import is_btp_isin
+from src.utils.btp_policy import BTPPolicy
 from src.trading.components.order_executor import OrderExecutor
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ class BuyExecutor:
             logger.error(f"Invalid symbol format: {symbol}")
             return
         base, quote = parts
-        _exec_is_btp = is_btp_isin(symbol)
+        _exec_is_btp = BTPPolicy.is_btp(symbol)
 
         # Safety: never buy when trading is paused
         paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
@@ -520,12 +520,13 @@ class BuyExecutor:
 
         # --- BTP take-profit cap: enforce smaller targets for bonds ---
         if is_btp and tp_pct is not None and tp_pct > 0:
-            if tp_pct > settings.BTP_MAX_TAKE_PROFIT_PCT:
+            max_tp = BTPPolicy.get_max_take_profit_pct(symbol)
+            if max_tp is not None and tp_pct > max_tp:
                 logger.info(
                     f"BTP take-profit capped for {symbol}: {tp_pct:.4%} -> "
-                    f"{settings.BTP_MAX_TAKE_PROFIT_PCT:.4%}"
+                    f"{max_tp:.4%}"
                 )
-                tp_pct = settings.BTP_MAX_TAKE_PROFIT_PCT
+                tp_pct = max_tp
 
         trailing_stop = params["trailing_stop"]
         # Force trailing_stop off for BTPs — not supported by Intesa Sanpaolo Investo
@@ -534,7 +535,7 @@ class BuyExecutor:
                 f"LLM set trailing_stop=true for BTP {symbol}, but trailing stops are not supported "
                 f"for BTPs on Intesa Sanpaolo Investo. Forcing trailing_stop=false."
             )
-            trailing_stop = False
+            trailing_stop = BTPPolicy.supports_trailing_stop(symbol)
         trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
 
         # Determine stop-loss percentage based on method
