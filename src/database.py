@@ -1828,11 +1828,6 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     if not missing_symbols:
         return cached_result
 
-    # Normalize input symbols to base form (strip /currency suffix)
-    base_symbols = set(missing_symbols)
-    # Construct full pair symbols for exact matching in the database
-    full_pairs = [f"{bs}/{settings.BASE_CURRENCY}" for bs in base_symbols]
-
     conn = get_connection()
     try:
         if _backend == "postgresql":
