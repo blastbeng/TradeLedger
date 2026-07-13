@@ -1217,6 +1217,7 @@ class Settings(BaseSettings):
             "REDIS_HOST",
             "REDIS_PORT",
             "REDIS_DB",
+            "REDIS_TLS",
             "WEB_HOST",
             "WEB_PORT",
         }
