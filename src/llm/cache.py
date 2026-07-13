@@ -558,9 +558,10 @@ def _normalize_for_hash(obj, depth=0):
             return 0.0
         if math.isnan(obj) or math.isinf(obj):
             return obj
-        # Percentage-based rounding: round to 3 significant figures
-        # to treat small absolute changes on high-priced assets as insignificant.
-        decimals = 2 - int(math.floor(math.log10(abs(obj))))
+        # Percentage-based rounding: round to 5 significant figures
+        # to treat tiny floating-point noise as insignificant while
+        # preserving meaningful price changes (e.g., 100.12 vs 100.14).
+        decimals = 4 - int(math.floor(math.log10(abs(obj))))
         return round(obj, decimals)
     if obj is None:
         return "null"
