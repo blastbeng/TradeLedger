@@ -94,6 +94,7 @@ class SignalProcessor:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self.market_data_fetcher = SignalMarketDataFetcher(engine)
         self.model_tier_manager = ModelTierManager(engine)
