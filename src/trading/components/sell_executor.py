@@ -932,7 +932,7 @@ class SellExecutor:
     ) -> None:
         """Execute a single partial take-profit sell for a position."""
         engine = self.engine
-        pos = engine.positions.get(symbol)
+        pos = self.shared_state.positions.get(symbol)
         if not pos:
             logger.warning(f"Cannot execute partial TP for {symbol}: no position.")
             return
