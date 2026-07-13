@@ -1722,7 +1722,7 @@ class TradingEngine:
                                 sym = entry["symbol"]
                                 try:
                                     await asyncio.wait_for(
-                                        self._signal_processor.process_symbol(entry, trading_paused=trading_paused),
+                                        self.event_bus.request("process_symbol", entry, trading_paused=trading_paused),
                                         timeout=settings.LLM_TIMEOUT + 10
                                     )
                                     async with self._eval_state_lock:
@@ -1771,7 +1771,7 @@ class TradingEngine:
                         pass
 
                 if await self._is_market_open():
-                    await self._signal_processor.pause_resume_manager.check_pause_resume_decision()
+                    await self.event_bus.request("check_pause_resume_decision")
             except Exception as e:
                 logger.error(f"Pause/resume check error: {e}", exc_info=True)
             await asyncio.sleep(1800)  # every 30 minutes
@@ -1933,7 +1933,7 @@ class TradingEngine:
                     if time.time() - last_forced < cooldown:
                         continue
 
-                    if await self._signal_processor.entry_signal_manager.detect_entry_signal(symbol, tf):
+                    if await self.event_bus.request("detect_entry_signal", symbol, tf):
                         logger.info(f"Entry signal detected for {symbol}, forcing LLM evaluation.")
                         async with self._eval_state_lock:
                             self._force_eval[symbol] = True
@@ -1951,7 +1951,7 @@ class TradingEngine:
             try:
                 now = time.time()
                 for symbol in list(self._pending_entries.keys()):
-                    await self._signal_processor.entry_signal_manager.process_pending_entry(symbol, now)
+                    await self.event_bus.request("process_pending_entry", symbol, now)
             except Exception as e:
                 logger.error(f"Error checking pending entries: {e}", exc_info=True)
             await asyncio.sleep(60)  # check every 60 seconds (medium/long-term)
