@@ -172,7 +172,7 @@ class SignalProcessor:
         ticker = symbol_data["ticker"]
         base_balance = symbol_data["base_balance"]
         ohlcv_data = symbol_data["ohlcv_data"]
-        has_position = symbol in engine.positions
+        has_position = symbol in self.shared_state.positions
 
         if await self.check_skip_conditions(symbol, display_symbol, ticker, assigned_tf, has_position, base_balance):
             return None
