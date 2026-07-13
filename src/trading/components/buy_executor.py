@@ -24,6 +24,7 @@ class BuyExecutor:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self._exit_order_manager = None
         self.event_bus.subscribe("execute_buy", self.execute_buy)
@@ -53,7 +54,7 @@ class BuyExecutor:
             logger.info(f"Ignoring BUY {symbol}: trading is paused (safety check).")
             return
         # Hard cap on total open positions
-        if symbol not in engine.positions and len(engine.positions) >= settings.MAX_OPEN_POSITIONS:
+        if symbol not in self.shared_state.positions and len(self.shared_state.positions) >= settings.MAX_OPEN_POSITIONS:
             logger.info(f"Skipping BUY {symbol}: maximum open positions limit ({settings.MAX_OPEN_POSITIONS}) reached.")
             if engine.notifier:
                 await engine.notifier.send_notification(
@@ -75,7 +76,7 @@ class BuyExecutor:
             return
 
         # --- Stale quote guard: skip BUY if the price is too old ---
-        tf = timeframe or (engine.positions.get(symbol, {}).get("timeframe") if symbol in engine.positions else None)
+        tf = timeframe or (self.shared_state.positions.get(symbol, {}).get("timeframe") if symbol in self.shared_state.positions else None)
         if tf and await engine._is_quote_too_stale(ticker, tf):
             age_seconds = (time.time() * 1000 - ticker.get("last_update", 0)) / 1000
             logger.warning(
@@ -182,8 +183,8 @@ class BuyExecutor:
                 order_type = "market"
 
         # --- Reserve cycle budget before placing order to prevent race condition ---
-        async with engine._cycle_spent_lock:
-            available = max(0.0, quote_balance - engine._cycle_spent)
+        async with self.shared_state._cycle_spent_lock:
+            available = max(0.0, quote_balance - self.shared_state._cycle_spent)
             if amount > available:
                 logger.info(
                     f"Skipping BUY {symbol}: cycle budget exhausted "
@@ -195,7 +196,7 @@ class BuyExecutor:
                         summary={"symbol": symbol, "action": "SKIP", "reason": "Cycle budget exhausted (concurrent order)"}
                     )
                 return
-            engine._cycle_spent += amount
+            self.shared_state._cycle_spent += amount
 
         try:
             if order_type == "market":
@@ -260,8 +261,8 @@ class BuyExecutor:
                     'filled_qty': 0,
                     'filled_cost': 0.0,
                 }
-                async with engine._queued_orders_lock:
-                    engine.queued_orders.append(queued_entry)
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders.append(queued_entry)
                 if engine.notifier:
                     await engine.notifier.send_notification(
                         f"⏳ BUY {order_type} order for {display_symbol} queued{price_str}",
@@ -269,8 +270,8 @@ class BuyExecutor:
                     )
                 return
             if order.get('status') == 'rejected':
-                async with engine._cycle_spent_lock:
-                    engine._cycle_spent = max(0.0, engine._cycle_spent - amount)
+                async with self.shared_state._cycle_spent_lock:
+                    self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - amount)
                 logger.warning(f"BUY order rejected for {symbol}")
                 if engine.notifier:
                     await engine.notifier.send_notification(
@@ -299,8 +300,8 @@ class BuyExecutor:
                     'filled_qty': 0,
                     'filled_cost': 0.0,
                 }
-                async with engine._queued_orders_lock:
-                    engine.queued_orders.append(queued_entry)
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders.append(queued_entry)
             await self.update_or_create_buy_position(
                 symbol=symbol,
                 order=order,
@@ -324,8 +325,8 @@ class BuyExecutor:
                 atr=atr,
             )
         except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
-            async with engine._cycle_spent_lock:
-                engine._cycle_spent = max(0.0, engine._cycle_spent - amount)
+            async with self.shared_state._cycle_spent_lock:
+                self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - amount)
             logger.error(f"Buy order failed for {symbol}: {e}")
             if engine.notifier:
                 await engine.notifier.send_notification(
@@ -364,7 +365,7 @@ class BuyExecutor:
         total_value = quote_balance
         total_open_exposure = 0.0
         total_open_stop_risk = 0.0
-        for sym, pos in engine.positions.items():
+        for sym, pos in self.shared_state.positions.items():
             try:
                 t = pos_tickers.get(sym)
                 price = t['last'] if t and t.get('last') else 0.0
@@ -422,8 +423,8 @@ class BuyExecutor:
             caps.append((available_stop_risk_budget / sl_pct, f"max_stop_risk={max_port_risk:.2%}"))
 
         # Cap 5: remaining cycle budget
-        async with engine._cycle_spent_lock:
-            available = max(0.0, quote_balance - engine._cycle_spent)
+        async with self.shared_state._cycle_spent_lock:
+            available = max(0.0, quote_balance - self.shared_state._cycle_spent)
         caps.append((available, "cycle_budget"))
 
         # --- Determine the binding cap ---
@@ -647,8 +648,8 @@ class BuyExecutor:
                 old_amount = amount
                 amount = required_quote
                 # Check if the adjusted amount exceeds remaining cycle budget
-                async with engine._cycle_spent_lock:
-                    available = max(0.0, quote_balance - engine._cycle_spent)
+                async with self.shared_state._cycle_spent_lock:
+                    available = max(0.0, quote_balance - self.shared_state._cycle_spent)
                 if amount > available:
                     logger.info(
                         f"BUY amount adjusted from {old_amount:.2f} to {amount:.2f} {quote} "
@@ -773,49 +774,49 @@ class BuyExecutor:
         timeframe: Optional[str],
     ) -> None:
         """Shared helper to update or create a position after a BUY fill."""
-        engine = self.engine
-        if symbol in engine.positions:
-            old_cost_basis = engine.positions[symbol].get("cost_basis", engine.positions[symbol]["amount"] * engine.positions[symbol]["price"])
-            old_net_base = engine.positions[symbol].get("net_base", engine.positions[symbol]["amount"])
+        positions = self.shared_state.positions
+        if symbol in positions:
+            old_cost_basis = positions[symbol].get("cost_basis", positions[symbol]["amount"] * positions[symbol]["price"])
+            old_net_base = positions[symbol].get("net_base", positions[symbol]["amount"])
             new_cost_basis = old_cost_basis + cost_basis
             new_net_base = old_net_base + net_base
             new_price = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
-            engine.positions[symbol]["amount"] = new_net_base
-            engine.positions[symbol]["price"] = new_price
-            engine.positions[symbol]["cost_basis"] = new_cost_basis
-            engine.positions[symbol]["net_base"] = new_net_base
-            engine.positions[symbol]["take_profit_atr_multiple"] = params.get("take_profit_atr_multiple")
-            engine.positions[symbol]["trailing_stop"] = trailing_stop
-            engine.positions[symbol]["trailing_stop_distance_pct"] = trailing_stop_distance_pct
-            engine.positions[symbol]["trailing_stop_atr_multiple"] = params.get("trailing_stop_atr_multiple")
-            engine.positions[symbol]["max_hold_time_seconds"] = params.get("max_hold_time_seconds")
-            engine.positions[symbol]["trailing_stop_activation_pct"] = params.get("trailing_stop_activation_pct")
-            engine.positions[symbol]["trailing_take_profit"] = params.get("trailing_take_profit", False)
-            engine.positions[symbol]["trailing_take_profit_distance_pct"] = params.get("trailing_take_profit_distance_pct")
-            engine.positions[symbol]["breakeven_activation_pct"] = params.get("breakeven_activation_pct")
+            positions[symbol]["amount"] = new_net_base
+            positions[symbol]["price"] = new_price
+            positions[symbol]["cost_basis"] = new_cost_basis
+            positions[symbol]["net_base"] = new_net_base
+            positions[symbol]["take_profit_atr_multiple"] = params.get("take_profit_atr_multiple")
+            positions[symbol]["trailing_stop"] = trailing_stop
+            positions[symbol]["trailing_stop_distance_pct"] = trailing_stop_distance_pct
+            positions[symbol]["trailing_stop_atr_multiple"] = params.get("trailing_stop_atr_multiple")
+            positions[symbol]["max_hold_time_seconds"] = params.get("max_hold_time_seconds")
+            positions[symbol]["trailing_stop_activation_pct"] = params.get("trailing_stop_activation_pct")
+            positions[symbol]["trailing_take_profit"] = params.get("trailing_take_profit", False)
+            positions[symbol]["trailing_take_profit_distance_pct"] = params.get("trailing_take_profit_distance_pct")
+            positions[symbol]["breakeven_activation_pct"] = params.get("breakeven_activation_pct")
             partial_levels = params.get("partial_take_profit_levels")
             if partial_levels:
-                engine.positions[symbol]["partial_take_profit_levels"] = partial_levels
-                engine.positions[symbol]["partial_tp_levels_triggered"] = []
-                engine.positions[symbol]["partial_tp_depth_wait_start"] = {}
-                engine.positions[symbol]["partial_take_profit_pct"] = None
-                engine.positions[symbol]["partial_take_profit_fraction"] = None
-                engine.positions[symbol]["partial_tp_triggered"] = None
+                positions[symbol]["partial_take_profit_levels"] = partial_levels
+                positions[symbol]["partial_tp_levels_triggered"] = []
+                positions[symbol]["partial_tp_depth_wait_start"] = {}
+                positions[symbol]["partial_take_profit_pct"] = None
+                positions[symbol]["partial_take_profit_fraction"] = None
+                positions[symbol]["partial_tp_triggered"] = None
             else:
-                engine.positions[symbol]["partial_take_profit_pct"] = params.get("partial_take_profit_pct")
-                engine.positions[symbol]["partial_take_profit_fraction"] = params.get("partial_take_profit_fraction")
-                engine.positions[symbol]["partial_tp_triggered"] = False
-            engine.positions[symbol]["cooldown_after_loss_seconds"] = params.get("cooldown_after_loss_seconds", 0)
-            engine.positions[symbol]["news_sentiment_exit_threshold"] = params.get("news_sentiment_exit_threshold")
-            engine.positions[symbol]["max_unrealized_loss_pct"] = params.get("max_unrealized_loss_pct")
-            engine.positions[symbol]["timeframe"] = timeframe
-            engine.positions[symbol]["indicator_config"] = indicator_config
-            engine.positions[symbol]["entry_order_type"] = order_type
-            engine.positions[symbol]["buy_confidence"] = signal_confidence
-            engine.positions[symbol]["buy_reasoning"] = (signal_reasoning or "")[:200]
+                positions[symbol]["partial_take_profit_pct"] = params.get("partial_take_profit_pct")
+                positions[symbol]["partial_take_profit_fraction"] = params.get("partial_take_profit_fraction")
+                positions[symbol]["partial_tp_triggered"] = False
+            positions[symbol]["cooldown_after_loss_seconds"] = params.get("cooldown_after_loss_seconds", 0)
+            positions[symbol]["news_sentiment_exit_threshold"] = params.get("news_sentiment_exit_threshold")
+            positions[symbol]["max_unrealized_loss_pct"] = params.get("max_unrealized_loss_pct")
+            positions[symbol]["timeframe"] = timeframe
+            positions[symbol]["indicator_config"] = indicator_config
+            positions[symbol]["entry_order_type"] = order_type
+            positions[symbol]["buy_confidence"] = signal_confidence
+            positions[symbol]["buy_reasoning"] = (signal_reasoning or "")[:200]
         else:
             entry_price = cost_basis / net_base if net_base > 0 else 0.0
-            engine.positions[symbol] = {
+            positions[symbol] = {
                 "symbol": symbol,
                 "side": "buy",
                 "amount": net_base,
@@ -854,7 +855,7 @@ class BuyExecutor:
 
         custom_interval = params.get("strategy_interval_seconds")
         if custom_interval is not None:
-            engine._strategy_intervals[symbol] = custom_interval
+            self.shared_state._strategy_intervals[symbol] = custom_interval
 
     async def update_or_create_buy_position(
         self,
@@ -910,7 +911,7 @@ class BuyExecutor:
         """Place exit orders, record the trade, and send BUY notification after a fill."""
         engine = self.engine
         # --- Place native exit orders (OCO) if LLM specified them ---
-        current_entry = engine.positions[symbol]["price"]
+        current_entry = self.shared_state.positions[symbol]["price"]
         exit_prices = self._exit_order_manager.compute_exit_order_prices(
             entry_price=current_entry,
             signal=signal,
@@ -923,11 +924,11 @@ class BuyExecutor:
         order["buy_reasoning"] = (signal.reasoning or "")[:200]
         if hasattr(signal, 'backtest_summary') and signal.backtest_summary:
             order["backtest_summary"] = signal.backtest_summary
-        engine._append_trade(order)
-        engine._balance_cache = None  # force refresh on next fetch
+        self.shared_state.append_trade(order, settings.MAX_TRADES_IN_MEMORY)
+        self.shared_state._balance_cache = None  # force refresh on next fetch
         await asyncio.to_thread(insert_trade, order)
         await self.event_bus.publish("save_state", force=True)
-        engine._portfolio_exposure_cache = None
+        self.shared_state._portfolio_exposure_cache = None
         if engine.notifier:
             buy_msg = f"🟢 BUY {display_symbol}: {order['amount']:.6f} @ {order['price']:.4f}"
             buy_summary = {
