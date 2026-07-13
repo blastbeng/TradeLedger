@@ -529,7 +529,7 @@ class OrderExecutor:
                     await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
                     logger.info(f"Cancelled OCO pair {oco_pair_id} for {status} exit order {order_id}")
                 except (RuntimeError, ValueError, ConnectionError) as e:
-                    logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
+                    logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {type(e).__name__}: {e}")
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders = [
                         q for q in self.shared_state.queued_orders
@@ -681,7 +681,7 @@ class OrderExecutor:
                     symbol, reconstructed_signal, exit_prices, queued.get('timeframe')
                 )
             except (TypeError, ValueError, RuntimeError, AttributeError) as e:
-                logger.error(f"Failed to setup exit orders after queued buy fill for {symbol}: {e}")
+                logger.error(f"Failed to setup exit orders after queued buy fill for {symbol}: {type(e).__name__}: {e}")
                 if engine.notifier:
                     stock_name = await engine._market_data_manager.get_stock_name(symbol)
                     display_symbol = engine._format_symbol_display(symbol, stock_name, queued.get('timeframe'))

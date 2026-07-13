@@ -469,7 +469,7 @@ class SellExecutor:
                     summary=sell_summary,
                 )
         except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
-            logger.error(f"Sell order failed for {symbol}: {e}")
+            logger.error(f"Sell order failed for {symbol}: {type(e).__name__}: {e}")
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"❌ Sell order failed for {display_symbol}: {e}",
@@ -754,7 +754,7 @@ class SellExecutor:
                     }
                 )
         except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
-            logger.error(f"Dust sweep failed for {symbol}: {e}")
+            logger.error(f"Dust sweep failed for {symbol}: {type(e).__name__}: {e}")
 
     async def execute_partial_sell(
         self,

@@ -594,8 +594,8 @@ class ExitOrderManager:
         if oco_pair_id:
             try:
                 await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
-            except (RuntimeError, ValueError, ConnectionError):
-                pass
+            except (RuntimeError, ValueError, ConnectionError) as e:
+                logger.debug(f"process_native_exit_fill: failed to cancel OCO pair {oco_pair_id} for {symbol}: {type(e).__name__}: {e}")
             async with self.shared_state._queued_orders_lock:
                 self.shared_state.queued_orders = [q for q in self.shared_state.queued_orders if q.get("order_id") != oco_pair_id]
         pos.pop("stop_loss_order_id", None)

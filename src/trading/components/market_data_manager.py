@@ -183,7 +183,7 @@ class MarketDataManager:
                         next_open += timedelta(days=1)
 
         except Exception as e:
-            logger.error(f"Failed to get market clock from pandas_market_calendars: {e}")
+            logger.error(f"Failed to get market clock from pandas_market_calendars: {type(e).__name__}: {e}")
             # Fallback: simple weekday + time check, assume no holidays
             if today.weekday() < 5 and market_open_today <= now_rome < market_close_today:
                 is_open = True
@@ -273,8 +273,8 @@ class MarketDataManager:
                         name = b.get("name") or base
                         if name and name != b["isin"]:
                             return name
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"get_stock_name: BTP cache lookup failed for {base}: {type(e).__name__}: {e}")
             # Fallback: try DB directly
             try:
                 db_name = await asyncio.to_thread(get_symbol_name_from_db, base)
@@ -295,8 +295,8 @@ class MarketDataManager:
                                 country="italy"
                             )
                             return name
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"get_stock_name: failed to save name to DB for {base}: {type(e).__name__}: {e}")
             return base
 
         # Check Redis cache first
@@ -314,11 +314,11 @@ class MarketDataManager:
             if db_name:
                 try:
                     await asyncio.to_thread(engine.redis.setex, cache_key, 7 * 24 * 3600, db_name)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"get_stock_name: failed to cache name in Redis for {base}: {type(e).__name__}: {e}")
                 return db_name
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"get_stock_name: DB name lookup failed for {base}: {type(e).__name__}: {e}")
 
         if _check_yf_circuit():
             return base
@@ -330,7 +330,8 @@ class MarketDataManager:
                 info = ticker.info
                 return info.get("longName") or info.get("shortName") or base
             name = await asyncio.to_thread(_fetch_yf_name)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"get_stock_name: yfinance fetch failed for {base}: {type(e).__name__}: {e}")
             name = base
 
         # If yfinance returned a name, save it to the DB for future use
@@ -341,14 +342,14 @@ class MarketDataManager:
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
                 save_discovered_symbol(db_base, None, None, name, country=None)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"get_stock_name: failed to save name to DB for {base}: {type(e).__name__}: {e}")
 
         # Cache for 7 days (names rarely change)
         try:
             await asyncio.to_thread(engine.redis.setex, cache_key, 7 * 24 * 3600, name)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"get_stock_name: failed to cache name in Redis for {base}: {type(e).__name__}: {e}")
         return name
 
     async def get_tradable_assets(self) -> List[str]:
@@ -454,7 +455,7 @@ class MarketDataManager:
                     if raw_frac is not None:
                         fractionable = bool(raw_frac)
             except Exception as e:
-                logger.debug(f"yfinance asset info fetch failed for {base}: {e}")
+                logger.warning(f"yfinance asset info fetch failed for {base}: {type(e).__name__}: {e}")
 
         # Database fallback for name
         if name == base:
@@ -487,7 +488,7 @@ class MarketDataManager:
             logger.warning(f"Quote fetch timed out for {len(symbols)} symbols")
             return {}
         except Exception as e:
-            logger.warning(f"Quote fetch failed for {len(symbols)} symbols: {e}")
+            logger.warning(f"Quote fetch failed for {len(symbols)} symbols: {type(e).__name__}: {e}")
             return {}
 
     async def _get_quotes_batched(self, symbols: List[str], timeout_per_chunk: float = 45.0, chunk_size: int = 50) -> Dict[str, Dict[str, Any]]:
@@ -659,7 +660,7 @@ class MarketDataManager:
                 await loop.run_in_executor(engine._db_executor, save_indicators, symbol, timeframe, latest_ts, ind)
                 logger.debug(f"Indicators computed and stored for {symbol} {timeframe}")
         except Exception as e:
-            logger.warning(f"Failed to compute/store indicators for {symbol} {timeframe}: {e}")
+            logger.warning(f"Failed to compute/store indicators for {symbol} {timeframe}: {type(e).__name__}: {e}")
     async def _fill_gaps(self, symbol: str, timeframe: str):
         """Detect and fill gaps in stored OHLCV data for a symbol/timeframe."""
         engine = self.engine
@@ -724,4 +725,4 @@ class MarketDataManager:
                     raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                     await self.compute_and_store_indicators(symbol, timeframe, raw_candles)
         except Exception as e:
-            logger.warning(f"Download failed for {symbol} {timeframe}: {e}")
+            logger.warning(f"Download failed for {symbol} {timeframe}: {type(e).__name__}: {e}")

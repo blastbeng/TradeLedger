@@ -236,7 +236,7 @@ class StatePersistence:
                     "condition": entry["condition"],
                 }
             except Exception as e:
-                logger.warning(f"Failed to restore pending entry for {symbol}: {e}")
+                logger.warning(f"Failed to restore pending entry for {symbol}: {type(e).__name__}: {e}")
 
         # Prune any pending entries whose deadline has already passed
         now = time.time()
@@ -321,8 +321,8 @@ class StatePersistence:
                                 else:
                                     countdown_str = f"{remaining_seconds}s"
                                 reason = "Market closed"
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"get_pause_status: failed to parse next_open: {type(e).__name__}: {e}")
             else:
                 # LLM or manual pause with duration
                 pause_start_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_start")

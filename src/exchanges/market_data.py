@@ -164,7 +164,7 @@ def _enrich_quotes_with_btp_details(result: Dict[str, Dict[str, Any]], symbols: 
                 if not result[sym].get("name") and d.get("name"):
                     result[sym]["name"] = d["name"]
     except (RuntimeError, ValueError, KeyError, OSError) as e:
-        logger.debug(f"Failed to enrich BTP details in quotes: {e}")
+        logger.debug(f"Failed to enrich BTP details in quotes: {type(e).__name__}: {e}")
 
 
 def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
@@ -312,7 +312,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             try:
                 save_quotes_batch(quotes_to_save)
             except (RuntimeError, ValueError, OSError) as e:
-                logger.warning(f"Failed to save quotes to database: {e}")
+                logger.warning(f"Failed to save quotes to database: {type(e).__name__}: {e}")
         return result
 
     # Initialize result with None for all still-missing symbols that don't have a DB quote yet
@@ -636,7 +636,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         try:
             save_quotes_batch(quotes_to_save)
         except (RuntimeError, ValueError, OSError) as e:
-            logger.warning(f"get_quotes_cached: Failed to save DB close prices to quotes table: {e}")
+            logger.warning(f"get_quotes_cached: Failed to save DB close prices to quotes table: {type(e).__name__}: {e}")
 
     # Enrich BTP quotes with maturity, coupon, and name from discovered_symbols
     _enrich_quotes_with_btp_details(result, symbols)

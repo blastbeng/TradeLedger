@@ -71,8 +71,8 @@ class PositionManager:
                 if stop_loss is not None and price > 0:
                     loss_if_stop = pos_value * (price - stop_loss) / price
                     portfolio_stop_risk += max(0, loss_if_stop)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"compute_portfolio_exposure_summary: failed to process {sym}: {type(e).__name__}: {e}")
         portfolio_exposure_pct = (portfolio_exposure / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
         portfolio_stop_risk_pct = (portfolio_stop_risk / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
         async with self.shared_state._cycle_spent_lock:
@@ -122,8 +122,8 @@ class PositionManager:
                 t = pos_tickers.get(sym)
                 price = t['last'] if t and t.get('last') else 0.0
                 open_value += pos['amount'] * price
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"get_profit_summary: failed to process {sym}: {type(e).__name__}: {e}")
 
         # --- Queued orders ---
         queued_buy_count = 0
@@ -245,8 +245,8 @@ class PositionManager:
                 if stop_loss is not None and price > 0:
                     loss_if_stop = pos_value * (price - stop_loss) / price
                     total_stop_risk += loss_if_stop
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"get_risk_metrics: failed to process {sym}: {type(e).__name__}: {e}")
 
         total_portfolio_value = total_balance + exposure
         largest_position_exposure_pct = (
@@ -318,7 +318,8 @@ class PositionManager:
             try:
                 t = pos_tickers.get(symbol)
                 current_price = t['last'] if t and t.get('last') else pos['price']
-            except Exception:
+            except Exception as e:
+                logger.debug(f"get_open_trades: failed to fetch ticker for {symbol}: {type(e).__name__}: {e}")
                 current_price = pos['price']  # fallback to entry price
 
             entry_price = pos['price']
@@ -371,8 +372,8 @@ class PositionManager:
                 t = pos_tickers.get(sym)
                 if t and t.get('last'):
                     unrealized_pnl += (t['last'] - pos['price']) * pos['amount']
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"compute_equity_and_drawdown: failed to compute unrealized P&L: {type(e).__name__}: {e}")
         current_equity = current_realized_equity + unrealized_pnl + total_dividends
         if current_equity > peak:
             peak = current_equity
@@ -1112,14 +1113,14 @@ class PositionManager:
         try:
             all_balances = await asyncio.to_thread(engine.trader.fetch_balance)
         except Exception as e:
-            logger.error(f"Failed to fetch balances for reconciliation: {e}")
+            logger.error(f"Failed to fetch balances for reconciliation: {type(e).__name__}: {e}")
             all_balances = {}
         for symbol, pos in list(self.shared_state.positions.items()):
             base = symbol.split('/')[0]
             try:
                 actual_balance = all_balances.get(base, 0.0)
             except Exception as e:
-                logger.error(f"Failed to get balance for {base}: {e}")
+                logger.error(f"Failed to get balance for {base}: {type(e).__name__}: {e}")
                 continue
 
             recorded_amount = pos.get("amount", 0.0)
@@ -1134,7 +1135,8 @@ class PositionManager:
                     tickers_map = await engine._market_data_manager._get_quotes_async([symbol.split("/")[0]], timeout=45.0)
                     ticker = tickers_map.get(symbol.split("/")[0])
                     current_price = ticker['last'] if ticker else pos.get("price", 0.0)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"reconcile_positions: failed to fetch price for {symbol}: {type(e).__name__}: {e}")
                     current_price = pos.get("price", 0.0)  # fallback to entry price
                 cost = sold_amount * current_price
                 from src.exchanges.fees import calculate_transaction_costs

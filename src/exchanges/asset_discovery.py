@@ -261,8 +261,8 @@ def discover_italian_ucits_etfs() -> List[str]:
         cached = redis_client.get(cache_key)
         if cached:
             return json.loads(cached)
-    except (TypeError, ValueError, RuntimeError):
-        pass
+    except (TypeError, ValueError, RuntimeError) as e:
+        logger.debug(f"discover_italian_ucits_etfs: failed to read/write Redis cache: {type(e).__name__}: {e}")
 
     try:
         import financedatabase as fd
@@ -317,8 +317,8 @@ def discover_italian_ucits_etfs() -> List[str]:
         # Cache for 24 hours
         try:
             redis_client.set(cache_key, json.dumps(base_symbols), ex=86400)
-        except (TypeError, ValueError, RuntimeError):
-            pass
+        except (TypeError, ValueError, RuntimeError) as e:
+            logger.debug(f"discover_italian_ucits_etfs: failed to write Redis cache: {type(e).__name__}: {e}")
         # Save ETF symbols to DB
         try:
             from src.database import save_discovered_symbols_batch
@@ -361,8 +361,8 @@ def _save_discovered_assets_to_db(base_symbols: List[str], etf_symbols: List[str
         isin_map = get_isin_map_from_db(sym_list)
         # Filter out symbols that already have an ISIN
         symbols_to_save = [s for s in symbols_to_save if not isin_map.get(s["symbol"])]
-    except (RuntimeError, ValueError, OSError):
-        pass  # If batch lookup fails, save all (upsert handles it)
+    except (RuntimeError, ValueError, OSError) as e:
+        logger.debug(f"_save_discovered_assets_to_db: batch ISIN lookup failed: {type(e).__name__}: {e}")
     if symbols_to_save:
         try:
             save_discovered_symbols_batch(symbols_to_save)
@@ -602,8 +602,8 @@ def get_tradable_assets() -> List[str]:
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
                 save_discovered_symbol(db_base, None, "stock", name or None, country=country)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"get_tradable_assets: failed to save discovered symbol {db_sym}: {type(e).__name__}: {e}")
         elif name and not settings.COUNTRY_FILTER_STRICT:
             # Country is None but name is available — save the name for display
             try:
@@ -612,8 +612,8 @@ def get_tradable_assets() -> List[str]:
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
                 save_discovered_symbol(db_base, None, "stock", name or None, country=None)
-            except (RuntimeError, ValueError, OSError):
-                pass
+            except (RuntimeError, ValueError, OSError) as e:
+                logger.debug(f"get_tradable_assets: failed to save discovered symbol {db_base}: {type(e).__name__}: {e}")
         if country is None:
             # yfinance failed to return country info.
             # In lenient mode (default), keep the symbol because it was

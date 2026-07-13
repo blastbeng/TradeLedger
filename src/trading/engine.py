@@ -1705,7 +1705,7 @@ class TradingEngine:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Background task {task.get_name()} failed: {e}", exc_info=True)
+            logger.error(f"Background task {task.get_name()} failed: {type(e).__name__}: {e}", exc_info=True)
 
     async def run(self):
         """Main event‑driven loop using WebSocket ticker updates."""

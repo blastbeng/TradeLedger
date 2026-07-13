@@ -261,7 +261,7 @@ class RiskManager:
                     if base in raw:
                         risk_tickers[sym] = raw[base]
             except Exception as e:
-                logger.warning(f"Batch quote fetch failed in risk management: {e}")
+                logger.warning(f"Batch quote fetch failed in risk management: {type(e).__name__}: {e}")
         return risk_tickers
 
     async def _check_position_risk(
@@ -376,7 +376,7 @@ class RiskManager:
                 ):
                     return
         except Exception as e:
-            logger.error(f"Risk check failed for {symbol}: {e}")
+            logger.error(f"Risk check failed for {symbol}: {type(e).__name__}: {e}")
 
     async def read_review_limits(self) -> Dict[str, int]:
         """Read LLM-decided review limits from Redis, falling back to settings defaults."""
@@ -583,7 +583,7 @@ class RiskManager:
                         )
                         return True
                 except Exception as e:
-                    logger.info(f"News sentiment check failed for {symbol}: {e}")
+                    logger.warning(f"News sentiment check failed for {symbol}: {type(e).__name__}: {e}")
         return False
 
     async def update_trailing_stop(
@@ -684,7 +684,7 @@ class RiskManager:
                             async with self.shared_state._positions_lock:
                                 pos["_last_trailing_check_ts"] = now_ts
                     except Exception as e:
-                        logger.debug(f"Failed to fetch OHLCV for trailing stop on {symbol}: {e}")
+                        logger.warning(f"Failed to fetch OHLCV for trailing stop on {symbol}: {type(e).__name__}: {e}")
 
                 best_high = max(candidate_prices)
                 async with self.shared_state._positions_lock:
@@ -1122,8 +1122,8 @@ class RiskManager:
                 tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
                 if tp_order_obj is not None and tp_order_obj.status == "filled":
                     tp_already_filled = True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"check_native_exit_triggers: failed to check TP fill status for {symbol}: {type(e).__name__}: {e}")
 
             if tp_already_filled:
                 logger.info(
@@ -1140,7 +1140,7 @@ class RiskManager:
                         f"cancelled OCO take-profit {tp_order_id}"
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to cancel OCO TP {tp_order_id} for {symbol}: {e}")
+                    logger.warning(f"Failed to cancel OCO TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders = [
                         q for q in self.shared_state.queued_orders
@@ -1204,8 +1204,8 @@ class RiskManager:
                 sl_order_obj_check = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
                 if sl_order_obj_check is not None and sl_order_obj_check.status == "filled":
                     sl_already_filled = True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"check_native_exit_triggers: failed to check SL fill status for {symbol}: {type(e).__name__}: {e}")
 
             if sl_already_filled:
                 logger.info(
@@ -1224,7 +1224,7 @@ class RiskManager:
                         f"cancelled OCO stop {sl_order_id}"
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to cancel OCO stop {sl_order_id} for {symbol}: {e}")
+                    logger.warning(f"Failed to cancel OCO stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders = [
                         q for q in self.shared_state.queued_orders
@@ -1270,8 +1270,8 @@ class RiskManager:
                     # TP not yet filled — cancel it and execute manual sell
                     try:
                         await asyncio.to_thread(engine.trader.cancel_order, tp_order_id)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"check_native_exit_triggers: failed to cancel TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
                     async with self.shared_state._queued_orders_lock:
                         self.shared_state.queued_orders = [
                             q for q in self.shared_state.queued_orders

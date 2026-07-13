@@ -508,7 +508,7 @@ class SignalProcessor:
             )
             await self.event_bus.request("process_post_llm_decision", decision_data)
         except Exception as e:
-            logger.error(f"Error processing {symbol}: {e}", exc_info=True)
+            logger.error(f"Error processing {symbol}: {type(e).__name__}: {e}", exc_info=True)
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"❌ Error processing {display_symbol}: {e}",

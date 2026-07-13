@@ -40,5 +40,5 @@ def summarize_text(text: str, context: str = "general", max_length: int = 500) -
             return summary.strip()
         return text
     except Exception as e:
-        logger.error(f"Failed to summarize text using weak model: {e}")
+        logger.error(f"Failed to summarize text using weak model: {type(e).__name__}: {e}")
         return text

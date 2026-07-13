@@ -376,8 +376,8 @@ class BuyExecutor:
                 if stop_loss is not None and price > 0:
                     loss_if_stop = pos_value * (price - stop_loss) / price
                     total_open_stop_risk += max(0, loss_if_stop)
-            except (KeyError, TypeError, ValueError):
-                pass
+            except (KeyError, TypeError, ValueError) as e:
+                logger.debug(f"compute_position_size: failed to process {sym}: {type(e).__name__}: {e}")
 
         # Apply global risk multiplier to desired amount (scales all positions)
         global_mult = await engine._get_global_risk_multiplier()

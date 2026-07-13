@@ -141,7 +141,8 @@ class ReevalMarketConditionMonitor:
                                     logger.info(f"Bollinger Band squeeze breakout for {symbol}, triggering re-evaluation")
                                     should_trigger = True
                                     break
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"check_market_conditions: indicator check failed for {symbol}: {type(e).__name__}: {e}")
                     continue
 
         if should_trigger:

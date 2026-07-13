@@ -589,7 +589,7 @@ class BacktestManager:
                     # Step 2 returned no params at all — use Step 1's params
                     signal.strategy_params = preliminary_signal.strategy_params
         except Exception as e:
-            logger.error(f"LLM Step 2 call failed for {symbol}: {e}. Using preliminary decision.")
+            logger.error(f"LLM Step 2 call failed for {symbol}: {type(e).__name__}: {e}. Using preliminary decision.")
             signal = preliminary_signal
             signal.backtest_summary = combined_bt_summary
             # Preserve provider/model from Step 1b as fallback

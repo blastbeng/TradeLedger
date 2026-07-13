@@ -58,7 +58,7 @@ class SimulationManager:
             )
             step1a_response = step1a_result["response"]
         except (asyncio.TimeoutError, ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
-            return None, None, None, {"error": f"LLM Step 1a call failed: {e}"}
+            return None, None, None, {"error": f"LLM Step 1a call failed: {type(e).__name__}: {e}"}
 
         analysis = self.sp._parse_analysis_response(step1a_response)
         if analysis is None:
@@ -112,7 +112,7 @@ class SimulationManager:
             )
             step1b_response = step1b_result["response"]
         except (asyncio.TimeoutError, ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
-            return None, None, None, {"error": f"LLM Step 1b call failed: {e}"}
+            return None, None, None, {"error": f"LLM Step 1b call failed: {type(e).__name__}: {e}"}
 
         try:
             preliminary_strategy = create_strategy_from_llm(step1b_response)
@@ -294,8 +294,8 @@ class SimulationManager:
         if settings.NEWS_ENABLED and detect_upcoming_events is not None:
             try:
                 symbol_event = await asyncio.to_thread(detect_upcoming_events, symbol)
-            except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, json.JSONDecodeError):
-                pass
+            except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, json.JSONDecodeError) as e:
+                logger.debug(f"prepare_simulation_data: failed to detect events for {symbol}: {type(e).__name__}: {e}")
 
         prompt_data = StrategyPromptData(
             symbol=symbol,

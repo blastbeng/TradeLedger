@@ -21,8 +21,8 @@ class UnifiedConfigService:
                 if isinstance(val, bytes):
                     val = val.decode('utf-8')
                 return val
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"UnifiedConfigService.get_config: failed to read '{key}' from Redis: {type(e).__name__}: {e}")
         return default
 
     async def set_llm_config(self, key: str, value: Any, ttl: int = 7 * 24 * 3600) -> None:
@@ -31,7 +31,7 @@ class UnifiedConfigService:
         try:
             await asyncio.to_thread(self.redis.setex, redis_key, ttl, str(value))
         except Exception as e:
-            logger.warning(f"Failed to set LLM config {key}: {e}")
+            logger.warning(f"Failed to set LLM config {key}: {type(e).__name__}: {e}")
 
     async def clear_llm_config(self, key: str) -> None:
         """Remove an LLM-decided override from Redis."""
@@ -39,4 +39,4 @@ class UnifiedConfigService:
         try:
             await asyncio.to_thread(self.redis.delete, redis_key)
         except Exception as e:
-            logger.warning(f"Failed to clear LLM config {key}: {e}")
+            logger.warning(f"Failed to clear LLM config {key}: {type(e).__name__}: {e}")

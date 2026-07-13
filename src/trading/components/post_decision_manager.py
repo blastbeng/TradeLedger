@@ -52,15 +52,15 @@ class PostDecisionManager:
                     summary = summary_raw
                 if summary in ("No recent news.", "Could not generate summary."):
                     summary = ""
-            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
-                pass  # fallback to no summary
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError) as e:
+                logger.debug(f"_get_sentiment_str: failed to get LLM summary for {symbol}: {type(e).__name__}: {e}")
 
             base = f"📰 (sentiment: {compound:+.2f}[{sentiment_label}], {total} articles)"
             if summary:
                 return f"{base} – {summary}"
             return base
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"_get_sentiment_str: failed to get sentiment for {symbol}: {type(e).__name__}: {e}")
         return ""
 
     async def log_and_notify_decision(

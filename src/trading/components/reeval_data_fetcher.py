@@ -90,7 +90,7 @@ class ReevalDataFetcher:
                 if rss_discovered:
                     logger.info(f"RSS ticker discovery added {len(rss_discovered)} new symbols: {rss_discovered}")
             except Exception as e:
-                logger.warning(f"RSS ticker discovery failed: {e}")
+                logger.warning(f"RSS ticker discovery failed: {type(e).__name__}: {e}")
 
         if not available_pairs:
             logger.warning("No available pairs found.")
@@ -115,7 +115,7 @@ class ReevalDataFetcher:
                 if discovered:
                     logger.info(f"Added {len(discovered)} news-discovered symbols to candidate pool.")
             except Exception as e:
-                logger.warning(f"News stock discovery failed: {e}")
+                logger.warning(f"News stock discovery failed: {type(e).__name__}: {e}")
 
         return available_pairs, btp_pairs, etf_pairs, old_symbols, last_key
 
@@ -477,7 +477,7 @@ class ReevalDataFetcher:
                     if base in extra_raw and extra_raw[base].get('last'):
                         tickers[pair] = extra_raw[base]
             except Exception as e:
-                logger.warning(f"Failed to fetch missing tickers for shortlist: {e}")
+                logger.warning(f"Failed to fetch missing tickers for shortlist: {type(e).__name__}: {e}")
 
         # --- Detect upcoming corporate events from news (parallelized) ---
         symbol_events: Dict[str, Dict[str, Any]] = {}
@@ -515,8 +515,8 @@ class ReevalDataFetcher:
             full_breadth_raw = await asyncio.to_thread(engine.redis.get, "market:breadth:full")
             if full_breadth_raw:
                 full_market_breadth = json.loads(full_breadth_raw)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"fetch_shortlist_context: failed to read full market breadth from Redis: {type(e).__name__}: {e}")
 
         vix = await engine._fetch_vix()
 
