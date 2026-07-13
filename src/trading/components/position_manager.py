@@ -356,7 +356,7 @@ class PositionManager:
         """
         engine = self.engine
         equity_series = []
-        running_equity = engine.initial_balance + engine._realized_pnl_offset
+        running_equity = engine.initial_balance + self.shared_state._realized_pnl_offset
         for trade in trades_snapshot:
             if trade.get("side") == "sell":
                 running_equity += trade.get("realized_pnl", 0.0)
@@ -367,7 +367,7 @@ class PositionManager:
         unrealized_pnl = 0.0
         try:
             pos_tickers = engine._market_data_manager._get_all_position_tickers_sync()
-            for sym, pos in engine.positions.items():
+            for sym, pos in self.shared_state.positions.items():
                 t = pos_tickers.get(sym)
                 if t and t.get('last'):
                     unrealized_pnl += (t['last'] - pos['price']) * pos['amount']
@@ -391,13 +391,13 @@ class PositionManager:
         engine = self.engine
         now = time.time()
         if (
-            engine._trade_history_version == engine._perf_cache_trade_count
+            self.shared_state._trade_history_version == engine._perf_cache_trade_count
             and engine._perf_cache is not None
             and (now - engine._perf_cache_time) < 60
         ):
             return engine._perf_cache
 
-        trades_snapshot = list(engine.trade_history)
+        trades_snapshot = list(self.shared_state.trade_history)
 
         from collections import defaultdict
 
@@ -487,7 +487,7 @@ class PositionManager:
             "stock_performance": symbol_perf,
             "strategy_performance": strategy_perf,
             "equity_curve": {
-                "total_pnl": round(engine._realized_pnl_offset + sum(t.get("realized_pnl", 0.0) for t in trades_snapshot if t.get("side") == "sell") + total_dividends, 4),
+                "total_pnl": round(self.shared_state._realized_pnl_offset + sum(t.get("realized_pnl", 0.0) for t in trades_snapshot if t.get("side") == "sell") + total_dividends, 4),
                 "total_dividends": round(total_dividends, 4),
                 "recent_10_trades_pnl": round(total_recent_pnl, 4),
                 "trend": trend,
@@ -498,7 +498,7 @@ class PositionManager:
         }
 
         engine._perf_cache = result
-        engine._perf_cache_trade_count = engine._trade_history_version
+        engine._perf_cache_trade_count = self.shared_state._trade_history_version
         engine._perf_cache_time = now
 
         return result
