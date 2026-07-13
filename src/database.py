@@ -393,6 +393,17 @@ def _get_init_statements() -> List[str]:
         )
         """,
         f"""
+        CREATE TABLE IF NOT EXISTS latest_close_prices (
+            symbol TEXT PRIMARY KEY,
+            last REAL,
+            prev_close REAL,
+            volume REAL,
+            candle_timestamp {bigint_type},
+            timeframe TEXT,
+            updated_at {float_type} NOT NULL
+        )
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS discovered_symbols (
             symbol TEXT PRIMARY KEY,
             isin TEXT,
@@ -1282,6 +1293,87 @@ def cleanup_old_news(retention_seconds: int):
         conn.close()
 
 
+def _update_latest_close_price(conn, full_symbol: str):
+    """Compute and upsert the latest close price for a single symbol into the latest_close_prices table."""
+    base_symbol = full_symbol.split('/')[0] if '/' in full_symbol else full_symbol
+
+    # Query 1: latest candle across all timeframes
+    sql_all_tf = _adapt_sql(
+        """
+        WITH RankedCandles AS (
+            SELECT close, volume, timestamp, timeframe,
+                   ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY timestamp DESC) as rn
+            FROM market_data
+            WHERE symbol = %s
+        ),
+        LatestTimeframe AS (
+            SELECT timeframe
+            FROM (
+                SELECT timeframe, timestamp,
+                       ROW_NUMBER() OVER (ORDER BY timestamp DESC) as tf_rn
+                FROM RankedCandles
+                WHERE rn = 1
+            ) t
+            WHERE tf_rn = 1
+        )
+        SELECT r.close, r.volume, r.timestamp, r.timeframe
+        FROM RankedCandles r
+        JOIN LatestTimeframe l ON r.timeframe = l.timeframe
+        WHERE r.rn = 1
+        """
+    )
+    row = conn.execute(sql_all_tf, (full_symbol,)).fetchone()
+
+    if not row or row["close"] is None:
+        return
+
+    last = float(row["close"])
+    volume = float(row["volume"]) if row["volume"] is not None else None
+    candle_timestamp = row["timestamp"]
+    timeframe = row["timeframe"]
+
+    # Query 2: latest 2 daily candles for prev_close
+    sql_daily = _adapt_sql(
+        """
+        WITH RankedDaily AS (
+            SELECT close, timestamp,
+                   ROW_NUMBER() OVER (ORDER BY timestamp DESC) as rn
+            FROM market_data
+            WHERE symbol = %s AND timeframe = '1d'
+        )
+        SELECT close
+        FROM RankedDaily
+        WHERE rn = 2
+        """
+    )
+    daily_row = conn.execute(sql_daily, (full_symbol,)).fetchone()
+    prev_close = float(daily_row["close"]) if daily_row and daily_row["close"] is not None else None
+
+    # Upsert into latest_close_prices
+    if _backend == "postgresql":
+        upsert_sql = _adapt_sql(
+            """
+            INSERT INTO latest_close_prices (symbol, last, prev_close, volume, candle_timestamp, timeframe, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol) DO UPDATE SET
+                last = EXCLUDED.last,
+                prev_close = EXCLUDED.prev_close,
+                volume = EXCLUDED.volume,
+                candle_timestamp = EXCLUDED.candle_timestamp,
+                timeframe = EXCLUDED.timeframe,
+                updated_at = EXCLUDED.updated_at
+            """
+        )
+    else:
+        upsert_sql = _adapt_sql(
+            """
+            INSERT OR REPLACE INTO latest_close_prices (symbol, last, prev_close, volume, candle_timestamp, timeframe, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
+        )
+    conn.execute(upsert_sql, (base_symbol, last, prev_close, volume, candle_timestamp, timeframe, time.time()))
+
+
 @retry_on_db_lock()
 def insert_ohlcv_batch(symbol: str, timeframe: str, candles: List[List]):
     """Insert OHLCV candles into the market_data table, ignoring duplicates."""
@@ -1319,6 +1411,7 @@ def insert_ohlcv_batch(symbol: str, timeframe: str, candles: List[List]):
 
         if valid_candles:
             conn.executemany(sql, valid_candles)
+            _update_latest_close_price(conn, symbol)
             conn.commit()
             logger.debug(f"Inserted {len(valid_candles)} valid OHLCV candles for {symbol} {timeframe}")
             # Invalidate the latest close price cache for this symbol
@@ -1744,148 +1837,27 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     try:
         if _backend == "postgresql":
             sql = _adapt_sql(
-                """
-                WITH RankedCandles AS (
-                    SELECT symbol, close, volume, timestamp, timeframe,
-                           ROW_NUMBER() OVER (PARTITION BY symbol, timeframe ORDER BY timestamp DESC) as rn
-                    FROM market_data
-                    WHERE symbol = ANY(%s)
-                ),
-                LatestTimeframe AS (
-                    SELECT symbol, timeframe
-                    FROM (
-                        SELECT symbol, timeframe, timestamp,
-                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as tf_rn
-                        FROM RankedCandles
-                        WHERE rn = 1
-                    ) t
-                    WHERE tf_rn = 1
-                )
-                SELECT r.symbol, r.close, r.volume, r.timestamp, r.timeframe
-                FROM RankedCandles r
-                JOIN LatestTimeframe l ON r.symbol = l.symbol AND r.timeframe = l.timeframe
-                WHERE r.rn <= 2
-                ORDER BY r.symbol, r.timestamp DESC
-                """
+                "SELECT symbol, last, prev_close, volume, candle_timestamp, timeframe FROM latest_close_prices WHERE symbol = ANY(%s)"
             )
-            rows = conn.execute(sql, (full_pairs,)).fetchall()
+            rows = conn.execute(sql, (missing_symbols,)).fetchall()
         else:
-            rows = []
-            chunk_size = 500
-            for i in range(0, len(full_pairs), chunk_size):
-                chunk = full_pairs[i:i + chunk_size]
-                placeholders = ",".join(["?" for _ in chunk])
-                sql = _adapt_sql(
-                    f"""
-                    WITH RankedCandles AS (
-                        SELECT symbol, close, volume, timestamp, timeframe,
-                               ROW_NUMBER() OVER (PARTITION BY symbol, timeframe ORDER BY timestamp DESC) as rn
-                        FROM market_data
-                        WHERE symbol IN ({placeholders})
-                    ),
-                    LatestTimeframe AS (
-                        SELECT symbol, timeframe
-                        FROM (
-                            SELECT symbol, timeframe, timestamp,
-                                   ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as tf_rn
-                            FROM RankedCandles
-                            WHERE rn = 1
-                        ) t
-                        WHERE tf_rn = 1
-                    )
-                    SELECT r.symbol, r.close, r.volume, r.timestamp, r.timeframe
-                    FROM RankedCandles r
-                    JOIN LatestTimeframe l ON r.symbol = l.symbol AND r.timeframe = l.timeframe
-                    WHERE r.rn <= 2
-                    ORDER BY r.symbol, r.timestamp DESC
-                    """
-                )
-                rows.extend(conn.execute(sql, chunk).fetchall())
+            placeholders = ",".join(["?" for _ in missing_symbols])
+            sql = _adapt_sql(
+                f"SELECT symbol, last, prev_close, volume, candle_timestamp, timeframe FROM latest_close_prices WHERE symbol IN ({placeholders})"
+            )
+            rows = conn.execute(sql, missing_symbols).fetchall()
 
         result = {}
         for row in rows:
-            db_symbol = row["symbol"]
-            # Strip /currency suffix to get base symbol for matching
-            db_base = db_symbol.split('/')[0]
-            if db_base in base_symbols and row["close"] is not None and row["close"] > 0:
-                if db_base not in result:
-                    # Latest row (due to ORDER BY timestamp DESC)
-                    result[db_base] = {
-                        "last": float(row["close"]),
-                        "volume": float(row["volume"]) if row["volume"] is not None else None,
-                        "prev_close": None,
-                        "candle_timestamp": row["timestamp"],
-                        "timeframe": row["timeframe"],
-                    }
-                else:
-                    # Second row (older timestamp) — only use as prev_close
-                    # if it's from the SAME timeframe as the latest candle.
-                    # Otherwise the percentage change would be meaningless.
-                    if row["timeframe"] == result[db_base]["timeframe"]:
-                        result[db_base]["prev_close"] = float(row["close"])
-
-        # --- Also fetch the latest 2 daily (1d) candles to compute a proper 24h change.
-        # The main query above gets the latest candles across ALL timeframes, which may
-        # mix timeframes (e.g., 5Y and 1M), making the prev_close / change_24h
-        # calculation incorrect.  We specifically query 1d candles so that prev_close
-        # always represents the previous trading day's close.
-        if base_symbols:
-            daily_pairs = [f"{bs}/{settings.BASE_CURRENCY}" for bs in base_symbols]
-            if _backend == "postgresql":
-                sql_daily = _adapt_sql(
-                    """
-                    WITH RankedDaily AS (
-                        SELECT symbol, close, timestamp,
-                               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
-                        FROM market_data
-                        WHERE symbol = ANY(%s) AND timeframe = '1d'
-                    )
-                    SELECT symbol, close, timestamp
-                    FROM RankedDaily
-                    WHERE rn <= 2
-                    ORDER BY symbol, timestamp DESC
-                    """
-                )
-                daily_rows = conn.execute(sql_daily, (daily_pairs,)).fetchall()
-            else:
-                daily_rows = []
-                for i in range(0, len(daily_pairs), chunk_size):
-                    chunk = daily_pairs[i:i + chunk_size]
-                    placeholders = ",".join(["?" for _ in chunk])
-                    sql_daily = _adapt_sql(
-                        f"""
-                        WITH RankedDaily AS (
-                            SELECT symbol, close, timestamp,
-                                   ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
-                            FROM market_data
-                            WHERE symbol IN ({placeholders}) AND timeframe = '1d'
-                        )
-                        SELECT symbol, close, timestamp
-                        FROM RankedDaily
-                        WHERE rn <= 2
-                        ORDER BY symbol, timestamp DESC
-                        """
-                    )
-                    daily_rows.extend(conn.execute(sql_daily, chunk).fetchall())
-
-            # Build a dict: base_symbol -> previous daily close (2nd latest 1d candle)
-            daily_seen: set = set()
-            daily_prev_close: Dict[str, float] = {}
-            for row in daily_rows:
-                db_symbol = row["symbol"]
-                db_base = db_symbol.split('/')[0]
-                if db_base in base_symbols and row["close"] is not None and row["close"] > 0:
-                    if db_base not in daily_seen:
-                        # First (latest) 1d candle — mark as seen, skip
-                        daily_seen.add(db_base)
-                    else:
-                        # Second 1d candle — this is the previous trading day's close
-                        daily_prev_close[db_base] = float(row["close"])
-
-            # Override prev_close with daily data when available
-            for db_base, prev_close in daily_prev_close.items():
-                if db_base in result:
-                    result[db_base]["prev_close"] = prev_close
+            sym = row["symbol"]
+            if sym in missing_symbols and row["last"] is not None and row["last"] > 0:
+                result[sym] = {
+                    "last": float(row["last"]),
+                    "prev_close": float(row["prev_close"]) if row["prev_close"] is not None else None,
+                    "volume": float(row["volume"]) if row["volume"] is not None else None,
+                    "candle_timestamp": row["candle_timestamp"],
+                    "timeframe": row["timeframe"],
+                }
     finally:
         conn.close()
 
