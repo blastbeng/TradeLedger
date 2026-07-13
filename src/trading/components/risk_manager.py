@@ -1007,12 +1007,12 @@ class RiskManager:
                     return True
                 # First expiry – ask LLM
                 expired_count = pos.get("_max_hold_expired_count", 0) + 1
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     pos["_max_hold_expired"] = True
                     pos["_max_hold_expired_count"] = expired_count
 
                 # Force re‑evaluation on the next main loop tick
-                engine._last_strategy_eval.pop(symbol, None)
+                self.shared_state._last_strategy_eval.pop(symbol, None)
 
                 logger.info(
                     f"Max hold time expired for {symbol} (attempt {expired_count}) – asking LLM to decide."
