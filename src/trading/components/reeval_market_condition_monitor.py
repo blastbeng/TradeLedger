@@ -71,7 +71,8 @@ class ReevalMarketConditionMonitor:
                                 await asyncio.to_thread(
                                     engine.redis.setex, prev_key, 3600, str(current_compound)
                                 )
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"check_market_conditions: sentiment check failed for {symbol}: {type(e).__name__}: {e}")
                     continue
 
         # 2. Unusually active market (many stocks with >5% daily change)
@@ -88,8 +89,8 @@ class ReevalMarketConditionMonitor:
                 if large_movers >= 5:
                     logger.info(f"Unusually active market: {large_movers} stocks with >5% daily change, triggering re-evaluation")
                     should_trigger = True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"check_market_conditions: active market check failed: {type(e).__name__}: {e}")
 
         # 3. Extreme indicator values or BB squeeze breakout on tracked symbols
         if not should_trigger:

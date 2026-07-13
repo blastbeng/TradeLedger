@@ -1260,8 +1260,8 @@ class RiskManager:
                     tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
                     if tp_order_obj is not None and tp_order_obj.status == "filled":
                         tp_filled = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"check_native_exit_triggers: failed to check TP fill for {symbol}: {type(e).__name__}: {e}")
 
                 if tp_filled:
                     logger.info(f"Take-profit order {tp_order_id} filled for {symbol}, processing native fill.")

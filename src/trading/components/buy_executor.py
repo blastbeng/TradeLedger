@@ -327,7 +327,7 @@ class BuyExecutor:
         except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
             async with self.shared_state._cycle_spent_lock:
                 self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - amount)
-            logger.error(f"Buy order failed for {symbol}: {e}")
+            logger.error(f"Buy order failed for {symbol}: {type(e).__name__}: {e}")
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"❌ Buy order failed for {display_symbol}: {e}",
