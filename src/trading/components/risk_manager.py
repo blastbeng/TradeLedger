@@ -1130,7 +1130,7 @@ class RiskManager:
                     f"OCO take-profit {tp_order_id} already filled for {symbol}; "
                     f"skipping cancel to avoid double-sell."
                 )
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     pos.pop("take_profit_order_id", None)
             else:
                 try:
@@ -1141,16 +1141,16 @@ class RiskManager:
                     )
                 except Exception as e:
                     logger.warning(f"Failed to cancel OCO TP {tp_order_id} for {symbol}: {e}")
-                async with engine._queued_orders_lock:
-                    engine.queued_orders = [
-                        q for q in engine.queued_orders
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders = [
+                        q for q in self.shared_state.queued_orders
                         if q.get("order_id") != tp_order_id
                     ]
-                    for q in engine.queued_orders:
+                    for q in self.shared_state.queued_orders:
                         if q.get("order_id") == sl_order_id:
                             q["oco_pair"] = None
                             break
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     pos.pop("take_profit_order_id", None)
                 if engine.notifier:
                     await engine.notifier.send_notification(
@@ -1212,7 +1212,7 @@ class RiskManager:
                     f"OCO stop-loss {sl_order_id} already filled for {symbol}; "
                     f"skipping cancel to avoid double-sell."
                 )
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     pos.pop("stop_loss_order_id", None)
                     pos.pop("stop_loss_order_type", None)
                     pos.pop("_native_stop_price", None)
@@ -1225,16 +1225,16 @@ class RiskManager:
                     )
                 except Exception as e:
                     logger.warning(f"Failed to cancel OCO stop {sl_order_id} for {symbol}: {e}")
-                async with engine._queued_orders_lock:
-                    engine.queued_orders = [
-                        q for q in engine.queued_orders
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders = [
+                        q for q in self.shared_state.queued_orders
                         if q.get("order_id") != sl_order_id
                     ]
-                    for q in engine.queued_orders:
+                    for q in self.shared_state.queued_orders:
                         if q.get("order_id") == tp_order_id:
                             q["oco_pair"] = None
                             break
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     pos.pop("stop_loss_order_id", None)
                     pos.pop("stop_loss_order_type", None)
                     pos.pop("_native_stop_price", None)
@@ -1272,12 +1272,12 @@ class RiskManager:
                         await asyncio.to_thread(engine.trader.cancel_order, tp_order_id)
                     except Exception:
                         pass
-                    async with engine._queued_orders_lock:
-                        engine.queued_orders = [
-                            q for q in engine.queued_orders
+                    async with self.shared_state._queued_orders_lock:
+                        self.shared_state.queued_orders = [
+                            q for q in self.shared_state.queued_orders
                             if q.get("order_id") != tp_order_id
                         ]
-                    async with engine._positions_lock:
+                    async with self.shared_state._positions_lock:
                         pos.pop("take_profit_order_id", None)
                     await self.event_bus.publish(
                         "execute_signal",
