@@ -384,6 +384,8 @@ def get_cached_llm_response(
             model = fb_model
             base_url = fb_base_url
             api_key = fb_api_key
+        else:
+            logger.warning("Market is closed but no fallback model is configured for model_type=%s. Using primary model to avoid downtime.", model_type)
 
     # Build cache key
     if messages is not None:
@@ -943,17 +945,7 @@ def _should_use_primary_model() -> bool:
             if 0 < time_to_open <= 3600:  # within 60 minutes of open
                 return True  # pre-market - use primary models
 
-        # Market is closed - check if there are open positions that need management
-        # (stop-loss reviews, max-hold decisions, etc. require primary model quality)
-        open_positions_raw = redis_client.get("trading:open_positions_count")
-        if open_positions_raw:
-            try:
-                if int(open_positions_raw) > 0:
-                    return True  # Has open positions - use primary models for management
-            except (ValueError, TypeError):
-                pass
-
-        return False  # market closed, no open positions - use fallback only
+        return False  # market is closed - use fallback models to save tokens
     except Exception:
         return True  # Default to primary if we can't determine market status
 
