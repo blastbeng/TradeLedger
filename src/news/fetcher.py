@@ -11,17 +11,12 @@ import feedparser
 from bs4 import BeautifulSoup
 from urllib.parse import quote
 
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-
-from langdetect import detect
-
 from src.config.settings import settings
 from src.database import get_aggregate_sentiment_from_db
 from src.utils.redis_client import get_redis_client
+from src.llm.llm_client import get_llm_response
 
 logger = logging.getLogger(__name__)
-
-_sentiment_analyzer = SentimentIntensityAnalyzer()
 
 # Event keyword categories for detecting upcoming corporate events from news
 _EVENT_KEYWORDS = {
@@ -181,23 +176,41 @@ def _is_feed_disabled(feed_url: str) -> bool:
 
 
 def _analyze_sentiment(text: str) -> Dict[str, Any]:
-    """Return sentiment label and compound score for a text."""
-    # VADER is designed for English. Skip sentiment for non-English text.
-    try:
-        if detect(text) != 'en':
-            return {"label": "neutral", "compound": 0.0}
-    except Exception:
-        pass  # Fallback to VADER if detection fails (e.g., empty text)
+    """Return sentiment label and compound score for a text using the weak LLM model."""
+    if not text or not text.strip():
+        return {"label": "neutral", "compound": 0.0}
 
-    scores = _sentiment_analyzer.polarity_scores(text)
-    compound = scores['compound']
-    if compound >= 0.05:
-        label = "positive"
-    elif compound <= -0.05:
-        label = "negative"
-    else:
-        label = "neutral"
-    return {"label": label, "compound": round(compound, 4)}
+    system_prompt = (
+        "You are a multilingual sentiment analysis engine. "
+        "Analyze the sentiment of the provided text and return a JSON object with two keys: "
+        '"label" (which must be "positive", "negative", or "neutral") and '
+        '"compound" (a float score between -1.0 and 1.0, where -1.0 is very negative, 1.0 is very positive, and 0.0 is neutral). '
+        "Output ONLY the raw JSON object, no other text."
+    )
+    prompt = f"Analyze the sentiment of this text:\n\n{text}"
+
+    try:
+        response_text = get_llm_response(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            model_type="weak",
+            request_type="sentiment_analysis"
+        )
+        # Extract JSON from response (handles both raw JSON and markdown-wrapped JSON)
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group(0))
+            label = str(data.get("label", "neutral")).lower()
+            compound = float(data.get("compound", 0.0))
+            if label not in ("positive", "negative", "neutral"):
+                label = "neutral"
+            # Clamp compound to [-1.0, 1.0]
+            compound = max(-1.0, min(1.0, compound))
+            return {"label": label, "compound": round(compound, 4)}
+    except Exception as e:
+        logger.warning(f"LLM sentiment analysis failed: {type(e).__name__}: {e}")
+
+    return {"label": "neutral", "compound": 0.0}
 
 
 def _is_relevant(symbol: str, title: str, summary: str, name: Optional[str] = None) -> bool:
