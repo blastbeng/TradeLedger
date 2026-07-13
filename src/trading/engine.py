@@ -1912,6 +1912,13 @@ class TradingEngine:
         await asyncio.sleep(60)  # initial delay
         while self._running:
             try:
+                # Skip LLM pause/resume check if auto-resume cooldown is active
+                cooldown_active = await asyncio.to_thread(self.redis.get, "trading:auto_resume_cooldown")
+                if cooldown_active:
+                    logger.debug("Skipping LLM pause/resume check – auto-resume cooldown is active.")
+                    await asyncio.sleep(1800)
+                    continue
+
                 # Skip LLM pause/resume check if duration-based auto-resume is imminent
                 pause_duration_raw = await asyncio.to_thread(self.redis.get, "trading:pause_duration")
                 pause_start_raw = await asyncio.to_thread(self.redis.get, "trading:pause_start")
