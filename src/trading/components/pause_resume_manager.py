@@ -111,7 +111,7 @@ class PauseResumeManager:
             if pause_reason:
                 prompt_parts.append(f"Pause reason: {pause_reason}")
             prompt_parts.append(f"Account P&L: daily={daily_pnl:.4f}, total={total_pnl:.4f}, drawdown={drawdown_pct:.2f}%")
-            if engine.positions:
+            if self.shared_state.positions:
                 prompt_parts.append(f"Unrealized P&L of open positions: {total_unrealized_pnl:.4f}")
             if consecutive_losses > 0:
                 prompt_parts.append(f"Consecutive losing trades: {consecutive_losses}")
