@@ -24,6 +24,7 @@ class ReevalDataFetcher:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
 
     async def fetch_and_filter_candidate_assets(
@@ -38,7 +39,7 @@ class ReevalDataFetcher:
         last_key = "trading:last_symbol_eval"
 
         logger.info("Re-evaluation step 2/12: Fetching tradable assets, BTPs, and ETFs...")
-        old_symbols = list(engine.current_symbols)
+        old_symbols = list(self.shared_state.current_symbols)
         plain_assets = await engine._market_data_manager.get_tradable_assets()
         stock_pairs = [f"{sym}/{engine.base_currency}" for sym in plain_assets]
 
@@ -506,7 +507,7 @@ class ReevalDataFetcher:
             "positive_count": positive_count,
             "total_count": total_count,
         }
-        engine._market_breadth = market_breadth
+        self.shared_state._market_breadth = market_breadth
 
         # Read full market breadth from Redis (computed by background task)
         full_market_breadth = None
@@ -621,7 +622,7 @@ class ReevalDataFetcher:
             )
             # Dynamic TTL: shorter during high-volatility / extreme market conditions
             corr_ttl = 1800  # default 30 minutes
-            _mb = getattr(engine, '_market_breadth', None)
+            _mb = self.shared_state._market_breadth
             if _mb:
                 pos_pct = _mb.get("positive_pct", 50)
                 if pos_pct > 80 or pos_pct < 20:
