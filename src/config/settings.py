@@ -762,6 +762,22 @@ class Settings(BaseSettings):
     LLM_ACTUATOR_THINKING_ENABLED: bool = False
     LLM_WEAK_THINKING_ENABLED: bool = False
 
+    # Max input tokens for main models (defaults: 1M for mind/actuator, 128K for weak)
+    OPENAI_MIND_MAX_INPUT_TOKENS: int = 1_000_000
+    OPENAI_ACTUATOR_MAX_INPUT_TOKENS: int = 1_000_000
+    OPENAI_WEAK_MAX_INPUT_TOKENS: int = 128_000
+    OLLAMA_MIND_MAX_INPUT_TOKENS: int = 1_000_000
+    OLLAMA_ACTUATOR_MAX_INPUT_TOKENS: int = 1_000_000
+    OLLAMA_WEAK_MAX_INPUT_TOKENS: int = 128_000
+
+    # Max input tokens for fallback models (defaults: 16K for mind/actuator, 8K for weak)
+    OPENAI_MIND_FALLBACK_MAX_INPUT_TOKENS: int = 16_384
+    OPENAI_ACTUATOR_FALLBACK_MAX_INPUT_TOKENS: int = 16_384
+    OPENAI_WEAK_FALLBACK_MAX_INPUT_TOKENS: int = 8_192
+    OLLAMA_MIND_FALLBACK_MAX_INPUT_TOKENS: int = 16_384
+    OLLAMA_ACTUATOR_FALLBACK_MAX_INPUT_TOKENS: int = 16_384
+    OLLAMA_WEAK_FALLBACK_MAX_INPUT_TOKENS: int = 8_192
+
     # Fallback provider settings (empty = use global LLM_FALLBACK_PROVIDER)
     LLM_FALLBACK_PROVIDER: str = ""
     LLM_MIND_FALLBACK_PROVIDER: str = ""

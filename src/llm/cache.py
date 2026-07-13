@@ -16,6 +16,39 @@ def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
     return len(text) // 4
 
+def _get_max_input_tokens(provider: str, model_type: str, is_fallback: bool) -> int:
+    """Return the max input tokens for the given provider, model type, and fallback status."""
+    if provider == "openai":
+        if is_fallback:
+            if model_type == "mind":
+                return settings.OPENAI_MIND_FALLBACK_MAX_INPUT_TOKENS
+            elif model_type == "weak":
+                return settings.OPENAI_WEAK_FALLBACK_MAX_INPUT_TOKENS
+            else:
+                return settings.OPENAI_ACTUATOR_FALLBACK_MAX_INPUT_TOKENS
+        else:
+            if model_type == "mind":
+                return settings.OPENAI_MIND_MAX_INPUT_TOKENS
+            elif model_type == "weak":
+                return settings.OPENAI_WEAK_MAX_INPUT_TOKENS
+            else:
+                return settings.OPENAI_ACTUATOR_MAX_INPUT_TOKENS
+    else:  # ollama
+        if is_fallback:
+            if model_type == "mind":
+                return settings.OLLAMA_MIND_FALLBACK_MAX_INPUT_TOKENS
+            elif model_type == "weak":
+                return settings.OLLAMA_WEAK_FALLBACK_MAX_INPUT_TOKENS
+            else:
+                return settings.OLLAMA_ACTUATOR_FALLBACK_MAX_INPUT_TOKENS
+        else:
+            if model_type == "mind":
+                return settings.OLLAMA_MIND_MAX_INPUT_TOKENS
+            elif model_type == "weak":
+                return settings.OLLAMA_WEAK_MAX_INPUT_TOKENS
+            else:
+                return settings.OLLAMA_ACTUATOR_MAX_INPUT_TOKENS
+
 def _normalize_text_for_cache(text: str) -> str:
     """Round all decimal numbers in text to 5 significant figures for stable cache keys.
 
