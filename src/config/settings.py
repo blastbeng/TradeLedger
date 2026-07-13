@@ -240,6 +240,18 @@ class Settings(BaseSettings):
             raise ValueError("PORTFOLIO_COOLDOWN_SECONDS must be >= 60")
         return v
 
+    # Maximum daily loss as a fraction of initial balance (0.05 = 5%).
+    # When daily realized losses exceed this fraction of the initial balance,
+    # trading is paused until the next calendar day.
+    MAX_DAILY_LOSS_PCT: float = 0.05
+
+    @field_validator("MAX_DAILY_LOSS_PCT")
+    @classmethod
+    def validate_max_daily_loss_pct(cls, v: float) -> float:
+        if not (0.0 < v <= 1.0):
+            raise ValueError("MAX_DAILY_LOSS_PCT must be between 0.0 and 1.0")
+        return v
+
     # Minimum LLM pause duration (seconds) – LLM cannot resume before this
     MIN_LLM_PAUSE_DURATION: int = 1800
 

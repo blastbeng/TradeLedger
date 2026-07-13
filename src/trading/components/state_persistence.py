@@ -10,6 +10,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -30,6 +31,7 @@ class StatePersistence:
         self.engine = engine
         self.shared_state = engine.shared_state
         self.event_bus = event_bus
+        self._persistence_lock = threading.Lock()
         self.event_bus.subscribe("save_state", self.save_state)
         self.event_bus.subscribe("get_pause_status", self.get_pause_status)
 
@@ -51,8 +53,15 @@ class StatePersistence:
         os._exit(0)
 
     def _sync_save_state(self):
-        """Synchronously save state to prevent data loss on crash/shutdown."""
+        """Synchronously save state to prevent data loss on crash/shutdown.
+
+        Uses a threading lock to avoid concurrent writes with the async save path.
+        If the async save is in progress, waits up to 2 seconds for it to complete.
+        """
         engine = self.engine
+        if not self._persistence_lock.acquire(blocking=True, timeout=2.0):
+            logger.warning("Could not acquire persistence lock for sync save — async save in progress.")
+            return
         try:
             save_trading_state("current_symbols", self.shared_state.current_symbols)
             save_trading_state("positions", dict(self.shared_state.positions))
@@ -80,6 +89,8 @@ class StatePersistence:
             save_trading_state("global_risk_multiplier", self.shared_state._global_risk_multiplier)
         except Exception as e:
             logger.critical(f"Failed to save state on exit: {e}", exc_info=True)
+        finally:
+            self._persistence_lock.release()
 
     async def save_state(self, force: bool = False):
         """Persist current symbols, positions, and trade history to SQLite.
@@ -106,6 +117,8 @@ class StatePersistence:
     async def _save_state_impl(self):
         """Actual state persistence (must be called under _state_lock)."""
         engine = self.engine
+        # Acquire threading lock to prevent concurrent writes from _sync_save_state
+        await asyncio.to_thread(self._persistence_lock.acquire)
         try:
             await asyncio.to_thread(save_trading_state, "current_symbols", self.shared_state.current_symbols)
             async with self.shared_state._positions_lock:
@@ -137,6 +150,14 @@ class StatePersistence:
         except Exception as e:
             logger.critical(f"Failed to save trading state: {e}", exc_info=True)
             raise RuntimeError(f"Failed to save trading state: {e}")
+        finally:
+            self._persistence_lock.release()
+
+        # Store open positions count in Redis for _should_use_primary_model() check
+        try:
+            engine.redis.set("trading:open_positions_count", str(len(self.shared_state.positions)))
+        except Exception:
+            pass
 
         logger.debug("Saved trading state: %d symbols, %d positions, %d trades",
                      len(self.shared_state.current_symbols), len(self.shared_state.positions), len(self.shared_state.trade_history))

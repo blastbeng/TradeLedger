@@ -7,6 +7,7 @@ Extracted from TradingEngine to reduce class size and improve maintainability.
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from src.config.settings import settings
@@ -91,6 +92,9 @@ class RiskManager:
 
         # --- Portfolio-level loss cooldown ---
         await self._check_portfolio_loss_cooldown()
+
+        # --- Daily loss limit ---
+        await self._check_daily_loss_limit()
 
         # Read LLM-decided review limits from Redis once (before the per-position loop)
         _review_limits = await self.read_review_limits()
@@ -240,6 +244,76 @@ class RiskManager:
                 await engine.notifier.send_notification(
                     f"🧊 Portfolio cooldown triggered after {consec_losses} consecutive losses. Trading paused for {cooldown_seconds // 60} minutes.",
                     summary={"action": "PAUSE", "reason": "Portfolio loss cooldown"}
+                )
+
+    async def _check_daily_loss_limit(self) -> None:
+        """Check if daily realized losses exceed the maximum daily loss limit.
+
+        When daily realized P&L falls below -MAX_DAILY_LOSS_PCT * initial_balance,
+        trading is paused until the next calendar day (auto-resume at midnight UTC).
+        """
+        engine = self.engine
+        if not is_redis_available():
+            return
+
+        # Check if already paused by daily loss limit
+        source_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
+        source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
+        paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
+
+        if source == "daily_loss_limit" and paused:
+            # Check if it's a new day — auto-resume
+            pause_start_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_start")
+            if pause_start_raw:
+                try:
+                    pause_start_ts = float(pause_start_raw)
+                    pause_date = datetime.fromtimestamp(pause_start_ts, tz=timezone.utc).date()
+                    today = datetime.now(timezone.utc).date()
+                    if today > pause_date:
+                        logger.info("Auto-resuming from daily loss limit: new day started.")
+                        pause_keys = [
+                            "trading:paused",
+                            "trading:pause_source",
+                            "trading:pause_start",
+                            "trading:pause_duration",
+                            "trading:pause_reason",
+                            "trading:llm_pause_time",
+                        ]
+                        for key in pause_keys:
+                            await asyncio.to_thread(engine.redis.delete, key)
+                        if engine.notifier:
+                            await engine.notifier.send_notification(
+                                "▶️ Auto-resumed from daily loss limit (new day started).",
+                                summary={"action": "RESUME", "reason": "Daily loss limit auto-resume (new day)"}
+                            )
+                        engine._reeval_trigger.set()
+                except (ValueError, TypeError):
+                    pass
+            return
+
+        # Skip if trading is already paused by another source
+        if paused:
+            return
+
+        daily_pnl = engine._daily_realized_pnl()
+        max_daily_loss = settings.MAX_DAILY_LOSS_PCT * engine.initial_balance
+
+        if daily_pnl < -max_daily_loss:
+            logger.warning(
+                f"Daily loss limit reached: daily P&L={daily_pnl:.2f}, "
+                f"max loss={max_daily_loss:.2f} ({settings.MAX_DAILY_LOSS_PCT:.2%} of initial balance). "
+                f"Pausing trading until tomorrow."
+            )
+            await asyncio.to_thread(engine.redis.set, "trading:paused", "1")
+            await asyncio.to_thread(engine.redis.set, "trading:pause_source", "daily_loss_limit")
+            await asyncio.to_thread(engine.redis.set, "trading:pause_start", str(time.time()))
+            await asyncio.to_thread(engine.redis.set, "trading:pause_reason", f"Daily loss limit reached ({daily_pnl:.2f})")
+
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"🛑 Daily loss limit reached: {daily_pnl:.2f} {engine.base_currency} "
+                    f"(max: -{max_daily_loss:.2f}). Trading paused until tomorrow.",
+                    summary={"action": "PAUSE", "reason": "Daily loss limit reached"}
                 )
 
     async def _fetch_risk_tickers(self, symbols_to_check: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:

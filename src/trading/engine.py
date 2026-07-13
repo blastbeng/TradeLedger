@@ -1029,8 +1029,11 @@ class TradingEngine:
                         else:
                             remaining_seconds = 0
 
-                    # Periodic update every 30 minutes (1800 seconds)
-                    if now_ts - self._last_market_closed_notify_time >= 1800:
+                    # Periodic update every 30 minutes on weekdays, 2 hours on weekends
+                    now_rome_check = clock.timestamp.astimezone(ZoneInfo(settings.MARKET_TIMEZONE)) if clock else None
+                    is_weekend = now_rome_check.weekday() >= 5 if now_rome_check else False
+                    notify_interval = 7200 if is_weekend else 1800
+                    if now_ts - self._last_market_closed_notify_time >= notify_interval:
                         if remaining_seconds > 0:
                             hours = int(remaining_seconds // 3600)
                             minutes = int((remaining_seconds % 3600) // 60)

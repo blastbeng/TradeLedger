@@ -389,6 +389,12 @@ class OrderExecutor:
 
         if status == 'filled':
             logger.info(f"Queued limit order {order_id} for {queued['symbol']} completely filled.")
+            # Safety: refund any remaining amount for buy orders (handles rounding edge cases
+            # where filled_cost doesn't exactly equal original_amount due to slippage/fees)
+            if queued['side'] == 'buy' and queued.get('amount', 0) > 0:
+                async with self.shared_state._cycle_spent_lock:
+                    self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued['amount'])
+                logger.debug(f"Refunded remaining {queued['amount']:.2f} to _cycle_spent for filled buy order {order_id}")
             async with self.shared_state._queued_orders_lock:
                 if queued in self.shared_state.queued_orders:
                     self.shared_state.queued_orders.remove(queued)

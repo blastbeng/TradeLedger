@@ -17,20 +17,22 @@ def estimate_tokens(text: str) -> int:
     return len(text) // 4
 
 def _normalize_text_for_cache(text: str) -> str:
-    """Round all decimal numbers in text to 2 decimal places for stable cache keys.
+    """Round all decimal numbers in text to 4 decimal places for stable cache keys.
 
     This normalizes the cache key so that tiny changes in floating-point values
-    (e.g., 1.234567 vs 1.234568) don't cause cache misses. The actual prompt
+    (e.g., 1.23456789 vs 1.23456788) don't cause cache misses. The actual prompt
     text sent to the LLM is not affected — only the cache key is normalized.
+    Rounding to 4 decimal places preserves enough precision for prices and
+    indicators while still normalizing floating-point noise.
     """
     if not text:
         return text
     def _round_num(match):
         try:
-            return f"{round(float(match.group(0)), 2)}"
+            return f"{round(float(match.group(0)), 4)}"
         except (ValueError, OverflowError):
             return match.group(0)
-    return re.sub(r'-?\d+\.\d{3,}', _round_num, text)
+    return re.sub(r'-?\d+\.\d{5,}', _round_num, text)
 
 def get_cached_llm_response(
     prompt: str,
@@ -604,7 +606,17 @@ def _should_use_primary_model() -> bool:
             if 0 < time_to_open <= 3600:  # within 60 minutes of open
                 return True  # pre-market - use primary models
 
-        return False  # market closed - use fallback only
+        # Market is closed - check if there are open positions that need management
+        # (stop-loss reviews, max-hold decisions, etc. require primary model quality)
+        open_positions_raw = redis_client.get("trading:open_positions_count")
+        if open_positions_raw:
+            try:
+                if int(open_positions_raw) > 0:
+                    return True  # Has open positions - use primary models for management
+            except (ValueError, TypeError):
+                pass
+
+        return False  # market closed, no open positions - use fallback only
     except Exception:
         return True  # Default to primary if we can't determine market status
 
