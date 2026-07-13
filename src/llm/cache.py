@@ -153,6 +153,10 @@ def _split_and_merge_prompt(
         )
         
         try:
+            # Use a fixed low temperature and default timeout for summarization
+            summary_temperature = 0.1
+            summary_timeout = settings.LLM_TIMEOUT
+            
             # Call the LLM to summarize the chunk
             if weak_provider == "openai":
                 from src.llm.llm_client import _get_openai_response
@@ -162,8 +166,8 @@ def _split_and_merge_prompt(
                     model=weak_model,
                     base_url=weak_base_url,
                     api_key=weak_api_key,
-                    temperature=temperature,
-                    timeout=timeout,
+                    temperature=summary_temperature,
+                    timeout=summary_timeout,
                     messages=None,
                     add_cache_control=False,
                     thinking_enabled=False,
@@ -176,8 +180,8 @@ def _split_and_merge_prompt(
                     model=weak_model,
                     base_url=weak_base_url,
                     api_key=weak_api_key,
-                    temperature=temperature,
-                    timeout=timeout,
+                    temperature=summary_temperature,
+                    timeout=summary_timeout,
                     messages=None,
                     add_cache_control=False,
                     thinking_enabled=False,
