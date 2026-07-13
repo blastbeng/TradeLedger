@@ -59,7 +59,7 @@ from src.utils.redis_client import get_redis_client, check_redis_connection, is_
 from src.utils.symbol_utils import is_btp_isin
 from src.utils.task_supervisor import TaskSupervisor
 from src.utils.event_bus import EventBus
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, get_latest_ohlcv_timestamps_batch, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data, insert_dividend, cleanup_old_dividends
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, get_latest_ohlcv_timestamps_batch, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data, insert_dividend, cleanup_old_dividends, get_pending_llm_decisions, update_llm_decision_outcome
 from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.buy_executor import BuyExecutor
 from src.trading.components.exit_order_manager import ExitOrderManager
@@ -1739,6 +1739,63 @@ class TradingEngine:
         except Exception as e:
             logger.error(f"Background task {task.get_name()} failed: {type(e).__name__}: {e}", exc_info=True)
 
+    async def _evaluate_llm_decisions_loop(self):
+        """Periodically evaluate past LLM decisions against actual market outcomes."""
+        await asyncio.sleep(300)  # initial delay 5 minutes
+        while self._running:
+            try:
+                # Evaluate decisions older than 1 hour (3600 seconds)
+                pending_decisions = await asyncio.to_thread(get_pending_llm_decisions, 3600)
+                if not pending_decisions:
+                    await self._interruptible_sleep(600)
+                    continue
+
+                # Fetch latest close prices for all symbols in pending decisions
+                symbols = [d["symbol"] for d in pending_decisions]
+                # get_latest_close_prices expects base symbols without /currency
+                base_symbols = [s.split("/")[0] if "/" in s else s for s in symbols]
+                prices = await asyncio.to_thread(get_latest_close_prices, base_symbols)
+
+                for decision in pending_decisions:
+                    symbol = decision["symbol"]
+                    base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+                    price_data = prices.get(base_symbol)
+                    if not price_data or price_data.get("last") is None:
+                        continue
+
+                    outcome_price = price_data["last"]
+                    entry_price = decision["entry_price"]
+                    action = decision["action"]
+
+                    if entry_price is None or entry_price <= 0:
+                        continue
+
+                    # Determine if the decision was profitable
+                    # BUY: profitable if price went up
+                    # SELL: profitable if price went down
+                    # HOLD: profitable if price didn't go up (opportunity cost avoided)
+                    if action == "BUY":
+                        profitable = outcome_price > entry_price
+                    elif action == "SELL":
+                        profitable = outcome_price < entry_price
+                    elif action == "HOLD":
+                        profitable = outcome_price <= entry_price
+                    else:
+                        profitable = False
+
+                    await asyncio.to_thread(
+                        update_llm_decision_outcome,
+                        decision["id"],
+                        outcome_price,
+                        profitable
+                    )
+                
+                logger.info(f"Evaluated {len(pending_decisions)} LLM decisions for quality tracking.")
+            except Exception as e:
+                logger.error(f"LLM decision evaluation loop error: {type(e).__name__}: {e}", exc_info=True)
+            
+            await self._interruptible_sleep(600)  # check every 10 minutes
+
     async def run(self):
         """Main event‑driven loop using WebSocket ticker updates."""
         logger.info("Trading engine initializing...")
@@ -1771,6 +1828,7 @@ class TradingEngine:
             self._fetch_dividends_loop,
             self._redis_health_check_loop,
             self._health_check_loop,
+            self._evaluate_llm_decisions_loop,
         ]
         for factory in background_factories:
             sup = TaskSupervisor(factory, name=factory.__qualname__)
