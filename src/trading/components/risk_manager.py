@@ -885,9 +885,11 @@ class RiskManager:
                     await self.event_bus.publish(
                         "replace_native_stop_order", symbol, pos, original_stop, pos["stop_loss"]
                     )
-                    # Update the stored baseline
+                    # Update the stored baseline and clear the trigger timestamp
+                    # so the timeout doesn't fire prematurely for the new stop price.
                     async with self.shared_state._positions_lock:
                         pos["_native_stop_price"] = pos["stop_loss"]
+                        pos.pop("_native_stop_trigger_ts", None)
 
     async def check_partial_take_profit(
         self,
@@ -1408,6 +1410,10 @@ class RiskManager:
 
         # Native exit orders are active but neither trigger price reached.
         # Skip manual stop/tp checks — native orders handle it.
+        # If the price has recovered above the stop-loss, clear the trigger timestamp.
+        if pos.get("_native_stop_trigger_ts") is not None and current_price > pos.get("stop_loss", float('inf')):
+            async with self.shared_state._positions_lock:
+                pos.pop("_native_stop_trigger_ts", None)
         return True
 
     async def check_manual_stop_loss(
