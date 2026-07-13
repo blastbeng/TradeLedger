@@ -618,7 +618,7 @@ class RiskManager:
                         "reason": "Trailing stop not supported for BTPs",
                     }
                 )
-            async with engine._positions_lock:
+            async with self.shared_state._positions_lock:
                 pos["_ts_btp_warned"] = True
 
         if (
@@ -646,7 +646,7 @@ class RiskManager:
                 tf = pos.get("timeframe")
                 if not tf:
                     # Fallback to the assigned timeframe from current_symbols
-                    for entry in engine.current_symbols:
+                    for entry in self.shared_state.current_symbols:
                         if entry["symbol"] == symbol:
                             tf = entry.get("timeframe")
                             break
@@ -673,7 +673,7 @@ class RiskManager:
                         # timestamp but don't fetch (avoids using pre-entry
                         # candles, matching the original _load_state behavior).
                         if last_check_ts == 0:
-                            async with engine._positions_lock:
+                            async with self.shared_state._positions_lock:
                                 pos["_last_trailing_check_ts"] = now_ts
                         elif (now_ts - last_check_ts) >= fetch_interval:
                             since_ms = int(last_check_ts * 1000)
@@ -681,13 +681,13 @@ class RiskManager:
                             if db_candles:
                                 candle_high = max(c["high"] for c in db_candles)
                                 candidate_prices.append(candle_high)
-                            async with engine._positions_lock:
+                            async with self.shared_state._positions_lock:
                                 pos["_last_trailing_check_ts"] = now_ts
                     except Exception as e:
                         logger.debug(f"Failed to fetch OHLCV for trailing stop on {symbol}: {e}")
 
                 best_high = max(candidate_prices)
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     if "_highest_price" not in pos or best_high > pos["_highest_price"]:
                         pos["_highest_price"] = best_high
 
@@ -700,7 +700,7 @@ class RiskManager:
                     # Determine the position timeframe for ATR reliability check
                     tf_for_atr = pos.get("timeframe")
                     if not tf_for_atr:
-                        for entry in engine.current_symbols:
+                        for entry in self.shared_state.current_symbols:
                             if entry["symbol"] == symbol:
                                 tf_for_atr = entry.get("timeframe")
                                 break
@@ -737,7 +737,7 @@ class RiskManager:
                                                         f"Falling back to fixed-percentage trailing stop."
                                                     )
                                                     atr_is_stale = True
-                                        async with engine._positions_lock:
+                                        async with self.shared_state._positions_lock:
                                             if not atr_is_stale:
                                                 pos["_current_atr"] = ind["atr"]
                                             else:
@@ -762,7 +762,7 @@ class RiskManager:
                         new_stop = highest_price * (1 - distance)
 
                 if new_stop is not None:
-                    async with engine._positions_lock:
+                    async with self.shared_state._positions_lock:
                         if new_stop > pos["stop_loss"]:
                             # Only update trailing stop if the improvement is at least 0.1%
                             # to avoid over-tightening on micro-movements (medium/long-term)
@@ -770,7 +770,7 @@ class RiskManager:
                             if new_stop - pos["stop_loss"] >= min_improvement:
                                 pos["stop_loss"] = new_stop
                                 logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
-                    engine._portfolio_exposure_cache = None
+                    self.shared_state._portfolio_exposure_cache = None
 
     async def update_native_stop_order(
         self,
@@ -790,7 +790,7 @@ class RiskManager:
             original_stop = pos.get("_native_stop_price")
             if original_stop is None:
                 # First time – store the current stop_loss as the baseline
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     pos["_native_stop_price"] = pos["stop_loss"]
             else:
                 # Check if stop_loss has moved by more than a tick
@@ -804,7 +804,7 @@ class RiskManager:
                         "replace_native_stop_order", symbol, pos, original_stop, pos["stop_loss"]
                     )
                     # Update the stored baseline
-                    async with engine._positions_lock:
+                    async with self.shared_state._positions_lock:
                         pos["_native_stop_price"] = pos["stop_loss"]
 
     async def check_partial_take_profit(
