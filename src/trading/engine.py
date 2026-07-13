@@ -708,7 +708,10 @@ class TradingEngine:
             )
             for task in (wait_task, reload_task):
                 if not task.done():
-                    task.cancel()
+                    try:
+                        task.cancel()
+                    except asyncio.CancelledError:
+                        pass
             self._reeval_trigger.clear()
 
     async def _clear_pause_and_resume(self, reason: str, notification_msg: str, notification_summary: dict) -> None:
