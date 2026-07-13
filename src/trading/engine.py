@@ -557,8 +557,13 @@ class TradingEngine:
             await asyncio.gather(*download_tasks)
 
             logger.info("Force download: complete for tracked symbols.")
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Force download tracked symbols network/IO error: {type(e).__name__}: {e}")
         except Exception as e:
-            logger.error(f"Force download error: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(f"Force download tracked symbols error: {type(e).__name__}: {e}", exc_info=True)
+            await self._record_unexpected_exception("force_download_tracked_symbols", e)
 
     async def _get_cached_balance(self, ttl: float = 30.0) -> Dict[str, float]:
         """Return cached balance, refreshing if older than ttl seconds."""
