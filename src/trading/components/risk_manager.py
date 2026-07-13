@@ -1342,11 +1342,11 @@ class RiskManager:
         else:
             # First or repeated trigger: set flag and ask LLM
             if not pos.get("_stop_loss_triggered"):
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     pos["_stop_loss_triggered"] = True
                     pos["_stop_loss_review_count"] = review_count + 1
                 # Force immediate strategy re-evaluation for this symbol
-                engine._last_strategy_eval.pop(symbol, None)
+                self.shared_state._last_strategy_eval.pop(symbol, None)
                 logger.info(
                     f"Stop-loss triggered for {symbol} at {current_price} – "
                     f"asking LLM (review {pos['_stop_loss_review_count']}/{effective_max_sl_reviews})."
