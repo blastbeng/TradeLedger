@@ -83,6 +83,27 @@ class ReevalLLMRunner:
                             chunk_corr[sym_a] = {sym_b: v for sym_b, v in row.items() if sym_b in chunk_set}
 
                 # Build chunk messages (system + user) for prompt caching
+                # Pre-summarize news for the chunk to avoid synchronous LLM calls in prompt builder
+                chunk_news_section = None
+                if settings.NEWS_ENABLED:
+                    try:
+                        from src.llm.summarizer import summarize_text_async
+                        from src.database import get_news_for_symbols
+                        from src.llm.prompt_utils import _format_news_for_prompt
+                        news_lines = []
+                        symbols_to_check = chunk_symbols[:20]
+                        batch_news = await asyncio.to_thread(get_news_for_symbols, symbols_to_check, settings.NEWS_CACHE_TTL_SECONDS)
+                        for sym in symbols_to_check:
+                            articles = batch_news.get(sym, [])
+                            if articles:
+                                formatted = _format_news_for_prompt(articles)
+                                news_lines.append(f"**{sym}**\n{formatted}")
+                        if news_lines:
+                            raw_news = "Recent news for candidate stocks:\n\n" + "\n\n".join(news_lines)
+                            chunk_news_section = await summarize_text_async(raw_news, context="stock selection news", max_length=1000)
+                    except Exception as e:
+                        logger.warning(f"Failed to pre-summarize news for chunk: {e}")
+
                 chunk_messages = await asyncio.to_thread(
                     build_stock_selection_messages,
                     available_symbols=chunk_symbols,
@@ -111,6 +132,7 @@ class ReevalLLMRunner:
                     market_breadth=market_breadth,
                     min_viable_trade_amount=min_viable_amount,
                     btp_ytm=btp_ytm,
+                    news_section=chunk_news_section,
                 )
                 if auto_resume_note:
                     chunk_messages[-1]["content"] += "\n" + auto_resume_note

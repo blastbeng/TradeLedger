@@ -231,6 +231,17 @@ class SignalProcessor:
         async with self.shared_state._cycle_spent_lock:
             remaining = max(0.0, base_balance - self.shared_state._cycle_spent)
 
+        # Pre-summarize news for the prompt to avoid synchronous LLM calls in prompt builder
+        news_section = None
+        if settings.NEWS_ENABLED:
+            try:
+                from src.llm.prompt_utils import get_cached_news_summary_async
+                news_summary = await get_cached_news_summary_async(symbol, model_type="weak")
+                if news_summary and news_summary.get("summary") and news_summary["summary"] != "No recent news.":
+                    news_section = f"Recent news summary for {symbol}: {news_summary['summary']}"
+            except Exception as e:
+                logger.warning(f"Failed to pre-summarize news for {symbol}: {e}")
+
         prompt_data = StrategyPromptData(
             symbol=symbol,
             ticker=ticker,
@@ -330,6 +341,7 @@ class SignalProcessor:
             ytm=symbol_data["ytm"],
             dividend_yield=_ctx.get("dividend_yield"),
             next_ex_dividend=_ctx.get("next_ex_dividend"),
+            news_section=news_section,
         )
         analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(prompt_data)
 
