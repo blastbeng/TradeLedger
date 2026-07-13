@@ -11,8 +11,9 @@ class DummyRedis:
     """A no-op Redis client used when Redis is unavailable.
 
     Read operations return safe defaults (None/0/False) to allow degraded
-    operation. Write operations raise ConnectionError to surface failures
-    rather than silently dropping data.
+    operation. Write operations log a warning and return safe defaults
+    (True/1) to allow graceful degradation rather than silently dropping
+    data or raising exceptions.
     """
     _warned = False
 
