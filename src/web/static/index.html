@@ -575,6 +575,11 @@
                 </div>
             </div>
 
+            <div class="card card-full" id="llm-decision-quality-card">
+                <h2>🎯 LLM Decision Quality</h2>
+                <div id="llm-decision-quality" style="font-size:0.9rem;">Loading...</div>
+            </div>
+
             <div class="card card-full">
                 <h2>📋 Logs <button id="btn-refresh-logs" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🔄 Refresh</button></h2>
                 <div id="logs-content" style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; white-space: pre-wrap; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; color: var(--text-secondary);">
@@ -1609,6 +1614,7 @@
             fetchMessages();
             fetchSignals(currentSignalsPage);
             fetchLLMMetrics();
+            fetchLLMDecisionQuality();
             fetchNews();
         }
 
@@ -1684,6 +1690,7 @@
         startRefreshTimer();
         refreshData();  // immediate first load
         fetchLLMMetrics(); // initial LLM metrics load
+        fetchLLMDecisionQuality(); // initial LLM decision quality load
 
         document.getElementById('update-interval').addEventListener('change', (e) => {
             updateIntervalMs = parseInt(e.target.value, 10);
@@ -2240,6 +2247,28 @@
         requestWakeLock();
 
         // --- LLM Metrics ---
+        async function fetchLLMDecisionQuality() {
+            try {
+                const resp = await fetch('/api/llm-decision-quality?period_days=7');
+                if (!resp.ok) throw new Error('Failed to fetch LLM decision quality');
+                const data = await resp.json();
+                const div = document.getElementById('llm-decision-quality');
+                if (data.total_evaluated === 0) {
+                    div.innerHTML = 'No evaluated decisions yet.';
+                    return;
+                }
+                div.innerHTML = `
+                    <strong>Total Evaluated:</strong> ${data.total_evaluated}<br>
+                    <strong>Accuracy:</strong> ${data.accuracy.toFixed(1)}%<br>
+                    <strong>BUY Decisions:</strong> ${data.buy_count}<br>
+                    <strong>SELL Decisions:</strong> ${data.sell_count}<br>
+                    <strong>HOLD Decisions:</strong> ${data.hold_count}
+                `;
+            } catch (e) {
+                console.error('Failed to fetch LLM decision quality', e);
+            }
+        }
+
         async function fetchLLMMetrics() {
             try {
                 const resp = await fetch(`/api/llm-metrics?model_filter=${llmModelFilter}`);
