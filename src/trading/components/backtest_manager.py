@@ -300,8 +300,13 @@ class BacktestManager:
         source_candles = historical_ohlcv or raw_candles or []
         last_ts = source_candles[-1][0] if source_candles else 0
         candle_count = len(source_candles)
+        hash_payload = {
+            "params": variant_params,
+            "last_ts": last_ts,
+            "candle_count": candle_count,
+        }
         params_hash = hashlib.md5(
-            json.dumps(variant_params, sort_keys=True, default=str).encode()
+            json.dumps(hash_payload, sort_keys=True, default=str).encode()
         ).hexdigest()[:16]
 
         # Check database for a recent identical backtest (dedup within 6 hours)
