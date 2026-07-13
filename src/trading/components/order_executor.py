@@ -631,7 +631,7 @@ class OrderExecutor:
         # in _execute_signal, so we do NOT add to it here to avoid double-counting.
         await asyncio.to_thread(insert_trade, trade_dict)
         await self.event_bus.publish("save_state", force=True)
-        engine._portfolio_exposure_cache = None
+        self.shared_state._portfolio_exposure_cache = None
         if engine.notifier:
             stock_name = await engine._market_data_manager.get_stock_name(symbol)
             display_symbol = engine._format_symbol_display(symbol, stock_name, timeframe)
