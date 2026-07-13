@@ -64,7 +64,8 @@ class Settings(BaseSettings):
         return v
 
     # Portfolio rebalance settings
-    PORTFOLIO_REBALANCE_ENABLED: bool = False
+    # Enabled by default for medium/long-term trading to maintain diversification and risk targets.
+    PORTFOLIO_REBALANCE_ENABLED: bool = True
     PORTFOLIO_REBALANCE_INTERVAL_SECONDS: int = 7776000  # 90 days
 
     # Fallback strategy evaluation interval (seconds) when no timeframe or no symbols
