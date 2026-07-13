@@ -391,8 +391,8 @@ class TradingEngine:
         await asyncio.to_thread(save_trading_state, "paper_initial_balance", settings.PAPER_INITIAL_BALANCE)
 
     async def reset_paper_trading_state(self):
-        """Reset paper trading state when PAPER_INITIAL_BALANCE changes."""
-        logger.info("Resetting paper trading state due to PAPER_INITIAL_BALANCE change...")
+        """Reset paper trading state."""
+        logger.info("Resetting paper trading state...")
 
         # Clear in-memory state
         self.positions.clear()
@@ -448,8 +448,8 @@ class TradingEngine:
 
         if self.notifier:
             await self.notifier.send_notification(
-                "♻️ Paper trading state has been reset due to PAPER_INITIAL_BALANCE change.",
-                summary={"action": "RESET", "reason": "Paper balance changed"}
+                "♻️ Paper trading state has been reset.",
+                summary={"action": "RESET", "reason": "State reset"}
             )
         logger.info("Paper trading state reset complete.")
 
