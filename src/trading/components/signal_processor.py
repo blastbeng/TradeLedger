@@ -1156,10 +1156,10 @@ class SignalProcessor:
                 return None
 
         # --- Cooldown after a losing trade (LLM-defined) ---
-        if symbol not in engine.positions:
-            last_loss = engine.last_loss_time.get(symbol)
+        if symbol not in self.shared_state.positions:
+            last_loss = self.shared_state.last_loss_time.get(symbol)
             if last_loss is not None:
-                cooldown = engine.cooldown_durations.get(symbol, 0)
+                cooldown = self.shared_state.cooldown_durations.get(symbol, 0)
                 if cooldown > 0:
                     elapsed = time.time() - last_loss
                     if elapsed < cooldown:
@@ -1167,17 +1167,17 @@ class SignalProcessor:
                         logger.info(
                             f"Skipping {symbol}: cooldown active ({remaining:.0f}s remaining after loss)"
                         )
-                        async with engine._eval_state_lock:
-                            engine._force_eval.pop(symbol, None)
+                        async with self.shared_state._eval_state_lock:
+                            self.shared_state._force_eval.pop(symbol, None)
                         return None
 
         # Skip if there is already a queued order for this symbol
-        async with engine._queued_orders_lock:
-            has_queued = any(q['symbol'] == symbol for q in engine.queued_orders)
+        async with self.shared_state._queued_orders_lock:
+            has_queued = any(q['symbol'] == symbol for q in self.shared_state.queued_orders)
         if has_queued:
             logger.info(f"Skipping {symbol}: order already queued.")
-            async with engine._eval_state_lock:
-                engine._force_eval.pop(symbol, None)
+            async with self.shared_state._eval_state_lock:
+                self.shared_state._force_eval.pop(symbol, None)
             return None
 
         # --- Read position trigger flags ---
@@ -1192,8 +1192,8 @@ class SignalProcessor:
         partial_tp_triggered_levels = []
         dust_sweep_triggered = False
         dust_sweep_review_count = 0
-        if symbol in engine.positions:
-            pos = engine.positions[symbol]
+        if symbol in self.shared_state.positions:
+            pos = self.shared_state.positions[symbol]
             max_hold_expired = pos.get("_max_hold_expired", False)
             max_hold_expired_count = pos.get("_max_hold_expired_count", 1)
             stop_loss_triggered = pos.get("_stop_loss_triggered", False)
