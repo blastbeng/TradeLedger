@@ -436,7 +436,7 @@ class BuyExecutor:
                 binding_reason = cap_reason
 
         if hard_max == float('inf'):
-            hard_max = 0.0
+            hard_max = desired_amount
 
         # Final amount: min of LLM's desired amount and the single hard ceiling
         amount = min(desired_amount, hard_max)
