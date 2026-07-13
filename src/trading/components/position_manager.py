@@ -25,6 +25,7 @@ class PositionManager:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self.event_bus.subscribe("update_position_params", self.update_position_params)
         self.event_bus.subscribe("compute_portfolio_exposure_summary", self.compute_portfolio_exposure_summary)
@@ -38,7 +39,7 @@ class PositionManager:
 
     def ensure_cost_basis(self):
         """If positions lack cost_basis, compute it from amount and price (backward compat)."""
-        for sym, pos in self.engine.positions.items():
+        for sym, pos in self.shared_state.positions.items():
             if 'cost_basis' not in pos or 'net_base' not in pos:
                 # Assume no fees for old positions; cost_basis = amount * price
                 pos['cost_basis'] = pos['amount'] * pos['price']
@@ -46,7 +47,7 @@ class PositionManager:
 
         # Pre-set the BTP trailing stop warning flag for loaded positions
         # so we don't spam warnings on every risk check cycle.
-        for sym, pos in self.engine.positions.items():
+        for sym, pos in self.shared_state.positions.items():
             base = sym.split("/")[0]
             if is_btp_isin(base) and pos.get("trailing_stop") and "_ts_btp_warned" not in pos:
                 pos["_ts_btp_warned"] = True
@@ -59,7 +60,7 @@ class PositionManager:
         portfolio_exposure = 0.0
         portfolio_stop_risk = 0.0
         pos_tickers = await engine._market_data_manager._get_all_position_tickers()
-        for sym, pos in engine.positions.items():
+        for sym, pos in self.shared_state.positions.items():
             try:
                 t = pos_tickers.get(sym)
                 price = t['last'] if t and t.get('last') else 0.0
@@ -74,8 +75,8 @@ class PositionManager:
                 pass
         portfolio_exposure_pct = (portfolio_exposure / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
         portfolio_stop_risk_pct = (portfolio_stop_risk / portfolio_total_value * 100) if portfolio_total_value > 0 else 0.0
-        async with engine._cycle_spent_lock:
-            portfolio_available_capital = max(0.0, base_balance - engine._cycle_spent)
+        async with self.shared_state._cycle_spent_lock:
+            portfolio_available_capital = max(0.0, base_balance - self.shared_state._cycle_spent)
         result = {
             "portfolio_total_value": portfolio_total_value,
             "portfolio_exposure": portfolio_exposure,
@@ -93,7 +94,7 @@ class PositionManager:
         current_balance = balance.get(engine.base_currency, 0.0)
 
         # --- Early exit: no positions and no queued orders → nothing to compute ---
-        if not engine.positions and not engine.queued_orders:
+        if not self.shared_state.positions and not self.shared_state.queued_orders:
             return {
                 "initial_balance": engine.initial_balance,
                 "current_balance": current_balance,
@@ -116,7 +117,7 @@ class PositionManager:
 
         open_value = 0.0
         pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
-        for sym, pos in engine.positions.items():
+        for sym, pos in self.shared_state.positions.items():
             try:
                 t = pos_tickers.get(sym)
                 price = t['last'] if t and t.get('last') else 0.0
@@ -133,7 +134,7 @@ class PositionManager:
 
         # Collect symbols for queued sells to fetch prices
         queued_sell_symbols = []
-        for q in engine.queued_orders:
+        for q in self.shared_state.queued_orders:
             if q['side'] == 'buy':
                 queued_buy_count += 1
                 # 'amount' is the remaining quote to spend
@@ -147,7 +148,7 @@ class PositionManager:
             sell_tickers = await asyncio.to_thread(engine._market_data_manager._get_tickers_for_symbols_sync, queued_sell_symbols)
         else:
             sell_tickers = {}
-        for q in engine.queued_orders:
+        for q in self.shared_state.queued_orders:
             if q['side'] == 'sell':
                 sym = q['symbol']
                 t = sell_tickers.get(sym) if sell_tickers else None
@@ -157,7 +158,7 @@ class PositionManager:
         effective_balance = current_balance - queued_buy_quote_total
 
         total_fees = 0.0
-        for t in engine.trade_history:
+        for t in self.shared_state.trade_history:
             fee = t.get('fee', {})
             fee_cost = float(fee.get('cost', 0) or 0)
             fee_currency = fee.get('currency', '')
@@ -171,7 +172,7 @@ class PositionManager:
                 total_fees += fee_cost * price
         total_value = current_balance + open_value
         # Fetch total dividends for all symbols in trade history
-        all_symbols = list(set(t["symbol"] for t in engine.trade_history))
+        all_symbols = list(set(t["symbol"] for t in self.shared_state.trade_history))
         dividends_map = get_total_dividends_for_symbols(all_symbols)
         total_dividends = sum(dividends_map.values())
 
@@ -181,7 +182,7 @@ class PositionManager:
         # Win/Loss stats
         wins = 0
         losses = 0
-        for t in engine.trade_history:
+        for t in self.shared_state.trade_history:
             if t.get('side') == 'sell' and 'realized_pnl' in t:
                 pnl_val = t['realized_pnl']
                 if pnl_val > 0:
