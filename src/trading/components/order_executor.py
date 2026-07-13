@@ -403,7 +403,7 @@ class OrderExecutor:
         open_orders = await asyncio.to_thread(engine.trader.get_open_orders)
         now = time.time()
         # Build a set of order IDs that are currently queued (waiting for fill)
-        queued_ids = {q.get('order_id') for q in engine.queued_orders if q.get('order_id')}
+        queued_ids = {q.get('order_id') for q in self.shared_state.queued_orders if q.get('order_id')}
         for order in open_orders:
             order_id = order.get('id')
             if order_id in queued_ids:
