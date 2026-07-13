@@ -241,7 +241,7 @@ class TradingEngine:
         try:
             for key in keys_to_clear:
                 self.redis.delete(key)
-        except Exception as e:
+        except (ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to clear time-sensitive Redis keys: {e}")
 
     # --- Scalar state properties (proxy to SharedState) ---
@@ -588,7 +588,7 @@ class TradingEngine:
             )
             self._sentiment_cache[base] = (now, agg)
             return agg
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to fetch sentiment for {base}: {type(e).__name__}: {e}")
             return None
 
@@ -981,8 +981,13 @@ class TradingEngine:
             try:
                 logger.info("Periodic portfolio rebalance triggered.")
                 self.trigger_portfolio_rebalance()
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Periodic portfolio rebalance network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Periodic portfolio rebalance error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("periodic_portfolio_rebalance", e)
             await self._interruptible_sleep(settings.PORTFOLIO_REBALANCE_INTERVAL_SECONDS)
 
     async def _market_clock_monitor(self):
@@ -1224,7 +1229,7 @@ class TradingEngine:
             if cached_no_news:
                 logger.debug(f"Skipping news fetch for {symbol}: recently found 0 articles.")
                 return
-        except Exception:
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
         try:
@@ -1240,9 +1245,9 @@ class TradingEngine:
                     await asyncio.to_thread(
                         self.redis.setex, no_news_cache_key, settings.NEWS_CACHE_TTL_SECONDS, "1"
                     )
-                except Exception:
+                except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                     pass
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"News fetch/store failed for {symbol}: {type(e).__name__}: {e}")
 
     async def _risk_management_loop(self):
@@ -1373,7 +1378,7 @@ class TradingEngine:
                         t = tickers.get(sym, {})
                         return t.get('quoteVolume', 0) or 0
                     symbols_to_refresh = set(sample_for_vol) - current_symbols
-                except Exception as e:
+                except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                     logger.warning(f"Could not get available pairs for news refresh: {e}")
 
                 for sym in symbols_to_refresh:
@@ -1384,7 +1389,7 @@ class TradingEngine:
                             if articles:
                                 base_symbol = sym.split("/")[0] if "/" in sym else sym
                                 await asyncio.to_thread(store_news_articles, base_symbol, articles)
-                    except Exception as e:
+                    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                         logger.info(f"News refresh failed for {sym}: {e}")
                     await asyncio.sleep(0.2)
 
@@ -1403,7 +1408,7 @@ class TradingEngine:
             try:
                 from src.database import cleanup_old_news
                 await asyncio.to_thread(cleanup_old_news, settings.NEWS_RETENTION_SECONDS)
-            except Exception as e:
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"News cleanup failed: {e}")
 
             await self._interruptible_sleep(settings.NEWS_UPDATE_INTERVAL_MINUTES * 60)
@@ -1661,7 +1666,7 @@ class TradingEngine:
                     try:
                         async with self._news_semaphore:
                             await self._fetch_and_store_news_for_symbol(pair)
-                    except Exception as e:
+                    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                         logger.warning(f"Full news download failed for {pair}: {e}")
 
                 news_tasks = [_download_news_for_symbol(pair) for pair in ordered_pairs]
@@ -1772,7 +1777,7 @@ class TradingEngine:
                             divs = await asyncio.to_thread(get_yahoo_dividends, symbol)
                             for d in divs:
                                 await asyncio.to_thread(insert_dividend, symbol, d["date"], d["amount"])
-                        except Exception as e:
+                        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                             logger.debug(f"Dividend fetch failed for {symbol}: {e}")
                     await asyncio.gather(*[_fetch_dividends(s) for s in stock_symbols])
                 # Cleanup old dividends
@@ -1991,7 +1996,7 @@ class TradingEngine:
                         full_breadth_raw = await asyncio.to_thread(self.redis.get, "market:breadth:full")
                         if full_breadth_raw:
                             full_market_breadth = json.loads(full_breadth_raw)
-                    except Exception:
+                    except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
                         pass
 
                     is_highly_active = False
@@ -2021,7 +2026,7 @@ class TradingEngine:
                                         prev_compound = float(prev_raw)
                                         if abs(current_compound - prev_compound) > 0.3:
                                             symbol_has_significant_news[symbol] = True
-                            except Exception:
+                            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
                                 continue
 
                     # Collect symbols that need evaluation this cycle
@@ -2090,8 +2095,13 @@ class TradingEngine:
                                             f"⏱️ Processing timeout for {sym} – skipping this cycle.",
                                             summary={"symbol": sym, "action": "SKIP", "reason": "Processing timeout"}
                                         )
+                                except asyncio.CancelledError:
+                                    raise
+                                except (ConnectionError, TimeoutError, OSError) as e:
+                                    logger.warning(f"Network/IO error processing symbol {sym}: {type(e).__name__}: {e}")
                                 except Exception as e:
                                     logger.error(f"Error processing symbol {sym}: {e}", exc_info=True)
+                                    await self._record_unexpected_exception("process_symbol_task", e)
 
                         await asyncio.gather(*[_process_symbol_task(entry) for entry in symbols_to_process])
 

@@ -1462,7 +1462,7 @@ def insert_ohlcv_batch(symbol: str, timeframe: str, candles: List[List]):
                 redis_client = get_redis_client()
                 base_symbol = symbol.split('/')[0] if '/' in symbol else symbol
                 redis_client.delete(f"latest_close_prices:{base_symbol}")
-            except Exception:
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
     finally:
         conn.close()
@@ -1865,7 +1865,7 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 cached_result[bs] = json.loads(cached)
             else:
                 missing_symbols.append(bs)
-    except Exception:
+    except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
         missing_symbols = base_symbols_list
 
     if not missing_symbols:
@@ -1906,7 +1906,7 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         for bs, data in result.items():
             pipe.setex(f"latest_close_prices:{bs}", 60, json.dumps(data))
         pipe.execute()
-    except Exception:
+    except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
         pass
 
     # Merge cached results with newly fetched results

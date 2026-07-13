@@ -317,7 +317,7 @@ class BacktestManager:
             if recent:
                 logger.debug(f"Backtest DB cache hit for {symbol} {assigned_tf} (params_hash={params_hash})")
                 return recent["stats"], recent["summary"]
-        except Exception:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
             pass
 
         # Run backtest with concurrency limiting
@@ -348,7 +348,7 @@ class BacktestManager:
                     save_backtest_result, symbol, assigned_tf, params_hash,
                     variant_params, bt_stats, bt_summary
                 )
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Failed to persist backtest result to DB for {symbol}: {type(e).__name__}: {e}")
 
         return bt_stats, bt_summary
@@ -390,7 +390,7 @@ class BacktestManager:
                     return {"variant_params": vp, "summary": bt_summary, "stats": bt_stats}
                 else:
                     return {"variant_params": vp, "summary": bt_summary or "Insufficient data for backtest.", "stats": {}}
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Backtest variant failed for {symbol}: {type(e).__name__}: {e}")
                 return {"variant_params": vp, "summary": f"Backtest error: {e}", "stats": {}}
 
@@ -518,7 +518,7 @@ class BacktestManager:
                     step2_response = retry_result["response"]
                     llm_provider = retry_result["provider"]
                     llm_model = retry_result["model"]
-                except Exception:
+                except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
                     logger.error(f"Step 2 JSON parse retry failed for {symbol}. Using preliminary decision.")
                     final_strategy = None
 

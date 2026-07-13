@@ -212,7 +212,7 @@ class SignalProcessor:
         if get_upcoming_earnings is not None and symbol in self.shared_state.positions:
             try:
                 upcoming_earnings = await asyncio.to_thread(get_upcoming_earnings, symbol)
-            except Exception:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
                 pass
 
         _ctx = await self.gather_prompt_context(
