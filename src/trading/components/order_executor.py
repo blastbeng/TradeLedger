@@ -281,9 +281,9 @@ class OrderExecutor:
                     logger.info(f"Cancelled OCO pair {oco_pair_id} for {queued['symbol']}")
                 except (RuntimeError, ValueError, ConnectionError) as e:
                     logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
-                async with engine._queued_orders_lock:
-                    engine.queued_orders = [
-                        q for q in engine.queued_orders
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders = [
+                        q for q in self.shared_state.queued_orders
                         if q.get("order_id") != oco_pair_id
                     ]
 
@@ -296,13 +296,13 @@ class OrderExecutor:
                     logger.info(f"Cancelled remaining part of partially filled exit order {order_id} for {queued['symbol']}")
                 except (RuntimeError, ValueError, ConnectionError) as e:
                     logger.warning(f"Failed to cancel remaining part of exit order {order_id}: {e}")
-                async with engine._queued_orders_lock:
-                    engine.queued_orders = [
-                        q for q in engine.queued_orders
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders = [
+                        q for q in self.shared_state.queued_orders
                         if q.get("order_id") != order_id
                     ]
 
-            pos = engine.positions.get(queued["symbol"])
+            pos = self.shared_state.positions.get(queued["symbol"])
             if pos:
                 pos.pop("stop_loss_order_id", None)
                 pos.pop("take_profit_order_id", None)
@@ -353,9 +353,9 @@ class OrderExecutor:
         order_id = queued.get('order_id')
         if not order_id:
             logger.warning(f"Queued order for {queued['symbol']} missing order_id, removing.")
-            async with engine._queued_orders_lock:
-                if queued in engine.queued_orders:
-                    engine.queued_orders.remove(queued)
+            async with self.shared_state._queued_orders_lock:
+                if queued in self.shared_state.queued_orders:
+                    self.shared_state.queued_orders.remove(queued)
             return
 
         if await self.check_and_cancel_timed_out_order(queued):
@@ -389,10 +389,10 @@ class OrderExecutor:
 
         if status == 'filled':
             logger.info(f"Queued limit order {order_id} for {queued['symbol']} completely filled.")
-            async with engine._queued_orders_lock:
-                if queued in engine.queued_orders:
-                    engine.queued_orders.remove(queued)
-            engine._state_dirty = True
+            async with self.shared_state._queued_orders_lock:
+                if queued in self.shared_state.queued_orders:
+                    self.shared_state.queued_orders.remove(queued)
+            self.shared_state._state_dirty = True
         elif status in ('rejected', 'canceled', 'cancelled', 'expired'):
             await self.handle_canceled_or_rejected_order(queued, status)
 
@@ -454,14 +454,14 @@ class OrderExecutor:
 
         # Refund remaining reserved capital for buy orders
         if queued['side'] == 'buy':
-            async with engine._cycle_spent_lock:
-                engine._cycle_spent = max(0.0, engine._cycle_spent - queued.get('amount', 0.0))
+            async with self.shared_state._cycle_spent_lock:
+                self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
 
         # Remove from queue regardless of cancel success
-        async with engine._queued_orders_lock:
-            if queued in engine.queued_orders:
-                engine.queued_orders.remove(queued)
-        engine._state_dirty = True
+        async with self.shared_state._queued_orders_lock:
+            if queued in self.shared_state.queued_orders:
+                self.shared_state.queued_orders.remove(queued)
+        self.shared_state._state_dirty = True
 
         if engine.notifier:
             stock_name = await engine._market_data_manager.get_stock_name(queued['symbol'])
@@ -484,12 +484,12 @@ class OrderExecutor:
         logger.warning(f"Order {order_id} not found for {queued['symbol']}, removing from queue.")
         # Refund remaining reserved capital for buy orders
         if queued['side'] == 'buy':
-            async with engine._cycle_spent_lock:
-                engine._cycle_spent = max(0.0, engine._cycle_spent - queued.get('amount', 0.0))
-        async with engine._queued_orders_lock:
-            if queued in engine.queued_orders:
-                engine.queued_orders.remove(queued)
-        engine._state_dirty = True
+            async with self.shared_state._cycle_spent_lock:
+                self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
+        async with self.shared_state._queued_orders_lock:
+            if queued in self.shared_state.queued_orders:
+                self.shared_state.queued_orders.remove(queued)
+        self.shared_state._state_dirty = True
 
     async def handle_canceled_or_rejected_order(
         self,
@@ -504,8 +504,8 @@ class OrderExecutor:
         )
         # Refund remaining reserved capital for buy orders
         if queued['side'] == 'buy':
-            async with engine._cycle_spent_lock:
-                engine._cycle_spent = max(0.0, engine._cycle_spent - queued.get('amount', 0.0))
+            async with self.shared_state._cycle_spent_lock:
+                self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
         if engine.notifier:
             stock_name = await engine._market_data_manager.get_stock_name(queued['symbol'])
             tf = queued.get('timeframe')
@@ -518,10 +518,10 @@ class OrderExecutor:
                     "reason": f"Order {status}",
                 }
             )
-        async with engine._queued_orders_lock:
-            if queued in engine.queued_orders:
-                engine.queued_orders.remove(queued)
-        engine._state_dirty = True
+        async with self.shared_state._queued_orders_lock:
+            if queued in self.shared_state.queued_orders:
+                self.shared_state.queued_orders.remove(queued)
+        self.shared_state._state_dirty = True
         if queued.get("is_exit_order"):
             oco_pair_id = queued.get("oco_pair")
             if oco_pair_id:
@@ -530,12 +530,12 @@ class OrderExecutor:
                     logger.info(f"Cancelled OCO pair {oco_pair_id} for {status} exit order {order_id}")
                 except (RuntimeError, ValueError, ConnectionError) as e:
                     logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
-                async with engine._queued_orders_lock:
-                    engine.queued_orders = [
-                        q for q in engine.queued_orders
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders = [
+                        q for q in self.shared_state.queued_orders
                         if q.get("order_id") != oco_pair_id
                     ]
-            pos = engine.positions.get(queued["symbol"])
+            pos = self.shared_state.positions.get(queued["symbol"])
             if pos:
                 pos.pop("stop_loss_order_id", None)
                 pos.pop("take_profit_order_id", None)
@@ -625,8 +625,8 @@ class OrderExecutor:
         trade_dict['timeframe'] = timeframe
         trade_dict['buy_confidence'] = signal_dict.get('confidence', 0.0)
         trade_dict['buy_reasoning'] = (signal_dict.get('reasoning', '') or '')[:200]
-        engine._append_trade(trade_dict)
-        engine._balance_cache = None
+        self.shared_state.append_trade(trade_dict, settings.MAX_TRADES_IN_MEMORY)
+        self.shared_state._balance_cache = None
         # Note: _cycle_spent was already updated when the order was queued
         # in _execute_signal, so we do NOT add to it here to avoid double-counting.
         await asyncio.to_thread(insert_trade, trade_dict)
@@ -672,7 +672,7 @@ class OrderExecutor:
                     filtered["reasoning"] = ""
                 reconstructed_signal = Signal(**filtered)
                 exit_prices = self._exit_order_manager.compute_exit_order_prices(
-                    entry_price=engine.positions[symbol]["price"],
+                    entry_price=self.shared_state.positions[symbol]["price"],
                     signal=reconstructed_signal,
                     atr=queued.get('atr'),
                 )
