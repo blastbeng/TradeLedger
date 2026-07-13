@@ -1151,8 +1151,8 @@ class SignalProcessor:
                 from src.strategies.base import Signal
                 signal = Signal(action="SELL", confidence=1.0, reasoning="Max symbol tenure reached")
                 await self.event_bus.publish("execute_signal", symbol, signal, exit_reason="max_tenure")
-                async with engine._eval_state_lock:
-                    engine._force_eval.pop(symbol, None)
+                async with self.shared_state._eval_state_lock:
+                    self.shared_state._force_eval.pop(symbol, None)
                 return None
 
         # --- Cooldown after a losing trade (LLM-defined) ---
@@ -1298,8 +1298,8 @@ class SignalProcessor:
                     await asyncio.to_thread(engine.redis.setex, stale_notify_key, 3600, str(time.time()))
                 except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                     pass
-            async with engine._eval_state_lock:
-                engine._force_eval.pop(symbol, None)
+            async with self.shared_state._eval_state_lock:
+                self.shared_state._force_eval.pop(symbol, None)
             return True
 
         # If we have an open position, we must continue evaluating it for SELL signals
@@ -1394,8 +1394,8 @@ class SignalProcessor:
             except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                 pass
 
-        async with engine._eval_state_lock:
-            engine._force_eval.pop(symbol, None)
+        async with self.shared_state._eval_state_lock:
+            self.shared_state._force_eval.pop(symbol, None)
         return True
 
     async def _get_skip_eval_config(self) -> Dict[str, float]:
