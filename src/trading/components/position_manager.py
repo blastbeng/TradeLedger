@@ -54,20 +54,6 @@ class PositionManager:
     async def compute_portfolio_exposure_summary(self, base_balance: float) -> Dict[str, float]:
         """Compute portfolio exposure, stop-loss risk, and available capital for the prompt."""
         engine = self.engine
-        now = time.time()
-        if (
-            engine._portfolio_exposure_cache is not None
-            and (now - engine._portfolio_exposure_cache_time) < 5
-        ):
-            # Return cached ticker-dependent values, but recompute available capital
-            # from the current cycle_spent (which changes during the cycle).
-            # Acquire the lock before copying the cache so the cache read and
-            # _cycle_spent read are atomic — prevents a race where another
-            # coroutine modifies _cycle_spent between the copy and the lock.
-            async with engine._cycle_spent_lock:
-                result = dict(engine._portfolio_exposure_cache)
-                result["portfolio_available_capital"] = max(0.0, base_balance - engine._cycle_spent)
-            return result
 
         portfolio_total_value = base_balance
         portfolio_exposure = 0.0
@@ -98,8 +84,6 @@ class PositionManager:
             "portfolio_stop_risk_pct": portfolio_stop_risk_pct,
             "portfolio_available_capital": portfolio_available_capital,
         }
-        engine._portfolio_exposure_cache = result
-        engine._portfolio_exposure_cache_time = now
         return result
 
     async def get_profit_summary(self) -> Dict[str, Any]:
