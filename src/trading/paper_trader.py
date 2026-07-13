@@ -655,20 +655,20 @@ class PaperTrader:
             elif order.order_type == "stop":
                 if order.side == "buy" and order.stop_price is not None:
                     if price >= order.stop_price:
-                        self._fill_order(order, price, base, quote)
+                        self._fill_order(order, order.stop_price, base, quote)
                 elif order.side == "sell" and order.stop_price is not None:
                     if price <= order.stop_price:
-                        self._fill_order(order, price, base, quote)
+                        self._fill_order(order, order.stop_price, base, quote)
 
             # Stop-limit orders
             elif order.order_type == "stop_limit":
                 if order.side == "buy" and order.stop_price is not None:
                     if price >= order.stop_price:
-                        fill = order.limit_price if order.limit_price else price
+                        fill = order.limit_price if order.limit_price else order.stop_price
                         self._fill_order(order, fill, base, quote)
                 elif order.side == "sell" and order.stop_price is not None:
                     if price <= order.stop_price:
-                        fill = order.limit_price if order.limit_price else price
+                        fill = order.limit_price if order.limit_price else order.stop_price
                         self._fill_order(order, fill, base, quote)
 
             # Limit orders
