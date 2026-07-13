@@ -923,6 +923,52 @@ class RiskManager:
         (unless max reviews have been reached, in which case it force-executes).
         """
         engine = self.engine
+
+        # --- Circuit breaker: execute partial TP immediately without LLM review ---
+        if await self._is_llm_circuit_breaker_active():
+            partial_levels = pos.get("partial_take_profit_levels")
+            if partial_levels:
+                triggered = pos.get("partial_tp_levels_triggered", [])
+                for i, level in enumerate(partial_levels):
+                    if i in triggered:
+                        continue
+                    if i in pos.get("_partial_tp_triggered_levels", []):
+                        continue
+                    lvl_pct = level["take_profit_pct"]
+                    entry_price = pos["price"]
+                    if current_price >= entry_price * (1 + lvl_pct):
+                        logger.info(
+                            f"LLM circuit breaker active — executing partial TP level {i} "
+                            f"for {symbol} without LLM review."
+                        )
+                        await self.event_bus.publish("execute_partial_tp_level", symbol, i, current_price, None, ticker)
+                        async with self.shared_state._positions_lock:
+                            pos.pop("_partial_tp_triggered", None)
+                            pos.pop("_partial_tp_review_count", None)
+                            triggered_levels = pos.get("_partial_tp_triggered_levels", [])
+                            pos["_partial_tp_triggered_levels"] = [x for x in triggered_levels if x != i]
+            else:
+                partial_tp_pct = pos.get("partial_take_profit_pct")
+                partial_tp_fraction = pos.get("partial_take_profit_fraction")
+                if (
+                    partial_tp_pct is not None
+                    and partial_tp_fraction is not None
+                    and not pos.get("partial_tp_triggered", False)
+                    and not pos.get("_partial_tp_triggered_single")
+                ):
+                    entry_price = pos["price"]
+                    if current_price >= entry_price * (1 + partial_tp_pct):
+                        logger.info(
+                            f"LLM circuit breaker active — executing single partial TP "
+                            f"for {symbol} without LLM review."
+                        )
+                        await self.event_bus.publish("execute_partial_tp_single", symbol, current_price, None, ticker)
+                        async with self.shared_state._positions_lock:
+                            pos.pop("_partial_tp_triggered_single", None)
+                            pos.pop("_partial_tp_single_review_count", None)
+            return
+        # --- End circuit breaker short-circuit ---
+
         partial_levels = pos.get("partial_take_profit_levels")
         if partial_levels:
             # Multiple levels
@@ -1023,6 +1069,38 @@ class RiskManager:
         should skip to the next position), False otherwise.
         """
         engine = self.engine
+
+        # --- Circuit breaker: sweep dust immediately without LLM review ---
+        if await self._is_llm_circuit_breaker_active():
+            base = symbol.split("/")[0]
+            amount = pos["amount"]
+            try:
+                asset = await engine._market_data_manager.get_asset_info(symbol)
+                min_amount = float(asset.min_order_size) if asset.min_order_size else None
+            except Exception:
+                min_amount = None
+            is_dust = min_amount is not None and amount < min_amount
+            if is_dust:
+                logger.info(
+                    f"LLM circuit breaker active — sweeping dust for {symbol} "
+                    f"without LLM review."
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"🧹 Dust sweep for {display_symbol} – "
+                        f"LLM unavailable (circuit breaker), selling.",
+                        summary={
+                            "symbol": symbol,
+                            "action": "SELL",
+                            "reason": "Dust sweep (circuit breaker active)",
+                            "exit_reason": "dust_sweep_circuit_breaker",
+                        }
+                    )
+                await self.event_bus.publish("sweep_dust", symbol)
+                return True
+            return False
+        # --- End circuit breaker short-circuit ---
+
         base = symbol.split("/")[0]
         amount = pos["amount"]
 
@@ -1098,6 +1176,37 @@ class RiskManager:
         should skip to the next position), False otherwise.
         """
         engine = self.engine
+
+        # --- Circuit breaker: force-sell immediately without LLM review ---
+        if await self._is_llm_circuit_breaker_active():
+            max_hold = pos.get("max_hold_time_seconds")
+            if max_hold is not None and max_hold > 0:
+                entry_ts = pos.get("timestamp", 0) / 1000.0
+                if time.time() - entry_ts > max_hold:
+                    logger.warning(
+                        f"LLM circuit breaker active — force-selling {symbol} "
+                        f"at max hold expiry without LLM review."
+                    )
+                    if engine.notifier:
+                        await engine.notifier.send_notification(
+                            f"⏰ Max hold expired for {display_symbol} – "
+                            f"LLM unavailable (circuit breaker), selling.",
+                            summary={
+                                "symbol": symbol,
+                                "action": "SELL",
+                                "reason": "Max hold expired (circuit breaker active)",
+                                "exit_reason": "max_hold_circuit_breaker",
+                            }
+                        )
+                    await self.event_bus.publish(
+                        "execute_signal",
+                        symbol,
+                        Signal(action="SELL", confidence=1.0, reasoning="Max hold expired (circuit breaker active)"),
+                        exit_reason="max_hold_circuit_breaker"
+                    )
+                    return True
+        # --- End circuit breaker short-circuit ---
+
         max_hold = pos.get("max_hold_time_seconds")
         if max_hold is not None and max_hold > 0:
             entry_ts = pos.get("timestamp", 0) / 1000.0  # convert ms to seconds
