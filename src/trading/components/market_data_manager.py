@@ -645,11 +645,11 @@ class MarketDataManager:
             logger.info(f"Backfill complete for {symbol} {timeframe}: {total_inserted} candles inserted")
         return total_inserted
 
-    async def compute_and_store_indicators(self, symbol: str, timeframe: str, candles: List[List]):
+    async def compute_and_store_indicators(self, symbol: str, timeframe: str, candles: List[List]) -> Optional[Dict[str, Any]]:
         """Compute indicators for a symbol/timeframe using TA-Lib and store in DB."""
         engine = self.engine
         if not candles or len(candles) < 2:
-            return
+            return None
         try:
             async with engine._indicator_semaphore:
                 loop = asyncio.get_running_loop()
@@ -659,8 +659,11 @@ class MarketDataManager:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(engine._db_executor, save_indicators, symbol, timeframe, latest_ts, ind)
                 logger.debug(f"Indicators computed and stored for {symbol} {timeframe}")
+                return ind
+            return None
         except Exception as e:
             logger.warning(f"Failed to compute/store indicators for {symbol} {timeframe}: {type(e).__name__}: {e}")
+            return None
     async def _fill_gaps(self, symbol: str, timeframe: str):
         """Detect and fill gaps in stored OHLCV data for a symbol/timeframe."""
         engine = self.engine
