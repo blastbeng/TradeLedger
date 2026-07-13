@@ -2298,6 +2298,10 @@ def get_llm_metrics_summary(model_filter: str = "all") -> dict:
         ]
         period_stats = {}
         for period_name, cutoff in period_cutoffs:
+            if where_clause:
+                period_sql = f"FROM llm_metrics{where_clause} AND timestamp >= %s"
+            else:
+                period_sql = "FROM llm_metrics WHERE timestamp >= %s"
             period_row = conn.execute(
                 _adapt_sql(
                     "SELECT COUNT(*) as calls, "
@@ -2306,7 +2310,7 @@ def get_llm_metrics_summary(model_filter: str = "all") -> dict:
                     "COALESCE(SUM(completion_tokens),0) as completion_tokens, "
                     "COALESCE(SUM(cache_hit),0) as cache_hits, "
                     "COALESCE(AVG(latency_ms),0) as avg_latency "
-                    f"FROM llm_metrics{where_clause} AND timestamp >= %s"
+                    f"{period_sql}"
                 ),
                 (cutoff,)
             ).fetchone()
