@@ -86,6 +86,7 @@ class TradingEngine:
         self.effective_max_symbols = self.max_symbols
         self._symbol_reevaluation_interval = settings.SYMBOL_REEVALUATION_INTERVAL
         self.redis = get_redis_client()
+        self._clear_time_sensitive_redis_keys()
         self.event_bus = EventBus()
         self.config_service = UnifiedConfigService(self.redis)
         self._exchange_semaphore = asyncio.Semaphore(10)  # max 10 concurrent API calls
@@ -230,6 +231,18 @@ class TradingEngine:
         self._entry_signal_state = self.shared_state._entry_signal_state
         # Lock to protect _force_eval, _force_eval_time, _last_strategy_eval, and _strategy_intervals
         self._eval_state_lock = self.shared_state._eval_state_lock
+
+    def _clear_time_sensitive_redis_keys(self):
+        """Clear time-sensitive Redis keys on startup to prevent stale data."""
+        keys_to_clear = [
+            "trading:last_triggered_reeval",
+            "market:breadth:full",
+        ]
+        try:
+            for key in keys_to_clear:
+                self.redis.delete(key)
+        except Exception as e:
+            logger.warning(f"Failed to clear time-sensitive Redis keys: {e}")
 
     # --- Scalar state properties (proxy to SharedState) ---
     @property
