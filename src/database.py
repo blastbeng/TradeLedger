@@ -520,6 +520,7 @@ def init_db():
     finally:
         conn.close()
     _migrate_db()
+    backfill_latest_close_prices()
 
 
 @retry_on_db_lock()
@@ -1372,6 +1373,33 @@ def _update_latest_close_price(conn, full_symbol: str):
             """
         )
     conn.execute(upsert_sql, (base_symbol, last, prev_close, volume, candle_timestamp, timeframe, time.time()))
+
+
+def backfill_latest_close_prices():
+    """Backfill the latest_close_prices table from existing market_data.
+    
+    This runs once on startup to populate the table for symbols that already
+    have OHLCV data but haven't had new candles inserted since the table was created.
+    """
+    conn = get_connection()
+    try:
+        # Check if the table is empty
+        row = conn.execute("SELECT COUNT(*) as count FROM latest_close_prices").fetchone()
+        if row and row["count"] > 0:
+            return  # Already populated
+
+        logger.info("Backfilling latest_close_prices table from market_data...")
+        
+        # Get all unique symbols from market_data
+        symbols = [r["symbol"] for r in conn.execute("SELECT DISTINCT symbol FROM market_data").fetchall()]
+        
+        for symbol in symbols:
+            _update_latest_close_price(conn, symbol)
+        
+        conn.commit()
+        logger.info(f"Backfilled latest_close_prices for {len(symbols)} symbols.")
+    finally:
+        conn.close()
 
 
 @retry_on_db_lock()
