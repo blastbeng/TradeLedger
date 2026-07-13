@@ -397,7 +397,10 @@ class TradingEngine:
                 for tf in settings.OHLCV_TIMEFRAMES:
                     await self._market_data_manager._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True, force=True)
 
-            download_concurrency = asyncio.Semaphore(10)
+            # Limit concurrent symbol downloads to 2 to avoid exhausting the
+            # _download_executor thread pool, leaving threads available for
+            # tracked tickers.
+            download_concurrency = asyncio.Semaphore(2)
             async def _limited_force_download(pair: str):
                 async with download_concurrency:
                     await _force_download_symbol(pair)
