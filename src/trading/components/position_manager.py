@@ -875,18 +875,18 @@ class PositionManager:
         """Helper to close a BTP position at par value (100.0) and record the trade."""
         engine = self.engine
         logger.info(f"Closing BTP {symbol} at par value. Reason: {log_reason}")
-        engine.current_symbols.remove(entry)
+        self.shared_state.current_symbols.remove(entry)
         # Refund reserved cycle capital for any removed buy orders
-        async with engine._queued_orders_lock:
-            removed_buys = [q for q in engine.queued_orders if q['symbol'] == symbol and q['side'] == 'buy']
-            engine.queued_orders = [q for q in engine.queued_orders if q['symbol'] != symbol]
+        async with self.shared_state._queued_orders_lock:
+            removed_buys = [q for q in self.shared_state.queued_orders if q['symbol'] == symbol and q['side'] == 'buy']
+            self.shared_state.queued_orders = [q for q in self.shared_state.queued_orders if q['symbol'] != symbol]
         if removed_buys:
-            async with engine._cycle_spent_lock:
-                engine._cycle_spent = max(0.0, engine._cycle_spent - sum(q.get('amount', 0.0) for q in removed_buys))
+            async with self.shared_state._cycle_spent_lock:
+                self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - sum(q.get('amount', 0.0) for q in removed_buys))
 
         await self.event_bus.publish("cancel_exit_orders", symbol)
-        async with engine._positions_lock:
-            engine.positions.pop(symbol, None)
+        async with self.shared_state._positions_lock:
+            self.shared_state.positions.pop(symbol, None)
 
         par_value = 100.0
         cost = pos["amount"] * par_value
@@ -909,7 +909,7 @@ class PositionManager:
             "realized_pnl": realized_pnl,
             "cost_basis": cost_basis,
         }
-        engine._append_trade(trade)
+        self.shared_state.append_trade(trade, settings.MAX_TRADES_IN_MEMORY)
         await asyncio.to_thread(insert_trade, trade)
         logger.info(f"Closed BTP {symbol}: {pos['amount']} at par value {par_value}.")
         if engine.notifier:
