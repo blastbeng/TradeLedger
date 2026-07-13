@@ -927,25 +927,27 @@ def _should_use_primary_model() -> bool:
 
     Returns True if market is open or in pre-market session (within 60 mins of open).
     Returns False if market is closed (use fallback models only to save tokens).
-    Defaults to True if market status cannot be determined.
+    Computes market status locally to avoid dependency on Redis background tasks.
     """
+    from zoneinfo import ZoneInfo
     try:
-        redis_client = get_redis_client()
-        market_closed = redis_client.get("trading:market_closed")
-        if not market_closed:
+        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
+        weekday = now_rome.weekday()
+        if weekday >= 5:  # Saturday or Sunday
+            return False
+
+        rome_minutes = now_rome.hour * 60 + now_rome.minute
+        open_minutes = settings.MARKET_OPEN_HOUR * 60 + settings.MARKET_OPEN_MINUTE
+        close_minutes = settings.MARKET_CLOSE_HOUR * 60 + settings.MARKET_CLOSE_MINUTE
+
+        if open_minutes <= rome_minutes < close_minutes:
             return True  # Market is open
 
-        # Market is closed - check if we're in pre-market (within 60 mins of open)
-        next_open_raw = redis_client.get("trading:market_next_open")
-        if next_open_raw:
-            next_open_str = next_open_raw.decode() if isinstance(next_open_raw, bytes) else next_open_raw
-            next_open_dt = datetime.fromisoformat(next_open_str)
-            now = datetime.now(timezone.utc)
-            time_to_open = (next_open_dt - now).total_seconds()
-            if 0 < time_to_open <= 3600:  # within 60 minutes of open
-                return True  # pre-market - use primary models
+        # Check pre-market (within 60 mins of open)
+        if open_minutes - 60 <= rome_minutes < open_minutes:
+            return True  # Pre-market
 
-        return False  # market is closed - use fallback models to save tokens
+        return False  # Market is closed
     except Exception:
         return True  # Default to primary if we can't determine market status
 
