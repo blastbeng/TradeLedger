@@ -372,18 +372,18 @@ class TradingEngine:
         logger.info("Resetting paper trading state due to PAPER_INITIAL_BALANCE change...")
 
         # Clear in-memory state
-        self.positions = {}
-        self.queued_orders = []
-        self.current_symbols = []
-        self._pending_entries = {}
+        self.positions.clear()
+        self.queued_orders.clear()
+        self.current_symbols.clear()
+        self._pending_entries.clear()
         async with self._eval_state_lock:
             self._last_strategy_eval.clear()
             self._strategy_intervals.clear()
             self._force_eval.clear()
             self._force_eval_time.clear()
-        self._entry_signal_state = {}
-        self._last_decisions = {}
-        self._last_eval_snapshot = {}
+        self._entry_signal_state.clear()
+        self._last_decisions.clear()
+        self._last_eval_snapshot.clear()
         async with self._cycle_spent_lock:
             self._cycle_spent = 0.0
         self._balance_cache = None
@@ -397,12 +397,12 @@ class TradingEngine:
         self._trade_pattern_cache_trade_count = -1
         self._trade_history_version = 0
         self._realized_pnl_offset = 0.0
-        self.trade_history = []
-        self.recent_signals = []
-        self.last_loss_time = {}
-        self.cooldown_durations = {}
+        self.trade_history.clear()
+        self.recent_signals.clear()
+        self.last_loss_time.clear()
+        self.cooldown_durations.clear()
         self._global_risk_multiplier = None
-        self._symbol_first_seen = {}
+        self._symbol_first_seen.clear()
         self._market_breadth = None
         self.initial_balance = settings.PAPER_INITIAL_BALANCE
 
