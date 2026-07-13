@@ -122,6 +122,7 @@ class BacktestConfig:
     fee_model: str = "flat"
     trade_value: Optional[float] = None
     is_btp: bool = False
+    dividends: Optional[List[Dict[str, float]]] = None
     max_trades: int = 200
     cooldown_after_loss_seconds: Optional[int] = None
     slippage_pct: float = 0.0
@@ -641,6 +642,18 @@ def backtest_strategy(
             exit_reason = "end_of_data"
             exit_index = len(candles) - 1
 
+        # --- Calculate dividends during holding period ---
+        total_dividends = 0.0
+        if config.dividends:
+            for div in config.dividends:
+                div_ts = div.get("timestamp_ms", 0)
+                if entry_ts <= div_ts <= exit_ts:
+                    div_amount = div.get("amount", 0.0)
+                    if is_short:
+                        total_dividends -= div_amount
+                    else:
+                        total_dividends += div_amount
+
         # Record partial trades first
         for pt in partial_trades:
             trades.append(pt)
@@ -659,7 +672,8 @@ def backtest_strategy(
                     gross_pnl_pct = (entry_price - exit_price) / entry_price * remaining_fraction
                 else:
                     gross_pnl_pct = (exit_price - entry_price) / entry_price * remaining_fraction
-                net_pnl_pct = gross_pnl_pct - entry_fee_pct - exit_fee_pct
+                dividend_pct = (total_dividends / entry_price) * remaining_fraction
+                net_pnl_pct = gross_pnl_pct - entry_fee_pct - exit_fee_pct + dividend_pct
             else:
                 entry_fee = entry_price * config.fee_rate
                 exit_fee = exit_price * config.fee_rate
@@ -667,7 +681,8 @@ def backtest_strategy(
                     gross_pnl_pct = (entry_price - exit_price) / entry_price * remaining_fraction
                 else:
                     gross_pnl_pct = (exit_price - entry_price) / entry_price * remaining_fraction
-                net_pnl_pct = gross_pnl_pct - (entry_fee + exit_fee) / entry_price * remaining_fraction
+                dividend_pct = (total_dividends / entry_price) * remaining_fraction
+                net_pnl_pct = gross_pnl_pct - (entry_fee + exit_fee) / entry_price * remaining_fraction + dividend_pct
 
             hold_time_seconds = (exit_ts - entry_ts) / 1000.0
 
