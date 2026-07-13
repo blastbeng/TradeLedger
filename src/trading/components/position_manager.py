@@ -950,7 +950,7 @@ class PositionManager:
 
         # --- Matured BTP bonds: close at par value (100.0) ---
         now_dt = datetime.now(timezone.utc)
-        for entry in list(engine.current_symbols):
+        for entry in list(self.shared_state.current_symbols):
             symbol = entry["symbol"]
             base = symbol.split("/")[0]
             if not is_btp_isin(base):
@@ -1012,7 +1012,7 @@ class PositionManager:
 
             if maturity_dt is None:
                 logger.warning(f"Could not parse maturity date '{maturity_str}' for BTP {symbol}")
-                pos = engine.positions.get(symbol)
+                pos = self.shared_state.positions.get(symbol)
                 if pos:
                     grace_period = 7 * 24 * 3600  # 7 days
                     unparseable_since = pos.get("_unparseable_maturity_since")
@@ -1049,26 +1049,26 @@ class PositionManager:
             if now_dt < maturity_dt:
                 continue
             # BTP has matured – close at par value
-            pos = engine.positions.get(symbol)
+            pos = self.shared_state.positions.get(symbol)
             if pos:
                 await self._close_btp_at_par(symbol, entry, pos, "btp_matured", "btp_matured", "BTP matured")
 
-        for entry in list(engine.current_symbols):
+        for entry in list(self.shared_state.current_symbols):
             symbol = entry["symbol"]
             if symbol not in available_pairs:
                 logger.warning(f"Stock {symbol} no longer available. Removing from tracking.")
-                engine.current_symbols.remove(entry)
+                self.shared_state.current_symbols.remove(entry)
                 # Remove any queued orders for this delisted symbol and refund reserved capital
-                async with engine._queued_orders_lock:
-                    removed_buys = [q for q in engine.queued_orders if q['symbol'] == symbol and q['side'] == 'buy']
-                    engine.queued_orders = [q for q in engine.queued_orders if q['symbol'] != symbol]
+                async with self.shared_state._queued_orders_lock:
+                    removed_buys = [q for q in self.shared_state.queued_orders if q['symbol'] == symbol and q['side'] == 'buy']
+                    self.shared_state.queued_orders = [q for q in self.shared_state.queued_orders if q['symbol'] != symbol]
                 if removed_buys:
-                    async with engine._cycle_spent_lock:
-                        engine._cycle_spent = max(0.0, engine._cycle_spent - sum(q.get('amount', 0.0) for q in removed_buys))
-                if symbol in engine.positions:
+                    async with self.shared_state._cycle_spent_lock:
+                        self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - sum(q.get('amount', 0.0) for q in removed_buys))
+                if symbol in self.shared_state.positions:
                     await self.event_bus.publish("cancel_exit_orders", symbol)
-                    async with engine._positions_lock:
-                        pos = engine.positions.pop(symbol)
+                    async with self.shared_state._positions_lock:
+                        pos = self.shared_state.positions.pop(symbol)
                     cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
                     base = symbol.split("/")[0]
                     is_btp = is_btp_isin(base)
@@ -1102,7 +1102,7 @@ class PositionManager:
                         "realized_pnl": realized_pnl,
                         "cost_basis": cost_basis,
                     }
-                    engine._append_trade(trade)
+                    self.shared_state.append_trade(trade, settings.MAX_TRADES_IN_MEMORY)
                     await asyncio.to_thread(insert_trade, trade)
                     logger.warning(f"Delisted {symbol}: recorded forced sell of {pos['amount']} at {close_price}.")
                     await self.event_bus.publish("remove_symbol_if_paused", symbol)
@@ -1114,7 +1114,7 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Failed to fetch balances for reconciliation: {e}")
             all_balances = {}
-        for symbol, pos in list(engine.positions.items()):
+        for symbol, pos in list(self.shared_state.positions.items()):
             base = symbol.split('/')[0]
             try:
                 actual_balance = all_balances.get(base, 0.0)
@@ -1158,7 +1158,7 @@ class PositionManager:
                 net_quote = cost - fee_cost
                 trade["realized_pnl"] = net_quote - prorated_cost_basis
                 trade["cost_basis"] = prorated_cost_basis
-                engine._append_trade(trade)
+                self.shared_state.append_trade(trade, settings.MAX_TRADES_IN_MEMORY)
                 await asyncio.to_thread(insert_trade, trade)
                 logger.warning(
                     f"External sell detected for {symbol}: {sold_amount} sold at ~{current_price}. "
@@ -1166,31 +1166,31 @@ class PositionManager:
                 )
                 if actual_balance < 1e-8:
                     await engine._cancel_exit_orders(symbol)
-                    async with engine._positions_lock:
-                        del engine.positions[symbol]
+                    async with self.shared_state._positions_lock:
+                        del self.shared_state.positions[symbol]
                     await self.event_bus.publish("remove_symbol_if_paused", symbol)
                 else:
-                    async with engine._positions_lock:
-                        engine.positions[symbol]["amount"] = actual_balance
-                        engine.positions[symbol]["cost_basis"] = cost_basis - prorated_cost_basis
-                        engine.positions[symbol]["net_base"] = net_base - sold_amount
-                        new_net_base = engine.positions[symbol]["net_base"]
-                        new_cost_basis = engine.positions[symbol]["cost_basis"]
-                        engine.positions[symbol]["price"] = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
+                    async with self.shared_state._positions_lock:
+                        self.shared_state.positions[symbol]["amount"] = actual_balance
+                        self.shared_state.positions[symbol]["cost_basis"] = cost_basis - prorated_cost_basis
+                        self.shared_state.positions[symbol]["net_base"] = net_base - sold_amount
+                        new_net_base = self.shared_state.positions[symbol]["net_base"]
+                        new_cost_basis = self.shared_state.positions[symbol]["cost_basis"]
+                        self.shared_state.positions[symbol]["price"] = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
             elif actual_balance > recorded_amount + 1e-8:
                 # External deposit – sync to actual balance
                 logger.warning(
                     f"Balance of {base} increased externally from {recorded_amount} to {actual_balance}. "
                     f"Updating position."
                 )
-                async with engine._positions_lock:
-                    engine.positions[symbol]["amount"] = actual_balance
-                    engine.positions[symbol]["net_base"] = actual_balance
-                    cost_basis = engine.positions[symbol].get("cost_basis", 0.0)
-                    engine.positions[symbol]["price"] = cost_basis / actual_balance if actual_balance > 0 else 0.0
+                async with self.shared_state._positions_lock:
+                    self.shared_state.positions[symbol]["amount"] = actual_balance
+                    self.shared_state.positions[symbol]["net_base"] = actual_balance
+                    cost_basis = self.shared_state.positions[symbol].get("cost_basis", 0.0)
+                    self.shared_state.positions[symbol]["price"] = cost_basis / actual_balance if actual_balance > 0 else 0.0
 
         # --- External buys (balance exists but no tracked position) ---
-        tracked_bases = {sym.split('/')[0] for sym in engine.positions}
+        tracked_bases = {sym.split('/')[0] for sym in self.shared_state.positions}
         for base, balance in all_balances.items():
             if base == engine.base_currency:
                 continue
@@ -1210,7 +1210,7 @@ class PositionManager:
                     )
 
         # --- Handle positions that were loaded without LLM risk parameters ---
-        for symbol, pos in list(engine.positions.items()):
+        for symbol, pos in list(self.shared_state.positions.items()):
             if pos.get("_needs_risk_params"):
                 # Check if risk parameters have been populated by a re-evaluation
                 if pos.get("stop_loss") is not None and pos.get("take_profit") is not None:
@@ -1224,8 +1224,8 @@ class PositionManager:
                 pos["_needs_risk_params_attempts"] = attempts
 
                 # Force another re-evaluation so the LLM gets another chance
-                engine._force_eval[symbol] = True
-                engine._last_strategy_eval.pop(symbol, None)
+                self.shared_state._force_eval[symbol] = True
+                self.shared_state._last_strategy_eval.pop(symbol, None)
 
                 max_attempts = 3  # ~15 minutes across 3 reconcile cycles (5 min each)
                 if attempts >= max_attempts:
