@@ -1413,11 +1413,11 @@ class RiskManager:
             return True
         # First or repeated trigger: set flag and ask LLM
         if not pos.get("_take_profit_triggered"):
-            async with engine._positions_lock:
+            async with self.shared_state._positions_lock:
                 pos["_take_profit_triggered"] = True
                 pos["_take_profit_review_count"] = review_count + 1
             # Force immediate strategy re-evaluation for this symbol
-            engine._last_strategy_eval.pop(symbol, None)
+            self.shared_state._last_strategy_eval.pop(symbol, None)
             logger.info(
                 f"Take-profit triggered for {symbol} at {current_price} – "
                 f"asking LLM (review {pos['_take_profit_review_count']}/{max_tp_reviews})."
