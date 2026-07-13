@@ -115,7 +115,6 @@ class TradingEngine:
         self.cooldown_durations = self.shared_state.cooldown_durations
         self._last_strategy_eval = self.shared_state._last_strategy_eval
         self._strategy_intervals = self.shared_state._strategy_intervals
-        self._symbol_reevaluation_interval = settings.SYMBOL_REEVALUATION_INTERVAL
         self.notifier = None
 
         # _load_state() and _ensure_cost_basis() are now called in _initialize_clients()
@@ -166,6 +165,8 @@ class TradingEngine:
         self._pre_market_reeval: bool = False
         self._rebalance_reeval: bool = False
         self._running = True
+        self._settings_reload_event = asyncio.Event()
+        settings.register_reload_callback(self._settings_reload_event.set)
         self._last_state_save = 0
         self._last_eval_snapshot = self.shared_state._last_eval_snapshot
         self._last_decisions = self.shared_state._last_decisions
@@ -597,6 +598,16 @@ class TradingEngine:
         close_pool()
         logger.info("Trading engine stopped.")
 
+    async def _interruptible_sleep(self, delay: float):
+        """Sleep for delay seconds, but wake up immediately if settings are reloaded."""
+        self._settings_reload_event.clear()
+        sleep_task = asyncio.create_task(asyncio.sleep(delay))
+        reload_task = asyncio.create_task(self._settings_reload_event.wait())
+        await asyncio.wait([sleep_task, reload_task], return_when=asyncio.FIRST_COMPLETED)
+        for task in (sleep_task, reload_task):
+            if not task.done():
+                task.cancel()
+
     async def _periodic_reconcile(self):
         """Run position reconciliation every 5 minutes (medium/long-term)."""
         while self._running:
@@ -650,10 +661,17 @@ class TradingEngine:
                     )
             finally:
                 self._reevaluate_running = False
-            try:
-                await asyncio.wait_for(self._reeval_trigger.wait(), timeout=self._symbol_reevaluation_interval)
-            except asyncio.TimeoutError:
-                pass
+            self._settings_reload_event.clear()
+            wait_task = asyncio.create_task(self._reeval_trigger.wait())
+            reload_task = asyncio.create_task(self._settings_reload_event.wait())
+            await asyncio.wait(
+                [wait_task, reload_task],
+                timeout=settings.SYMBOL_REEVALUATION_INTERVAL,
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in (wait_task, reload_task):
+                if not task.done():
+                    task.cancel()
             self._reeval_trigger.clear()
 
     async def _clear_pause_and_resume(self, reason: str, notification_msg: str, notification_summary: dict) -> None:
@@ -893,7 +911,7 @@ class TradingEngine:
                 self.trigger_portfolio_rebalance()
             except Exception as e:
                 logger.error(f"Periodic portfolio rebalance error: {e}", exc_info=True)
-            await asyncio.sleep(settings.PORTFOLIO_REBALANCE_INTERVAL_SECONDS)
+            await self._interruptible_sleep(settings.PORTFOLIO_REBALANCE_INTERVAL_SECONDS)
 
     async def _market_clock_monitor(self):
         """Periodically check market clock and pause/resume trading based on market open/close."""
@@ -1192,10 +1210,10 @@ class TradingEngine:
                 # Dynamically compute sleep interval based on the shortest timeframe
                 # among current positions. This ensures the interval is updated immediately
                 # when positions are closed and the shortest timeframe changes.
-                await asyncio.sleep(min_interval)
+                await self._interruptible_sleep(min_interval)
             except Exception as e:
                 logger.error(f"Risk management loop error: {e}", exc_info=True)
-                await asyncio.sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
+                await self._interruptible_sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
 
     async def _refresh_current_symbols_news_fast(self):
         """Fast news refresh loop – only for the symbols currently tracked by the engine."""
@@ -1208,7 +1226,7 @@ class TradingEngine:
         while self._running:
             if self._news_fast_running:
                 logger.warning("Fast news refresh still running; skipping this cycle.")
-                await asyncio.sleep(settings.NEWS_FAST_UPDATE_INTERVAL_MINUTES * 60)
+                await self._interruptible_sleep(settings.NEWS_FAST_UPDATE_INTERVAL_MINUTES * 60)
                 continue
             self._news_fast_running = True
             try:
@@ -1225,7 +1243,7 @@ class TradingEngine:
                 logger.error(f"Fast news refresh error: {e}")
             finally:
                 self._news_fast_running = False
-            await asyncio.sleep(settings.NEWS_FAST_UPDATE_INTERVAL_MINUTES * 60)
+            await self._interruptible_sleep(settings.NEWS_FAST_UPDATE_INTERVAL_MINUTES * 60)
 
     async def _refresh_news_cache(self):
         """Periodically fetch news for tracked stocks/ETFs and top-volume stocks to keep cache warm."""
@@ -1243,7 +1261,7 @@ class TradingEngine:
         while self._running:
             if self._news_cache_running:
                 logger.warning("News cache refresh still running; skipping this cycle.")
-                await asyncio.sleep(settings.NEWS_UPDATE_INTERVAL_MINUTES * 60)
+                await self._interruptible_sleep(settings.NEWS_UPDATE_INTERVAL_MINUTES * 60)
                 continue
             self._news_cache_running = True
             try:
@@ -1292,7 +1310,7 @@ class TradingEngine:
             except Exception as e:
                 logger.warning(f"News cleanup failed: {e}")
 
-            await asyncio.sleep(settings.NEWS_UPDATE_INTERVAL_MINUTES * 60)
+            await self._interruptible_sleep(settings.NEWS_UPDATE_INTERVAL_MINUTES * 60)
 
     @staticmethod
     def _timeframe_to_ms(timeframe: str) -> int:
@@ -1381,7 +1399,7 @@ class TradingEngine:
         while self._running:
             if self._market_data_running:
                 logger.warning("Market data download still running; skipping this cycle.")
-                await asyncio.sleep(self._get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, "data"))
+                await self._interruptible_sleep(self._get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, "data"))
                 continue
             self._market_data_running = True
             try:
@@ -1411,7 +1429,7 @@ class TradingEngine:
             finally:
                 self._market_data_running = False
 
-            await asyncio.sleep(self._get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, "data"))
+            await self._interruptible_sleep(self._get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, "data"))
 
     async def _download_all_assets_data_loop(self):
         """Periodically download OHLCV for ALL tradable assets (stocks, ETFs, BTPs)."""
@@ -1419,7 +1437,7 @@ class TradingEngine:
         while self._running:
             if self._full_download_running:
                 logger.info("Full download already running (likely force download); skipping this cycle.")
-                await asyncio.sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
+                await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
                 continue
             self._full_download_running = True
             try:
@@ -1435,7 +1453,7 @@ class TradingEngine:
                 all_pairs = stock_pairs + btp_pairs
                 if not all_pairs:
                     logger.info("No tradable assets found; skipping full download.")
-                    await asyncio.sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
+                    await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
                     continue
 
                 now_ms = int(time.time() * 1000)
@@ -1499,7 +1517,7 @@ class TradingEngine:
                 self._full_download_running = False
 
             # Wait before next full download
-            await asyncio.sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
+            await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
 
     async def _download_all_news_loop(self):
         """Periodically pre‑fetch news for ALL tradable assets (stocks, ETFs, BTPs)."""
@@ -1523,7 +1541,7 @@ class TradingEngine:
                 all_pairs = stock_pairs + btp_pairs
                 if not all_pairs:
                     logger.info("No tradable assets found; skipping full news download.")
-                    await asyncio.sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, "news"))
+                    await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, "news"))
                     continue
 
                 # Prioritize currently tracked symbols first, then the rest.
@@ -1547,7 +1565,7 @@ class TradingEngine:
             except Exception as e:
                 logger.error(f"Full asset news download loop error: {e}", exc_info=True)
 
-            await asyncio.sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, "news"))
+            await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, "news"))
 
     async def _refresh_all_quotes_loop(self):
         """Periodically fetch quotes for all tradable assets and cache them in Redis."""
@@ -1555,7 +1573,7 @@ class TradingEngine:
         while self._running:
             if self._quotes_fetch_running:
                 logger.info("Quotes fetch already running (likely re-evaluation or breadth); skipping this cycle.")
-                await asyncio.sleep(self._get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, "quotes"))
+                await self._interruptible_sleep(self._get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, "quotes"))
                 continue
             self._quotes_fetch_running = True
             try:
@@ -1577,7 +1595,7 @@ class TradingEngine:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
             finally:
                 self._quotes_fetch_running = False
-            await asyncio.sleep(self._get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, "quotes"))
+            await self._interruptible_sleep(self._get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, "quotes"))
 
     async def _refresh_ticker_discovery_loop(self):
         """Periodically discover tickers from news RSS feeds and trending stocks.
@@ -1717,7 +1735,7 @@ class TradingEngine:
                     await self.reset_paper_trading_state()
                     continue
 
-                await asyncio.sleep(settings.ENGINE_LOOP_INTERVAL_SECONDS)
+                await self._interruptible_sleep(settings.ENGINE_LOOP_INTERVAL_SECONDS)
 
                 # Process any symbol whose evaluation interval has elapsed
                 now = time.time()
@@ -2056,7 +2074,7 @@ class TradingEngine:
                             self._last_strategy_eval.pop(symbol, None)
             except Exception as e:
                 logger.error(f"Entry signal monitor error: {e}", exc_info=True)
-            await asyncio.sleep(settings.ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS)
+            await self._interruptible_sleep(settings.ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS)
 
     async def _check_pending_entries(self):
         """Periodically check pending entry conditions and execute if met."""
