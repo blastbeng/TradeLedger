@@ -403,6 +403,7 @@ class TradingEngine:
         self.cooldown_durations.clear()
         self._global_risk_multiplier = None
         self._symbol_first_seen.clear()
+        self._sentiment_cache.clear()
         self._market_breadth = None
         self.initial_balance = settings.PAPER_INITIAL_BALANCE
 
