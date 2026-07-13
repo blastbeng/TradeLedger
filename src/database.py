@@ -1714,29 +1714,29 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         return {}
 
     # Try to get from Redis cache (per-symbol keys for granular invalidation)
-    base_symbols = [s.split('/')[0] for s in symbols]
+    base_symbols_list = [s.split('/')[0] for s in symbols]
+    cached_result = {}
+    missing_symbols = []
     try:
         redis_client = get_redis_client()
         pipe = redis_client.pipeline()
-        for bs in base_symbols:
+        for bs in base_symbols_list:
             pipe.get(f"latest_close_prices:{bs}")
         cached_results = pipe.execute()
         
-        cached_result = {}
-        all_cached = True
-        for bs, cached in zip(base_symbols, cached_results):
+        for bs, cached in zip(base_symbols_list, cached_results):
             if cached:
                 cached_result[bs] = json.loads(cached)
             else:
-                all_cached = False
-        
-        if all_cached:
-            return cached_result
+                missing_symbols.append(bs)
     except Exception:
-        pass
+        missing_symbols = base_symbols_list
+
+    if not missing_symbols:
+        return cached_result
 
     # Normalize input symbols to base form (strip /currency suffix)
-    base_symbols = set(s.split('/')[0] for s in symbols)
+    base_symbols = set(missing_symbols)
     # Construct full pair symbols for exact matching in the database
     full_pairs = [f"{bs}/{settings.BASE_CURRENCY}" for bs in base_symbols]
 
@@ -1899,7 +1899,9 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     except Exception:
         pass
 
-    return result
+    # Merge cached results with newly fetched results
+    final_result = {**cached_result, **result}
+    return final_result
 
 
 @retry_on_db_lock()
