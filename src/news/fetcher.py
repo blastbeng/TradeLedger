@@ -121,6 +121,9 @@ def _get_rate_limiter() -> RateLimiter:
     global _rate_limiter
     if _rate_limiter is None:
         _rate_limiter = RateLimiter(settings.NEWS_RATE_LIMIT_PER_SOURCE_SECONDS)
+    else:
+        # Update min_interval so settings.reload() takes effect immediately
+        _rate_limiter.min_interval = settings.NEWS_RATE_LIMIT_PER_SOURCE_SECONDS
     return _rate_limiter
 
 

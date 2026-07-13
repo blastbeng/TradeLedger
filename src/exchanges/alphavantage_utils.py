@@ -35,6 +35,7 @@ def get_alphavantage_quote(symbol: str) -> Optional[Dict[str, Any]]:
     if suffix and base.endswith(suffix):
         base = base[:-len(suffix)]
 
+    _av_rate_limiter.max_requests = settings.ALPHAVANTAGE_RATE_LIMIT_PER_MIN
     try:
         _av_rate_limiter.acquire()
     except ConnectionError:
@@ -101,6 +102,7 @@ def get_alphavantage_candles(
     else:
         return None  # Unsupported timeframe for Alpha Vantage
 
+    _av_rate_limiter.max_requests = settings.ALPHAVANTAGE_RATE_LIMIT_PER_MIN
     try:
         _av_rate_limiter.acquire()
     except ConnectionError:

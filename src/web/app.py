@@ -22,10 +22,8 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-# Rate limiting configuration (configurable via settings)
-RATE_LIMIT_REQUESTS = settings.WEB_RATE_LIMIT_REQUESTS
-RATE_LIMIT_WINDOW = settings.WEB_RATE_LIMIT_WINDOW
-GLOBAL_RATE_LIMIT_REQUESTS = RATE_LIMIT_REQUESTS * 10
+# Rate limiting configuration is read fresh from settings in the middleware
+# so that settings.reload() takes effect immediately without restart.
 
 async def _get_display_symbol(engine, symbol: str, timeframe: Optional[str] = None) -> str:
     """Return a formatted display string for the given symbol and timeframe."""
@@ -94,26 +92,31 @@ async def rate_limit_middleware(request: Request, call_next):
     rate_limit_key = f"rate_limit:{client_ip}"
     global_rate_limit_key = "rate_limit:global"
 
+    # Read rate limit settings fresh each request so settings.reload() takes effect immediately
+    rate_limit_requests = settings.WEB_RATE_LIMIT_REQUESTS
+    rate_limit_window = settings.WEB_RATE_LIMIT_WINDOW
+    global_rate_limit_requests = rate_limit_requests * 10
+
     try:
         # Remove timestamps older than the window for both keys
-        await asyncio.to_thread(redis.zremrangebyscore, rate_limit_key, 0, now - RATE_LIMIT_WINDOW)
-        await asyncio.to_thread(redis.zremrangebyscore, global_rate_limit_key, 0, now - RATE_LIMIT_WINDOW)
+        await asyncio.to_thread(redis.zremrangebyscore, rate_limit_key, 0, now - rate_limit_window)
+        await asyncio.to_thread(redis.zremrangebyscore, global_rate_limit_key, 0, now - rate_limit_window)
 
         # Count current requests in the window
         count = await asyncio.to_thread(redis.zcard, rate_limit_key)
         global_count = await asyncio.to_thread(redis.zcard, global_rate_limit_key)
 
-        if count >= RATE_LIMIT_REQUESTS or global_count >= GLOBAL_RATE_LIMIT_REQUESTS:
+        if count >= rate_limit_requests or global_count >= global_rate_limit_requests:
             return JSONResponse(status_code=429, content={"detail": "Too Many Requests"})
 
         # Add current request timestamp and set expiration
         # Use a unique member (uuid) to avoid collisions if two requests happen at the exact same time
         request_id = uuid.uuid4().hex
         await asyncio.to_thread(redis.zadd, rate_limit_key, {request_id: now})
-        await asyncio.to_thread(redis.expire, rate_limit_key, RATE_LIMIT_WINDOW)
-        
+        await asyncio.to_thread(redis.expire, rate_limit_key, rate_limit_window)
+
         await asyncio.to_thread(redis.zadd, global_rate_limit_key, {request_id: now})
-        await asyncio.to_thread(redis.expire, global_rate_limit_key, RATE_LIMIT_WINDOW)
+        await asyncio.to_thread(redis.expire, global_rate_limit_key, rate_limit_window)
     except Exception as e:
         # Fail-open if Redis is unavailable
         logger.warning(f"Rate limiter failed, allowing request: {e}")

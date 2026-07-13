@@ -620,6 +620,11 @@ class TradingEngine:
         self._symbol_reevaluation_interval = settings.SYMBOL_REEVALUATION_INTERVAL
         # Invalidate yfinance session so it's recreated with new proxy settings
         _invalidate_yf_session()
+        # Update backtest concurrency semaphore to pick up MAX_CONCURRENT_BACKTESTS changes
+        self._backtest_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_BACKTESTS)
+        # Update paper trader's base currency if it exists
+        if self.trader is not None:
+            self.trader.base_currency = settings.BASE_CURRENCY
 
     async def _periodic_reconcile(self):
         """Run position reconciliation every 5 minutes (medium/long-term)."""
