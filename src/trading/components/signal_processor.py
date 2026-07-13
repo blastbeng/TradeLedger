@@ -501,8 +501,6 @@ class SignalProcessor:
             await self.post_decision_manager.process_post_llm_decision(decision_data)
         except Exception as e:
             logger.error(f"Error processing {symbol}: {e}", exc_info=True)
-            async with engine._eval_state_lock:
-                engine._force_eval[symbol] = True
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"❌ Error processing {display_symbol}: {e}",
