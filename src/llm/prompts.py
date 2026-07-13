@@ -388,8 +388,8 @@ Maximum symbols to trade: {max_symbols}
                 f"Round-trip@{trade_value:.0f}={total_fees:.2f} ({break_even_pct*100:.2f}%). "
                 f"Smaller trades → higher % due to fixed+min fees. TP must be > {break_even_pct*100:.2f}%.\n"
             )
-if ytm is not None:
-    prompt += f"YTM:{ytm:.2f}%\n"
+    if ytm is not None:
+        prompt += f"YTM:{ytm:.2f}%\n"
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)
