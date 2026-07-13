@@ -23,6 +23,7 @@ class RiskManager:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self.event_bus.subscribe("check_risk_management", self.check_risk_management)
         self.event_bus.subscribe("record_position_pnl_snapshots", self.record_position_pnl_snapshots)
@@ -31,21 +32,21 @@ class RiskManager:
     async def _handle_update_native_stop_order(self, symbol: str) -> None:
         """Event handler to immediately update native stop order for a symbol."""
         engine = self.engine
-        if symbol in engine.positions:
-            await self.update_native_stop_order(symbol, engine.positions[symbol])
+        if symbol in self.shared_state.positions:
+            await self.update_native_stop_order(symbol, self.shared_state.positions[symbol])
 
     async def record_position_pnl_snapshots(self, symbols_to_check: Optional[List[str]] = None):
         """Record P&L snapshots for all open positions to the database."""
         engine = self.engine
-        if not engine.positions:
+        if not self.shared_state.positions:
             return
         pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
         now_ms = int(time.time() * 1000)
 
-        target_symbols = symbols_to_check if symbols_to_check is not None else list(engine.positions.keys())
+        target_symbols = symbols_to_check if symbols_to_check is not None else list(self.shared_state.positions.keys())
 
         for symbol in target_symbols:
-            pos = engine.positions.get(symbol)
+            pos = self.shared_state.positions.get(symbol)
             if not pos:
                 continue
             try:
@@ -60,7 +61,7 @@ class RiskManager:
                 # Realized P&L: sum of all closed sell trades for this symbol
                 realized_pnl = sum(
                     t.get("realized_pnl", 0.0)
-                    for t in engine.trade_history
+                    for t in self.shared_state.trade_history
                     if t.get("symbol") == symbol and t.get("side") == "sell"
                 )
                 await asyncio.to_thread(
@@ -119,8 +120,8 @@ class RiskManager:
             logger.warning("Redis unavailable, skipping portfolio drawdown circuit breaker check.")
             return
         try:
-            with engine._trade_history_lock:
-                trades_snapshot = list(engine.trade_history)
+            with self.shared_state._trade_history_lock:
+                trades_snapshot = list(self.shared_state.trade_history)
             # Compute drawdown based on realized equity (initial balance + realized P&L)
             # plus current unrealized P&L to catch deep drawdowns from open positions.
             initial_balance = settings.PAPER_INITIAL_BALANCE
@@ -140,9 +141,9 @@ class RiskManager:
 
             # Include unrealized P&L from open positions in the current equity
             unrealized_pnl = 0.0
-            if engine.positions:
+            if self.shared_state.positions:
                 pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
-                for symbol, pos in engine.positions.items():
+                for symbol, pos in self.shared_state.positions.items():
                     t = pos_tickers.get(symbol)
                     current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
                     amount = pos.get('amount', 0.0)
@@ -215,8 +216,8 @@ class RiskManager:
         max_consec_losses = settings.PORTFOLIO_COOLDOWN_MAX_CONSEC_LOSSES
         cooldown_seconds = settings.PORTFOLIO_COOLDOWN_SECONDS
 
-        with engine._trade_history_lock:
-            trades_snapshot = list(engine.trade_history)
+        with self.shared_state._trade_history_lock:
+            trades_snapshot = list(self.shared_state.trade_history)
 
         consec_losses = 0
         for trade in reversed(trades_snapshot):
