@@ -507,11 +507,11 @@ class PositionManager:
         """Analyze closed trades to identify which conditions, timeframes, and parameters
         have historically led to wins vs losses. Cached and only recomputed when new trades arrive."""
         engine = self.engine
-        if engine._trade_history_version == engine._trade_pattern_cache_trade_count and engine._trade_pattern_cache is not None:
+        if self.shared_state._trade_history_version == engine._trade_pattern_cache_trade_count and engine._trade_pattern_cache is not None:
             return engine._trade_pattern_cache
 
         # Snapshot trade_history to avoid concurrent modification during iteration
-        trades_snapshot = list(engine.trade_history)
+        trades_snapshot = list(self.shared_state.trade_history)
 
         sells = [t for t in trades_snapshot if t.get("side") == "sell" and "realized_pnl" in t]
         if not sells:
@@ -624,7 +624,7 @@ class PositionManager:
         }
 
         engine._trade_pattern_cache = result
-        engine._trade_pattern_cache_trade_count = engine._trade_history_version
+        engine._trade_pattern_cache_trade_count = self.shared_state._trade_history_version
         return result
 
     @staticmethod
