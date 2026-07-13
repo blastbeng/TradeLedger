@@ -494,6 +494,21 @@ def _get_init_statements() -> List[str]:
         "CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol_tf_hash ON backtest_results(symbol, timeframe, params_hash, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_backtest_results_created_at ON backtest_results(created_at)",
         f"""
+        CREATE TABLE IF NOT EXISTS llm_decision_quality (
+            id {pk_type},
+            symbol TEXT NOT NULL,
+            timestamp {bigint_type} NOT NULL,
+            action TEXT NOT NULL,
+            entry_price REAL,
+            timeframe TEXT,
+            outcome_price REAL,
+            outcome_timestamp {bigint_type},
+            outcome_profitable INTEGER,
+            evaluated INTEGER DEFAULT 0
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_llm_decision_quality_timestamp ON llm_decision_quality(timestamp)",
+        f"""
         CREATE TABLE IF NOT EXISTS dividends (
             id {pk_type},
             symbol TEXT NOT NULL,
@@ -2671,6 +2686,101 @@ def cleanup_old_dividends(retention_days: int = 365):
         if deleted:
             logger.info(f"Cleaned up {deleted} old dividend records (older than {retention_days} days)")
         return deleted
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def insert_llm_decision(symbol: str, action: str, entry_price: float, timeframe: str):
+    """Inserts a new LLM decision into the quality tracking table."""
+    timestamp = int(time.time() * 1000)
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            INSERT INTO llm_decision_quality (symbol, timestamp, action, entry_price, timeframe, evaluated)
+            VALUES (%s, %s, %s, %s, %s, 0)
+            """
+        )
+        conn.execute(sql, (symbol, timestamp, action, entry_price, timeframe))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_pending_llm_decisions(evaluation_window_seconds: int) -> List[Dict[str, Any]]:
+    """Fetches LLM decisions that are ready to be evaluated."""
+    cutoff_timestamp = int((time.time() - evaluation_window_seconds) * 1000)
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            SELECT id, symbol, timestamp, action, entry_price, timeframe
+            FROM llm_decision_quality
+            WHERE evaluated = 0 AND timestamp <= %s
+            """
+        )
+        rows = conn.execute(sql, (cutoff_timestamp,)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def update_llm_decision_outcome(decision_id: int, outcome_price: float, outcome_profitable: bool):
+    """Updates an LLM decision record with the actual outcome."""
+    outcome_timestamp = int(time.time() * 1000)
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            UPDATE llm_decision_quality
+            SET outcome_price = %s, outcome_timestamp = %s, outcome_profitable = %s, evaluated = 1
+            WHERE id = %s
+            """
+        )
+        conn.execute(sql, (outcome_price, outcome_timestamp, 1 if outcome_profitable else 0, decision_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_llm_decision_quality_metrics(period_days: int = 7) -> Dict[str, Any]:
+    """Calculates LLM decision accuracy and counts over a given period."""
+    cutoff_timestamp = int((time.time() - period_days * 86400) * 1000)
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            SELECT 
+                COUNT(*) as total_decisions,
+                SUM(CASE WHEN outcome_profitable = 1 THEN 1 ELSE 0 END) as profitable_decisions,
+                SUM(CASE WHEN action = 'HOLD' THEN 1 ELSE 0 END) as hold_decisions,
+                SUM(CASE WHEN action = 'BUY' THEN 1 ELSE 0 END) as buy_decisions,
+                SUM(CASE WHEN action = 'SELL' THEN 1 ELSE 0 END) as sell_decisions
+            FROM llm_decision_quality
+            WHERE evaluated = 1 AND timestamp >= %s
+            """
+        )
+        row = conn.execute(sql, (cutoff_timestamp,)).fetchone()
+        if not row or row["total_decisions"] == 0:
+            return {
+                "total_evaluated": 0,
+                "accuracy": 0.0,
+                "hold_count": 0,
+                "buy_count": 0,
+                "sell_count": 0
+            }
+        
+        total = row["total_decisions"]
+        profitable = row["profitable_decisions"] or 0
+        return {
+            "total_evaluated": total,
+            "accuracy": (profitable / total) * 100 if total > 0 else 0.0,
+            "hold_count": row["hold_decisions"] or 0,
+            "buy_count": row["buy_decisions"] or 0,
+            "sell_count": row["sell_decisions"] or 0
+        }
     finally:
         conn.close()
 
