@@ -1321,6 +1321,13 @@ def insert_ohlcv_batch(symbol: str, timeframe: str, candles: List[List]):
             conn.executemany(sql, valid_candles)
             conn.commit()
             logger.debug(f"Inserted {len(valid_candles)} valid OHLCV candles for {symbol} {timeframe}")
+            # Invalidate the latest close price cache for this symbol
+            try:
+                redis_client = get_redis_client()
+                base_symbol = symbol.split('/')[0] if '/' in symbol else symbol
+                redis_client.delete(f"latest_close_prices:{base_symbol}")
+            except Exception:
+                pass
     finally:
         conn.close()
 
@@ -1706,13 +1713,25 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     if not symbols:
         return {}
 
-    # Try to get from Redis cache
+    # Try to get from Redis cache (per-symbol keys for granular invalidation)
+    base_symbols = [s.split('/')[0] for s in symbols]
     try:
         redis_client = get_redis_client()
-        cache_key = "latest_close_prices:" + hashlib.md5(json.dumps(sorted(symbols)).encode()).hexdigest()
-        cached = redis_client.get(cache_key)
-        if cached:
-            return json.loads(cached)
+        pipe = redis_client.pipeline()
+        for bs in base_symbols:
+            pipe.get(f"latest_close_prices:{bs}")
+        cached_results = pipe.execute()
+        
+        cached_result = {}
+        all_cached = True
+        for bs, cached in zip(base_symbols, cached_results):
+            if cached:
+                cached_result[bs] = json.loads(cached)
+            else:
+                all_cached = False
+        
+        if all_cached:
+            return cached_result
     except Exception:
         pass
 
@@ -1870,11 +1889,13 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     finally:
         conn.close()
 
-    # Save to Redis cache
+    # Save to Redis cache (per-symbol keys)
     try:
         redis_client = get_redis_client()
-        cache_key = "latest_close_prices:" + hashlib.md5(json.dumps(sorted(symbols)).encode()).hexdigest()
-        redis_client.setex(cache_key, 60, json.dumps(result))
+        pipe = redis_client.pipeline()
+        for bs, data in result.items():
+            pipe.setex(f"latest_close_prices:{bs}", 60, json.dumps(data))
+        pipe.execute()
     except Exception:
         pass
 
