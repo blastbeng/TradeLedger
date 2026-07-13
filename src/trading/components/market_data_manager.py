@@ -182,7 +182,7 @@ class MarketDataManager:
                     while next_open.weekday() >= 5:
                         next_open += timedelta(days=1)
 
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.error(f"Failed to get market clock from pandas_market_calendars: {type(e).__name__}: {e}")
             # Fallback: simple weekday + time check, assume no holidays
             if today.weekday() < 5 and market_open_today <= now_rome < market_close_today:
@@ -273,14 +273,14 @@ class MarketDataManager:
                         name = b.get("name") or base
                         if name and name != b["isin"]:
                             return name
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.debug(f"get_stock_name: BTP cache lookup failed for {base}: {type(e).__name__}: {e}")
             # Fallback: try DB directly
             try:
                 db_name = await asyncio.to_thread(get_symbol_name_from_db, base)
                 if db_name:
                     return db_name
-            except Exception:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
                 pass
 
             # If we got a name from the BTP cache, save it to DB for future lookups
@@ -295,7 +295,7 @@ class MarketDataManager:
                                 country="italy"
                             )
                             return name
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.debug(f"get_stock_name: failed to save name to DB for {base}: {type(e).__name__}: {e}")
             return base
 
@@ -305,7 +305,7 @@ class MarketDataManager:
             cached = await asyncio.to_thread(engine.redis.get, cache_key)
             if cached:
                 return cached.decode() if isinstance(cached, bytes) else cached
-        except Exception:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
             pass
 
         # Check discovered_symbols table (works even when yf circuit is open)
@@ -314,10 +314,10 @@ class MarketDataManager:
             if db_name:
                 try:
                     await asyncio.to_thread(engine.redis.setex, cache_key, 7 * 24 * 3600, db_name)
-                except Exception as e:
+                except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                     logger.debug(f"get_stock_name: failed to cache name in Redis for {base}: {type(e).__name__}: {e}")
                 return db_name
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.debug(f"get_stock_name: DB name lookup failed for {base}: {type(e).__name__}: {e}")
 
         if _check_yf_circuit():
@@ -330,7 +330,7 @@ class MarketDataManager:
                 info = ticker.info
                 return info.get("longName") or info.get("shortName") or base
             name = await asyncio.to_thread(_fetch_yf_name)
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.debug(f"get_stock_name: yfinance fetch failed for {base}: {type(e).__name__}: {e}")
             name = base
 
@@ -342,13 +342,13 @@ class MarketDataManager:
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
                 save_discovered_symbol(db_base, None, None, name, country=None)
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.debug(f"get_stock_name: failed to save name to DB for {base}: {type(e).__name__}: {e}")
 
         # Cache for 7 days (names rarely change)
         try:
             await asyncio.to_thread(engine.redis.setex, cache_key, 7 * 24 * 3600, name)
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.debug(f"get_stock_name: failed to cache name in Redis for {base}: {type(e).__name__}: {e}")
         return name
 
@@ -396,7 +396,7 @@ class MarketDataManager:
                             "maturity": db_entry.get("maturity"),
                         })
                         existing_isins.add(db_entry["symbol"])
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Failed to merge BTPs from DB: {e}")
             engine._btp_bonds_cache = bonds
             engine._btp_bonds_cache_time = now
@@ -454,7 +454,7 @@ class MarketDataManager:
                     raw_frac = info.get("fractionalTrading")
                     if raw_frac is not None:
                         fractionable = bool(raw_frac)
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"yfinance asset info fetch failed for {base}: {type(e).__name__}: {e}")
 
         # Database fallback for name
@@ -463,7 +463,7 @@ class MarketDataManager:
                 db_name = await asyncio.to_thread(get_symbol_name_from_db, base)
                 if db_name:
                     name = db_name
-            except Exception:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
                 pass
 
         # Default to permissive 0.0 when no minimum was found
@@ -487,7 +487,7 @@ class MarketDataManager:
         except asyncio.TimeoutError:
             logger.warning(f"Quote fetch timed out for {len(symbols)} symbols")
             return {}
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Quote fetch failed for {len(symbols)} symbols: {type(e).__name__}: {e}")
             return {}
 
@@ -526,7 +526,7 @@ class MarketDataManager:
                     base = sym.split("/")[0]
                     if base in raw:
                         tickers[sym] = raw[base]
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Batch quote fetch failed for positions: {type(e).__name__}: {e}")
         return tickers
 
@@ -549,7 +549,7 @@ class MarketDataManager:
                     base = sym.split("/")[0]
                     if base in raw:
                         tickers[sym] = raw[base]
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Sync batch quote fetch failed for positions: {type(e).__name__}: {e}")
         return tickers
 
@@ -571,7 +571,7 @@ class MarketDataManager:
                     base = sym.split("/")[0]
                     if base in raw:
                         tickers[sym] = raw[base]
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Sync batch quote fetch failed: {type(e).__name__}: {e}")
         return tickers
 
@@ -609,7 +609,7 @@ class MarketDataManager:
                         get_bars_range,
                         symbol.split("/")[0], timeframe, since, 10000
                     )
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"get_bars_range failed for {symbol} {timeframe} at {since}: {e}")
                 break
 
@@ -661,7 +661,7 @@ class MarketDataManager:
                 logger.debug(f"Indicators computed and stored for {symbol} {timeframe}")
                 return ind
             return None
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to compute/store indicators for {symbol} {timeframe}: {type(e).__name__}: {e}")
             return None
     async def _fill_gaps(self, symbol: str, timeframe: str):
@@ -727,5 +727,5 @@ class MarketDataManager:
                 if db_candles:
                     raw_candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                     await self.compute_and_store_indicators(symbol, timeframe, raw_candles)
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Download failed for {symbol} {timeframe}: {type(e).__name__}: {e}")

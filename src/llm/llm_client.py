@@ -347,7 +347,7 @@ def check_llm_health() -> dict:
                 "model": model or "unknown",
                 "error": None,
             }
-        except Exception as e:
+        except (httpx.HTTPError, ConnectionError, TimeoutError, OSError, ValueError, TypeError) as e:
             results[role] = {
                 "status": "disconnected",
                 "provider": provider,

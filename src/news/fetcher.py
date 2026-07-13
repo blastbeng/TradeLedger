@@ -207,7 +207,7 @@ def _analyze_sentiment(text: str) -> Dict[str, Any]:
             # Clamp compound to [-1.0, 1.0]
             compound = max(-1.0, min(1.0, compound))
             return {"label": label, "compound": round(compound, 4)}
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
         logger.warning(f"LLM sentiment analysis failed: {type(e).__name__}: {e}")
 
     return {"label": "neutral", "compound": 0.0}
@@ -331,7 +331,7 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
             articles = json.loads(cached)
             logger.debug(f"News for {base_symbol} served from cache ({len(articles)} articles)")
             return articles
-        except Exception:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
             pass
 
     articles: List[Dict[str, str]] = []
@@ -404,7 +404,7 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
     # Cache
     try:
         redis_client.set(cache_key, json.dumps(unique), ex=settings.NEWS_CACHE_TTL_SECONDS)
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
         logger.warning(f"Failed to cache news for {base_symbol}: {type(e).__name__}: {e}")
 
     total_time = time.time() - start_time
@@ -440,7 +440,7 @@ def discover_trending_stocks(
                 discovered = json.loads(cached)
                 existing_symbols = {pair.split("/")[0].lower() for pair in existing_pairs}
                 return [d for d in discovered if d.split("/")[0].lower() not in existing_symbols][:max_symbols]
-        except Exception:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
             pass
         return []
 
@@ -453,7 +453,7 @@ def discover_trending_stocks(
 
     try:
         quotes = get_quotes(sample)
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
         logger.warning(f"Failed to fetch quotes for stock discovery: {type(e).__name__}: {e}")
         return []
 
@@ -489,7 +489,7 @@ def discover_trending_stocks(
         # Cache the raw discovered list in Redis for 1 hour
         try:
             redis_client.set(cache_key, json.dumps(discovered), ex=3600)
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to cache trending stocks: {type(e).__name__}: {e}")
     return discovered
 
@@ -552,7 +552,7 @@ def get_upcoming_earnings(symbol: str) -> Optional[str]:
                     return None
                 earnings_date = earnings_date[0]
             return earnings_date.strftime('%Y-%m-%d')
-    except Exception:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError):
         pass
     return None
 
@@ -626,7 +626,7 @@ def _fetch_newsapi(symbol: str, name: Optional[str] = None) -> List[Dict[str, st
             })
         logger.debug(f"NewsAPI returned {len(articles)} articles for {symbol}")
         return articles
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as e:
         logger.warning(f"NewsAPI fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
@@ -673,7 +673,7 @@ def _fetch_twitter(symbol: str, use_cashtag: bool = True, name: Optional[str] = 
                 })
         logger.debug(f"Twitter returned {len(articles)} articles for {symbol}")
         return articles
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
         logger.warning(f"Twitter fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
@@ -727,7 +727,7 @@ def _fetch_reddit(symbol: str, name: Optional[str] = None) -> List[Dict[str, str
             })
         logger.debug(f"Reddit returned {len(articles)} articles for {symbol}")
         return articles
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
         logger.warning(f"Reddit fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
@@ -776,7 +776,7 @@ def _fetch_facebook(symbol: str, name: Optional[str] = None) -> List[Dict[str, s
             })
         logger.debug(f"Facebook returned {len(articles)} articles for {symbol}")
         return articles
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as e:
         logger.warning(f"Facebook fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
@@ -828,7 +828,7 @@ def _fetch_youtube(symbol: str, name: Optional[str] = None) -> List[Dict[str, st
             })
         logger.debug(f"YouTube returned {len(articles)} articles for {symbol}")
         return articles
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as e:
         logger.warning(f"YouTube fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
@@ -872,7 +872,7 @@ def _fetch_googlenews(symbol: str, name: Optional[str] = None) -> List[Dict[str,
             })
         logger.debug(f"Google News returned {len(articles)} articles for {symbol}")
         return articles
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as e:
         logger.warning(f"Google News fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
@@ -946,7 +946,7 @@ def _fetch_stocktwits(symbol: str, name: Optional[str] = None) -> List[Dict[str,
                     "summary": body[:300],
                     "sentiment": {"label": label, "compound": compound},
                 })
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, AttributeError, IndexError) as e:
                 logger.warning(
                     f"StockTwits: failed to process message id={msg.get('id', '?')} "
                     f"for {symbol}: {e}. Raw message: {json.dumps(msg, default=str)[:500]}"
@@ -954,7 +954,7 @@ def _fetch_stocktwits(symbol: str, name: Optional[str] = None) -> List[Dict[str,
                 continue
         logger.debug(f"StockTwits returned {len(articles)} articles for {symbol}")
         return articles
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as e:
         logger.warning(f"StockTwits fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
@@ -1024,7 +1024,7 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
             else:
                 logger.warning(f"RSS fetch failed for {feed_url}: {e}")
             continue
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as e:
             _handle_feed_failure(feed_url)
             logger.warning(f"RSS fetch failed for {feed_url}: {type(e).__name__}: {e}")
             continue
@@ -1068,7 +1068,7 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
                     "summary": summary[:300],
                     "sentiment": sentiment,
                 })
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, AttributeError, IndexError) as e:
             logger.warning(f"RSS parse/processing failed for {feed_url}: {type(e).__name__}: {e}")
     logger.debug(f"RSS total articles for {symbol}: {len(articles)}")
     return articles
@@ -1129,7 +1129,7 @@ def _fetch_banca_d_italia_btp_news(symbol: str, name: Optional[str] = None) -> L
                         })
             if not found_items:
                 break
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as e:
             logger.warning(f"Banca d'Italia scrape failed for page {page}: {e}")
             break
 
@@ -1164,14 +1164,14 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache
     cached_raw = None
     try:
         cached_raw = redis_client.get(cache_key)
-    except Exception:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
         pass
 
     discovered: set = set()
     if cached_raw:
         try:
             discovered = set(json.loads(cached_raw))
-        except Exception:
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
             discovered = set()
     elif cache_only:
         # Re-evaluation: never fetch RSS feeds, just return empty if not cached.
@@ -1220,7 +1220,7 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache
                 # Reset consecutive failure counter on success
                 _feed_fail_counts.pop(feed_url, None)
 
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as e:
                 _handle_feed_failure(feed_url)
                 logger.debug(f"Ticker discovery from RSS feed {feed_url} failed: {e}")
                 continue
@@ -1241,7 +1241,7 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache
                                 break
                     if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
                         break
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, AttributeError, IndexError) as e:
                 logger.debug(f"RSS parse/processing failed for {feed_url}: {e}")
             if len(discovered) >= settings.NEWS_TICKER_DISCOVERY_MAX_SYMBOLS:
                 break
@@ -1249,7 +1249,7 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache
         # Cache the raw discovered tickers for 1 hour
         try:
             redis_client.set(cache_key, json.dumps(list(discovered)), ex=3600)
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to cache discovered tickers: {type(e).__name__}: {e}")
 
     # Filter out existing pairs (in case the cache was used)
@@ -1277,5 +1277,5 @@ def test_rss_feeds():
                 logger.debug(f"RSS OK: {url}")
             else:
                 logger.warning(f"RSS {url} returned {resp.status_code}")
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as e:
             logger.warning(f"RSS {url} failed: {e}")

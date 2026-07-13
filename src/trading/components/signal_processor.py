@@ -516,8 +516,13 @@ class SignalProcessor:
                 strategy_model_type=strategy_model_type,
             )
             await self.event_bus.request("process_post_llm_decision", decision_data)
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Network/IO error processing {symbol}: {type(e).__name__}: {e}")
         except Exception as e:
             logger.error(f"Error processing {symbol}: {type(e).__name__}: {e}", exc_info=True)
+            await self.engine._record_unexpected_exception("process_symbol", e)
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"❌ Error processing {display_symbol}: {e}",

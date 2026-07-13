@@ -180,7 +180,7 @@ class BacktestManager:
                     _adx_series = compute_adx_series(bt_candles, period=14)
                     _rsi_series = compute_rsi_series(bt_candles, period=14)
                     _, _, _macd_hist_series = compute_macd_series(bt_candles)
-                except Exception:
+                except (ValueError, TypeError, KeyError, IndexError, ZeroDivisionError):
                     pass
                 return _atr_series, _adx_series, _rsi_series, _macd_hist_series
 
@@ -593,8 +593,13 @@ class BacktestManager:
                 else:
                     # Step 2 returned no params at all — use Step 1's params
                     signal.strategy_params = preliminary_signal.strategy_params
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"LLM Step 2 network/IO error for {symbol}: {type(e).__name__}: {e}")
         except Exception as e:
             logger.error(f"LLM Step 2 call failed for {symbol}: {type(e).__name__}: {e}. Using preliminary decision.")
+            await self.engine._record_unexpected_exception("run_step2_llm_call", e)
             signal = preliminary_signal
             signal.backtest_summary = combined_bt_summary
             # Preserve provider/model from Step 1b as fallback
@@ -779,6 +784,15 @@ class BacktestManager:
                 timeout=settings.LLM_TIMEOUT
             )
             step2_response = step2_result["response"]
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionError, TimeoutError, OSError) as e:
+            return None, f"LLM Step 2 network/IO error: {e}", None, {
+                "step1_response": data.get("step1b_response"),
+                "error": f"LLM Step 2 network/IO error: {e}",
+                "action": preliminary_signal.action,
+                "backtest_summary": combined_bt_summary,
+            }
         except Exception as e:
             return None, f"LLM Step 2 call failed: {e}", None, {
                 "step1_response": data.get("step1b_response"),
@@ -818,7 +832,7 @@ class BacktestManager:
                 )
                 step2_response = retry_result["response"]
                 final_strategy = create_strategy_from_llm(step2_response)
-            except Exception as e2:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e2:
                 return step2_response, f"Failed to parse LLM Step 2 response after retry: {e2}", None, {
                     "step1_response": data.get("step1b_response"),
                     "step2_response": step2_response,
