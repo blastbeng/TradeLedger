@@ -2,7 +2,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from src.config.settings import settings
 from src.utils.symbol_utils import is_btp_isin
 from src.database import get_news_for_symbol
@@ -119,6 +119,8 @@ class StrategyPromptData:
     min_viable_trade_amount: float = 0.0
     historical_backtest_results: Optional[List[Dict[str, Any]]] = None
     ytm: Optional[float] = None
+    dividend_yield: Optional[float] = None
+    next_ex_dividend: Optional[Tuple[str, int]] = None
 
 
 def build_strategy_prompt(
@@ -219,6 +221,8 @@ def build_strategy_prompt(
     min_viable_trade_amount = data.min_viable_trade_amount
     historical_backtest_results = data.historical_backtest_results
     ytm = data.ytm
+    dividend_yield = data.dividend_yield
+    next_ex_dividend = data.next_ex_dividend
     # Trim large lists to prevent context window overflow
     if recent_trades and len(recent_trades) > 20:
         recent_trades = recent_trades[-20:]
@@ -390,6 +394,10 @@ Maximum symbols to trade: {max_symbols}
             )
     if ytm is not None:
         prompt += f"YTM:{ytm:.2f}%\n"
+    if dividend_yield is not None:
+        prompt += f"DivYield:{dividend_yield*100:.2f}%\n"
+    if next_ex_dividend is not None:
+        prompt += f"NextExDiv:{next_ex_dividend[0]}({next_ex_dividend[1]}d)\n"
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)
