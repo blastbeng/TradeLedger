@@ -32,6 +32,7 @@ class SymbolReevaluator:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self.config_manager = ReevalConfigManager(engine)
         self.data_fetcher = ReevalDataFetcher(engine, event_bus)
@@ -61,13 +62,13 @@ class SymbolReevaluator:
 
         # Reset per-cycle spending tracker, but carry over capital already reserved
         # by queued buy orders from previous cycles so it is not re-allocated.
-        async with engine._queued_orders_lock:
+        async with self.shared_state._queued_orders_lock:
             queued_buy_total = sum(
-                q.get('amount', 0.0) for q in engine.queued_orders
+                q.get('amount', 0.0) for q in self.shared_state.queued_orders
                 if q.get('side') == 'buy'
             )
-        async with engine._cycle_spent_lock:
-            engine._cycle_spent = queued_buy_total
+        async with self.shared_state._cycle_spent_lock:
+            self.shared_state._cycle_spent = queued_buy_total
         logger.info("Re-evaluation step 1/12: Checking cooldown and fetching asset lists...")
 
         # Respect triggered re-evaluation cooldown for market-condition triggers only.
@@ -97,7 +98,7 @@ class SymbolReevaluator:
         last_key = "trading:last_symbol_eval"
         last_eval = await asyncio.to_thread(engine.redis.get, last_key)
         now = time.time()
-        if last_eval and (now - float(last_eval)) < engine._symbol_reevaluation_interval and engine.current_symbols and not force:
+        if last_eval and (now - float(last_eval)) < engine._symbol_reevaluation_interval and self.shared_state.current_symbols and not force:
             logger.info("Skipping symbol re-evaluation: last eval was recent and symbols are already loaded.")
             return None
 
@@ -285,7 +286,7 @@ class SymbolReevaluator:
         )
 
         # If no symbols were selected, shorten the re‑evaluation interval to retry sooner.
-        if not engine.current_symbols:
+        if not self.shared_state.current_symbols:
             engine._symbol_reevaluation_interval = max(engine._symbol_reevaluation_interval, settings.MIN_SYMBOL_REEVALUATION_INTERVAL)
             logger.info(f"No symbols selected – next re‑evaluation in {engine._symbol_reevaluation_interval}s")
         # else: keep the current interval (may have been set by LLM via
@@ -302,8 +303,8 @@ class SymbolReevaluator:
         # --- Cleanup stale entries from engine state dicts and caches ---
         await self.post_selection_manager.cleanup_stale_state_entries()
 
-        engine._state_dirty = True
-        logger.info("Re-evaluation complete: %d symbols selected.", len(engine.current_symbols))
+        self.shared_state._state_dirty = True
+        logger.info("Re-evaluation complete: %d symbols selected.", len(self.shared_state.current_symbols))
         await asyncio.to_thread(engine.redis.set, last_key, now)
 
     async def reevaluate_symbols_impl(self, force: bool = False):
