@@ -49,6 +49,19 @@ def _get_max_input_tokens(provider: str, model_type: str, is_fallback: bool) -> 
             else:
                 return settings.OLLAMA_ACTUATOR_MAX_INPUT_TOKENS
 
+def _get_weak_model_config() -> tuple:
+    """Return (provider, model, base_url, api_key) for the weak model."""
+    provider = settings.LLM_WEAK_PROVIDER or settings.LLM_PROVIDER
+    if provider == "openai":
+        model = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
+        base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
+        api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
+    else:  # ollama
+        model = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
+        base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
+        api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
+    return (provider, model, base_url, api_key)
+
 def _split_and_merge_prompt(
     prompt: str,
     system_prompt: str,
@@ -63,7 +76,7 @@ def _split_and_merge_prompt(
     depth: int = 0,
 ) -> str:
     """
-    Splits an oversized prompt into chunks, summarizes each chunk using the LLM,
+    Splits an oversized prompt into chunks, summarizes each chunk using the weak LLM,
     and merges the summaries into a single prompt that fits within the context window.
     """
     if depth >= 3:
@@ -75,8 +88,12 @@ def _split_and_merge_prompt(
         max_input_tokens, depth
     )
 
-    # Reserve 30% for summary instructions and completion
-    chunk_limit = int(max_input_tokens * 0.7)
+    # Use the weak model for summarization to save time and tokens
+    weak_provider, weak_model, weak_base_url, weak_api_key = _get_weak_model_config()
+    weak_max_tokens = _get_max_input_tokens(weak_provider, "weak", False)
+
+    # The chunk limit must fit within the weak model's context window
+    chunk_limit = int(weak_max_tokens * 0.7)
 
     def _split_text(text: str, limit: int) -> List[str]:
         """Recursively split text by paragraphs, lines, and words to fit within limit."""
@@ -127,7 +144,7 @@ def _split_and_merge_prompt(
 
     summaries = []
     for i, chunk in enumerate(chunks):
-        logger.info("Summarizing chunk %d/%d...", i + 1, len(chunks))
+        logger.info("Summarizing chunk %d/%d using weak model...", i + 1, len(chunks))
         summary_prompt = (
             f"You are processing part {i+1} of {len(chunks)} of a large market analysis prompt. "
             f"Summarize the key data points, indicators, and insights from this chunk. "
@@ -137,14 +154,14 @@ def _split_and_merge_prompt(
         
         try:
             # Call the LLM to summarize the chunk
-            if provider == "openai":
+            if weak_provider == "openai":
                 from src.llm.llm_client import _get_openai_response
                 result = _get_openai_response(
                     prompt=summary_prompt,
                     system_prompt="You are an expert summarizer for a stock trading bot.",
-                    model=model,
-                    base_url=base_url,
-                    api_key=api_key,
+                    model=weak_model,
+                    base_url=weak_base_url,
+                    api_key=weak_api_key,
                     temperature=temperature,
                     timeout=timeout,
                     messages=None,
@@ -156,9 +173,9 @@ def _split_and_merge_prompt(
                 result = _get_ollama_response(
                     prompt=summary_prompt,
                     system_prompt="You are an expert summarizer for a stock trading bot.",
-                    model=model,
-                    base_url=base_url,
-                    api_key=api_key,
+                    model=weak_model,
+                    base_url=weak_base_url,
+                    api_key=weak_api_key,
                     temperature=temperature,
                     timeout=timeout,
                     messages=None,
@@ -168,8 +185,8 @@ def _split_and_merge_prompt(
             summaries.append(result["content"])
         except Exception as e:
             logger.error("Failed to summarize chunk %d: %s. Truncating instead.", i + 1, e)
-            # If summarization fails, truncate the chunk to fit
-            summaries.append(chunk[:chunk_limit * 4])
+            # If summarization fails, truncate the chunk to fit the original model's limit
+            summaries.append(chunk[:max_input_tokens * 4])
     
     # Combine summaries into a new prompt
     merged_prompt = (
