@@ -13,6 +13,7 @@ class ReevalShortlistBuilder:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
 
     def compute_ohlcv_summary(
@@ -83,7 +84,7 @@ class ReevalShortlistBuilder:
         shortlist = sorted_by_composite
 
         # Always include currently held symbols (they must be managed)
-        for entry in engine.current_symbols:
+        for entry in self.shared_state.current_symbols:
             sym = entry["symbol"]
             if sym in sample_pairs and sym not in shortlist:
                 shortlist.append(sym)
@@ -202,7 +203,7 @@ class ReevalShortlistBuilder:
         previously tracked symbols if no suitable candidates are found.
         """
         engine = self.engine
-        if engine.current_symbols or pause_trading is True:
+        if self.shared_state.current_symbols or pause_trading is True:
             return
 
         logger.warning("LLM returned no symbols without pausing – using composite-score-based fallback.")
@@ -245,16 +246,16 @@ class ReevalShortlistBuilder:
             if len(fallback_symbols) >= engine.effective_max_symbols:
                 break
         if fallback_symbols:
-            existing_symbols = {c['symbol']: c for c in engine.current_symbols}
+            existing_symbols = {c['symbol']: c for c in self.shared_state.current_symbols}
             for entry in fallback_symbols:
                 if entry['symbol'] in existing_symbols and 'entry_time' in existing_symbols[entry['symbol']]:
                     entry['entry_time'] = existing_symbols[entry['symbol']]['entry_time']
                 else:
                     entry['entry_time'] = time.time()
-            engine.current_symbols = fallback_symbols
+            self.shared_state.current_symbols = fallback_symbols
         elif old_symbols:
             logger.warning("Fallback found no symbols. Keeping previously tracked symbols.")
-            engine.current_symbols = old_symbols
+            self.shared_state.current_symbols = old_symbols
             engine.effective_max_symbols = max(len(old_symbols), 1)
 
     def update_current_symbols(
@@ -270,7 +271,7 @@ class ReevalShortlistBuilder:
         """
         engine = self.engine
         if deduped and engine.effective_max_symbols > 0:
-            existing_symbols = {c['symbol']: c for c in engine.current_symbols}
+            existing_symbols = {c['symbol']: c for c in self.shared_state.current_symbols}
             for entry in deduped[: engine.effective_max_symbols]:
                 sym = entry['symbol']
                 new_tf = entry['timeframe']
@@ -289,21 +290,21 @@ class ReevalShortlistBuilder:
                     old_tf = old_entry.get('timeframe')
                     if old_tf != new_tf:
                         logger.info(f"Timeframe changed for {sym}: {old_tf} -> {new_tf}")
-                        if sym in engine.positions:
-                            engine.positions[sym]['timeframe'] = new_tf
+                        if sym in self.shared_state.positions:
+                            self.shared_state.positions[sym]['timeframe'] = new_tf
                             # Clear max hold expired flags since the timeframe context changed
-                            engine.positions[sym].pop("_max_hold_expired", None)
-                            engine.positions[sym].pop("_max_hold_expired_count", None)
+                            self.shared_state.positions[sym].pop("_max_hold_expired", None)
+                            self.shared_state.positions[sym].pop("_max_hold_expired_count", None)
                 else:
                     entry['entry_time'] = time.time()
-            engine.current_symbols = deduped[: engine.effective_max_symbols]
+            self.shared_state.current_symbols = deduped[: engine.effective_max_symbols]
         else:
             # LLM returned no symbols – keep previously tracked symbols
             if old_symbols:
                 logger.info("LLM selected 0 symbols. Keeping previously tracked symbols for signal generation.")
-                engine.current_symbols = old_symbols
+                self.shared_state.current_symbols = old_symbols
                 engine.effective_max_symbols = max(len(old_symbols), 1)
             else:
-                engine.current_symbols = []
+                self.shared_state.current_symbols = []
                 engine.effective_max_symbols = 0
                 logger.info("LLM selected 0 symbols – pausing trading until next evaluation.")
