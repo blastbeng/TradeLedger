@@ -251,7 +251,7 @@ class RiskManager:
         """Check if daily realized losses exceed the maximum daily loss limit.
 
         When daily realized P&L falls below -MAX_DAILY_LOSS_PCT * initial_balance,
-        trading is paused until the next calendar day (auto-resume at midnight UTC).
+        trading is paused until the next calendar day (auto-resume at midnight market timezone).
         """
         engine = self.engine
         if not is_redis_available():
