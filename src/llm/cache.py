@@ -189,8 +189,8 @@ def _split_and_merge_prompt(
             return result["content"]
         except Exception as e:
             logger.error("Failed to summarize chunk %d: %s. Truncating instead.", i + 1, e)
-            # If summarization fails, truncate the chunk to fit the original model's limit
-            return chunk[:max_input_tokens * 4]
+            # If summarization fails, truncate the chunk to fit the weak model's limit
+            return chunk[:chunk_limit * 4]
 
     # Summarize chunks in parallel using a thread pool
     summaries = []
@@ -207,7 +207,7 @@ def _split_and_merge_prompt(
                 results[idx] = future.result()
             except Exception as e:
                 logger.error("Chunk %d summarization failed unexpectedly: %s", idx, e)
-                results[idx] = chunks[idx][:max_input_tokens * 4]
+                results[idx] = chunks[idx][:chunk_limit * 4]
         summaries = [r for r in results if r is not None]
     
     # Combine summaries into a new prompt
