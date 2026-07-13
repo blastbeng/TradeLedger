@@ -1686,9 +1686,10 @@ class TradingEngine:
             await self._interruptible_sleep(86400)  # daily
 
     def _daily_realized_pnl(self) -> float:
-        """Return the sum of realized P&L for trades closed today (UTC)."""
+        """Return the sum of realized P&L for trades closed today (market timezone)."""
         from datetime import datetime, timezone
-        today = datetime.now(timezone.utc).date()
+        tz = ZoneInfo(settings.MARKET_TIMEZONE)
+        today = datetime.now(tz).date()
         total = 0.0
         with self._trade_history_lock:
             trades_snapshot = list(self.trade_history)
@@ -1697,7 +1698,7 @@ class TradingEngine:
                 continue
             ts = trade.get("timestamp", 0)
             if ts:
-                trade_date = datetime.fromtimestamp(ts / 1000.0, tz=timezone.utc).date()
+                trade_date = datetime.fromtimestamp(ts / 1000.0, tz=tz).date()
                 if trade_date == today:
                     total += trade.get("realized_pnl", 0.0)
         return total

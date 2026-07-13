@@ -9,6 +9,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
 from src.database import insert_position_pnl_snapshot, get_indicators, get_latest_ohlcv_timestamp, get_ohlcv
@@ -267,8 +268,9 @@ class RiskManager:
             if pause_start_raw:
                 try:
                     pause_start_ts = float(pause_start_raw)
-                    pause_date = datetime.fromtimestamp(pause_start_ts, tz=timezone.utc).date()
-                    today = datetime.now(timezone.utc).date()
+                    tz = ZoneInfo(settings.MARKET_TIMEZONE)
+                    pause_date = datetime.fromtimestamp(pause_start_ts, tz=tz).date()
+                    today = datetime.now(tz).date()
                     if today > pause_date:
                         logger.info("Auto-resuming from daily loss limit: new day started.")
                         pause_keys = [
