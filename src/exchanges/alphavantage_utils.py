@@ -41,10 +41,15 @@ def get_alphavantage_quote(symbol: str) -> Optional[Dict[str, Any]]:
     except ConnectionError:
         return None
 
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={base}&apikey={settings.ALPHAVANTAGE_API_KEY}"
+    url = "https://www.alphavantage.co/query"
+    params = {
+        "function": "GLOBAL_QUOTE",
+        "symbol": base,
+        "apikey": settings.ALPHAVANTAGE_API_KEY,
+    }
     try:
         with httpx.Client(proxy=_get_proxies(), timeout=10.0) as client:
-            response = client.get(url)
+            response = client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
             quote = data.get("Global Quote")
