@@ -1501,10 +1501,6 @@ class TradingEngine:
             # Wait before next full download
             await asyncio.sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
 
-    async def _cleanup_yf_cache_loop(self):
-        """No-op: yfinance manages its own cache. External deletion caused SQLite errors."""
-        pass
-
     async def _download_all_news_loop(self):
         """Periodically pre‑fetch news for ALL tradable assets (stocks, ETFs, BTPs)."""
         if not settings.NEWS_ENABLED:
@@ -1663,21 +1659,6 @@ class TradingEngine:
                 if trade_date == today:
                     total += trade.get("realized_pnl", 0.0)
         return total
-
-    def _append_trade(self, trade: Dict[str, Any]):
-        """Append a trade to history and prune old entries to bound memory usage."""
-        with self._trade_history_lock:
-            self._trade_history_version += 1
-            self.trade_history.append(trade)
-            if len(self.trade_history) > settings.MAX_TRADES_IN_MEMORY:
-                # Accumulate realized P&L of pruned trades so the equity curve
-                # in _compute_performance_metrics remains accurate.
-                pruned = self.trade_history[:-settings.MAX_TRADES_IN_MEMORY]
-                for t in pruned:
-                    if t.get("side") == "sell":
-                        self._realized_pnl_offset += t.get("realized_pnl", 0.0)
-                # Keep only the most recent trades
-                self.trade_history = self.trade_history[-settings.MAX_TRADES_IN_MEMORY:]
 
     def _log_task_exception(self, task: asyncio.Task) -> None:
         """Log exceptions from background tasks to prevent silent failures."""
