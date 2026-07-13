@@ -14,6 +14,7 @@ class ReevalPostSelectionManager:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
 
     async def post_selection_cleanup_and_backfill(
@@ -26,10 +27,10 @@ class ReevalPostSelectionManager:
         engine = self.engine
 
         # Ensure all open positions remain in current_symbols so they continue to be managed by the LLM strategy
-        for symbol, pos in engine.positions.items():
-            if not any(entry["symbol"] == symbol for entry in engine.current_symbols):
+        for symbol, pos in self.shared_state.positions.items():
+            if not any(entry["symbol"] == symbol for entry in self.shared_state.current_symbols):
                 tf = pos.get("timeframe") or (settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h")
-                engine.current_symbols.append({"symbol": symbol, "timeframe": tf})
+                self.shared_state.current_symbols.append({"symbol": symbol, "timeframe": tf})
                 logger.info(f"Keeping {symbol} in current_symbols due to open position (timeframe={tf})")
 
         # If trading is paused, we still keep all symbols so the LLM can generate signals
@@ -41,17 +42,17 @@ class ReevalPostSelectionManager:
 
         # Update symbol tenure tracking
         now_ts = time.time()
-        new_symbol_set = {entry["symbol"] for entry in engine.current_symbols}
+        new_symbol_set = {entry["symbol"] for entry in self.shared_state.current_symbols}
         for sym in new_symbol_set:
-            if sym not in engine._symbol_first_seen:
-                engine._symbol_first_seen[sym] = now_ts
-        for sym in list(engine._symbol_first_seen.keys()):
+            if sym not in self.shared_state._symbol_first_seen:
+                self.shared_state._symbol_first_seen[sym] = now_ts
+        for sym in list(self.shared_state._symbol_first_seen.keys()):
             if sym not in new_symbol_set:
-                del engine._symbol_first_seen[sym]
+                del self.shared_state._symbol_first_seen[sym]
 
         # Trigger immediate backfill for newly selected symbols
         old_symbol_set = {entry["symbol"] for entry in old_symbols}
-        for entry in engine.current_symbols:
+        for entry in self.shared_state.current_symbols:
             if entry["symbol"] not in old_symbol_set:
                 sym = entry["symbol"]
                 tf = entry["timeframe"]
@@ -72,20 +73,20 @@ class ReevalPostSelectionManager:
         symbols that are no longer tracked and have no open position.
         """
         engine = self.engine
-        active_symbols = {entry["symbol"] for entry in engine.current_symbols}
-        active_symbols.update(engine.positions.keys())
-        async with engine._eval_state_lock:
+        active_symbols = {entry["symbol"] for entry in self.shared_state.current_symbols}
+        active_symbols.update(self.shared_state.positions.keys())
+        async with self.shared_state._eval_state_lock:
             for state_dict in (
-                engine._force_eval,
-                engine._last_decisions,
-                engine._entry_signal_state,
-                engine._force_eval_time,
-                engine._last_strategy_eval,
-                engine._strategy_intervals,
-                engine._last_eval_snapshot,
-                engine.last_loss_time,
-                engine.cooldown_durations,
-                engine._pending_entries,
+                self.shared_state._force_eval,
+                self.shared_state._last_decisions,
+                self.shared_state._entry_signal_state,
+                self.shared_state._force_eval_time,
+                self.shared_state._last_strategy_eval,
+                self.shared_state._strategy_intervals,
+                self.shared_state._last_eval_snapshot,
+                self.shared_state.last_loss_time,
+                self.shared_state.cooldown_durations,
+                self.shared_state._pending_entries,
             ):
                 stale_keys = [s for s in state_dict if s not in active_symbols]
                 for s in stale_keys:
@@ -95,7 +96,7 @@ class ReevalPostSelectionManager:
 
         active_bases = {s.split("/")[0] for s in active_symbols}
         for cache_dict in (
-            engine._sentiment_cache,
+            self.shared_state._sentiment_cache,
             engine._asset_cache,
             engine._asset_cache_time,
         ):
