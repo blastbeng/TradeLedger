@@ -1600,140 +1600,139 @@ class TradingEngine:
 
                 await asyncio.sleep(settings.ENGINE_LOOP_INTERVAL_SECONDS)
 
-                # If re-evaluation is running, skip this cycle to avoid
-                # race conditions with _cycle_spent reset and concurrent budget calculations.
-                if self._reevaluate_running:
-                    continue
-
                 # Process any symbol whose evaluation interval has elapsed
                 now = time.time()
 
-                # Compute active period status once per loop iteration
-                clock = await self._market_data_manager.get_clock()
-                is_active_period = False
-                if clock and clock.is_open:
-                    now_rome = clock.timestamp
-                    market_open_dt = now_rome.replace(hour=settings.MARKET_OPEN_HOUR, minute=settings.MARKET_OPEN_MINUTE, second=0, microsecond=0)
-                    minutes_since_open = (now_rome - market_open_dt).total_seconds() / 60
-                    if 0 <= minutes_since_open < settings.MARKET_OPEN_ACTIVE_MINUTES:
-                        is_active_period = True
-                    if not is_active_period:
-                        market_close_dt = now_rome.replace(hour=settings.MARKET_CLOSE_HOUR, minute=settings.MARKET_CLOSE_MINUTE, second=0, microsecond=0)
-                        minutes_to_close = (market_close_dt - now_rome).total_seconds() / 60
-                        if 0 < minutes_to_close < settings.MARKET_CLOSE_ACTIVE_MINUTES:
+                # If re-evaluation is running, skip symbol processing to avoid
+                # race conditions with _cycle_spent reset and concurrent budget
+                # calculations, but still allow state saving to run.
+                if not self._reevaluate_running:
+                    # Compute active period status once per loop iteration
+                    clock = await self._market_data_manager.get_clock()
+                    is_active_period = False
+                    if clock and clock.is_open:
+                        now_rome = clock.timestamp
+                        market_open_dt = now_rome.replace(hour=settings.MARKET_OPEN_HOUR, minute=settings.MARKET_OPEN_MINUTE, second=0, microsecond=0)
+                        minutes_since_open = (now_rome - market_open_dt).total_seconds() / 60
+                        if 0 <= minutes_since_open < settings.MARKET_OPEN_ACTIVE_MINUTES:
                             is_active_period = True
+                        if not is_active_period:
+                            market_close_dt = now_rome.replace(hour=settings.MARKET_CLOSE_HOUR, minute=settings.MARKET_CLOSE_MINUTE, second=0, microsecond=0)
+                            minutes_to_close = (market_close_dt - now_rome).total_seconds() / 60
+                            if 0 < minutes_to_close < settings.MARKET_CLOSE_ACTIVE_MINUTES:
+                                is_active_period = True
 
-                # --- Dynamic evaluation interval based on timeframe and market conditions ---
+                    # --- Dynamic evaluation interval based on timeframe and market conditions ---
 
-                # Fetch full market breadth once per loop iteration
-                full_market_breadth = None
-                try:
-                    full_breadth_raw = await asyncio.to_thread(self.redis.get, "market:breadth:full")
-                    if full_breadth_raw:
-                        full_market_breadth = json.loads(full_breadth_raw)
-                except Exception:
-                    pass
+                    # Fetch full market breadth once per loop iteration
+                    full_market_breadth = None
+                    try:
+                        full_breadth_raw = await asyncio.to_thread(self.redis.get, "market:breadth:full")
+                        if full_breadth_raw:
+                            full_market_breadth = json.loads(full_breadth_raw)
+                    except Exception:
+                        pass
 
-                is_highly_active = False
-                if full_market_breadth:
-                    pos_pct = full_market_breadth.get("positive_pct", 50)
-                    if pos_pct > 80 or pos_pct < 20:
-                        is_highly_active = True
+                    is_highly_active = False
+                    if full_market_breadth:
+                        pos_pct = full_market_breadth.get("positive_pct", 50)
+                        if pos_pct > 80 or pos_pct < 20:
+                            is_highly_active = True
 
-                # Snapshot current_symbols to avoid race condition with
-                # re-evaluation modifying the list while we iterate.
-                current_symbols_snapshot = list(self.current_symbols)
+                    # Snapshot current_symbols to avoid race condition with
+                    # re-evaluation modifying the list while we iterate.
+                    current_symbols_snapshot = list(self.current_symbols)
 
-                # Check for significant news sentiment shifts for all tracked symbols
-                # We store this in a dict so we can use it per-symbol
-                symbol_has_significant_news: Dict[str, bool] = {}
-                if settings.NEWS_ENABLED:
-                    for entry in current_symbols_snapshot:
-                        symbol = entry["symbol"]
-                        try:
-                            agg = await self._get_cached_sentiment(symbol)
-                            if agg:
-                                base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
-                                prev_key = f"sentiment:reeval_baseline:{base_symbol}"
-                                prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
-                                current_compound = agg.get("avg_compound", 0)
-                                if prev_raw:
-                                    prev_compound = float(prev_raw)
-                                    if abs(current_compound - prev_compound) > 0.3:
-                                        symbol_has_significant_news[symbol] = True
-                        except Exception:
-                            continue
-
-                # Collect symbols that need evaluation this cycle
-                symbols_to_process = []
-                for symbol_entry in current_symbols_snapshot:
-                    symbol = symbol_entry["symbol"]
-                    tf = symbol_entry.get("timeframe", "1d")
-
-                    # Base interval proportional to timeframe
-                    if tf in ("1h",):
-                        tf_base_interval = settings.EVAL_INTERVAL_1H
-                    elif tf in ("1d",):
-                        tf_base_interval = settings.EVAL_INTERVAL_1D
-                    elif tf in ("1w",):
-                        tf_base_interval = settings.EVAL_INTERVAL_1W
-                    elif tf in ("1M",):
-                        tf_base_interval = settings.EVAL_INTERVAL_1M
-                    elif tf in ("3M",):
-                        tf_base_interval = settings.EVAL_INTERVAL_3M
-                    elif tf in ("6M", "1Y"):
-                        tf_base_interval = settings.EVAL_INTERVAL_6M_1Y
-                    else:
-                        tf_base_interval = settings.EVAL_INTERVAL_DEFAULT
-
-                    # Adjust based on market conditions
-                    if is_active_period or is_highly_active:
-                        # Active market: evaluate more frequently (halve the interval, min 15m)
-                        tf_base_interval = max(900, tf_base_interval // 2)
-
-                    if symbol_has_significant_news.get(symbol, False):
-                        # Significant news for this specific ticker: evaluate quickly (min 15m)
-                        tf_base_interval = max(900, min(tf_base_interval, 1800))
-
-                    if full_market_breadth and 40 <= full_market_breadth.get("positive_pct", 50) <= 60 and not is_active_period:
-                        # Quiet market: evaluate less frequently (double the interval, max 8h)
-                        # Use max() so the cap never reduces the interval below the base for long timeframes
-                        tf_base_interval = max(tf_base_interval, min(tf_base_interval * 2, 28800))
-
-                    # Use the dynamically computed tf_base_interval, but allow LLM to override per-symbol
-                    default_interval = tf_base_interval
-                    async with self._eval_state_lock:
-                        interval = self._strategy_intervals.get(symbol, default_interval)
-                        last_eval = self._last_strategy_eval.get(symbol, 0)
-                    if now - last_eval >= interval:
-                        symbols_to_process.append(symbol_entry)
-
-                if symbols_to_process:
-                    # Check if trading is paused (skip BUY signals)
-                    paused = await asyncio.to_thread(self.redis.get, "trading:paused")
-                    trading_paused = paused is not None and paused == "1"
-
-                    async def _process_symbol_task(entry: Dict[str, str]):
-                        async with self._symbol_processing_semaphore:
-                            sym = entry["symbol"]
+                    # Check for significant news sentiment shifts for all tracked symbols
+                    # We store this in a dict so we can use it per-symbol
+                    symbol_has_significant_news: Dict[str, bool] = {}
+                    if settings.NEWS_ENABLED:
+                        for entry in current_symbols_snapshot:
+                            symbol = entry["symbol"]
                             try:
-                                await asyncio.wait_for(
-                                    self._signal_processor.process_symbol(entry, trading_paused=trading_paused),
-                                    timeout=settings.LLM_TIMEOUT + 10
-                                )
-                                async with self._eval_state_lock:
-                                    self._last_strategy_eval[sym] = now
-                            except asyncio.TimeoutError:
-                                logger.error(f"Timeout processing symbol {sym} – skipping. Will retry on next loop iteration.")
-                                if self.notifier:
-                                    await self.notifier.send_notification(
-                                        f"⏱️ Processing timeout for {sym} – skipping this cycle.",
-                                        summary={"symbol": sym, "action": "SKIP", "reason": "Processing timeout"}
-                                    )
-                            except Exception as e:
-                                logger.error(f"Error processing symbol {sym}: {e}", exc_info=True)
+                                agg = await self._get_cached_sentiment(symbol)
+                                if agg:
+                                    base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+                                    prev_key = f"sentiment:reeval_baseline:{base_symbol}"
+                                    prev_raw = await asyncio.to_thread(self.redis.get, prev_key)
+                                    current_compound = agg.get("avg_compound", 0)
+                                    if prev_raw:
+                                        prev_compound = float(prev_raw)
+                                        if abs(current_compound - prev_compound) > 0.3:
+                                            symbol_has_significant_news[symbol] = True
+                            except Exception:
+                                continue
 
-                    await asyncio.gather(*[_process_symbol_task(entry) for entry in symbols_to_process])
+                    # Collect symbols that need evaluation this cycle
+                    symbols_to_process = []
+                    for symbol_entry in current_symbols_snapshot:
+                        symbol = symbol_entry["symbol"]
+                        tf = symbol_entry.get("timeframe", "1d")
+
+                        # Base interval proportional to timeframe
+                        if tf in ("1h",):
+                            tf_base_interval = settings.EVAL_INTERVAL_1H
+                        elif tf in ("1d",):
+                            tf_base_interval = settings.EVAL_INTERVAL_1D
+                        elif tf in ("1w",):
+                            tf_base_interval = settings.EVAL_INTERVAL_1W
+                        elif tf in ("1M",):
+                            tf_base_interval = settings.EVAL_INTERVAL_1M
+                        elif tf in ("3M",):
+                            tf_base_interval = settings.EVAL_INTERVAL_3M
+                        elif tf in ("6M", "1Y"):
+                            tf_base_interval = settings.EVAL_INTERVAL_6M_1Y
+                        else:
+                            tf_base_interval = settings.EVAL_INTERVAL_DEFAULT
+
+                        # Adjust based on market conditions
+                        if is_active_period or is_highly_active:
+                            # Active market: evaluate more frequently (halve the interval, min 15m)
+                            tf_base_interval = max(900, tf_base_interval // 2)
+
+                        if symbol_has_significant_news.get(symbol, False):
+                            # Significant news for this specific ticker: evaluate quickly (min 15m)
+                            tf_base_interval = max(900, min(tf_base_interval, 1800))
+
+                        if full_market_breadth and 40 <= full_market_breadth.get("positive_pct", 50) <= 60 and not is_active_period:
+                            # Quiet market: evaluate less frequently (double the interval, max 8h)
+                            # Use max() so the cap never reduces the interval below the base for long timeframes
+                            tf_base_interval = max(tf_base_interval, min(tf_base_interval * 2, 28800))
+
+                        # Use the dynamically computed tf_base_interval, but allow LLM to override per-symbol
+                        default_interval = tf_base_interval
+                        async with self._eval_state_lock:
+                            interval = self._strategy_intervals.get(symbol, default_interval)
+                            last_eval = self._last_strategy_eval.get(symbol, 0)
+                        if now - last_eval >= interval:
+                            symbols_to_process.append(symbol_entry)
+
+                    if symbols_to_process:
+                        # Check if trading is paused (skip BUY signals)
+                        paused = await asyncio.to_thread(self.redis.get, "trading:paused")
+                        trading_paused = paused is not None and paused == "1"
+
+                        async def _process_symbol_task(entry: Dict[str, str]):
+                            async with self._symbol_processing_semaphore:
+                                sym = entry["symbol"]
+                                try:
+                                    await asyncio.wait_for(
+                                        self._signal_processor.process_symbol(entry, trading_paused=trading_paused),
+                                        timeout=settings.LLM_TIMEOUT + 10
+                                    )
+                                    async with self._eval_state_lock:
+                                        self._last_strategy_eval[sym] = now
+                                except asyncio.TimeoutError:
+                                    logger.error(f"Timeout processing symbol {sym} – skipping. Will retry on next loop iteration.")
+                                    if self.notifier:
+                                        await self.notifier.send_notification(
+                                            f"⏱️ Processing timeout for {sym} – skipping this cycle.",
+                                            summary={"symbol": sym, "action": "SKIP", "reason": "Processing timeout"}
+                                        )
+                                except Exception as e:
+                                    logger.error(f"Error processing symbol {sym}: {e}", exc_info=True)
+
+                        await asyncio.gather(*[_process_symbol_task(entry) for entry in symbols_to_process])
 
                 # Save state periodically (every 5 minutes) when dirty
                 if now - self._last_state_save > 300 and self._state_dirty:
