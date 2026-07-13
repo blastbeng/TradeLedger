@@ -256,7 +256,7 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
                     }
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
         _record_bi_error(e)
-        logger.debug(f"Borsa Italiana quote fetch failed for {symbol}: {e}")
+        logger.warning(f"Borsa Italiana quote fetch failed for {symbol}: {type(e).__name__}: {e}")
     return None
 
 
@@ -481,7 +481,7 @@ def get_borsa_italiana_candles(
 
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
         _record_bi_error(e)
-        logger.debug(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {e}")
+        logger.warning(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
         return None
 
 

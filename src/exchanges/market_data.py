@@ -230,7 +230,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         if db_quotes:
             logger.debug(f"Loaded {len(db_quotes)} quotes from database (Redis miss fallback)")
     except (RuntimeError, ValueError, OSError) as e:
-        logger.warning(f"DB quote fetch failed: {e}", exc_info=True)
+        logger.warning(f"DB quote fetch failed: {type(e).__name__}: {e}", exc_info=True)
 
     # --- Try DB close prices first (fast, no network call) ---
     # This ensures quotes are available even when yfinance is rate-limited or blocked.
@@ -263,7 +263,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     }
                     # Do not remove from missing_symbols so yfinance can still try to update it
         except (RuntimeError, ValueError, KeyError, OSError) as e:
-            logger.warning(f"get_quotes: DB close price fallback failed: {e}")
+            logger.warning(f"get_quotes: DB close price fallback failed: {type(e).__name__}: {e}")
 
     # --- Try Borsa Italiana first for symbols with known ISINs ---
     # Borsa Italiana is the primary source for Italian market quotes.
@@ -380,7 +380,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 except (KeyError, ValueError, AttributeError, IndexError):
                     pass
         except (RuntimeError, ValueError, ConnectionError, OSError) as e:
-            logger.warning(f"Batch download failed: {e}")
+            logger.warning(f"Batch download failed: {type(e).__name__}: {e}")
     elif stock_symbols and _check_yf_circuit():
         logger.warning(
             f"get_quotes: yfinance circuit breaker is OPEN — skipping quote fetch for {len(stock_symbols)} symbols. "
@@ -453,7 +453,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                         if result[sym].get("percentage") is None:
                             result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
         except (RuntimeError, ValueError, KeyError, OSError) as e:
-            logger.warning(f"Failed to recompute change_24h/percentage from DB candles: {e}")
+            logger.warning(f"Failed to recompute change_24h/percentage from DB candles: {type(e).__name__}: {e}")
 
     # Ensure bid/ask are never NULL when last is available — use last as fallback
     for sym in result:
@@ -549,7 +549,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                 except Exception:
                     pass
     except (RuntimeError, ValueError, OSError) as e:
-        logger.warning(f"get_quotes_cached: DB quote fetch failed: {e}", exc_info=True)
+        logger.warning(f"get_quotes_cached: DB quote fetch failed: {type(e).__name__}: {e}", exc_info=True)
 
     # Try DB close prices for anything still missing
     if missing_symbols:
@@ -580,7 +580,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                     }
                     missing_symbols.remove(sym)
         except (RuntimeError, ValueError, KeyError, OSError) as e:
-            logger.warning(f"get_quotes_cached: DB close price fallback failed: {e}")
+            logger.warning(f"get_quotes_cached: DB close price fallback failed: {type(e).__name__}: {e}")
 
     # Initialize remaining missing symbols with None values
     for sym in missing_symbols:
@@ -609,7 +609,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                         if result[sym].get("percentage") is None:
                             result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
         except (RuntimeError, ValueError, KeyError, OSError) as e:
-            logger.warning(f"get_quotes_cached: Failed to recompute change_24h/percentage from DB candles: {e}")
+            logger.warning(f"get_quotes_cached: Failed to recompute change_24h/percentage from DB candles: {type(e).__name__}: {e}")
 
     # Ensure bid/ask are never NULL when last is available — use last as fallback
     for sym in result:

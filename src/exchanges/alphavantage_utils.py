@@ -67,7 +67,7 @@ def get_alphavantage_quote(symbol: str) -> Optional[Dict[str, Any]]:
                 "source": "alphavantage",
             }
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
-        logger.debug(f"Alpha Vantage quote failed for {symbol}: {e}")
+        logger.warning(f"Alpha Vantage quote failed for {symbol}: {type(e).__name__}: {e}")
         return None
 
 
@@ -160,5 +160,5 @@ def get_alphavantage_candles(
                 rows = rows[-limit:]
             return _validate_and_clean_candles(rows, symbol)
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
-        logger.debug(f"Alpha Vantage candles failed for {symbol} {timeframe}: {e}")
+        logger.warning(f"Alpha Vantage candles failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
         return None

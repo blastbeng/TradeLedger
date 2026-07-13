@@ -63,7 +63,7 @@ def get_iex_quote(symbol: str) -> Optional[Dict[str, Any]]:
                 "source": "iex",
             }
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
-        logger.debug(f"IEX quote failed for {symbol}: {e}")
+        logger.warning(f"IEX quote failed for {symbol}: {type(e).__name__}: {e}")
         return None
 
 
@@ -143,5 +143,5 @@ def get_iex_candles(
                 rows = rows[-limit:]
             return _validate_and_clean_candles(rows, symbol)
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
-        logger.debug(f"IEX candles failed for {symbol} {timeframe}: {e}")
+        logger.warning(f"IEX candles failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
         return None
