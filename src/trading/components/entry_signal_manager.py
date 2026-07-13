@@ -16,6 +16,7 @@ class EntrySignalManager:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
 
     async def detect_entry_signal(self, symbol: str, timeframe: str) -> bool:
@@ -24,12 +25,12 @@ class EntrySignalManager:
         engine = self.engine
         
         # Clean up stale entry signal state for symbols no longer tracked
-        async with engine._eval_state_lock:
-            active_symbols = {entry["symbol"] for entry in engine.current_symbols}
-            active_symbols.update(engine.positions.keys())
-            stale_keys = [s for s in engine._entry_signal_state if s not in active_symbols]
+        async with self.shared_state._eval_state_lock:
+            active_symbols = {entry["symbol"] for entry in self.shared_state.current_symbols}
+            active_symbols.update(self.shared_state.positions.keys())
+            stale_keys = [s for s in self.shared_state._entry_signal_state if s not in active_symbols]
             for s in stale_keys:
-                engine._entry_signal_state.pop(s, None)
+                self.shared_state._entry_signal_state.pop(s, None)
 
         # Fetch pre-computed indicators from DB
         ind = await asyncio.to_thread(get_indicators, symbol, timeframe)
@@ -67,7 +68,7 @@ class EntrySignalManager:
         volumes = [c["volume"] for c in db_candles]
 
         # Retrieve previous state
-        prev = engine._entry_signal_state.get(symbol, {})
+        prev = self.shared_state._entry_signal_state.get(symbol, {})
 
         # Current values
         rsi = ind.get("rsi")
@@ -115,7 +116,7 @@ class EntrySignalManager:
             "close": current_close,
             "volume_ema": volume_ema,
         }
-        engine._entry_signal_state[symbol] = new_state
+        self.shared_state._entry_signal_state[symbol] = new_state
 
         # --- Read LLM-defined thresholds from Redis (fallback to defaults) ---
         rsi_oversold = 30.0
@@ -372,8 +373,8 @@ class EntrySignalManager:
     async def process_pending_entry(self, symbol: str, now: float) -> None:
         """Process a single pending entry: check timeout and condition, execute if met."""
         engine = self.engine
-        async with engine._pending_entries_lock:
-            entry = engine._pending_entries.get(symbol)
+        async with self.shared_state._pending_entries_lock:
+            entry = self.shared_state._pending_entries.get(symbol)
             if entry is None:
                 return
             entry_tf = entry.get("timeframe")
@@ -382,8 +383,8 @@ class EntrySignalManager:
             if now >= entry["deadline"]:
                 # Timeout – clear and notify
                 logger.info(f"Entry condition timeout for {symbol}")
-                del engine._pending_entries[symbol]
-                engine._state_dirty = True
+                del self.shared_state._pending_entries[symbol]
+                self.shared_state._state_dirty = True
                 _timed_out = True
                 _signal = None
             else:
@@ -395,8 +396,8 @@ class EntrySignalManager:
                     logger.info(f"Entry condition met for {symbol}, executing BUY")
                     # Remove from pending before executing to avoid re‑trigger
                     _signal = entry["signal"]
-                    del engine._pending_entries[symbol]
-                    engine._state_dirty = True
+                    del self.shared_state._pending_entries[symbol]
+                    self.shared_state._state_dirty = True
                     _timed_out = False
                 else:
                     return  # condition not met, keep pending
