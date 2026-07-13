@@ -151,14 +151,14 @@ class StatePersistence:
         # Convert old format (list of strings) to new format if needed
         if raw_symbols and isinstance(raw_symbols[0], str):
             default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
-            engine.current_symbols = [{"symbol": s, "timeframe": default_tf} for s in raw_symbols]
+            self.shared_state.current_symbols = [{"symbol": s, "timeframe": default_tf} for s in raw_symbols]
         else:
-            engine.current_symbols = raw_symbols
-        engine.positions = state.get("positions", {})
+            self.shared_state.current_symbols = raw_symbols
+        self.shared_state.positions = state.get("positions", {})
         # Remove any position that lacks LLM-defined risk parameters.
         # Such positions cannot be managed safely.
-        for symbol in list(engine.positions.keys()):
-            pos = engine.positions[symbol]
+        for symbol in list(self.shared_state.positions.keys()):
+            pos = self.shared_state.positions[symbol]
             if "stop_loss" not in pos or "take_profit" not in pos:
                 logger.warning(
                     f"Position for {symbol} is missing stop_loss/take_profit. "
@@ -167,24 +167,24 @@ class StatePersistence:
                 pos["_needs_risk_params"] = True
                 pos["_needs_risk_params_attempts"] = 0
                 # Force immediate re-evaluation so the LLM can provide risk parameters
-                engine._force_eval[symbol] = True
-                engine._last_strategy_eval.pop(symbol, None)
+                self.shared_state._force_eval[symbol] = True
+                self.shared_state._last_strategy_eval.pop(symbol, None)
 
         # Discard positions with zero amount or zero price (corrupted state)
-        for symbol in list(engine.positions.keys()):
-            pos = engine.positions[symbol]
+        for symbol in list(self.shared_state.positions.keys()):
+            pos = self.shared_state.positions[symbol]
             amount = pos.get("amount", 0)
             price = pos.get("price", 0)
             if amount <= 0 or price <= 0:
                 logger.warning(
                     f"Position for {symbol} has invalid amount={amount} or price={price}. Removing it."
                 )
-                del engine.positions[symbol]
+                del self.shared_state.positions[symbol]
 
         # Initialize trailing stop tracking fields for positions with trailing stops.
         # This ensures _highest_price is not set to a pre-entry price on the first
         # check after a restart (which would make the trailing stop too tight).
-        for symbol, pos in engine.positions.items():
+        for symbol, pos in self.shared_state.positions.items():
             if pos.get("trailing_stop"):
                 if "_highest_price" not in pos:
                     pos["_highest_price"] = pos.get("price", 0.0)
@@ -192,31 +192,31 @@ class StatePersistence:
                     pos["_last_trailing_check_ts"] = time.time()
 
         all_trades = get_all_trades()
-        engine.trade_history = all_trades[-settings.MAX_TRADES_IN_MEMORY:]
+        self.shared_state.trade_history = all_trades[-settings.MAX_TRADES_IN_MEMORY:]
         # Compute the realized P&L offset for trades that were pruned at load time
-        engine._realized_pnl_offset = sum(
+        self.shared_state._realized_pnl_offset = sum(
             t.get("realized_pnl", 0.0)
             for t in all_trades[:-settings.MAX_TRADES_IN_MEMORY]
             if t.get("side") == "sell"
         )
-        engine.queued_orders = state.get("queued_orders", [])
-        for q in engine.queued_orders:
+        self.shared_state.queued_orders = state.get("queued_orders", [])
+        for q in self.shared_state.queued_orders:
             q['order_book'] = None
-        engine.recent_signals = state.get("recent_signals", [])
-        engine._symbol_first_seen = state.get("symbol_first_seen", {})
-        engine._entry_signal_state = state.get("entry_signal_state", {})
-        engine._last_eval_snapshot = state.get("last_eval_snapshot", {})
-        engine._force_eval = state.get("force_eval", {})
-        engine._force_eval_time = state.get("force_eval_time", {})
-        engine._strategy_intervals = state.get("strategy_intervals", {})
-        engine._last_decisions = state.get("last_decisions", {})
-        engine.last_loss_time = state.get("last_loss_time", {})
-        engine.cooldown_durations = state.get("cooldown_durations", {})
-        engine._global_risk_multiplier = state.get("global_risk_multiplier")
+        self.shared_state.recent_signals = state.get("recent_signals", [])
+        self.shared_state._symbol_first_seen = state.get("symbol_first_seen", {})
+        self.shared_state._entry_signal_state = state.get("entry_signal_state", {})
+        self.shared_state._last_eval_snapshot = state.get("last_eval_snapshot", {})
+        self.shared_state._force_eval = state.get("force_eval", {})
+        self.shared_state._force_eval_time = state.get("force_eval_time", {})
+        self.shared_state._strategy_intervals = state.get("strategy_intervals", {})
+        self.shared_state._last_decisions = state.get("last_decisions", {})
+        self.shared_state.last_loss_time = state.get("last_loss_time", {})
+        self.shared_state.cooldown_durations = state.get("cooldown_durations", {})
+        self.shared_state._global_risk_multiplier = state.get("global_risk_multiplier")
 
         # Restore pending entries (reconstruct Signal objects from dicts)
         raw_pending = state.get("pending_entries", {})
-        engine._pending_entries = {}
+        self.shared_state._pending_entries = {}
         valid_signal_keys = {f.name for f in _dc.fields(Signal)}
         for symbol, entry in raw_pending.items():
             try:
@@ -229,7 +229,7 @@ class StatePersistence:
                 if "reasoning" not in filtered:
                     filtered["reasoning"] = ""
                 signal = Signal(**filtered)
-                engine._pending_entries[symbol] = {
+                self.shared_state._pending_entries[symbol] = {
                     "signal": signal,
                     "deadline": entry["deadline"],
                     "timeframe": entry["timeframe"],
@@ -240,10 +240,10 @@ class StatePersistence:
 
         # Prune any pending entries whose deadline has already passed
         now = time.time()
-        expired = [sym for sym, e in engine._pending_entries.items() if now >= e["deadline"]]
+        expired = [sym for sym, e in self.shared_state._pending_entries.items() if now >= e["deadline"]]
         for sym in expired:
             logger.info(f"Discarding expired pending entry for {sym} (deadline passed during downtime).")
-            del engine._pending_entries[sym]
+            del self.shared_state._pending_entries[sym]
 
         if "initial_balance" in state:
             engine.initial_balance = float(state["initial_balance"])
@@ -254,9 +254,9 @@ class StatePersistence:
 
         logger.info(
             "Loaded trading state: %d symbols, %d positions, %d trades",
-            len(engine.current_symbols),
-            len(engine.positions),
-            len(engine.trade_history),
+            len(self.shared_state.current_symbols),
+            len(self.shared_state.positions),
+            len(self.shared_state.trade_history),
         )
 
     async def get_pause_status(self) -> Dict[str, Any]:
