@@ -625,6 +625,8 @@ class TradingEngine:
         # Update paper trader's base currency if it exists
         if self.trader is not None:
             self.trader.base_currency = settings.BASE_CURRENCY
+        # Invalidate clock cache so market hours/timezone changes take effect immediately
+        self._market_data_manager.invalidate_clock_cache()
 
     async def _periodic_reconcile(self):
         """Run position reconciliation every 5 minutes (medium/long-term)."""
