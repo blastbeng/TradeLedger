@@ -57,7 +57,7 @@ class PositionManager:
         now = time.time()
         if (
             engine._portfolio_exposure_cache is not None
-            and (now - engine._portfolio_exposure_cache_time) < 30
+            and (now - engine._portfolio_exposure_cache_time) < 5
         ):
             # Return cached ticker-dependent values, but recompute available capital
             # from the current cycle_spent (which changes during the cycle).
