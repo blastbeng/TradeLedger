@@ -2673,3 +2673,19 @@ def cleanup_old_dividends(retention_days: int = 365):
         return deleted
     finally:
         conn.close()
+
+
+@retry_on_db_lock()
+def cleanup_old_llm_decisions(retention_days: int = 30):
+    """Delete evaluated LLM decisions older than retention_days."""
+    conn = get_connection()
+    try:
+        cutoff_ms = int((time.time() - retention_days * 24 * 60 * 60) * 1000)
+        sql = _adapt_sql("DELETE FROM llm_decision_quality WHERE evaluated = 1 AND timestamp < %s")
+        deleted = conn.execute(sql, (cutoff_ms,)).rowcount
+        conn.commit()
+        if deleted:
+            logger.info(f"Cleaned up {deleted} old LLM decision quality records (older than {retention_days} days)")
+        return deleted
+    finally:
+        conn.close()
