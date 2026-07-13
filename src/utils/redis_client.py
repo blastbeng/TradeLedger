@@ -38,22 +38,27 @@ class DummyRedis:
         self._warn("incr")
         return 0
 
-    # Write operations – raise to surface the failure
+    # Write operations – log and return safe defaults to allow degraded operation
     def set(self, *args, **kwargs):
-        raise ConnectionError("Redis unavailable – cannot execute SET")
+        self._warn("set")
+        return True
 
     def setex(self, *args, **kwargs):
-        raise ConnectionError("Redis unavailable – cannot execute SETEX")
+        self._warn("setex")
+        return True
 
     def delete(self, *args, **kwargs):
-        raise ConnectionError("Redis unavailable – cannot execute DELETE")
+        self._warn("delete")
+        return 1
 
     def expire(self, *args, **kwargs):
-        raise ConnectionError("Redis unavailable – cannot execute EXPIRE")
+        self._warn("expire")
+        return True
 
     def __getattr__(self, name):
         def method(*args, **kwargs):
-            raise ConnectionError(f"Redis unavailable – cannot execute {name.upper()}")
+            self._warn(name)
+            return None
         return method
 
 def is_redis_available() -> bool:
