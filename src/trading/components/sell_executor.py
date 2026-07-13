@@ -844,7 +844,7 @@ class SellExecutor:
             remaining_cost_basis = cost_basis - prorated_cost_basis
             remaining_net_base = net_base - filled_amount
 
-            await self._order_executor._exit_order_manager.cancel_exit_orders(symbol)
+            await self.event_bus.request("cancel_exit_orders", symbol)
 
             if remaining_amount <= 0 or remaining_net_base <= 0:
                 async with engine._positions_lock:
