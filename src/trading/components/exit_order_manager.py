@@ -21,6 +21,7 @@ class ExitOrderManager:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self.event_bus.subscribe("cancel_exit_orders", self.cancel_exit_orders)
         self.event_bus.subscribe("place_exit_orders", self.place_exit_orders)
@@ -79,7 +80,7 @@ class ExitOrderManager:
     async def cancel_exit_orders(self, symbol: str):
         """Cancel any native stop-loss and take-profit orders for a symbol."""
         engine = self.engine
-        pos = engine.positions.get(symbol)
+        pos = self.shared_state.positions.get(symbol)
         if not pos:
             return
         for order_id_key in ("stop_loss_order_id", "take_profit_order_id"):
@@ -90,9 +91,9 @@ class ExitOrderManager:
                     logger.info(f"Cancelled exit order {order_id} for {symbol}")
                 except (RuntimeError, ValueError, ConnectionError) as e:
                     logger.warning(f"Failed to cancel exit order {order_id}: {e}")
-                async with engine._queued_orders_lock:
-                    engine.queued_orders = [
-                        q for q in engine.queued_orders
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders = [
+                        q for q in self.shared_state.queued_orders
                         if q.get("order_id") != order_id
                     ]
         pos.pop("stop_loss_order_type", None)
@@ -107,7 +108,7 @@ class ExitOrderManager:
     ):
         """Place native stop-loss and take-profit orders for a position."""
         engine = self.engine
-        pos = engine.positions.get(symbol)
+        pos = self.shared_state.positions.get(symbol)
         if not pos:
             return
 
@@ -122,9 +123,9 @@ class ExitOrderManager:
                 except (RuntimeError, ValueError, ConnectionError) as e:
                     logger.warning(f"Failed to cancel old exit order {old_id}: {e}")
                 # Remove from queued_orders
-                async with engine._queued_orders_lock:
-                    engine.queued_orders = [
-                        q for q in engine.queued_orders
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders = [
+                        q for q in self.shared_state.queued_orders
                         if q.get("order_id") != old_id
                     ]
         # Clear the stored IDs so they are not reused
@@ -183,8 +184,8 @@ class ExitOrderManager:
                     "is_exit_order": True,
                     "oco_pair": None,
                 }
-                async with engine._queued_orders_lock:
-                    engine.queued_orders.append(_sl_queued)
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders.append(_sl_queued)
             except (RuntimeError, ValueError, ConnectionError) as e:
                 logger.error(f"Failed to place stop-loss order for {symbol}: {e}")
 
@@ -225,8 +226,8 @@ class ExitOrderManager:
                             "is_exit_order": True,
                             "oco_pair": None,
                         }
-                        async with engine._queued_orders_lock:
-                            engine.queued_orders.append(_trail_queued)
+                        async with self.shared_state._queued_orders_lock:
+                            self.shared_state.queued_orders.append(_trail_queued)
                     except (RuntimeError, ValueError, ConnectionError) as e:
                         logger.error(f"Failed to place trailing-stop order for {symbol}: {e}")
 
@@ -271,14 +272,14 @@ class ExitOrderManager:
                     "is_exit_order": True,
                     "oco_pair": None,
                 }
-                async with engine._queued_orders_lock:
-                    engine.queued_orders.append(_tp_queued)
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders.append(_tp_queued)
             except (RuntimeError, ValueError, ConnectionError) as e:
                 logger.error(f"Failed to place take-profit order for {symbol}: {e}")
 
         # --- Link OCO pair ---
         if sl_order_id and tp_order_id:
-            for q in engine.queued_orders:
+            for q in self.shared_state.queued_orders:
                 if q.get("order_id") == sl_order_id:
                     q["oco_pair"] = tp_order_id
                 elif q.get("order_id") == tp_order_id:
@@ -379,7 +380,7 @@ class ExitOrderManager:
                 f"{queued['symbol']}; skipping cancel to avoid double-sell."
             )
             queued["oco_pair"] = None
-            pos = engine.positions.get(queued["symbol"])
+            pos = self.shared_state.positions.get(queued["symbol"])
             if pos:
                 pos.pop("take_profit_order_id", None)
         else:
@@ -392,15 +393,15 @@ class ExitOrderManager:
             except (RuntimeError, ValueError, ConnectionError) as e:
                 logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
             # Remove the cancelled take-profit from queued_orders (with lock)
-            async with engine._queued_orders_lock:
-                engine.queued_orders = [
-                    q for q in engine.queued_orders
+            async with self.shared_state._queued_orders_lock:
+                self.shared_state.queued_orders = [
+                    q for q in self.shared_state.queued_orders
                     if q.get("order_id") != oco_pair_id
                 ]
             # Clear OCO reference so we don't try again
             queued["oco_pair"] = None
             # Clear take-profit order ID from position
-            pos = engine.positions.get(queued["symbol"])
+            pos = self.shared_state.positions.get(queued["symbol"])
             if pos:
                 pos.pop("take_profit_order_id", None)
             # Notify user
@@ -418,7 +419,7 @@ class ExitOrderManager:
                         "reason": "Stop triggered, OCO pair cancelled",
                     }
                 )
-        engine._state_dirty = True
+        self.shared_state._state_dirty = True
         return True
 
     async def replace_native_stop_order(
@@ -435,9 +436,9 @@ class ExitOrderManager:
             return
 
         # Capture the old queued entry's limit price (read-only, do NOT remove yet)
-        async with engine._queued_orders_lock:
+        async with self.shared_state._queued_orders_lock:
             old_queued = next(
-                (q for q in engine.queued_orders if q.get("order_id") == old_order_id),
+                (q for q in self.shared_state.queued_orders if q.get("order_id") == old_order_id),
                 None
             )
             old_limit_price = old_queued.get("limit_price") if old_queued else None
@@ -484,12 +485,12 @@ class ExitOrderManager:
                 "is_exit_order": True,
                 "oco_pair": pos.get("take_profit_order_id"),  # maintain OCO link
             }
-            async with engine._queued_orders_lock:
-                engine.queued_orders.append(_replace_queued)
+            async with self.shared_state._queued_orders_lock:
+                self.shared_state.queued_orders.append(_replace_queued)
                 # Update OCO link on the take-profit order if it exists
                 tp_order_id = pos.get("take_profit_order_id")
                 if tp_order_id:
-                    for q in engine.queued_orders:
+                    for q in self.shared_state.queued_orders:
                         if q.get("order_id") == tp_order_id:
                             q["oco_pair"] = new_order_id
                             break
@@ -505,9 +506,9 @@ class ExitOrderManager:
                 logger.warning(f"Failed to cancel old stop order {old_order_id} (new order {new_order_id} already placed): {e}")
 
             # Remove the old queued entry now that the new one is active
-            async with engine._queued_orders_lock:
-                engine.queued_orders = [
-                    q for q in engine.queued_orders
+            async with self.shared_state._queued_orders_lock:
+                self.shared_state.queued_orders = [
+                    q for q in self.shared_state.queued_orders
                     if q.get("order_id") != old_order_id
                 ]
 
@@ -562,10 +563,10 @@ class ExitOrderManager:
         # Find and remove the queued entry under the lock, but do NOT call
         # _handle_queued_sell_fill inside the lock — it internally acquires
         # _queued_orders_lock via _cancel_exit_orders, which would deadlock.
-        async with engine._queued_orders_lock:
-            queued = next((q for q in engine.queued_orders if q.get("order_id") == order_id), None)
+        async with self.shared_state._queued_orders_lock:
+            queued = next((q for q in self.shared_state.queued_orders if q.get("order_id") == order_id), None)
             if queued:
-                engine.queued_orders = [q for q in engine.queued_orders if q.get("order_id") != order_id]
+                self.shared_state.queued_orders = [q for q in self.shared_state.queued_orders if q.get("order_id") != order_id]
 
         if queued:
             filled_qty = float(order_obj.filled_qty) if order_obj.filled_qty else 0.0
@@ -595,8 +596,8 @@ class ExitOrderManager:
                 await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
             except (RuntimeError, ValueError, ConnectionError):
                 pass
-            async with engine._queued_orders_lock:
-                engine.queued_orders = [q for q in engine.queued_orders if q.get("order_id") != oco_pair_id]
+            async with self.shared_state._queued_orders_lock:
+                self.shared_state.queued_orders = [q for q in self.shared_state.queued_orders if q.get("order_id") != oco_pair_id]
         pos.pop("stop_loss_order_id", None)
         pos.pop("take_profit_order_id", None)
         pos.pop("stop_loss_order_type", None)
