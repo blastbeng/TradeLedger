@@ -140,6 +140,9 @@ def get_cached_news_summary(symbol: str, model_type: str = "weak") -> dict:
     articles = get_news_for_symbol(symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
     if not articles:
         result = {"summary": "No recent news.", "provider": "", "model": ""}
+        # Cache "No recent news" for a short time to avoid repeated DB queries
+        redis_client.set(cache_key, json.dumps(result), ex=60)
+        return result
     else:
         try:
             formatted = _format_news_for_prompt(articles)
@@ -166,6 +169,10 @@ def get_cached_news_summary(symbol: str, model_type: str = "weak") -> dict:
         except Exception:
             result = {"summary": "Could not generate summary.", "provider": "", "model": ""}
 
-    ttl = settings.NEWS_CACHE_TTL_SECONDS
+    # Use short TTL for error/failure results, full TTL for successful summaries
+    if result["summary"] in ("Could not generate summary.", "No recent news."):
+        ttl = 60
+    else:
+        ttl = settings.NEWS_CACHE_TTL_SECONDS
     redis_client.set(cache_key, json.dumps(result), ex=ttl)
     return result
