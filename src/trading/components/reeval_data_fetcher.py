@@ -626,7 +626,7 @@ class ReevalDataFetcher:
                 self.compute_correlation_matrix, ohlcv_data, sorted_by_vol
             )
             # Dynamic TTL: shorter during high-volatility / extreme market conditions
-            corr_ttl = 1800  # default 30 minutes
+            corr_ttl = 3600  # default 1 hour
             _mb = self.shared_state._market_breadth
             if _mb:
                 pos_pct = _mb.get("positive_pct", 50)
