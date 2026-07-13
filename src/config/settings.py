@@ -697,6 +697,15 @@ class Settings(BaseSettings):
         Settings.parse_temperature_range(v)  # raises ValueError if invalid
         return v
 
+    # Thinking mode (reasoning) control per model type.
+    # When False, sends reasoning_effort="low" to the API to minimize deep thinking.
+    # Mind: KEEP enabled — deep financial analysis, critical trading decisions.
+    # Actuator: DISABLE — fast, time-critical decisions (SL/TP reviews, pause/resume).
+    # Weak: DISABLE — summarization and simple text tasks.
+    LLM_MIND_THINKING_ENABLED: bool = True
+    LLM_ACTUATOR_THINKING_ENABLED: bool = False
+    LLM_WEAK_THINKING_ENABLED: bool = False
+
     # Fallback provider settings (empty = use global LLM_FALLBACK_PROVIDER)
     LLM_FALLBACK_PROVIDER: str = ""
     LLM_MIND_FALLBACK_PROVIDER: str = ""

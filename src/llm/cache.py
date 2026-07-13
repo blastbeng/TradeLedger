@@ -122,6 +122,14 @@ def get_cached_llm_response(
     # when temperature is dynamically computed based on complexity.
     cache_temp = round(temperature * 2) / 2 if temperature is not None else None
 
+    # Determine thinking mode based on model_type
+    if model_type == "mind":
+        thinking_enabled = settings.LLM_MIND_THINKING_ENABLED
+    elif model_type == "weak":
+        thinking_enabled = settings.LLM_WEAK_THINKING_ENABLED
+    else:
+        thinking_enabled = settings.LLM_ACTUATOR_THINKING_ENABLED
+
     # Determine effective timeout: use shorter timeout for actuator calls
     if model_type == "actuator":
         effective_timeout = settings.LLM_ACTUATOR_TIMEOUT
@@ -253,6 +261,7 @@ def get_cached_llm_response(
                 temperature=temperature, timeout=effective_timeout,
                 messages=api_messages,
                 add_cache_control=add_cache_control,
+                thinking_enabled=thinking_enabled,
             )
         else:
             from src.llm.llm_client import _get_ollama_response
@@ -263,6 +272,7 @@ def get_cached_llm_response(
                 temperature=temperature, timeout=effective_timeout,
                 messages=api_messages,
                 add_cache_control=add_cache_control,
+                thinking_enabled=thinking_enabled,
             )
 
         response_text = result["content"]
@@ -346,6 +356,7 @@ def get_cached_llm_response(
                         timeout=effective_timeout,
                         messages=api_messages,
                         add_cache_control=add_cache_control,
+                        thinking_enabled=thinking_enabled,
                     )
                     response_text = result["content"]
                     usage = result.get("usage", {})
@@ -411,6 +422,7 @@ def get_cached_llm_response(
                         timeout=effective_timeout,
                         messages=api_messages,
                         add_cache_control=add_cache_control,
+                        thinking_enabled=thinking_enabled,
                     )
                     response_text = result["content"]
                     usage = result.get("usage", {})

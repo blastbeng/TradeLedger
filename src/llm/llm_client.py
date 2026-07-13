@@ -16,6 +16,7 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
                          timeout: Optional[float] = None,
                         messages: Optional[List[Dict[str, str]]] = None,
                         add_cache_control: bool = False,
+                        thinking_enabled: bool = True,
 ) -> dict:
     """Send a prompt to the configured Ollama model and return a dict with 'content' and 'usage'."""
     url = f"{(base_url or settings.OLLAMA_BASE_URL).rstrip('/')}/api/chat"
@@ -39,6 +40,10 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
         "stream": False,
         "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
     }
+
+    # Disable deep thinking/reasoning when not needed (saves tokens, reduces latency)
+    if not thinking_enabled:
+        payload["reasoning_effort"] = "low"
 
     logger.info("LLM request (ollama): model=%s, system_prompt=%.200s..., prompt=%.500s...", model, system_prompt, prompt)
     max_retries = 3
@@ -126,6 +131,7 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
                          timeout: Optional[float] = None,
                         messages: Optional[List[Dict[str, str]]] = None,
                         add_cache_control: bool = False,
+                        thinking_enabled: bool = True,
 ) -> dict:
     """Send a prompt to the configured OpenAI-compatible API and return a dict with 'content' and 'usage'."""
     url = f"{(base_url or settings.OPENAI_BASE_URL).rstrip('/')}/chat/completions"
@@ -160,6 +166,10 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
         "messages": api_messages,
         "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
     }
+
+    # Disable deep thinking/reasoning when not needed (saves tokens, reduces latency)
+    if not thinking_enabled:
+        payload["reasoning_effort"] = "low"
 
     logger.info("LLM request (openai): model=%s, system_prompt=%.200s..., prompt=%.500s...", model, system_prompt, prompt)
     max_retries = 3
