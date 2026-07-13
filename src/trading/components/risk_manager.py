@@ -1465,11 +1465,11 @@ class RiskManager:
                     breakeven_price = entry_price
                 else:
                     breakeven_price = entry_price * 1.005
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     if breakeven_price > pos["stop_loss"]:
                         pos["stop_loss"] = breakeven_price
                         logger.info(f"Breakeven stop activated for {symbol}: new stop {breakeven_price:.4f}")
-                engine._portfolio_exposure_cache = None
+                self.shared_state._portfolio_exposure_cache = None
 
     async def update_trailing_take_profit(
         self,
@@ -1486,8 +1486,8 @@ class RiskManager:
         if pos.get("trailing_take_profit") and pos.get("trailing_take_profit_distance_pct"):
             ttp_dist = pos["trailing_take_profit_distance_pct"]
             new_tp = current_price * (1 + ttp_dist)
-            async with engine._positions_lock:
+            async with self.shared_state._positions_lock:
                 if new_tp > pos["take_profit"]:
                     pos["take_profit"] = new_tp
                     logger.info(f"Trailing take-profit updated for {symbol}: new TP {new_tp:.4f}")
-        engine._portfolio_exposure_cache = None
+        self.shared_state._portfolio_exposure_cache = None
