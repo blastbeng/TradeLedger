@@ -664,8 +664,8 @@ class PositionManager:
     ):
         """Update risk parameters of an open position from LLM strategy_params."""
         engine = self.engine
-        async with engine._positions_lock:
-            pos = engine.positions.get(symbol)
+        async with self.shared_state._positions_lock:
+            pos = self.shared_state.positions.get(symbol)
         if not pos:
             return
 
@@ -858,7 +858,7 @@ class PositionManager:
                 60.0, 2_592_000.0, symbol,  # 1 minute to ~30 days
             )
             if val is not None:
-                engine._strategy_intervals[symbol] = val
+                self.shared_state._strategy_intervals[symbol] = val
 
         # --- Indicator config ---
         if indicator_config is not None:
@@ -869,7 +869,7 @@ class PositionManager:
             pos["timeframe"] = timeframe
 
         logger.info(f"Updated risk parameters for {symbol} from LLM strategy_params")
-        engine._state_dirty = True
+        self.shared_state._state_dirty = True
 
     async def _close_btp_at_par(self, symbol: str, entry: dict, pos: dict, exit_reason: str, note: str, log_reason: str):
         """Helper to close a BTP position at par value (100.0) and record the trade."""
