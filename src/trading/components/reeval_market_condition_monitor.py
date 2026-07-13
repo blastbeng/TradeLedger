@@ -20,6 +20,7 @@ class ReevalMarketConditionMonitor:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self.event_bus.subscribe("check_market_conditions", self.check_market_conditions)
 
@@ -43,8 +44,8 @@ class ReevalMarketConditionMonitor:
         should_trigger = False
 
         # 1. Significant news sentiment shift on tracked symbols
-        if settings.NEWS_ENABLED and engine.current_symbols:
-            for entry in engine.current_symbols:
+        if settings.NEWS_ENABLED and self.shared_state.current_symbols:
+            for entry in self.shared_state.current_symbols:
                 symbol = entry["symbol"]
                 try:
                     agg = await engine._get_cached_sentiment(symbol)
@@ -92,7 +93,7 @@ class ReevalMarketConditionMonitor:
 
         # 3. Extreme indicator values or BB squeeze breakout on tracked symbols
         if not should_trigger:
-            for entry in engine.current_symbols:
+            for entry in self.shared_state.current_symbols:
                 symbol = entry["symbol"]
                 tf = entry["timeframe"]
                 try:
