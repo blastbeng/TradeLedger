@@ -435,7 +435,8 @@ class SignalProcessor:
                 market_snapshot=ctx["market_snapshot"], historical_backtest_results=ctx["historical_backtest_results"],
                 is_critical=is_critical,
             )
-            signal, combined_bt_summary, llm_provider, llm_model = await engine._backtest_manager.run_backtest_and_final_decision(
+            signal, combined_bt_summary, llm_provider, llm_model = await engine.event_bus.request(
+                "run_backtest_and_final_decision",
                 symbol=symbol, assigned_tf=assigned_tf, tf_seconds=tf_seconds, current_price=ctx["current_price"],
                 atr=ctx["atr"], historical_ohlcv=ctx["historical_ohlcv"], raw_candles=ctx["raw_candles"],
                 base_balance=ctx["base_balance"], is_btp=ctx["is_btp"], trading_paused=False,
@@ -501,7 +502,7 @@ class SignalProcessor:
                 partial_tp_triggered=_flags["partial_tp_triggered"], dust_sweep_triggered=_flags["dust_sweep_triggered"],
                 strategy_model_type=strategy_model_type,
             )
-            await self.post_decision_manager.process_post_llm_decision(decision_data)
+            await self.event_bus.request("process_post_llm_decision", decision_data)
         except Exception as e:
             logger.error(f"Error processing {symbol}: {e}", exc_info=True)
             if engine.notifier:

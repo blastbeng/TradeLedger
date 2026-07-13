@@ -25,6 +25,7 @@ class PostDecisionManager:
     def __init__(self, engine, event_bus):
         self.engine = engine
         self.event_bus = event_bus
+        self.event_bus.subscribe("process_post_llm_decision", self.process_post_llm_decision)
 
     async def _get_sentiment_str(self, symbol: str) -> str:
         """Get a short news sentiment string for notifications, including an LLM summary."""

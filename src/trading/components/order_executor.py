@@ -33,6 +33,9 @@ class OrderExecutor:
         self.event_bus.subscribe("execute_partial_tp_level", self._sell_executor.execute_partial_tp_level)
         self.event_bus.subscribe("sell_all_positions", self.sell_all_positions)
         self.event_bus.subscribe("sell_position", self.sell_position)
+        self.event_bus.subscribe("process_single_queued_order", self.process_single_queued_order)
+        self.event_bus.subscribe("cancel_orphaned_orders", self.cancel_orphaned_orders)
+        self.event_bus.subscribe("place_replacement_exit_orders_with_retry", self._place_replacement_exit_orders_with_retry)
 
     async def execute_signal(
         self,
@@ -326,7 +329,8 @@ class OrderExecutor:
                         "stop_loss_price": pos.get("stop_loss"),
                         "take_profit_price": pos.get("take_profit"),
                     }
-                    await self._place_replacement_exit_orders_with_retry(
+                    await self.event_bus.request(
+                        "place_replacement_exit_orders_with_retry",
                         queued["symbol"], _dummy_signal, _exit_prices, pos.get("timeframe")
                     )
             # Notify user
@@ -365,7 +369,7 @@ class OrderExecutor:
         if isinstance(status, str):
             status = status.lower()
 
-        if await self._exit_order_manager.check_and_cancel_oco_on_stop_trigger(queued):
+        if await self.event_bus.request("check_and_cancel_oco_on_stop_trigger", queued):
             pass  # OCO handled, continue processing this order for fill detection
 
         filled_qty = float(paper_order.filled_qty) if paper_order.filled_qty else 0.0
@@ -671,7 +675,8 @@ class OrderExecutor:
                     signal=reconstructed_signal,
                     atr=queued.get('atr'),
                 )
-                await self._place_replacement_exit_orders_with_retry(
+                await self.event_bus.request(
+                    "place_replacement_exit_orders_with_retry",
                     symbol, reconstructed_signal, exit_prices, queued.get('timeframe')
                 )
             except (TypeError, ValueError, RuntimeError, AttributeError) as e:

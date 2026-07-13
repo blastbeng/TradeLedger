@@ -545,7 +545,7 @@ class TradingEngine:
                 self._force_reeval = False
                 self._reeval_pending_force = False
                 async with self._symbol_reeval_lock:
-                    await self._symbol_reevaluator.reevaluate_symbols_impl(force=is_forced)
+                    await self.event_bus.request("reevaluate_symbols_impl", force=is_forced)
                 elapsed = time.time() - reeval_start_time
                 logger.info(f"Symbol re-evaluation complete (took {elapsed:.1f}s).")
             except Exception as e:
@@ -784,7 +784,7 @@ class TradingEngine:
         await asyncio.sleep(120)  # initial delay
         while self._running:
             try:
-                await self._symbol_reevaluator.market_condition_monitor.check_market_conditions()
+                await self.event_bus.request("check_market_conditions")
             except Exception as e:
                 logger.error(f"Market condition check error: {e}", exc_info=True)
             await asyncio.sleep(1800)  # check every 30 minutes (medium/long-term)
@@ -1086,7 +1086,7 @@ class TradingEngine:
                 else:
                     risk_interval = settings.RISK_CHECK_INTERVAL_SECONDS
                 await asyncio.sleep(risk_interval)
-                await self._risk_manager.check_risk_management()
+                await self.event_bus.request("check_risk_management")
                 await self._state_persistence.save_state()
                 self._state_dirty = True
             except Exception as e:
@@ -1986,7 +1986,8 @@ class TradingEngine:
                 )
             return
         logger.info(f"Delay elapsed for {symbol}, executing BUY")
-        await self._order_executor.execute_signal(
+        await self.event_bus.request(
+            "execute_signal",
             symbol=symbol,
             signal=signal,
             timeframe=timeframe,
@@ -2037,7 +2038,7 @@ class TradingEngine:
         while self._running:
             try:
                 for queued in list(self.queued_orders):
-                    await self._order_executor.process_single_queued_order(queued)
+                    await self.event_bus.request("process_single_queued_order", queued)
             except Exception as e:
                 logger.error(f"Error processing queued orders: {e}", exc_info=True)
             await asyncio.sleep(15)  # check every 15 seconds for faster fill detection
@@ -2051,7 +2052,7 @@ class TradingEngine:
             return
         while self._running:
             try:
-                await self._order_executor.cancel_orphaned_orders()
+                await self.event_bus.request("cancel_orphaned_orders")
             except Exception as e:
                 logger.error(f"Orphaned order cleanup error: {e}", exc_info=True)
             await asyncio.sleep(900)  # every 15 minutes

@@ -916,7 +916,7 @@ class BuyExecutor:
             signal=signal,
             atr=atr,
         )
-        await self._exit_order_manager.place_exit_orders(symbol, signal, exit_prices, timeframe)
+        await self.event_bus.request("place_exit_orders", symbol, signal, exit_prices, timeframe)
         order["strategy_type"] = signal.strategy_type
         order["timeframe"] = timeframe
         order["buy_confidence"] = signal.confidence

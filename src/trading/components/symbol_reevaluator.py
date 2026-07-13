@@ -43,6 +43,7 @@ class SymbolReevaluator:
         self.post_selection_manager = ReevalPostSelectionManager(engine, event_bus)
         self.notifier = ReevalNotifier(engine, event_bus)
         self.event_bus.subscribe("reevaluate_symbols_impl", self.reevaluate_symbols_impl)
+        self.event_bus.subscribe("check_market_conditions", self.market_condition_monitor.check_market_conditions)
 
     async def check_cooldown_and_reset(
         self, force: bool

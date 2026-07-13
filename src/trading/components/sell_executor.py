@@ -44,7 +44,7 @@ class SellExecutor:
 
         # Cancel any native exit orders before selling
         if pos:
-            await self._order_executor._exit_order_manager.cancel_exit_orders(symbol)
+            await self.event_bus.request("cancel_exit_orders", symbol)
 
         params = signal.strategy_params or {}
         fill_timeout = params.get("order_fill_timeout_seconds", settings.ORDER_FILL_TIMEOUT_SECONDS)
@@ -402,7 +402,8 @@ class SellExecutor:
                         "stop_loss_price": engine.positions[symbol].get("stop_loss"),
                         "take_profit_price": engine.positions[symbol].get("take_profit"),
                     }
-                    await self._order_executor._place_replacement_exit_orders_with_retry(
+                    await self.event_bus.request(
+                        "place_replacement_exit_orders_with_retry",
                         symbol, _dummy_signal, _exit_prices, engine.positions[symbol].get("timeframe")
                     )
             else:
@@ -523,7 +524,7 @@ class SellExecutor:
             remaining_net_base = net_base - trade_dict['amount']
 
             # Cancel old exit orders because quantity changed
-            await self._order_executor._exit_order_manager.cancel_exit_orders(symbol)
+            await self.event_bus.request("cancel_exit_orders", symbol)
 
             if remaining_amount <= 0 or remaining_net_base <= 0:
                 # Position fully closed via partial fills
@@ -569,13 +570,14 @@ class SellExecutor:
                         "stop_loss_price": engine.positions[symbol].get("stop_loss"),
                         "take_profit_price": engine.positions[symbol].get("take_profit"),
                     }
-                await self._order_executor._place_replacement_exit_orders_with_retry(
+                await self.event_bus.request(
+                    "place_replacement_exit_orders_with_retry",
                     symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe")
                 )
         else:
             # Full fill (non-partial) – original logic
             # Cancel any remaining exit orders before removing the position
-            await self._order_executor._exit_order_manager.cancel_exit_orders(symbol)
+            await self.event_bus.request("cancel_exit_orders", symbol)
             if pos:
                 cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
                 realized_pnl = net_quote - cost_basis
@@ -730,7 +732,7 @@ class SellExecutor:
                 engine._portfolio_exposure_cache = None
 
             # Cancel any remaining exit orders before removing the position
-            await self._order_executor._exit_order_manager.cancel_exit_orders(symbol)
+            await self.event_bus.request("cancel_exit_orders", symbol)
 
             # Remove the now-empty position
             async with engine._positions_lock:
@@ -886,7 +888,8 @@ class SellExecutor:
                         "stop_loss_price": engine.positions[symbol].get("stop_loss"),
                         "take_profit_price": engine.positions[symbol].get("take_profit"),
                     }
-                    await self._order_executor._place_replacement_exit_orders_with_retry(
+                    await self.event_bus.request(
+                        "place_replacement_exit_orders_with_retry",
                         symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe")
                     )
 
