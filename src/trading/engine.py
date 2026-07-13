@@ -70,6 +70,7 @@ from src.trading.components.signal_processor import SignalProcessor
 from src.trading.components.backtest_manager import BacktestManager
 from src.trading.components.market_data_manager import MarketDataManager, ClockInfo
 from src.trading.components.symbol_reevaluator import SymbolReevaluator
+from src.trading.components.shared_state import SharedState
 from src.config.config_service import UnifiedConfigService
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ logger = logging.getLogger(__name__)
 class TradingEngine:
     def __init__(self):
         self.trader = None
+        self.shared_state = SharedState()
 
         self.base_currency = settings.BASE_CURRENCY
         self.max_symbols = settings.MAX_SYMBOLS
@@ -104,16 +106,16 @@ class TradingEngine:
         # asyncio thread pool used by the web server and Telegram bot.
         self._quote_executor = ThreadPoolExecutor(max_workers=12, thread_name_prefix="quotes")
 
-        self.current_symbols: List[Dict[str, str]] = []   # each dict: {"symbol": ..., "timeframe": ...}
-        self.positions: Dict[str, Dict[str, Any]] = {}  # symbol -> position info
-        self.trade_history: List[Dict[str, Any]] = []
-        self.recent_signals: List[Dict[str, Any]] = []
+        self.current_symbols = self.shared_state.current_symbols
+        self.positions = self.shared_state.positions
+        self.trade_history = self.shared_state.trade_history
+        self.recent_signals = self.shared_state.recent_signals
         self.initial_balance: float = 0.0
-        self.last_loss_time: Dict[str, float] = {}  # symbol -> timestamp of last losing trade
-        self.cooldown_durations: Dict[str, float] = {}  # symbol -> cooldown seconds set by LLM
+        self.last_loss_time = self.shared_state.last_loss_time
+        self.cooldown_durations = self.shared_state.cooldown_durations
         self._global_risk_multiplier: Optional[float] = None
-        self._last_strategy_eval: Dict[str, float] = {}   # symbol -> timestamp of last strategy evaluation
-        self._strategy_intervals: Dict[str, float] = {}    # symbol -> custom interval in seconds
+        self._last_strategy_eval = self.shared_state._last_strategy_eval
+        self._strategy_intervals = self.shared_state._strategy_intervals
         self._symbol_reevaluation_interval = settings.SYMBOL_REEVALUATION_INTERVAL
         self.notifier = None
 
@@ -134,14 +136,14 @@ class TradingEngine:
 
         # Track quote currency spent in the current cycle to avoid over-allocating
         self._cycle_spent = 0.0
-        self._symbol_first_seen: Dict[str, float] = {}  # symbol -> timestamp when first added
+        self._symbol_first_seen = self.shared_state._symbol_first_seen
         self._market_breadth: Optional[Dict[str, Any]] = None
-        self._cycle_spent_lock = asyncio.Lock()
-        self._positions_lock = asyncio.Lock()
-        self._pending_entries_lock = asyncio.Lock()
-        self._queued_orders_lock = asyncio.Lock()
-        self._state_lock = asyncio.Lock()
-        self._trade_history_lock = threading.Lock()
+        self._cycle_spent_lock = self.shared_state._cycle_spent_lock
+        self._positions_lock = self.shared_state._positions_lock
+        self._pending_entries_lock = self.shared_state._pending_entries_lock
+        self._queued_orders_lock = self.shared_state._queued_orders_lock
+        self._state_lock = self.shared_state._state_lock
+        self._trade_history_lock = self.shared_state._trade_history_lock
         self._state_save_pending = False
         self._state_dirty: bool = False
         # --- Extracted components ---
@@ -170,9 +172,9 @@ class TradingEngine:
         self._rebalance_reeval: bool = False
         self._running = True
         self._last_state_save = 0
-        self._last_eval_snapshot: Dict[str, Dict[str, float]] = {}  # symbol -> indicator snapshot
-        self._last_decisions: Dict[str, Dict[str, Any]] = {}  # symbol -> last LLM decision
-        self._pending_entries: Dict[str, Dict[str, Any]] = {}  # symbol -> pending entry condition info
+        self._last_eval_snapshot = self.shared_state._last_eval_snapshot
+        self._last_decisions = self.shared_state._last_decisions
+        self._pending_entries = self.shared_state._pending_entries
 
         # Re-entrancy guards for periodic tasks
         self._reconcile_running = False
@@ -184,7 +186,7 @@ class TradingEngine:
         self._full_breadth_running = False
         self._full_download_running = False
         self._quotes_fetch_running = False
-        self._delayed_entry_tasks: set = set()
+        self._delayed_entry_tasks = self.shared_state._delayed_entry_tasks
         self._supervisors: list = []
         self._background_tasks: list = []
 
@@ -223,16 +225,16 @@ class TradingEngine:
         self._balance_cache_time: float = 0.0
         self._position_tickers_cache: Optional[Dict[str, Dict[str, Any]]] = None
         self._position_tickers_cache_time: float = 0.0
-        self._sentiment_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, sentiment_dict)
-        self.queued_orders: List[Dict[str, Any]] = []
+        self._sentiment_cache = self.shared_state._sentiment_cache
+        self.queued_orders = self.shared_state.queued_orders
         # Force immediate LLM evaluation when an entry signal is detected
-        self._force_eval: Dict[str, bool] = {}
+        self._force_eval = self.shared_state._force_eval
         # Track when we last forced an LLM evaluation per symbol (for entry signal cooldown)
-        self._force_eval_time: Dict[str, float] = {}
+        self._force_eval_time = self.shared_state._force_eval_time
         # Per‑symbol state for crossover detection (stores last known indicator values)
-        self._entry_signal_state: Dict[str, Dict[str, Any]] = {}
+        self._entry_signal_state = self.shared_state._entry_signal_state
         # Lock to protect _force_eval, _force_eval_time, _last_strategy_eval, and _strategy_intervals
-        self._eval_state_lock = asyncio.Lock()
+        self._eval_state_lock = self.shared_state._eval_state_lock
 
     async def _initialize_clients(self):
         """Initialize clients and load persisted state (non‑blocking)."""
