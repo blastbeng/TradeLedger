@@ -136,9 +136,11 @@ def get_cached_llm_response(
     )
 
     # When market is closed (not in pre-market), use fallback models only to save tokens
+    is_fallback = False
     if not _should_use_primary_model():
         fb_provider, fb_model, fb_base_url, fb_api_key = _get_fallback_provider_config(model_type)
         if fb_provider and fb_model:
+            is_fallback = True
             logger.info("Market is closed - using fallback model only (provider=%s, model=%s, model_type=%s)", fb_provider, fb_model, model_type)
             provider = fb_provider
             model = fb_model
@@ -197,6 +199,7 @@ def get_cached_llm_response(
                             "latency_ms": 0,
                             "error": None,
                             "request_type": request_type,
+                            "is_fallback": data.get("is_fallback", False),
                         })
                     except Exception as metric_err:
                         logger.warning("Failed to save cache hit metric: %s", metric_err)
@@ -283,6 +286,7 @@ def get_cached_llm_response(
                 "latency_ms": latency_ms,
                 "error": str(e)[:500],
                 "request_type": request_type,
+                "is_fallback": is_fallback,
             })
         except Exception as metric_err:
             logger.warning("Failed to save primary error metric: %s", metric_err)
@@ -347,6 +351,7 @@ def get_cached_llm_response(
                     usage = result.get("usage", {})
                     used_provider = "openai"
                     used_model = fallback_model
+                    is_fallback = True
                 except Exception as fallback_e:
                     fallback_latency = (time.time() - fallback_start) * 1000
                     try:
@@ -362,6 +367,7 @@ def get_cached_llm_response(
                             "latency_ms": fallback_latency,
                             "error": str(fallback_e)[:500],
                             "request_type": request_type,
+                            "is_fallback": True,
                         })
                     except Exception as metric_err:
                         logger.warning("Failed to save fallback error metric: %s", metric_err)
@@ -410,6 +416,7 @@ def get_cached_llm_response(
                     usage = result.get("usage", {})
                     used_provider = "ollama"
                     used_model = fallback_model
+                    is_fallback = True
                 except Exception as fallback_e:
                     fallback_latency = (time.time() - fallback_start) * 1000
                     try:
@@ -425,6 +432,7 @@ def get_cached_llm_response(
                             "latency_ms": fallback_latency,
                             "error": str(fallback_e)[:500],
                             "request_type": request_type,
+                            "is_fallback": True,
                         })
                     except Exception as metric_err:
                         logger.warning("Failed to save fallback error metric: %s", metric_err)
@@ -454,6 +462,7 @@ def get_cached_llm_response(
                 "latency_ms": (time.time() - start_time) * 1000,
                 "error": "LLM returned None response",
                 "request_type": request_type,
+                "is_fallback": is_fallback,
             })
         except Exception as metric_err:
             logger.warning("Failed to save None response metric: %s", metric_err)
@@ -474,6 +483,7 @@ def get_cached_llm_response(
             "latency_ms": latency_ms,
             "error": None,
             "request_type": request_type,
+            "is_fallback": is_fallback,
         })
     except Exception as metric_err:
         logger.warning("Failed to save success metric: %s", metric_err)
@@ -484,6 +494,7 @@ def get_cached_llm_response(
         "response": response_text,
         "provider": used_provider,
         "model": used_model,
+        "is_fallback": is_fallback,
     })
     try:
         redis_client.set(cache_key, cache_data, ex=ttl)

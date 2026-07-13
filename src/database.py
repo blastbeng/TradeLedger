@@ -248,6 +248,7 @@ def _migrate_db():
         ("discovered_symbols", "coupon", "ALTER TABLE discovered_symbols ADD COLUMN coupon REAL"),
         ("discovered_symbols", "country", "ALTER TABLE discovered_symbols ADD COLUMN country TEXT"),
         ("llm_metrics", "request_type", "ALTER TABLE llm_metrics ADD COLUMN request_type TEXT"),
+        ("llm_metrics", "is_fallback", "ALTER TABLE llm_metrics ADD COLUMN is_fallback INTEGER NOT NULL DEFAULT 0"),
     ]
 
     max_retries = 3
@@ -473,7 +474,8 @@ def _get_init_statements() -> List[str]:
             cache_hit INTEGER NOT NULL DEFAULT 0,
             latency_ms REAL NOT NULL DEFAULT 0,
             error TEXT,
-            request_type TEXT
+            request_type TEXT,
+            is_fallback INTEGER NOT NULL DEFAULT 0
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp DESC)",
@@ -2178,8 +2180,8 @@ def save_llm_metrics(metrics: dict):
             INSERT INTO llm_metrics (
                 timestamp, provider, model, model_type,
                 prompt_tokens, completion_tokens, total_tokens,
-                cache_hit, latency_ms, error, request_type
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                cache_hit, latency_ms, error, request_type, is_fallback
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
         )
         conn.execute(sql, (
@@ -2194,6 +2196,7 @@ def save_llm_metrics(metrics: dict):
             metrics.get("latency_ms", 0),
             metrics.get("error"),
             metrics.get("request_type"),
+            1 if metrics.get("is_fallback") else 0,
         ))
         conn.commit()
     finally:
@@ -2211,10 +2214,20 @@ def reset_llm_metrics():
         conn.close()
 
 
-def get_llm_metrics_summary() -> dict:
-    """Return aggregated LLM metrics for the dashboard."""
+def get_llm_metrics_summary(model_filter: str = "all") -> dict:
+    """Return aggregated LLM metrics for the dashboard.
+
+    model_filter: "all" (no filter), "main" (is_fallback=0), "fallback" (is_fallback=1).
+    """
     conn = get_connection()
     try:
+        # Build WHERE clause for model filter
+        where_clause = ""
+        if model_filter == "main":
+            where_clause = " WHERE is_fallback = 0"
+        elif model_filter == "fallback":
+            where_clause = " WHERE is_fallback = 1"
+
         # Total calls and tokens
         row = conn.execute(
             "SELECT COUNT(*) as total_calls, "
@@ -2222,7 +2235,7 @@ def get_llm_metrics_summary() -> dict:
             "COALESCE(SUM(completion_tokens),0) as total_completion_tokens, "
             "COALESCE(SUM(total_tokens),0) as total_tokens, "
             "COALESCE(SUM(cache_hit),0) as cache_hits "
-            "FROM llm_metrics"
+            f"FROM llm_metrics{where_clause}"
         ).fetchone()
         total_calls = row["total_calls"] if row else 0
         total_prompt_tokens = row["total_prompt_tokens"] if row else 0
@@ -2238,7 +2251,7 @@ def get_llm_metrics_summary() -> dict:
             "SUM(prompt_tokens) as prompt_tokens, "
             "SUM(completion_tokens) as completion_tokens, "
             "AVG(latency_ms) as avg_latency "
-            "FROM llm_metrics GROUP BY provider, model, model_type"
+            f"FROM llm_metrics{where_clause} GROUP BY provider, model, model_type"
         ).fetchall()
         per_model = []
         for r in per_model_rows:
@@ -2257,7 +2270,7 @@ def get_llm_metrics_summary() -> dict:
         recent_rows = conn.execute(
             "SELECT timestamp, provider, model, model_type, prompt_tokens, completion_tokens, "
             "total_tokens, cache_hit, latency_ms, error, request_type "
-            "FROM llm_metrics ORDER BY timestamp DESC LIMIT 20"
+            f"FROM llm_metrics{where_clause} ORDER BY timestamp DESC LIMIT 20"
         ).fetchall()
         recent_calls = []
         for r in recent_rows:
@@ -2293,7 +2306,7 @@ def get_llm_metrics_summary() -> dict:
                     "COALESCE(SUM(completion_tokens),0) as completion_tokens, "
                     "COALESCE(SUM(cache_hit),0) as cache_hits, "
                     "COALESCE(AVG(latency_ms),0) as avg_latency "
-                    "FROM llm_metrics WHERE timestamp >= %s"
+                    f"FROM llm_metrics{where_clause} AND timestamp >= %s"
                 ),
                 (cutoff,)
             ).fetchone()
@@ -2322,8 +2335,11 @@ def get_llm_metrics_summary() -> dict:
         conn.close()
 
 
-def get_llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = None, to_date: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Return aggregated LLM metrics for charting based on period and date range."""
+def get_llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = None, to_date: Optional[str] = None, model_filter: str = "all") -> List[Dict[str, Any]]:
+    """Return aggregated LLM metrics for charting based on period and date range.
+
+    model_filter: "all" (no filter), "main" (is_fallback=0), "fallback" (is_fallback=1).
+    """
     conn = get_connection()
     try:
         now_ts = time.time()
@@ -2346,6 +2362,13 @@ def get_llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = 
         else:
             end_ts = now_ts
 
+        # Build model filter clause
+        model_clause = ""
+        if model_filter == "main":
+            model_clause = " AND is_fallback = 0"
+        elif model_filter == "fallback":
+            model_clause = " AND is_fallback = 1"
+
         if _backend == "postgresql":
             trunc = period if period in ("hour", "day", "week", "month") else "hour"
             sql = _adapt_sql(
@@ -2359,7 +2382,7 @@ def get_llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = 
                     AVG(latency_ms) as avg_latency,
                     SUM(cache_hit) as cache_hits
                 FROM llm_metrics
-                WHERE timestamp >= %s AND timestamp <= %s
+                WHERE timestamp >= %s AND timestamp <= %s{model_clause}
                 GROUP BY hour
                 ORDER BY hour ASC
                 """
@@ -2386,7 +2409,7 @@ def get_llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = 
                     AVG(latency_ms) as avg_latency,
                     SUM(cache_hit) as cache_hits
                 FROM llm_metrics
-                WHERE timestamp >= %s AND timestamp <= %s
+                WHERE timestamp >= %s AND timestamp <= %s{model_clause}
                 GROUP BY hour
                 ORDER BY hour ASC
                 """

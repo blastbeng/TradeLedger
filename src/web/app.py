@@ -684,10 +684,10 @@ async def tickers(symbols: str = ""):
     return result
 
 @http_router.get("/api/llm-metrics")
-async def llm_metrics():
+async def llm_metrics(model_filter: str = "main"):
     """Return aggregated LLM metrics for the dashboard."""
     try:
-        data = await run_in_threadpool(get_llm_metrics_summary)
+        data = await run_in_threadpool(get_llm_metrics_summary, model_filter)
         
         mind_provider, mind_model, mind_url = _resolve_llm_role_settings("mind")
         actuator_provider, actuator_model, actuator_url = _resolve_llm_role_settings("actuator")
@@ -722,10 +722,10 @@ async def llm_metrics_reset():
         raise HTTPException(status_code=500, detail=str(e))
 
 @http_router.get("/api/llm-metrics/timeseries")
-async def llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = None, to_date: Optional[str] = None):
+async def llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = None, to_date: Optional[str] = None, model_filter: str = "main"):
     """Return aggregated LLM metrics for charting based on period and date range."""
     try:
-        return await run_in_threadpool(get_llm_metrics_timeseries, period, from_date, to_date)
+        return await run_in_threadpool(get_llm_metrics_timeseries, period, from_date, to_date, model_filter)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

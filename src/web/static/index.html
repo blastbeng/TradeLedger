@@ -501,7 +501,13 @@
             </div>
 
             <div class="card card-full" id="llm-metrics-card">
-                <h2>🤖 LLM Metrics <button id="btn-reset-llm-metrics" style="margin-left:12px; background:var(--red); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🗑️ Reset</button></h2>
+                <h2>🤖 LLM Metrics
+                    <select id="llm-model-filter" style="margin-left:12px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:0.85rem;">
+                        <option value="all">All Models</option>
+                        <option value="main" selected>Main Models</option>
+                        <option value="fallback">Fallback Models</option>
+                    </select>
+                    <button id="btn-reset-llm-metrics" style="margin-left:12px; background:var(--red); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🗑️ Reset</button></h2>
                 <div id="llm-metrics-summary" style="margin-bottom:16px; font-size:0.9rem;"></div>
                 <div id="llm-metrics-periods" style="margin-bottom:16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px;">
                     <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px;">
@@ -1199,6 +1205,7 @@
 
         let chartInstance = null;
         let llmMetricsChart = null;
+        let llmModelFilter = 'main';
         let chartUpdateTimer = null;
         const modal = document.getElementById('chart-modal');
         const closeBtn = document.getElementById('close-modal');
@@ -2235,7 +2242,7 @@
         // --- LLM Metrics ---
         async function fetchLLMMetrics() {
             try {
-                const resp = await fetch('/api/llm-metrics');
+                const resp = await fetch(`/api/llm-metrics?model_filter=${llmModelFilter}`);
                 if (!resp.ok) throw new Error('Failed to fetch LLM metrics');
                 const data = await resp.json();
 
@@ -2360,7 +2367,7 @@
             const fromDate = document.getElementById('llm-chart-from')?.value;
             const toDate = document.getElementById('llm-chart-to')?.value;
             
-            let url = `/api/llm-metrics/timeseries?period=${period}`;
+            let url = `/api/llm-metrics/timeseries?period=${period}&model_filter=${llmModelFilter}`;
             if (fromDate) url += `&from_date=${fromDate}`;
             if (toDate) url += `&to_date=${toDate}`;
 
@@ -2376,6 +2383,12 @@
         }
 
         document.getElementById('llm-chart-apply').addEventListener('click', fetchLLMMetricsChart);
+
+        document.getElementById('llm-model-filter').addEventListener('change', (e) => {
+            llmModelFilter = e.target.value;
+            fetchLLMMetrics();
+            fetchLLMMetricsChart();
+        });
 
         function renderLLMMetricsChart(tsData) {
             const canvas = document.getElementById('llm-metrics-chart');
