@@ -209,7 +209,7 @@ class SignalProcessor:
                 pass
 
         upcoming_earnings = None
-        if get_upcoming_earnings is not None:
+        if get_upcoming_earnings is not None and symbol in self.shared_state.positions:
             try:
                 upcoming_earnings = await asyncio.to_thread(get_upcoming_earnings, symbol)
             except Exception:
