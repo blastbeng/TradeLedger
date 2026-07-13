@@ -13,6 +13,12 @@ from urllib.parse import quote
 
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
+try:
+    from langdetect import detect
+    _LANGDETECT_AVAILABLE = True
+except ImportError:
+    _LANGDETECT_AVAILABLE = False
+
 from src.config.settings import settings
 from src.database import get_aggregate_sentiment_from_db
 from src.utils.redis_client import get_redis_client
@@ -180,6 +186,14 @@ def _is_feed_disabled(feed_url: str) -> bool:
 
 def _analyze_sentiment(text: str) -> Dict[str, Any]:
     """Return sentiment label and compound score for a text."""
+    # VADER is designed for English. Skip sentiment for non-English text.
+    if _LANGDETECT_AVAILABLE:
+        try:
+            if detect(text) != 'en':
+                return {"label": "neutral", "compound": 0.0}
+        except Exception:
+            pass  # Fallback to VADER if detection fails (e.g., empty text)
+
     scores = _sentiment_analyzer.polarity_scores(text)
     compound = scores['compound']
     if compound >= 0.05:
