@@ -472,7 +472,7 @@ class TradingEngine:
             # so the LLM sees fresh correlations after significant market changes
             try:
                 self.redis.delete("reeval:correlation_matrix")
-            except Exception:
+            except (ConnectionError, TimeoutError, OSError):
                 pass
         elif self._reevaluate_running:
             logger.info("Re-evaluation already running; queued re-evaluation for after current cycle completes.")
@@ -523,8 +523,13 @@ class TradingEngine:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(self._db_executor, cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
             logger.info("Force download: complete.")
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Force download network/IO error: {type(e).__name__}: {e}")
         except Exception as e:
             logger.error(f"Force download error: {type(e).__name__}: {e}", exc_info=True)
+            await self._record_unexpected_exception("force_download_all_assets", e)
         finally:
             self._full_download_running = False
 
@@ -659,8 +664,13 @@ class TradingEngine:
             self._reconcile_running = True
             try:
                 await self.event_bus.request("reconcile_positions")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Reconcile network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Reconcile error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("reconcile", e)
             finally:
                 self._reconcile_running = False
             await asyncio.sleep(300)
