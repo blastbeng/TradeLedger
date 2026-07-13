@@ -7,6 +7,7 @@ import asyncio
 import logging
 import time
 
+from src.config.settings import settings
 from src.database import insert_trade
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ class ManualTradeLogger:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self.event_bus.subscribe("log_manual_trade", self.log_manual_trade)
 
@@ -53,20 +55,20 @@ class ManualTradeLogger:
         if side == "buy":
             cost_basis = cost + fee
             net_base = quantity
-            if symbol in engine.positions:
-                old_pos = engine.positions[symbol]
+            if symbol in self.shared_state.positions:
+                old_pos = self.shared_state.positions[symbol]
                 old_cost_basis = old_pos.get("cost_basis", old_pos["amount"] * old_pos["price"])
                 old_net_base = old_pos.get("net_base", old_pos["amount"])
                 new_cost_basis = old_cost_basis + cost_basis
                 new_net_base = old_net_base + net_base
                 new_price = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
-                engine.positions[symbol]["amount"] = new_net_base
-                engine.positions[symbol]["price"] = new_price
-                engine.positions[symbol]["cost_basis"] = new_cost_basis
-                engine.positions[symbol]["net_base"] = new_net_base
+                self.shared_state.positions[symbol]["amount"] = new_net_base
+                self.shared_state.positions[symbol]["price"] = new_price
+                self.shared_state.positions[symbol]["cost_basis"] = new_cost_basis
+                self.shared_state.positions[symbol]["net_base"] = new_net_base
             else:
                 entry_price = cost_basis / net_base if net_base > 0 else price
-                engine.positions[symbol] = {
+                self.shared_state.positions[symbol] = {
                     "symbol": symbol,
                     "side": "buy",
                     "amount": net_base,
@@ -81,7 +83,7 @@ class ManualTradeLogger:
                     "buy_confidence": 1.0,
                     "buy_reasoning": "Manual trade",
                 }
-            engine._balance_cache = None
+            self.shared_state._balance_cache = None
 
             # Update virtual cash balance
             with engine.trader._lock:
@@ -90,7 +92,7 @@ class ManualTradeLogger:
                 engine.trader._balances_dirty = True
             await asyncio.to_thread(engine.trader._save_balances)
         elif side == "sell":
-            pos = engine.positions.get(symbol)
+            pos = self.shared_state.positions.get(symbol)
             if pos:
                 cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
                 net_quote = cost - fee
@@ -100,8 +102,8 @@ class ManualTradeLogger:
                 trade["exit_reason"] = "manual_sell"
                 if "timestamp" in pos:
                     trade["hold_time_seconds"] = (timestamp - pos["timestamp"]) / 1000.0
-                engine.positions.pop(symbol, None)
-                engine._balance_cache = None
+                self.shared_state.positions.pop(symbol, None)
+                self.shared_state._balance_cache = None
 
                 # Update virtual cash balance
                 with engine.trader._lock:
@@ -133,9 +135,9 @@ class ManualTradeLogger:
                     engine.trader._balances_dirty = True
                 await asyncio.to_thread(engine.trader._save_balances)
 
-        engine._append_trade(trade)
+        self.shared_state.append_trade(trade, settings.MAX_TRADES_IN_MEMORY)
         await asyncio.to_thread(insert_trade, trade)
         await self.event_bus.publish("save_state", force=True)
-        engine._portfolio_exposure_cache = None
+        self.shared_state._portfolio_exposure_cache = None
         logger.info(f"Manual trade logged: {side} {quantity} {symbol} @ {price:.4f}")
         return {"status": "ok", "trade": trade}
