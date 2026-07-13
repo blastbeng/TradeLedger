@@ -194,7 +194,7 @@ class SignalProcessor:
         base_balance = symbol_data["base_balance"]
         ohlcv_data = symbol_data["ohlcv_data"]
 
-        open_positions = [pos for pos in engine.positions.values() if pos.get("symbol") == symbol]
+        open_positions = [pos for pos in self.shared_state.positions.values() if pos.get("symbol") == symbol]
         per_symbol_budget = base_balance / engine.effective_max_symbols if engine.effective_max_symbols > 0 else 0.0
 
         perf = await engine.event_bus.request("compute_performance_metrics")
@@ -220,8 +220,8 @@ class SignalProcessor:
         )
 
         _portfolio = await engine._position_manager.compute_portfolio_exposure_summary(base_balance)
-        async with engine._cycle_spent_lock:
-            remaining = max(0.0, base_balance - engine._cycle_spent)
+        async with self.shared_state._cycle_spent_lock:
+            remaining = max(0.0, base_balance - self.shared_state._cycle_spent)
 
         prompt_data = StrategyPromptData(
             symbol=symbol,
@@ -268,9 +268,9 @@ class SignalProcessor:
             historical_ohlcv=_ctx["historical_ohlcv"],
             min_order_amount=_ctx["min_order_amount"],
             min_order_cost=_ctx["min_order_cost"],
-            all_symbols=engine.current_symbols,
+            all_symbols=self.shared_state.current_symbols,
             past_trades=_ctx["past_trades"],
-            cycle_spent=engine._cycle_spent,
+            cycle_spent=self.shared_state._cycle_spent,
             remaining_balance=remaining,
             market_regime=_ctx["market_regime"],
             multi_tf_raw_candles=symbol_data["multi_tf_raw_candles"],
@@ -278,7 +278,7 @@ class SignalProcessor:
             session_info=_ctx["session_info"],
             sentiment_trend=_ctx["sentiment_trend_val"],
             volume_trend=_ctx["volume_trend_val"],
-            market_breadth=getattr(engine, '_market_breadth', None),
+            market_breadth=self.shared_state._market_breadth,
             full_market_breadth=_ctx["full_market_breadth"],
             atr_percentile=_ctx["atr_percentile"],
             global_risk_multiplier=_ctx["global_risk_mult"],
@@ -302,16 +302,16 @@ class SignalProcessor:
             portfolio_exposure_pct=_portfolio["portfolio_exposure_pct"],
             portfolio_stop_risk_pct=_portfolio["portfolio_stop_risk_pct"],
             portfolio_total_value=_portfolio["portfolio_total_value"],
-            portfolio_open_count=len(engine.positions),
+            portfolio_open_count=len(self.shared_state.positions),
             portfolio_available_capital=_portfolio["portfolio_available_capital"],
-            last_decision=engine._last_decisions.get(symbol),
+            last_decision=self.shared_state._last_decisions.get(symbol),
             minutes_to_market_close=_ctx["minutes_to_market_close"],
-            current_strategy_interval_seconds=engine._strategy_intervals.get(symbol, engine._timeframe_to_seconds(assigned_tf)),
+            current_strategy_interval_seconds=self.shared_state._strategy_intervals.get(symbol, engine._timeframe_to_seconds(assigned_tf)),
             max_portfolio_exposure_pct=_ctx["max_port_exp"],
             max_portfolio_stop_risk_pct=_ctx["max_port_risk"],
             trade_pattern_analysis=trade_pattern_analysis,
             symbol_event=symbol_event,
-            queued_orders=engine.queued_orders,
+            queued_orders=self.shared_state.queued_orders,
             fundamentals=symbol_data["fundamentals"],
             min_hold_time_mult=_ctx["min_hold_time_mult"],
             min_stop_atr_mult=_ctx["min_stop_atr_mult"],
