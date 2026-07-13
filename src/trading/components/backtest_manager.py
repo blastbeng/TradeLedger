@@ -457,6 +457,21 @@ class BacktestManager:
         """
         engine = self.engine
 
+        # --- LLM circuit breaker: skip calls if too many consecutive failures ---
+        cb_active = False
+        try:
+            cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
+            if cb_raw:
+                cb_data = json.loads(cb_raw)
+                if time.time() < cb_data.get("active_until", 0):
+                    cb_active = True
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
+            pass
+
+        if cb_active:
+            logger.error(f"LLM circuit breaker ACTIVE for {symbol} during Step 2 — using preliminary decision. Check LLM connectivity.")
+            return preliminary_signal, llm_provider, llm_model
+
         if not backtest_results:
             logger.info(f"Insufficient data for any backtest for {symbol}. Using preliminary decision.")
             return preliminary_signal, llm_provider, llm_model
