@@ -877,7 +877,7 @@ def walk_forward_backtest(
 
     for i in range(num_windows):
         start = i * window_size
-        end = (i + 1) * window_size if i < num_windows - 1 else len(candles)
+        end = (i + 1) * window_size  # Use strictly equal-sized windows, discarding the remainder
         window_candles = candles[start:end]
         if len(window_candles) < 5:
             continue
