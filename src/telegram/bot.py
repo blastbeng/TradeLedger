@@ -1069,7 +1069,6 @@ class TelegramBot:
                     logger.warning(f"Failed to store message for web interface: {type(e).__name__}: {e}")
 
                 # Send to Telegram
-                action = summary.get("action", "") if summary else ""
                 max_retries = 3 if is_critical else 1
                 retry_delay = 2.0
 

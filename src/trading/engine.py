@@ -368,7 +368,11 @@ class TradingEngine:
         else:
             self.trader = PaperTrader()
             logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
-            self._state_persistence.load_state()
+            try:
+                self._state_persistence.load_state()
+            except ValueError as e:
+                logger.critical(f"State corruption detected during load: {e}. Resetting paper trading state.")
+                await self.reset_paper_trading_state()
             self._position_manager.ensure_cost_basis()
             # Initialize _cycle_spent from any queued buy orders loaded from persisted
             # state so capital is reserved immediately at startup, before the first

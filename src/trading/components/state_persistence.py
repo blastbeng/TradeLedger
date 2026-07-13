@@ -186,6 +186,7 @@ class StatePersistence:
                 self.shared_state._last_strategy_eval.pop(symbol, None)
 
         # Discard positions with zero amount or zero price (corrupted state)
+        corrupted_positions = []
         for symbol in list(self.shared_state.positions.keys()):
             pos = self.shared_state.positions[symbol]
             amount = pos.get("amount", 0)
@@ -195,6 +196,10 @@ class StatePersistence:
                     f"Position for {symbol} has invalid amount={amount} or price={price}. Removing it."
                 )
                 del self.shared_state.positions[symbol]
+                corrupted_positions.append(symbol)
+        
+        if corrupted_positions:
+            raise ValueError(f"Corrupted positions detected and removed: {corrupted_positions}")
 
         # Initialize trailing stop tracking fields for positions with trailing stops.
         # This ensures _highest_price is not set to a pre-entry price on the first
