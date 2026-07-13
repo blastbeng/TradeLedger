@@ -896,6 +896,17 @@ class Settings(BaseSettings):
             raise ValueError("LLM_ACTUATOR_TIMEOUT must be positive")
         return v
 
+    # LLM timeout (seconds) for fallback model calls.
+    # Fallback models are often weaker/slower, so a longer timeout is recommended.
+    LLM_FALLBACK_TIMEOUT: float = 600.0
+
+    @field_validator("LLM_FALLBACK_TIMEOUT")
+    @classmethod
+    def validate_llm_fallback_timeout(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("LLM_FALLBACK_TIMEOUT must be positive")
+        return v
+
     # Enforce the LLM's minimum profit per trade check.
     # Set to False to allow trades with very small expected profit.
     ENFORCE_MIN_PROFIT_PER_TRADE: bool = False
