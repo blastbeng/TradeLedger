@@ -11,6 +11,7 @@ class ReevalNotifier:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
 
     async def build_and_send_reeval_notification(
@@ -34,7 +35,7 @@ class ReevalNotifier:
         async def _fetch_label(c):
             name = await engine._market_data_manager.get_stock_name(c['symbol'])
             return engine._format_symbol_display(c['symbol'], name, c['timeframe'])
-        symbol_labels = await asyncio.gather(*[_fetch_label(c) for c in engine.current_symbols])
+        symbol_labels = await asyncio.gather(*[_fetch_label(c) for c in self.shared_state.current_symbols])
         logger.info(f"Selected symbols: {symbol_labels}")
 
         # Build a pause/resume message if the LLM provided a decision
@@ -86,7 +87,7 @@ class ReevalNotifier:
             if pause_reason:
                 pause_msg += f" – {pause_reason}"
 
-        if not engine.current_symbols:
+        if not self.shared_state.current_symbols:
             logger.warning("No symbols selected after evaluation. Bot will idle until next cycle.")
             if engine.notifier:
                 msg = f"⚠️ No stocks selected. Bot will idle.\n"
@@ -121,7 +122,7 @@ class ReevalNotifier:
                 summary={
                     "action": "INFO",
                     "reason": "Symbols updated",
-                    "stocks": [c["symbol"] for c in engine.current_symbols],
+                    "stocks": [c["symbol"] for c in self.shared_state.current_symbols],
                     "stock_reasoning": stock_reasoning,
                     "pause_decision": pause_trading if isinstance(pause_trading, bool) else None,
                     "pause_reason": pause_reason,
