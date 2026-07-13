@@ -690,8 +690,13 @@ class TradingEngine:
                     await self.event_bus.request("reevaluate_symbols_impl", force=is_forced)
                 elapsed = time.time() - reeval_start_time
                 logger.info(f"Symbol re-evaluation complete (took {elapsed:.1f}s).")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Stock re-evaluation network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Stock re-evaluation error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("reevaluate", e)
                 if self.notifier:
                     await self.notifier.send_notification(
                         f"❌ Stock re-evaluation failed: {str(e)[:200]}",
@@ -820,8 +825,13 @@ class TradingEngine:
 
                         if pause_start_raw and pause_duration_raw:
                             await self._handle_pause_duration_elapsed(pause_start_raw, pause_duration_raw)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Pause check network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Pause check error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("pause_check", e)
             finally:
                 self._pause_check_running = False
             await asyncio.sleep(30)
@@ -927,8 +937,13 @@ class TradingEngine:
                         self.redis.setex, "market:breadth:full", 600, json.dumps(full_market_breadth)
                     )
                     logger.info(f"Full market breadth updated: {full_market_breadth} (sampled from {len(available_pairs)} symbols)")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Full market breadth computation network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Full market breadth computation error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("full_market_breadth", e)
             finally:
                 self._full_breadth_running = False
             await asyncio.sleep(1800)  # every 30 minutes (medium/long-term)
@@ -945,8 +960,13 @@ class TradingEngine:
         while self._running:
             try:
                 await self.event_bus.request("check_market_conditions")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Market condition check network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Market condition check error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("market_condition_check", e)
             await asyncio.sleep(1800)  # check every 30 minutes (medium/long-term)
 
     async def _periodic_portfolio_rebalance(self):
@@ -1153,8 +1173,13 @@ class TradingEngine:
                     # Reset the periodic countdown timer so the first update
                     # after the next market close is not skipped due to a stale timestamp.
                     self._last_market_closed_notify_time = 0.0
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Market clock monitor network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Market clock monitor error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("market_clock_monitor", e)
             await asyncio.sleep(30)  # check every 30 seconds
 
 
@@ -1266,8 +1291,14 @@ class TradingEngine:
                 # among current positions. This ensures the interval is updated immediately
                 # when positions are closed and the shortest timeframe changes.
                 await self._interruptible_sleep(min_interval)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Risk management loop network/IO error: {type(e).__name__}: {e}")
+                await self._interruptible_sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
             except Exception as e:
                 logger.error(f"Risk management loop error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("risk_management_loop", e)
                 await self._interruptible_sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
 
     async def _refresh_current_symbols_news_fast(self):
@@ -1294,8 +1325,13 @@ class TradingEngine:
                     await asyncio.gather(
                         *[_fetch_news_with_limit(sym) for sym in symbols]
                     )
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Fast news refresh network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Fast news refresh error: {type(e).__name__}: {e}")
+                await self._record_unexpected_exception("fast_news_refresh", e)
             finally:
                 self._news_fast_running = False
             await self._interruptible_sleep(settings.NEWS_FAST_UPDATE_INTERVAL_MINUTES * 60)
@@ -1353,8 +1389,13 @@ class TradingEngine:
                     await asyncio.sleep(0.2)
 
                 logger.info(f"News cache refreshed for {len(symbols_to_refresh)} symbols in {time.time() - cycle_start:.2f}s")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Background news refresh network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Background news refresh error: {type(e).__name__}: {e}")
+                await self._record_unexpected_exception("news_cache_refresh", e)
             finally:
                 self._news_cache_running = False
 
@@ -1479,8 +1520,13 @@ class TradingEngine:
                     # Clean up old OHLCV data (older than retention period)
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(self._db_executor, cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Market data download loop network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Market data download loop error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("market_data_download_loop", e)
             finally:
                 self._market_data_running = False
 
@@ -1566,8 +1612,13 @@ class TradingEngine:
                 await loop.run_in_executor(self._db_executor, cleanup_old_position_pnl, 90)
                 await loop.run_in_executor(self._db_executor, cleanup_old_backtest_results, 90)
                 logger.info("Full asset OHLCV download cycle complete.")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Full asset download loop network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Full asset download loop error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("full_asset_download_loop", e)
             finally:
                 self._full_download_running = False
 
@@ -1617,8 +1668,13 @@ class TradingEngine:
                 await asyncio.gather(*news_tasks)
 
                 logger.info("Full asset news download cycle complete.")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Full asset news download loop network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Full asset news download loop error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("full_asset_news_download_loop", e)
 
             await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, "news"))
 
@@ -1646,8 +1702,13 @@ class TradingEngine:
                 if all_quote_symbols:
                     # Fetch quotes in batches to avoid yfinance timeouts on large symbol lists
                     await self._market_data_manager._get_quotes_batched(all_quote_symbols, timeout_per_chunk=180.0)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Background quote refresh network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Background quote refresh error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("quote_refresh_loop", e)
             finally:
                 self._quotes_fetch_running = False
             await self._interruptible_sleep(self._get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, "quotes"))
@@ -1685,8 +1746,13 @@ class TradingEngine:
                             cache_only=False,
                         )
                     )
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Ticker discovery refresh network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Ticker discovery refresh error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("ticker_discovery_loop", e)
             await asyncio.sleep(3600)  # every 60 minutes (medium/long-term)
 
     async def _fetch_dividends_loop(self):
@@ -1712,8 +1778,13 @@ class TradingEngine:
                 # Cleanup old dividends
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(self._db_executor, cleanup_old_dividends, 365)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Dividend fetch loop network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Dividend fetch loop error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("dividend_fetch_loop", e)
             await self._interruptible_sleep(86400)  # daily
 
     def _daily_realized_pnl(self) -> float:
@@ -1819,10 +1890,25 @@ class TradingEngine:
 
                 # Clean up old evaluated decisions to prevent database bloat
                 await asyncio.to_thread(cleanup_old_llm_decisions, 30)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"LLM decision evaluation loop network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"LLM decision evaluation loop error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("llm_decision_eval_loop", e)
             
             await self._interruptible_sleep(600)  # check every 10 minutes
+
+    async def _record_unexpected_exception(self, context: str, exc: Exception) -> None:
+        """Record metrics for unexpected exceptions in Redis."""
+        try:
+            exc_type = type(exc).__name__
+            key = f"metrics:unexpected_exception:{context}:{exc_type}"
+            await asyncio.to_thread(self.redis.incr, key)
+            await asyncio.to_thread(self.redis.expire, key, 86400)
+        except Exception:
+            pass
 
     async def run(self):
         """Main event‑driven loop using WebSocket ticker updates."""
@@ -2015,8 +2101,14 @@ class TradingEngine:
                     self._last_state_save = now
                     self._state_dirty = False
 
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Engine loop network/IO error: {type(e).__name__}: {e}")
+                await asyncio.sleep(5)
             except Exception as e:
                 logger.error(f"Engine loop error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("engine_loop", e)
                 await asyncio.sleep(5)
 
 
@@ -2049,8 +2141,13 @@ class TradingEngine:
 
                 if await self._is_market_open():
                     await self.event_bus.request("check_pause_resume_decision")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Pause/resume check network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Pause/resume check error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("pause_resume_check", e)
             await asyncio.sleep(1800)  # every 30 minutes
 
     async def _redis_health_check_loop(self):
@@ -2108,8 +2205,13 @@ class TradingEngine:
                     else:
                         # If the task somehow becomes healthy/running again, clear the alert flag
                         alerted_supervisors.discard(sup.name)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Health check loop network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Health check loop error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("health_check_loop", e)
             await asyncio.sleep(300)  # check every 5 minutes
 
     @staticmethod
@@ -2228,8 +2330,13 @@ class TradingEngine:
                             self._force_eval_time[symbol] = time.time()
                             # Clear last evaluation timestamp so the main loop picks it up immediately
                             self._last_strategy_eval.pop(symbol, None)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Entry signal monitor network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Entry signal monitor error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("entry_signal_monitor", e)
             await self._interruptible_sleep(settings.ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS)
 
     async def _check_pending_entries(self):
@@ -2240,8 +2347,13 @@ class TradingEngine:
                 now = time.time()
                 for symbol in list(self._pending_entries.keys()):
                     await self.event_bus.request("process_pending_entry", symbol, now)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Pending entries check network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Error checking pending entries: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("check_pending_entries", e)
             await asyncio.sleep(60)  # check every 60 seconds (medium/long-term)
 
     async def _execute_delayed_entry(self, symbol: str, signal, timeframe: str, delay_seconds: float):
@@ -2327,8 +2439,13 @@ class TradingEngine:
             try:
                 for queued in list(self.queued_orders):
                     await self.event_bus.request("process_single_queued_order", queued)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Queued orders processing network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Error processing queued orders: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("process_queued_orders", e)
             await asyncio.sleep(15)  # check every 15 seconds for faster fill detection
 
     async def _cleanup_orphaned_orders(self):
@@ -2341,8 +2458,13 @@ class TradingEngine:
         while self._running:
             try:
                 await self.event_bus.request("cancel_orphaned_orders")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Orphaned order cleanup network/IO error: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Orphaned order cleanup error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("cleanup_orphaned_orders", e)
             await asyncio.sleep(900)  # every 15 minutes
 
     def _is_excluded(self, symbol: str, timeframe: str) -> bool:
