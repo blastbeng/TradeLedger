@@ -1061,35 +1061,42 @@ class TradingEngine:
     async def _risk_management_loop(self):
         """Check stop-loss, take-profit, and other risk rules on every ticker update."""
         await asyncio.sleep(5)  # initial delay
+        last_risk_check: Dict[str, float] = {}
+
         while self._running:
             try:
-                # Scale risk check interval based on the shortest timeframe among
-                # open positions.  For very long timeframes (>= 1 month), checking
-                # every 2 minutes is wasteful — use ~1% of the timeframe instead,
-                # capped at 1 hour minimum and 1 day maximum.
-                min_tf_seconds = None
-                for pos in self.positions.values():
+                await asyncio.sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
+
+                now = time.time()
+                symbols_to_check = []
+                for symbol, pos in self.positions.items():
                     pos_tf = pos.get("timeframe")
-                    if pos_tf:
-                        pos_tf_secs = self._timeframe_to_seconds(pos_tf)
-                        if min_tf_seconds is None or pos_tf_secs < min_tf_seconds:
-                            min_tf_seconds = pos_tf_secs
-                if min_tf_seconds is not None:
-                    if min_tf_seconds >= 31_536_000:  # >= 1 year
-                        # Use the dedicated very long timeframe interval (e.g., 4 hours)
-                        risk_interval = settings.RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS
-                    elif min_tf_seconds >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
-                        # Cap at 1 hour (3600s) to ensure stop-loss/take-profit triggers
-                        # are checked frequently enough even for very long timeframes.
-                        risk_interval = max(3600, min(3600, int(min_tf_seconds * 0.01)))
+                    if not pos_tf:
+                        pos_tf_secs = settings.RISK_CHECK_INTERVAL_SECONDS
                     else:
-                        risk_interval = settings.RISK_CHECK_INTERVAL_SECONDS
-                else:
-                    risk_interval = settings.RISK_CHECK_INTERVAL_SECONDS
-                await asyncio.sleep(risk_interval)
-                await self.event_bus.request("check_risk_management")
-                await self._state_persistence.save_state()
-                self._state_dirty = True
+                        pos_tf_secs = self._timeframe_to_seconds(pos_tf)
+
+                    if pos_tf_secs >= 31_536_000:  # >= 1 year
+                        pos_interval = settings.RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS
+                    elif pos_tf_secs >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
+                        pos_interval = max(3600, min(3600, int(pos_tf_secs * 0.01)))
+                    else:
+                        pos_interval = settings.RISK_CHECK_INTERVAL_SECONDS
+
+                    last_check = last_risk_check.get(symbol, 0)
+                    if now - last_check >= pos_interval:
+                        symbols_to_check.append(symbol)
+                        last_risk_check[symbol] = now
+
+                # Clean up last_risk_check for closed positions
+                closed_symbols = [s for s in last_risk_check if s not in self.positions]
+                for s in closed_symbols:
+                    del last_risk_check[s]
+
+                if symbols_to_check:
+                    await self.event_bus.request("check_risk_management", symbols_to_check)
+                    await self._state_persistence.save_state()
+                    self._state_dirty = True
             except Exception as e:
                 logger.error(f"Risk management loop error: {e}", exc_info=True)
 

@@ -7,7 +7,7 @@ Extracted from TradingEngine to reduce class size and improve maintainability.
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from src.config.settings import settings
 from src.database import insert_position_pnl_snapshot, get_indicators, get_latest_ohlcv_timestamp, get_ohlcv
@@ -34,14 +34,20 @@ class RiskManager:
         if symbol in engine.positions:
             await self.update_native_stop_order(symbol, engine.positions[symbol])
 
-    async def record_position_pnl_snapshots(self):
+    async def record_position_pnl_snapshots(self, symbols_to_check: Optional[List[str]] = None):
         """Record P&L snapshots for all open positions to the database."""
         engine = self.engine
         if not engine.positions:
             return
         pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
         now_ms = int(time.time() * 1000)
-        for symbol, pos in engine.positions.items():
+
+        target_symbols = symbols_to_check if symbols_to_check is not None else list(engine.positions.keys())
+
+        for symbol in target_symbols:
+            pos = engine.positions.get(symbol)
+            if not pos:
+                continue
             try:
                 t = pos_tickers.get(symbol)
                 current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
@@ -72,7 +78,7 @@ class RiskManager:
             except Exception as e:
                 logger.debug(f"Failed to record P&L snapshot for {symbol}: {e}")
 
-    async def check_risk_management(self):
+    async def check_risk_management(self, symbols_to_check: Optional[List[str]] = None):
         """Check open positions and close if stop-loss, take-profit, or trailing stop is hit."""
         engine = self.engine
         # --- Notify mode: no automated risk management ---
@@ -93,16 +99,18 @@ class RiskManager:
         max_dust_sweep_reviews = _review_limits["max_dust_sweep_reviews"]
 
         # Batch-fetch missing tickers once before the per-position loop
-        risk_tickers = await self._fetch_risk_tickers()
+        risk_tickers = await self._fetch_risk_tickers(symbols_to_check)
 
         for symbol, pos in list(engine.positions.items()):
+            if symbols_to_check is not None and symbol not in symbols_to_check:
+                continue
             await self._check_position_risk(
                 symbol, pos, risk_tickers, max_sl_reviews, max_tp_reviews,
                 max_partial_tp_reviews, max_dust_sweep_reviews,
             )
 
         # Record position-level P&L snapshots for all open positions
-        await self.record_position_pnl_snapshots()
+        await self.record_position_pnl_snapshots(symbols_to_check)
 
     async def _check_portfolio_drawdown_circuit_breaker(self) -> None:
         """Check portfolio-level drawdown and pause/resume trading via a circuit breaker."""
@@ -233,18 +241,21 @@ class RiskManager:
                     summary={"action": "PAUSE", "reason": "Portfolio loss cooldown"}
                 )
 
-    async def _fetch_risk_tickers(self) -> Dict[str, Dict[str, Any]]:
+    async def _fetch_risk_tickers(self, symbols_to_check: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
         """Batch-fetch tickers for all open positions for risk checks."""
         engine = self.engine
         risk_tickers: Dict[str, Dict[str, Any]] = {}
         missing_risk: List[str] = []
-        for sym in engine.positions:
+
+        target_symbols = symbols_to_check if symbols_to_check is not None else list(engine.positions.keys())
+
+        for sym in target_symbols:
             missing_risk.append(sym.split("/")[0])
         if missing_risk:
             try:
                 raw = await engine._market_data_manager._get_quotes_batched(missing_risk, timeout_per_chunk=45.0)
                 engine._portfolio_exposure_cache = None
-                for sym in engine.positions:
+                for sym in target_symbols:
                     base = sym.split("/")[0]
                     if base in raw:
                         risk_tickers[sym] = raw[base]
