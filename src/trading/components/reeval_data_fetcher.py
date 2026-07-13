@@ -541,15 +541,20 @@ class ReevalDataFetcher:
 
         For each pair of symbols, uses the longest timeframe where both have
         enough data (minimum 20 candles and 19 returns) to avoid missing pairs.
+        Limits computation to the top 50 symbols by volume to avoid O(n^2) bottleneck.
         """
         corr_matrix: Dict[str, Dict[str, float]] = {}
         if ohlcv_data and settings.OHLCV_TIMEFRAMES:
             MIN_CANDLES = 20
             MIN_RETURNS = 19
 
+            # Limit to top N symbols by volume to avoid O(n^2) bottleneck
+            MAX_CORR_SYMBOLS = 50
+            top_vol_symbols = sorted_by_vol[:MAX_CORR_SYMBOLS]
+
             # Pre-compute valid returns for each symbol on each timeframe
             sym_tf_returns: Dict[str, Dict[str, List[float]]] = {}
-            for sym in sorted_by_vol:
+            for sym in top_vol_symbols:
                 if sym not in ohlcv_data:
                     continue
                 sym_tf_returns[sym] = {}
