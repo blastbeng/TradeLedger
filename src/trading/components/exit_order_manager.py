@@ -391,7 +391,7 @@ class ExitOrderManager:
                     f"cancelled OCO pair {oco_pair_id}"
                 )
             except (RuntimeError, ValueError, ConnectionError) as e:
-                logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
+                logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {type(e).__name__}: {e}")
             # Remove the cancelled take-profit from queued_orders (with lock)
             async with self.shared_state._queued_orders_lock:
                 self.shared_state.queued_orders = [
@@ -529,7 +529,7 @@ class ExitOrderManager:
                 )
         except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
             logger.error(
-                f"Failed to place replacement stop order for {symbol}: {e}. "
+                f"Failed to place replacement stop order for {symbol}: {type(e).__name__}: {e}. "
                 f"Old stop order {old_order_id} remains active at the previous price."
             )
             if engine.notifier:

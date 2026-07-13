@@ -26,7 +26,7 @@ class EventBus:
                 else:
                     callback(*args, **kwargs)
             except Exception as e:
-                logger.error(f"Event handler error for '{event_name}': {e}", exc_info=True)
+                logger.error(f"Event handler error for '{event_name}': {type(e).__name__}: {e}", exc_info=True)
 
     async def request(self, event_name: str, *args, **kwargs):
         """Send a command/query via the event bus and return the result of the first subscriber."""

@@ -209,7 +209,7 @@ class OrderExecutor:
             except (RuntimeError, ValueError, ConnectionError, KeyError, TypeError, AttributeError) as e:
                 logger.warning(
                     f"Failed to place replacement exit orders for {symbol} "
-                    f"(attempt {attempt + 1}/{max_retries}): {e}"
+                    f"(attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}"
                 )
                 if attempt < max_retries - 1:
                     await asyncio.sleep(delay)
