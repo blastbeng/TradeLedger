@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -1000,3 +1001,32 @@ def _get_fallback_provider_config(model_type: str):
             fb_api_key = settings.OLLAMA_ACTUATOR_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
 
     return (fallback_provider, fb_model, fb_base_url, fb_api_key)
+
+
+async def get_cached_llm_response_async(
+    prompt: str,
+    system_prompt: str = "",
+    ttl: Optional[int] = None,
+    market_hash: str = None,
+    model_type: str = "actuator",
+    temperature: Optional[float] = None,
+    symbol: Optional[str] = None,
+    messages: Optional[List[Dict[str, str]]] = None,
+    request_type: Optional[str] = None,
+) -> Optional[dict]:
+    """
+    Asynchronous wrapper for get_cached_llm_response.
+    Runs the blocking LLM call in a separate thread to avoid blocking the event loop.
+    """
+    return await asyncio.to_thread(
+        get_cached_llm_response,
+        prompt,
+        system_prompt,
+        ttl,
+        market_hash,
+        model_type,
+        temperature,
+        symbol,
+        messages,
+        request_type,
+    )

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -356,3 +357,19 @@ def check_llm_health() -> dict:
             }
 
     return results
+
+
+async def get_llm_response_async(prompt: str, system_prompt: str = "", model_type: str = "actuator", symbol: Optional[str] = None, messages: Optional[List[Dict[str, str]]] = None, request_type: Optional[str] = None) -> str:
+    """
+    Asynchronous wrapper for get_llm_response.
+    Runs the blocking LLM call in a separate thread to avoid blocking the event loop.
+    """
+    return await asyncio.to_thread(
+        get_llm_response,
+        prompt,
+        system_prompt,
+        model_type,
+        symbol,
+        messages,
+        request_type,
+    )
