@@ -17,6 +17,7 @@ class PauseResumeManager:
     def __init__(self, signal_processor):
         self.sp = signal_processor
         self.engine = signal_processor.engine
+        self.shared_state = self.engine.shared_state
         self.event_bus = signal_processor.event_bus
 
     async def check_pause_resume_decision(self) -> None:
@@ -65,7 +66,7 @@ class PauseResumeManager:
                     full_market_breadth = json.loads(raw)
             except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
                 pass
-            market_breadth = getattr(engine, '_market_breadth', None)
+            market_breadth = self.shared_state._market_breadth
 
             # Current pause reason
             reason_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_reason")
@@ -88,12 +89,12 @@ class PauseResumeManager:
 
             # Compute total unrealized P&L of open positions
             total_unrealized_pnl = 0.0
-            if engine.positions:
-                open_symbols = list(engine.positions.keys())
+            if self.shared_state.positions:
+                open_symbols = list(self.shared_state.positions.keys())
                 base_symbols = [s.split("/")[0] for s in open_symbols]
                 try:
                     tickers_map = await engine._market_data_manager._get_quotes_async(base_symbols, timeout=45.0)
-                    for sym, pos in engine.positions.items():
+                    for sym, pos in self.shared_state.positions.items():
                         base_sym = sym.split("/")[0]
                         ticker = tickers_map.get(base_sym)
                         if ticker and ticker.get("last"):
