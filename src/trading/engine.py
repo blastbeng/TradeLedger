@@ -1065,10 +1065,9 @@ class TradingEngine:
 
         while self._running:
             try:
-                await asyncio.sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
-
                 now = time.time()
                 symbols_to_check = []
+                min_interval = settings.RISK_CHECK_INTERVAL_SECONDS
                 for symbol, pos in self.positions.items():
                     pos_tf = pos.get("timeframe")
                     if not pos_tf:
@@ -1082,6 +1081,9 @@ class TradingEngine:
                         pos_interval = max(3600, min(3600, int(pos_tf_secs * 0.01)))
                     else:
                         pos_interval = settings.RISK_CHECK_INTERVAL_SECONDS
+
+                    if pos_interval < min_interval:
+                        min_interval = pos_interval
 
                     last_check = last_risk_check.get(symbol, 0)
                     if now - last_check >= pos_interval:
@@ -1097,8 +1099,14 @@ class TradingEngine:
                     await self.event_bus.request("check_risk_management", symbols_to_check)
                     await self._state_persistence.save_state()
                     self._state_dirty = True
+
+                # Dynamically compute sleep interval based on the shortest timeframe
+                # among current positions. This ensures the interval is updated immediately
+                # when positions are closed and the shortest timeframe changes.
+                await asyncio.sleep(min_interval)
             except Exception as e:
                 logger.error(f"Risk management loop error: {e}", exc_info=True)
+                await asyncio.sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
 
     async def _refresh_current_symbols_news_fast(self):
         """Fast news refresh loop – only for the symbols currently tracked by the engine."""
