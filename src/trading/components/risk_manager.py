@@ -1263,15 +1263,53 @@ class RiskManager:
                     # The native stop-loss order filled — process the fill to
                     # update positions and trade history, avoiding a double sell.
                     logger.info(f"Stop-loss order {sl_order_id} filled for {symbol}, processing native fill.")
+                    async with self.shared_state._positions_lock:
+                        pos.pop("_native_stop_trigger_ts", None)
                     await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
                 else:
                     # Stop-loss not yet filled — leave the native stop order active
-                    # to avoid a worse fill from a manual market sell. The queued
-                    # order polling loop will process the fill when it occurs.
-                    logger.info(
-                        f"Stop price reached for {symbol}, waiting for native "
-                        f"stop-loss order {sl_order_id} to fill."
-                    )
+                    # to avoid a worse fill from a manual market sell, but only
+                    # for a limited time. If the fill timeout is exceeded, fall
+                    # back to a manual market sell.
+                    now_ts = time.time()
+                    trigger_ts = pos.get("_native_stop_trigger_ts")
+                    if trigger_ts is None:
+                        async with self.shared_state._positions_lock:
+                            pos["_native_stop_trigger_ts"] = now_ts
+                        trigger_ts = now_ts
+                    elapsed = now_ts - trigger_ts
+                    if elapsed >= settings.NATIVE_STOP_FILL_TIMEOUT_SECONDS:
+                        logger.warning(
+                            f"Native stop-loss order {sl_order_id} for {symbol} "
+                            f"not filled after {elapsed:.0f}s, falling back to manual market sell."
+                        )
+                        # Cancel the native stop order and execute a manual sell
+                        try:
+                            await asyncio.to_thread(engine.trader.cancel_order, sl_order_id)
+                        except Exception as e:
+                            logger.warning(f"Failed to cancel native stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
+                        async with self.shared_state._queued_orders_lock:
+                            self.shared_state.queued_orders = [
+                                q for q in self.shared_state.queued_orders
+                                if q.get("order_id") != sl_order_id
+                            ]
+                        async with self.shared_state._positions_lock:
+                            pos.pop("stop_loss_order_id", None)
+                            pos.pop("stop_loss_order_type", None)
+                            pos.pop("_native_stop_price", None)
+                            pos.pop("_native_stop_trigger_ts", None)
+                        await self.event_bus.publish(
+                            "execute_signal",
+                            symbol,
+                            Signal(action="SELL", confidence=1.0, reasoning="Stop-loss native fill timeout"),
+                            exit_reason="stop_loss"
+                        )
+                    else:
+                        logger.debug(
+                            f"Stop price reached for {symbol}, waiting for native "
+                            f"stop-loss order {sl_order_id} to fill "
+                            f"({elapsed:.0f}s / {settings.NATIVE_STOP_FILL_TIMEOUT_SECONDS}s)."
+                        )
             return True  # position has been closed, move to next
 
         # Take-profit price reached → cancel stop OCO pair

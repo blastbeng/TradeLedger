@@ -388,6 +388,17 @@ class Settings(BaseSettings):
     # Maximum number of consecutive dust sweep reviews before force-selling
     MAX_DUST_SWEEP_REVIEWS: int = 10
 
+    # Maximum time (seconds) to wait for a native stop-loss order to fill
+    # after the stop price is reached before falling back to a manual market sell.
+    NATIVE_STOP_FILL_TIMEOUT_SECONDS: int = 300
+
+    @field_validator("NATIVE_STOP_FILL_TIMEOUT_SECONDS")
+    @classmethod
+    def validate_native_stop_fill_timeout(cls, v: int) -> int:
+        if v < 10:
+            raise ValueError("NATIVE_STOP_FILL_TIMEOUT_SECONDS must be >= 10")
+        return v
+
     # Maximum time (seconds) dust can be kept before auto-selling
     DUST_KEEP_TIMEOUT_SECONDS: int = 604800  # 7 days
 
