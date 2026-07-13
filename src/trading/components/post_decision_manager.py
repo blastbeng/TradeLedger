@@ -24,6 +24,7 @@ class PostDecisionManager:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self.event_bus.subscribe("process_post_llm_decision", self.process_post_llm_decision)
 
@@ -75,7 +76,7 @@ class PostDecisionManager:
 
         # Store the last decision for the next prompt cycle
         params = data.signal.strategy_params
-        engine._last_decisions[data.symbol] = {
+        self.shared_state._last_decisions[data.symbol] = {
             "action": validated.action,
             "confidence": validated.confidence,
             "reasoning": validated.reasoning[:300],
@@ -86,15 +87,15 @@ class PostDecisionManager:
             "position_size_fraction": params.get("position_size_fraction") if params else None,
             "stop_loss_method": params.get("stop_loss_method") if params else None,
         }
-        engine._state_dirty = True
+        self.shared_state._state_dirty = True
 
         # Compute trade amount for display in the signals card
         _params = data.signal.strategy_params or {}
         _psf = _params.get("position_size_fraction")
         if validated.action == "BUY" and _psf is not None:
             _trade_amount = data.base_balance * float(_psf)
-        elif validated.action == "SELL" and data.symbol in engine.positions:
-            _pos = engine.positions[data.symbol]
+        elif validated.action == "SELL" and data.symbol in self.shared_state.positions:
+            _pos = self.shared_state.positions[data.symbol]
             _trade_amount = _pos.get("amount", 0) * data.current_price
         else:
             _trade_amount = 0.0
@@ -216,13 +217,13 @@ class PostDecisionManager:
             new_max_hold = params.get("max_hold_time_seconds") if params else None
             if new_max_hold is not None and new_max_hold > 0:
                 logger.info(f"LLM extended max hold time for {symbol} to {new_max_hold}s")
-                if symbol in engine.positions:
-                    async with engine._positions_lock:
-                        engine.positions[symbol]["max_hold_time_seconds"] = new_max_hold
-                        engine.positions[symbol]["timestamp"] = int(time.time() * 1000)
-                        engine.positions[symbol].pop("_max_hold_expired", None)
-                        engine.positions[symbol].pop("_max_hold_expired_count", None)
-                for symbol_entry in engine.current_symbols:
+                if symbol in self.shared_state.positions:
+                    async with self.shared_state._positions_lock:
+                        self.shared_state.positions[symbol]["max_hold_time_seconds"] = new_max_hold
+                        self.shared_state.positions[symbol]["timestamp"] = int(time.time() * 1000)
+                        self.shared_state.positions[symbol].pop("_max_hold_expired", None)
+                        self.shared_state.positions[symbol].pop("_max_hold_expired_count", None)
+                for symbol_entry in self.shared_state.current_symbols:
                     if symbol_entry["symbol"] == symbol:
                         symbol_entry["entry_time"] = time.time()
                         break
@@ -244,7 +245,7 @@ class PostDecisionManager:
                     "update_position_params",
                     symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
                 )
-                engine._state_dirty = True
+                self.shared_state._state_dirty = True
             else:
                 logger.warning(
                     f"LLM returned HOLD without new max_hold_time_seconds for {symbol} "
@@ -284,17 +285,17 @@ class PostDecisionManager:
                     f"LLM decided to hold {symbol} after stop-loss trigger, "
                     f"new stop_loss_pct={new_stop_pct:.4%}"
                 )
-                if symbol in engine.positions:
-                    async with engine._positions_lock:
-                        engine.positions[symbol]["stop_loss"] = current_price * (1 - new_stop_pct)
-                        engine.positions[symbol].pop("_stop_loss_triggered", None)
-                        engine.positions[symbol].pop("_stop_loss_review_count", None)
+                if symbol in self.shared_state.positions:
+                    async with self.shared_state._positions_lock:
+                        self.shared_state.positions[symbol]["stop_loss"] = current_price * (1 - new_stop_pct)
+                        self.shared_state.positions[symbol].pop("_stop_loss_triggered", None)
+                        self.shared_state.positions[symbol].pop("_stop_loss_review_count", None)
                     await self.event_bus.publish(
                         "update_position_params",
                         symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
                     )
                     await self.event_bus.publish("update_native_stop_order", symbol)
-                    engine._state_dirty = True
+                    self.shared_state._state_dirty = True
                 if engine.notifier:
                     await engine.notifier.send_notification(
                         f"🔄 {display_symbol}: LLM adjusted stop-loss to {new_stop_pct:.4%} – holding.\n"
@@ -329,10 +330,10 @@ class PostDecisionManager:
                 return True
 
         elif stop_loss_triggered and signal.action == "SELL":
-            if symbol in engine.positions:
-                async with engine._positions_lock:
-                    engine.positions[symbol].pop("_stop_loss_triggered", None)
-                    engine.positions[symbol].pop("_stop_loss_review_count", None)
+            if symbol in self.shared_state.positions:
+                async with self.shared_state._positions_lock:
+                    self.shared_state.positions[symbol].pop("_stop_loss_triggered", None)
+                    self.shared_state.positions[symbol].pop("_stop_loss_review_count", None)
             # Continue to normal SELL execution
 
         # --- Handle take-profit-triggered LLM decision ---
@@ -344,16 +345,16 @@ class PostDecisionManager:
                     f"LLM decided to hold {symbol} after take-profit trigger, "
                     f"new take_profit_pct={new_tp_pct:.4%}"
                 )
-                if symbol in engine.positions:
-                    async with engine._positions_lock:
-                        engine.positions[symbol]["take_profit"] = current_price * (1 + new_tp_pct)
-                        engine.positions[symbol].pop("_take_profit_triggered", None)
-                        engine.positions[symbol].pop("_take_profit_review_count", None)
+                if symbol in self.shared_state.positions:
+                    async with self.shared_state._positions_lock:
+                        self.shared_state.positions[symbol]["take_profit"] = current_price * (1 + new_tp_pct)
+                        self.shared_state.positions[symbol].pop("_take_profit_triggered", None)
+                        self.shared_state.positions[symbol].pop("_take_profit_review_count", None)
                     await self.event_bus.publish(
                         "update_position_params",
                         symbol, new_params, signal.indicator_config, assigned_tf, current_price, atr,
                     )
-                    engine._state_dirty = True
+                    self.shared_state._state_dirty = True
                 if engine.notifier:
                     await engine.notifier.send_notification(
                         f"🔄 {display_symbol}: LLM adjusted take-profit to {new_tp_pct:.4%} – holding.\n"
@@ -388,31 +389,31 @@ class PostDecisionManager:
                 return True
 
         elif take_profit_triggered and signal.action == "SELL":
-            if symbol in engine.positions:
-                async with engine._positions_lock:
-                    engine.positions[symbol].pop("_take_profit_triggered", None)
-                    engine.positions[symbol].pop("_take_profit_review_count", None)
+            if symbol in self.shared_state.positions:
+                async with self.shared_state._positions_lock:
+                    self.shared_state.positions[symbol].pop("_take_profit_triggered", None)
+                    self.shared_state.positions[symbol].pop("_take_profit_review_count", None)
             # Continue to normal SELL execution
 
         # --- Handle partial TP triggered ---
         if partial_tp_triggered and signal.action == "HOLD":
             new_levels = params.get("partial_take_profit_levels") if params else None
             if new_levels is not None:
-                async with engine._positions_lock:
-                    engine.positions[symbol]["partial_take_profit_levels"] = new_levels
-                    engine.positions[symbol].pop("_partial_tp_triggered", None)
-                    engine.positions[symbol].pop("_partial_tp_triggered_single", None)
-                    engine.positions[symbol].pop("_partial_tp_review_count", None)
-                    engine.positions[symbol].pop("_partial_tp_single_review_count", None)
-                    engine.positions[symbol].pop("_partial_tp_triggered_levels", None)
-                    engine.positions[symbol]["partial_tp_levels_triggered"] = []
-                    engine.positions[symbol]["partial_tp_depth_wait_start"] = {}
+                async with self.shared_state._positions_lock:
+                    self.shared_state.positions[symbol]["partial_take_profit_levels"] = new_levels
+                    self.shared_state.positions[symbol].pop("_partial_tp_triggered", None)
+                    self.shared_state.positions[symbol].pop("_partial_tp_triggered_single", None)
+                    self.shared_state.positions[symbol].pop("_partial_tp_review_count", None)
+                    self.shared_state.positions[symbol].pop("_partial_tp_single_review_count", None)
+                    self.shared_state.positions[symbol].pop("_partial_tp_triggered_levels", None)
+                    self.shared_state.positions[symbol]["partial_tp_levels_triggered"] = []
+                    self.shared_state.positions[symbol]["partial_tp_depth_wait_start"] = {}
                 logger.info(f"LLM updated partial TP levels for {symbol}")
                 await self.event_bus.publish(
                     "update_position_params",
                     symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
                 )
-                engine._state_dirty = True
+                self.shared_state._state_dirty = True
                 if engine.notifier:
                     await engine.notifier.send_notification(
                         f"🔄 {display_symbol}: LLM adjusted partial TP levels – holding.",
@@ -421,36 +422,36 @@ class PostDecisionManager:
                 return True
             else:
                 logger.info(f"LLM did not update partial TP levels for {symbol}, executing triggered level(s)")
-                if engine.positions[symbol].get("_partial_tp_triggered_single"):
+                if self.shared_state.positions[symbol].get("_partial_tp_triggered_single"):
                     await self.event_bus.publish("execute_partial_tp_single", symbol, current_price, None, ticker)
-                    async with engine._positions_lock:
-                        engine.positions[symbol].pop("_partial_tp_triggered_single", None)
-                        engine.positions[symbol].pop("_partial_tp_single_review_count", None)
-                if engine.positions[symbol].get("_partial_tp_triggered"):
-                    for lvl in engine.positions[symbol].get("_partial_tp_triggered_levels", []):
+                    async with self.shared_state._positions_lock:
+                        self.shared_state.positions[symbol].pop("_partial_tp_triggered_single", None)
+                        self.shared_state.positions[symbol].pop("_partial_tp_single_review_count", None)
+                if self.shared_state.positions[symbol].get("_partial_tp_triggered"):
+                    for lvl in self.shared_state.positions[symbol].get("_partial_tp_triggered_levels", []):
                         await self.event_bus.publish("execute_partial_tp_level", symbol, lvl, current_price, None, ticker)
-                    async with engine._positions_lock:
-                        engine.positions[symbol].pop("_partial_tp_triggered", None)
-                        engine.positions[symbol].pop("_partial_tp_review_count", None)
-                        engine.positions[symbol].pop("_partial_tp_triggered_levels", None)
+                    async with self.shared_state._positions_lock:
+                        self.shared_state.positions[symbol].pop("_partial_tp_triggered", None)
+                        self.shared_state.positions[symbol].pop("_partial_tp_review_count", None)
+                        self.shared_state.positions[symbol].pop("_partial_tp_triggered_levels", None)
                 return True
 
         elif partial_tp_triggered and signal.action == "SELL":
-            async with engine._positions_lock:
-                engine.positions[symbol].pop("_partial_tp_triggered", None)
-                engine.positions[symbol].pop("_partial_tp_triggered_single", None)
-                engine.positions[symbol].pop("_partial_tp_review_count", None)
-                engine.positions[symbol].pop("_partial_tp_single_review_count", None)
-                engine.positions[symbol].pop("_partial_tp_triggered_levels", None)
+            async with self.shared_state._positions_lock:
+                self.shared_state.positions[symbol].pop("_partial_tp_triggered", None)
+                self.shared_state.positions[symbol].pop("_partial_tp_triggered_single", None)
+                self.shared_state.positions[symbol].pop("_partial_tp_review_count", None)
+                self.shared_state.positions[symbol].pop("_partial_tp_single_review_count", None)
+                self.shared_state.positions[symbol].pop("_partial_tp_triggered_levels", None)
             # Continue to normal SELL execution
 
         # --- Handle dust sweep triggered ---
         if dust_sweep_triggered and signal.action == "HOLD":
-            async with engine._positions_lock:
-                engine.positions[symbol].pop("_dust_sweep_triggered", None)
-                if engine.positions[symbol].get("_dust_keep_since") is None:
-                    engine.positions[symbol]["_dust_keep_since"] = time.time()
-            engine._state_dirty = True
+            async with self.shared_state._positions_lock:
+                self.shared_state.positions[symbol].pop("_dust_sweep_triggered", None)
+                if self.shared_state.positions[symbol].get("_dust_keep_since") is None:
+                    self.shared_state.positions[symbol]["_dust_keep_since"] = time.time()
+            self.shared_state._state_dirty = True
             logger.info(f"LLM decided to hold dust for {symbol}")
             if engine.notifier:
                 await engine.notifier.send_notification(
@@ -459,9 +460,9 @@ class PostDecisionManager:
                 )
             return True
         elif dust_sweep_triggered and signal.action == "SELL":
-            async with engine._positions_lock:
-                engine.positions[symbol].pop("_dust_sweep_triggered", None)
-                engine.positions[symbol].pop("_dust_sweep_review_count", None)
+            async with self.shared_state._positions_lock:
+                self.shared_state.positions[symbol].pop("_dust_sweep_triggered", None)
+                self.shared_state.positions[symbol].pop("_dust_sweep_review_count", None)
             logger.info(f"LLM decided to sell dust for {symbol}")
             await self.event_bus.publish("sweep_dust", symbol)
             return True
@@ -495,8 +496,8 @@ class PostDecisionManager:
             task = asyncio.create_task(
                 engine._execute_delayed_entry(symbol, validated, assigned_tf, delay_sec)
             )
-            engine._delayed_entry_tasks.add(task)
-            task.add_done_callback(engine._delayed_entry_tasks.discard)
+            self.shared_state._delayed_entry_tasks.add(task)
+            task.add_done_callback(self.shared_state._delayed_entry_tasks.discard)
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"⏳ Delayed entry for {display_symbol} – executing in {delay_sec}s.",
@@ -522,8 +523,8 @@ class PostDecisionManager:
             timeout = min_timeout
         deadline = time.time() + timeout
         # Store for background checking – do NOT block the main loop
-        async with engine._pending_entries_lock:
-            engine._pending_entries[symbol] = {
+        async with self.shared_state._pending_entries_lock:
+            self.shared_state._pending_entries[symbol] = {
                 "signal": validated,
                 "deadline": deadline,
                 "timeframe": assigned_tf,
@@ -599,7 +600,7 @@ class PostDecisionManager:
             return True
 
         # Prevent SELL without an open position (no shorting)
-        if validated.action == "SELL" and symbol not in engine.positions:
+        if validated.action == "SELL" and symbol not in self.shared_state.positions:
             logger.info(f"Skipping SELL for {symbol}: no open position.")
             if engine.notifier:
                 await engine.notifier.send_notification(
@@ -628,7 +629,7 @@ class PostDecisionManager:
         engine = self.engine
 
         current_sector = None
-        for entry in engine.current_symbols:
+        for entry in self.shared_state.current_symbols:
             if entry["symbol"] == symbol:
                 current_sector = entry.get("sector")
                 break
@@ -649,8 +650,8 @@ class PostDecisionManager:
             return False
 
         sector_count = 0
-        for pos_sym in engine.positions.keys():
-            for entry in engine.current_symbols:
+        for pos_sym in self.shared_state.positions.keys():
+            for entry in self.shared_state.current_symbols:
                 if entry["symbol"] == pos_sym and entry.get("sector") == current_sector:
                     sector_count += 1
                     break
@@ -704,8 +705,8 @@ class PostDecisionManager:
         validated.backtest_stats = getattr(data.signal, 'backtest_stats', None)
 
         # Clear _needs_risk_params flag if the LLM has now provided risk parameters
-        if data.symbol in engine.positions:
-            _pos = engine.positions[data.symbol]
+        if data.symbol in self.shared_state.positions:
+            _pos = self.shared_state.positions[data.symbol]
             if _pos.get("_needs_risk_params"):
                 if _pos.get("stop_loss") is not None and _pos.get("take_profit") is not None:
                     _pos.pop("_needs_risk_params", None)
@@ -748,7 +749,7 @@ class PostDecisionManager:
             return
 
         # Apply any updated risk parameters from the LLM to the open position
-        if data.symbol in engine.positions and data.signal.strategy_params:
+        if data.symbol in self.shared_state.positions and data.signal.strategy_params:
             await self.event_bus.publish(
                 "update_position_params",
                 data.symbol,
