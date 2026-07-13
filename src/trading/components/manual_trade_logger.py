@@ -84,9 +84,10 @@ class ManualTradeLogger:
             engine._balance_cache = None
 
             # Update virtual cash balance
-            engine.trader._balances[quote] = engine.trader._balances.get(quote, 0.0) - cost_basis
-            engine.trader._balances[base] = engine.trader._balances.get(base, 0.0) + net_base
-            engine.trader._balances_dirty = True
+            with engine.trader._lock:
+                engine.trader._balances[quote] = engine.trader._balances.get(quote, 0.0) - cost_basis
+                engine.trader._balances[base] = engine.trader._balances.get(base, 0.0) + net_base
+                engine.trader._balances_dirty = True
             await asyncio.to_thread(engine.trader._save_balances)
         elif side == "sell":
             pos = engine.positions.get(symbol)
@@ -103,31 +104,33 @@ class ManualTradeLogger:
                 engine._balance_cache = None
 
                 # Update virtual cash balance
-                engine.trader._balances[base] = engine.trader._balances.get(base, 0.0) - quantity
-                engine.trader._balances[quote] = engine.trader._balances.get(quote, 0.0) + net_quote
-                engine.trader._balances_dirty = True
+                with engine.trader._lock:
+                    engine.trader._balances[base] = engine.trader._balances.get(base, 0.0) - quantity
+                    engine.trader._balances[quote] = engine.trader._balances.get(quote, 0.0) + net_quote
+                    engine.trader._balances_dirty = True
                 await asyncio.to_thread(engine.trader._save_balances)
             else:
                 # Check if the user actually holds enough of the base asset
-                current_base_balance = engine.trader._balances.get(base, 0.0)
-                if current_base_balance < quantity:
-                    logger.warning(
-                        f"Manual sell rejected for {symbol}: insufficient {base} balance "
-                        f"(have {current_base_balance}, need {quantity})"
-                    )
-                    return {
-                        "status": "error",
-                        "error": f"Insufficient {base} balance: have {current_base_balance}, need {quantity}",
-                    }
+                with engine.trader._lock:
+                    current_base_balance = engine.trader._balances.get(base, 0.0)
+                    if current_base_balance < quantity:
+                        logger.warning(
+                            f"Manual sell rejected for {symbol}: insufficient {base} balance "
+                            f"(have {current_base_balance}, need {quantity})"
+                        )
+                        return {
+                            "status": "error",
+                            "error": f"Insufficient {base} balance: have {current_base_balance}, need {quantity}",
+                        }
 
-                trade["realized_pnl"] = 0.0
-                trade["cost_basis"] = 0.0
-                trade["exit_reason"] = "manual_sell"
+                    trade["realized_pnl"] = 0.0
+                    trade["cost_basis"] = 0.0
+                    trade["exit_reason"] = "manual_sell"
 
-                # Update virtual cash balance even if position wasn't tracked
-                engine.trader._balances[base] = current_base_balance - quantity
-                engine.trader._balances[quote] = engine.trader._balances.get(quote, 0.0) + (cost - fee)
-                engine.trader._balances_dirty = True
+                    # Update virtual cash balance even if position wasn't tracked
+                    engine.trader._balances[base] = current_base_balance - quantity
+                    engine.trader._balances[quote] = engine.trader._balances.get(quote, 0.0) + (cost - fee)
+                    engine.trader._balances_dirty = True
                 await asyncio.to_thread(engine.trader._save_balances)
 
         engine._append_trade(trade)
