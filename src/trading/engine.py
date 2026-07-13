@@ -566,7 +566,7 @@ class TradingEngine:
             self._sentiment_cache[base] = (now, agg)
             return agg
         except Exception as e:
-            logger.warning(f"Failed to fetch sentiment for {base}: {e}")
+            logger.warning(f"Failed to fetch sentiment for {base}: {type(e).__name__}: {e}")
             return None
 
     async def stop(self):
@@ -1145,7 +1145,7 @@ class TradingEngine:
                 except Exception:
                     pass
         except Exception as e:
-            logger.info(f"News fetch/store failed for {symbol}: {e}")
+            logger.warning(f"News fetch/store failed for {symbol}: {type(e).__name__}: {e}")
 
     async def _risk_management_loop(self):
         """Check stop-loss, take-profit, and other risk rules on every ticker update."""

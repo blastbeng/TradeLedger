@@ -152,7 +152,7 @@ def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[s
                                 return isin, "Italy", name
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
         _record_bi_error(e)
-        logger.error(f"Borsa Italiana search failed for {base_symbol}: {e}")
+        logger.error(f"Borsa Italiana search failed for {base_symbol}: {type(e).__name__}: {e}")
     return None, None, None
 
 
@@ -550,7 +550,7 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
             return details
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, AttributeError, OSError) as e:
         _record_bi_error(e)
-        logger.debug(f"Failed to fetch BTP details for {isin}: {e}")
+        logger.warning(f"Failed to fetch BTP details for {isin}: {type(e).__name__}: {e}")
         return {}
 
 
@@ -633,7 +633,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
                         })
             except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
                 _record_bi_error(e)
-                logger.warning(f"Failed to fetch BTP page {page}: {e}")
+                logger.warning(f"Failed to fetch BTP page {page}: {type(e).__name__}: {e}")
                 break
 
         # Only cache non-empty results so failed scrapes retry on next call

@@ -280,8 +280,8 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
         db_name = get_symbol_name_from_db(base_symbol)
         if db_name and db_name not in search_terms:
             search_terms.append(db_name)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"fetch_news_for_symbol: failed to get DB name for {base_symbol}: {type(e).__name__}: {e}")
 
     start_time = time.time()
     logger.debug(f"Fetching news for {symbol} (base symbol: {base_symbol}, name: {name})...")
@@ -382,13 +382,13 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
             elif result is not None:
                 article["summary"] = result
     except Exception as e:
-        logger.warning(f"Failed to summarize news articles for {base_symbol}: {e}")
+        logger.warning(f"Failed to summarize news articles for {base_symbol}: {type(e).__name__}: {e}")
 
     # Cache
     try:
         redis_client.set(cache_key, json.dumps(unique), ex=settings.NEWS_CACHE_TTL_SECONDS)
     except Exception as e:
-        logger.warning(f"Failed to cache news for {base_symbol}: {e}")
+        logger.warning(f"Failed to cache news for {base_symbol}: {type(e).__name__}: {e}")
 
     total_time = time.time() - start_time
     logger.info(f"News for {symbol}: {len(unique)} articles from {len(enabled)} sources in {total_time:.2f}s")
@@ -437,7 +437,7 @@ def discover_trending_stocks(
     try:
         quotes = get_quotes(sample)
     except Exception as e:
-        logger.warning(f"Failed to fetch quotes for stock discovery: {e}")
+        logger.warning(f"Failed to fetch quotes for stock discovery: {type(e).__name__}: {e}")
         return []
 
     # Build list of (symbol, change_24h)
@@ -473,7 +473,7 @@ def discover_trending_stocks(
         try:
             redis_client.set(cache_key, json.dumps(discovered), ex=3600)
         except Exception as e:
-            logger.warning(f"Failed to cache trending stocks: {e}")
+            logger.warning(f"Failed to cache trending stocks: {type(e).__name__}: {e}")
     return discovered
 
 
@@ -588,7 +588,7 @@ def _fetch_newsapi(symbol: str, name: Optional[str] = None) -> List[Dict[str, st
         logger.debug(f"NewsAPI returned {len(articles)} articles for {symbol}")
         return articles
     except Exception as e:
-        logger.warning(f"NewsAPI fetch failed for {symbol}: {e}")
+        logger.warning(f"NewsAPI fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
 
@@ -635,7 +635,7 @@ def _fetch_twitter(symbol: str, use_cashtag: bool = True, name: Optional[str] = 
         logger.debug(f"Twitter returned {len(articles)} articles for {symbol}")
         return articles
     except Exception as e:
-        logger.warning(f"Twitter fetch failed for {symbol}: {e}")
+        logger.warning(f"Twitter fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
 
@@ -689,7 +689,7 @@ def _fetch_reddit(symbol: str, name: Optional[str] = None) -> List[Dict[str, str
         logger.debug(f"Reddit returned {len(articles)} articles for {symbol}")
         return articles
     except Exception as e:
-        logger.warning(f"Reddit fetch failed for {symbol}: {e}")
+        logger.warning(f"Reddit fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
 
@@ -738,7 +738,7 @@ def _fetch_facebook(symbol: str, name: Optional[str] = None) -> List[Dict[str, s
         logger.debug(f"Facebook returned {len(articles)} articles for {symbol}")
         return articles
     except Exception as e:
-        logger.warning(f"Facebook fetch failed for {symbol}: {e}")
+        logger.warning(f"Facebook fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
 
@@ -790,7 +790,7 @@ def _fetch_youtube(symbol: str, name: Optional[str] = None) -> List[Dict[str, st
         logger.debug(f"YouTube returned {len(articles)} articles for {symbol}")
         return articles
     except Exception as e:
-        logger.warning(f"YouTube fetch failed for {symbol}: {e}")
+        logger.warning(f"YouTube fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
 
@@ -834,7 +834,7 @@ def _fetch_googlenews(symbol: str, name: Optional[str] = None) -> List[Dict[str,
         logger.debug(f"Google News returned {len(articles)} articles for {symbol}")
         return articles
     except Exception as e:
-        logger.warning(f"Google News fetch failed for {symbol}: {e}")
+        logger.warning(f"Google News fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
 
@@ -916,7 +916,7 @@ def _fetch_stocktwits(symbol: str, name: Optional[str] = None) -> List[Dict[str,
         logger.debug(f"StockTwits returned {len(articles)} articles for {symbol}")
         return articles
     except Exception as e:
-        logger.warning(f"StockTwits fetch failed for {symbol}: {e}")
+        logger.warning(f"StockTwits fetch failed for {symbol}: {type(e).__name__}: {e}")
         return []
 
 
@@ -987,7 +987,7 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
             continue
         except Exception as e:
             _handle_feed_failure(feed_url)
-            logger.warning(f"RSS fetch failed for {feed_url}: {e}")
+            logger.warning(f"RSS fetch failed for {feed_url}: {type(e).__name__}: {e}")
             continue
 
         # --- Parse and process entries (parsing errors do NOT count toward disable) ---
@@ -1030,7 +1030,7 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
                     "sentiment": sentiment,
                 })
         except Exception as e:
-            logger.warning(f"RSS parse/processing failed for {feed_url}: {e}")
+            logger.warning(f"RSS parse/processing failed for {feed_url}: {type(e).__name__}: {e}")
     logger.debug(f"RSS total articles for {symbol}: {len(articles)}")
     return articles
 
@@ -1211,7 +1211,7 @@ def discover_tickers_from_news(existing_pairs: Optional[List[str]] = None, cache
         try:
             redis_client.set(cache_key, json.dumps(list(discovered)), ex=3600)
         except Exception as e:
-            logger.warning(f"Failed to cache discovered tickers: {e}")
+            logger.warning(f"Failed to cache discovered tickers: {type(e).__name__}: {e}")
 
     # Filter out existing pairs (in case the cache was used)
     existing_set = set()

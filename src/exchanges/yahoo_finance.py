@@ -79,7 +79,7 @@ def get_yahoo_quote(symbol: str) -> Optional[Dict[str, Any]]:
         redis_client.set(cache_key, json.dumps(result), ex=ttl)
         return result
     except Exception as e:
-        logger.warning(f"Yahoo Finance quote failed for {base}: {e}")
+        logger.warning(f"Yahoo Finance quote failed for {base}: {type(e).__name__}: {e}")
         return None
 
 
@@ -129,7 +129,7 @@ def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
             pass
         return result
     except Exception as e:
-        logger.warning(f"Yahoo Finance fundamentals failed for {base}: {e}")
+        logger.warning(f"Yahoo Finance fundamentals failed for {base}: {type(e).__name__}: {e}")
         return None
 
 
@@ -166,5 +166,5 @@ def get_yahoo_dividends(symbol: str) -> List[Dict[str, Any]]:
             pass
         return result
     except Exception as e:
-        logger.warning(f"Yahoo Finance dividends failed for {base}: {e}")
+        logger.warning(f"Yahoo Finance dividends failed for {base}: {type(e).__name__}: {e}")
         return []

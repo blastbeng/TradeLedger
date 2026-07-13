@@ -31,7 +31,8 @@ async def _get_display_symbol(engine, symbol: str, timeframe: Optional[str] = No
     """Return a formatted display string for the given symbol and timeframe."""
     try:
         name = await engine._get_stock_name(symbol)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"_get_display_symbol: failed to get stock name for {symbol}: {type(e).__name__}: {e}")
         name = symbol.split("/")[0] if "/" in symbol else symbol
     return engine._format_symbol_display(symbol, name, timeframe)
 
@@ -265,7 +266,7 @@ async def status():
                 list(pos_symbols), timeout=15.0
             )
         except Exception as e:
-            logger.warning(f"Status batch quote fetch failed for positions: {e}")
+            logger.warning(f"Status batch quote fetch failed for positions: {type(e).__name__}: {e}")
 
     positions = {}
     for sym, pos in engine.positions.items():
@@ -315,7 +316,7 @@ async def trades(limit: int = 0):
         try:
             batch_quotes = await engine._market_data_manager._get_quotes_async(list(all_price_symbols), timeout=15.0)
         except Exception as e:
-            logger.warning(f"Batch quote fetch failed for trades: {e}")
+            logger.warning(f"Batch quote fetch failed for trades: {type(e).__name__}: {e}")
 
     # Enrich trades with position data (SL/TP, trailing stops, etc.) from engine.positions
     enriched_trades = []
@@ -383,8 +384,8 @@ async def market_status_api():
         market_status_raw = await asyncio.to_thread(redis.get, "market:status")
         if market_status_raw:
             market_status = json.loads(market_status_raw)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"market_status_api: failed to read market status from Redis: {type(e).__name__}: {e}")
     return market_status or {}
 
 @http_router.get("/api/risk")
@@ -408,7 +409,8 @@ async def news():
         try:
             news_data = await run_in_threadpool(get_cached_news_summary, symbol)
             summary = news_data["summary"]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"news: failed to generate summary for {symbol}: {type(e).__name__}: {e}")
             summary = "Could not generate summary."
         display = await _get_display_symbol(engine, symbol, entry.get("timeframe"))
         return {"symbol": symbol, "display_symbol": display, "summary": summary}
@@ -430,8 +432,8 @@ async def messages():
         try:
             msg = json.loads(raw)
             messages.append(msg)
-        except Exception:
-            pass
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.debug(f"messages: failed to parse raw message: {e}")
     return messages
 
 @http_router.get("/api/logs")
@@ -444,8 +446,8 @@ async def logs(limit: int = 200):
         for item in raw:
             try:
                 entries.append(json.loads(item))
-            except Exception:
-                pass
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.debug(f"logs: failed to parse log entry: {e}")
         return entries
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -652,7 +654,7 @@ async def ticker(symbol: str):
                 "percentage": q.get("percentage"),
             }
     except Exception as e:
-        logger.warning(f"REST ticker fetch failed for {symbol}: {e}")
+        logger.warning(f"REST ticker fetch failed for {symbol}: {type(e).__name__}: {e}")
     return {
         "symbol": symbol,
         "last": None,
@@ -686,7 +688,7 @@ async def tickers(symbols: str = ""):
             else:
                 result[full_sym] = {"last": None, "bid": None, "ask": None, "change_24h": None, "percentage": None}
     except Exception as e:
-        logger.warning(f"REST tickers fetch failed: {e}")
+        logger.warning(f"REST tickers fetch failed: {type(e).__name__}: {e}")
         for full_sym in full_symbol_list:
             result[full_sym] = {"last": None, "bid": None, "ask": None, "change_24h": None, "percentage": None}
     return result
@@ -802,7 +804,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 list(pos_symbols), timeout=15.0
                             )
                         except Exception as e:
-                            logger.warning(f"WebSocket batch quote fetch failed for positions: {e}")
+                            logger.warning(f"WebSocket batch quote fetch failed for positions: {type(e).__name__}: {e}")
 
                     # Build positions with display_symbol and P&L (parallelized)
                     async def _build_position_entry(sym, pos):
@@ -841,7 +843,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     try:
                         paused_val = await asyncio.to_thread(redis.get, "trading:paused")
                         is_paused = paused_val == "1"
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"WebSocket: failed to read trading:paused from Redis: {type(e).__name__}: {e}")
                         is_paused = False
 
                     payload = {

@@ -526,7 +526,7 @@ class MarketDataManager:
                     if base in raw:
                         tickers[sym] = raw[base]
             except Exception as e:
-                logger.warning(f"Batch quote fetch failed for positions: {e}")
+                logger.warning(f"Batch quote fetch failed for positions: {type(e).__name__}: {e}")
         return tickers
 
     def _get_all_position_tickers_sync(self) -> Dict[str, Dict[str, Any]]:
@@ -549,7 +549,7 @@ class MarketDataManager:
                     if base in raw:
                         tickers[sym] = raw[base]
             except Exception as e:
-                logger.warning(f"Sync batch quote fetch failed for positions: {e}")
+                logger.warning(f"Sync batch quote fetch failed for positions: {type(e).__name__}: {e}")
         return tickers
 
     def _get_tickers_for_symbols_sync(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -571,7 +571,7 @@ class MarketDataManager:
                     if base in raw:
                         tickers[sym] = raw[base]
             except Exception as e:
-                logger.warning(f"Sync batch quote fetch failed: {e}")
+                logger.warning(f"Sync batch quote fetch failed: {type(e).__name__}: {e}")
         return tickers
 
     async def _backfill_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, max_candles: int = None, ignore_existing: bool = False, force: bool = False, quiet: bool = False) -> int:

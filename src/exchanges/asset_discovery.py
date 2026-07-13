@@ -515,7 +515,7 @@ def get_tradable_assets() -> List[str]:
                     logger.info(f"Discovery failed but recovered {len(db_only_list)} symbols from DB only")
                     return db_only_list
         except (RuntimeError, ValueError, OSError) as e:
-            logger.warning(f"Failed to recover symbols from DB: {e}")
+            logger.warning(f"Failed to recover symbols from DB: {type(e).__name__}: {e}")
         if _notifier:
             msg = "⚠️ Market Data Discovery Failure: All discovery sources (Wikipedia, FinanceDatabase, news feeds, DB) failed to return any tradable assets. The bot will idle."
             try:
@@ -536,7 +536,7 @@ def get_tradable_assets() -> List[str]:
             etf_set = set(etf_symbols)
             _save_discovered_assets_to_db(base_symbols, list(etf_set))
         except (RuntimeError, ValueError, OSError) as e:
-            logger.warning(f"Failed to save discovered assets to DB: {e}")
+            logger.warning(f"Failed to save discovered assets to DB: {type(e).__name__}: {e}")
 
     suffix = settings.TICKER_SUFFIX
     candidates = []
@@ -577,7 +577,7 @@ def get_tradable_assets() -> List[str]:
                             cached_list.append(candidate)
                             existing_set.add(candidate)
             except Exception as e:
-                logger.warning(f"Failed to merge DB symbols with cached list: {e}")
+                logger.warning(f"Failed to merge DB symbols with cached list: {type(e).__name__}: {e}")
             return cached_list
     except (TypeError, ValueError, RuntimeError):
         pass
@@ -661,7 +661,7 @@ def get_tradable_assets() -> List[str]:
         import json
         redis_client.set(cache_key, json.dumps(filtered), ex=86400)
     except (TypeError, ValueError, RuntimeError) as e:
-        logger.warning(f"Failed to cache tradable assets: {e}")
+        logger.warning(f"Failed to cache tradable assets: {type(e).__name__}: {e}")
 
     # Merge with previously discovered symbols from DB so nothing is lost
     try:
@@ -687,7 +687,7 @@ def get_tradable_assets() -> List[str]:
                     existing_set.add(candidate)
         logger.info(f"Merged {len(db_symbols)} symbols from DB, total: {len(filtered)}")
     except (RuntimeError, ValueError, OSError) as e:
-        logger.warning(f"Failed to merge discovered symbols from DB: {e}")
+        logger.warning(f"Failed to merge discovered symbols from DB: {type(e).__name__}: {e}")
 
     logger.info(f"Tradable assets for {settings.TARGET_COUNTRY}: {len(filtered)} symbols")
     return filtered

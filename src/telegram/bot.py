@@ -230,7 +230,7 @@ class TelegramBot:
             try:
                 pos_quotes = await self.engine._market_data_manager._get_quotes_async(list(pos_symbols), timeout=15.0)
             except Exception as e:
-                logger.warning(f"Batch quote fetch failed for status: {e}")
+                logger.warning(f"Batch quote fetch failed for status: {type(e).__name__}: {e}")
 
         msg = "<b>📊 Current Status</b>\n\n"
         mind_provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
@@ -361,7 +361,7 @@ class TelegramBot:
             try:
                 batch_quotes = await self.engine._market_data_manager._get_quotes_async(list(all_price_symbols), timeout=15.0)
             except Exception as e:
-                logger.warning(f"Batch quote fetch failed for trades: {e}")
+                logger.warning(f"Batch quote fetch failed for trades: {type(e).__name__}: {e}")
 
         if not open_trades and not queued_orders:
             await update.message.reply_text("📈 No open trades or queued orders.", reply_markup=self.keyboard)
@@ -1040,7 +1040,7 @@ class TelegramBot:
                 await asyncio.to_thread(self.redis.lpush, "web:messages", msg_data)
                 await asyncio.to_thread(self.redis.ltrim, "web:messages", 0, 99)
             except Exception as e:
-                logger.warning(f"Failed to store message for web interface: {e}")
+                logger.warning(f"Failed to store message for web interface: {type(e).__name__}: {e}")
 
             # Send to Telegram
             action = summary.get("action", "") if summary else ""
@@ -1116,7 +1116,7 @@ class TelegramBot:
                 }
             )
         except Exception as e:
-            logger.warning(f"Failed to send startup notification: {e}")
+            logger.warning(f"Failed to send startup notification: {type(e).__name__}: {e}")
         # Keep the task alive until cancelled by the supervisor during shutdown.
         # Without this, the coroutine returns immediately (PTB v20 start methods
         # are non-blocking), causing the supervisor to think the task exited
