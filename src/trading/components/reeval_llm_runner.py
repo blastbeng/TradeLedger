@@ -128,7 +128,7 @@ class ReevalLLMRunner:
                     "session_info": session_info,
                     "market_breadth": market_breadth,
                     "trading_paused": trading_paused_bool,
-                    "open_positions": engine.positions,
+                    "open_positions": self.shared_state.positions,
                     "base_balance": base_balance,
                     "per_symbol_budget": per_symbol_budget,
                     "current_symbols": self.shared_state.current_symbols,
