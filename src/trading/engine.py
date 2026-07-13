@@ -288,10 +288,11 @@ class TradingEngine:
         self.queued_orders = []
         self.current_symbols = []
         self._pending_entries = {}
-        self._last_strategy_eval = {}
-        self._strategy_intervals = {}
-        self._force_eval = {}
-        self._force_eval_time = {}
+        async with self._eval_state_lock:
+            self._last_strategy_eval.clear()
+            self._strategy_intervals.clear()
+            self._force_eval.clear()
+            self._force_eval_time.clear()
         self._entry_signal_state = {}
         self._last_decisions = {}
         self._last_eval_snapshot = {}
