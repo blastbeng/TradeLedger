@@ -26,6 +26,7 @@ class BuyExecutor:
         self.engine = engine
         self.event_bus = event_bus
         self._exit_order_manager = None
+        self.event_bus.subscribe("execute_buy", self.execute_buy)
 
     async def execute_buy(
         self,

@@ -1902,11 +1902,11 @@ class TradingEngine:
 
     async def sell_all_positions(self):
         """Sell all open positions at market price."""
-        await self._order_executor.sell_all_positions()
+        await self.event_bus.request("sell_all_positions")
 
     async def sell_position(self, symbol: str):
         """Sell a specific open position at market price."""
-        await self._order_executor.sell_position(symbol)
+        await self.event_bus.request("sell_position", symbol)
 
     async def log_manual_trade(self, ticker: str, side: str, quantity: float, money_spent: float, fee: float) -> dict:
         """Log a manually executed trade in notify mode. Persists to DB and updates positions."""

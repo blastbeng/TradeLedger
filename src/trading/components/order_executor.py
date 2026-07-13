@@ -100,7 +100,8 @@ class OrderExecutor:
         balance = await engine._get_cached_balance()
 
         if signal.action == "BUY":
-            await self._buy_executor.execute_buy(
+            await self.event_bus.request(
+                "execute_buy",
                 symbol=symbol,
                 display_symbol=display_symbol,
                 signal=signal,
@@ -110,7 +111,8 @@ class OrderExecutor:
                 balance=balance,
             )
         elif signal.action == "SELL":
-            await self._sell_executor.execute_sell(
+            await self.event_bus.request(
+                "execute_sell",
                 symbol=symbol,
                 display_symbol=display_symbol,
                 signal=signal,
