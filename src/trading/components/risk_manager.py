@@ -351,10 +351,14 @@ class RiskManager:
         """Run all risk checks for a single open position."""
         engine = self.engine
         try:
-            # Skip if there is already a queued order for this symbol
+            # Skip if there is already a queued non-exit BUY order for this symbol.
+            # Exit orders (SELL) should not block risk checks.
             async with self.shared_state._queued_orders_lock:
-                has_queued = any(q['symbol'] == symbol for q in self.shared_state.queued_orders)
-            if has_queued:
+                has_queued_buy = any(
+                    q['symbol'] == symbol and (q.get('side') or q.get('action') or '').lower() == 'buy'
+                    for q in self.shared_state.queued_orders
+                )
+            if has_queued_buy:
                 return
 
             # --- Retry deferred dust sweep if market is now open ---
