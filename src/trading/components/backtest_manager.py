@@ -762,6 +762,21 @@ class BacktestManager:
         model_type = data.get("model_type", "mind")
         temperature = data.get("temperature", 0.2)
 
+        # --- LLM circuit breaker: skip calls if too many consecutive failures ---
+        cb_active = False
+        try:
+            cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
+            if cb_raw:
+                cb_data = json.loads(cb_raw)
+                if time.time() < cb_data.get("active_until", 0):
+                    cb_active = True
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
+            pass
+
+        if cb_active:
+            logger.error(f"LLM circuit breaker ACTIVE for {symbol} during simulation Step 2 — using preliminary decision. Check LLM connectivity.")
+            return None, "LLM circuit breaker active", preliminary_signal, None
+
         total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
         step2_messages = build_final_decision_messages(
             symbol=symbol,
