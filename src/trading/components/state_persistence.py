@@ -7,6 +7,7 @@ import asyncio
 import atexit
 import dataclasses as _dc
 import logging
+import os
 import signal
 import sys
 import time
@@ -33,14 +34,20 @@ class StatePersistence:
 
         # Register handlers to flush state on shutdown/crash
         atexit.register(self._sync_save_state)
-        signal.signal(signal.SIGTERM, self._handle_signal)
-        signal.signal(signal.SIGINT, self._handle_signal)
+        try:
+            signal.signal(signal.SIGTERM, self._handle_signal)
+            signal.signal(signal.SIGINT, self._handle_signal)
+        except ValueError:
+            # signal.signal can only be called in the main thread
+            logger.warning("Could not register signal handlers (not in main thread). Relying on atexit only.")
 
     def _handle_signal(self, signum, frame):
         """Handle termination signals by flushing state before exiting."""
         logger.info(f"Received signal {signum}, flushing state to database...")
         self._sync_save_state()
-        sys.exit(0)
+        # Use os._exit to bypass atexit handlers (since we already saved)
+        # and ensure immediate termination.
+        os._exit(0)
 
     def _sync_save_state(self):
         """Synchronously save state to prevent data loss on crash/shutdown."""
