@@ -321,8 +321,12 @@ class ModelTierManager:
         total = tech_score + conflict_score + market_score + portfolio_score + critical_score + candidate_score + legacy_score
         return min(1.0, total)
 
-    def _get_effective_temperature(self, model_type: str, complexity: float) -> float:
-        """Return the temperature to use for a given model_type and complexity score (0-1)."""
+    def _get_effective_temperature(self, model_type: str, complexity: float, is_critical: bool = False) -> float:
+        """Return the temperature to use for a given model_type and complexity score (0-1).
+        
+        Higher complexity leads to lower temperature for more deterministic and focused decisions.
+        Critical decisions always use the lowest temperature.
+        """
         from src.config.settings import Settings
         raw = settings.LLM_MIND_TEMPERATURE if model_type == "mind" else settings.LLM_ACTUATOR_TEMPERATURE
         parsed = Settings.parse_temperature_range(raw)
@@ -331,7 +335,12 @@ class ModelTierManager:
         lo, hi = parsed
         if lo == hi:
             return lo
-        return lo + (hi - lo) * complexity
+        
+        if is_critical:
+            return lo
+        
+        # Invert the scale: higher complexity -> lower temperature (more deterministic)
+        return hi - (hi - lo) * complexity
 
     def compute_model_tier_and_temperature(
         self,
@@ -420,6 +429,6 @@ class ModelTierManager:
         else:
             strategy_model_type = "mind" if strategy_complexity >= settings.LLM_MIND_MODEL_THRESHOLD else "actuator"
 
-        effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity)
+        effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity, is_critical)
 
         return strategy_model_type, effective_temp
