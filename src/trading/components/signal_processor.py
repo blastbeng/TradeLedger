@@ -1121,7 +1121,14 @@ class SignalProcessor:
             "trading_paused": data.trading_paused,
             "last_decision": data.last_decision,
         }
-        market_hash = compute_market_hash(market_snapshot)
+        # Exclude high-cardinality fields from the cache hash to prevent
+        # frequent cache misses caused by volatile data like raw candles.
+        _high_cardinality_keys = {
+            "ohlcv_data", "raw_candles", "recent_trades", "historical_ohlcv",
+            "past_trades", "multi_tf_raw_candles"
+        }
+        hash_snapshot = {k: v for k, v in market_snapshot.items() if k not in _high_cardinality_keys}
+        market_hash = compute_market_hash(hash_snapshot)
 
         return analysis_prompt, market_snapshot, market_hash
 
