@@ -49,6 +49,93 @@ def _get_max_input_tokens(provider: str, model_type: str, is_fallback: bool) -> 
             else:
                 return settings.OLLAMA_ACTUATOR_MAX_INPUT_TOKENS
 
+def _split_and_merge_prompt(
+    prompt: str,
+    system_prompt: str,
+    model_type: str,
+    provider: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    temperature: Optional[float],
+    timeout: float,
+    max_input_tokens: int,
+) -> str:
+    """
+    Splits an oversized prompt into chunks, summarizes each chunk using the LLM,
+    and merges the summaries into a single prompt that fits within the context window.
+    """
+    logger.warning(
+        "Prompt size exceeds context window limit (%d tokens). Splitting and merging...",
+        max_input_tokens
+    )
+
+    # Split the prompt by paragraphs (double newlines)
+    paragraphs = prompt.split('\n\n')
+
+    chunks = []
+    current_chunk = ""
+    for para in paragraphs:
+        if estimate_tokens(current_chunk + para) > max_input_tokens * 0.8 and current_chunk:
+            chunks.append(current_chunk)
+            current_chunk = para
+        else:
+            current_chunk += "\n\n" + para if current_chunk else para
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    summaries = []
+    for i, chunk in enumerate(chunks):
+        logger.info("Summarizing chunk %d/%d...", i + 1, len(chunks))
+        summary_prompt = (
+            f"You are processing part {i+1} of {len(chunks)} of a large market analysis prompt. "
+            f"Summarize the key data points, indicators, and insights from this chunk. "
+            f"Preserve all important numbers, dates, and entity names.\n\n"
+            f"Chunk:\n{chunk}"
+        )
+
+        # Call the LLM to summarize the chunk
+        if provider == "openai":
+            from src.llm.llm_client import _get_openai_response
+            result = _get_openai_response(
+                prompt=summary_prompt,
+                system_prompt="You are an expert summarizer for a stock trading bot.",
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                temperature=temperature,
+                timeout=timeout,
+                messages=None,
+                add_cache_control=False,
+                thinking_enabled=False,
+            )
+        else:
+            from src.llm.llm_client import _get_ollama_response
+            result = _get_ollama_response(
+                prompt=summary_prompt,
+                system_prompt="You are an expert summarizer for a stock trading bot.",
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                temperature=temperature,
+                timeout=timeout,
+                messages=None,
+                add_cache_control=False,
+                thinking_enabled=False,
+            )
+
+        summaries.append(result["content"])
+
+    # Combine summaries into a new prompt
+    merged_prompt = (
+        "The following is a merged summary of a large market analysis prompt. "
+        "Use this information to make your trading decision.\n\n"
+        + "\n\n".join(summaries)
+    )
+
+    return merged_prompt
+
+
 def _normalize_text_for_cache(text: str) -> str:
     """Round all decimal numbers in text to 5 significant figures for stable cache keys.
 
@@ -259,21 +346,48 @@ def get_cached_llm_response(
         logger.warning(f"Redis cache get failed: {type(e).__name__}: {e}. Proceeding without cache.")
 
     logger.debug("LLM cache miss: model_type=%s, system_prompt=%.200s..., prompt=%.500s...", model_type, system_prompt, prompt)
-    # Context window management: hard limit at 1,000,000 tokens
-    MAX_TOKENS = 1_000_000
-    prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
-    if prompt_tokens > MAX_TOKENS:
-        logger.warning(
-            "Prompt size (~%d tokens) exceeds context window limit (%d). Truncating...",
-            prompt_tokens, MAX_TOKENS
-        )
-        keep_start = 2000
-        keep_end = 4000
-        if len(prompt) > keep_start + keep_end:
-            prompt = (
-                prompt[:keep_start] +
-                "\n... [TRUNCATED DUE TO CONTEXT WINDOW LIMIT] ...\n" +
-                prompt[-keep_end:]
+    # Context window management
+    max_input_tokens = _get_max_input_tokens(provider, model_type, is_fallback)
+    # Reserve some tokens for the system prompt and completion
+    effective_limit = int(max_input_tokens * 0.8)
+
+    if messages is not None:
+        total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
+        if total_tokens > effective_limit:
+            logger.warning(
+                "Messages size (~%d tokens) exceeds context window limit (%d). Splitting and merging...",
+                total_tokens, effective_limit
+            )
+            # Assume the last message is the user prompt that needs splitting
+            if messages and messages[-1]["role"] == "user":
+                user_content = messages[-1]["content"]
+                merged_content = _split_and_merge_prompt(
+                    prompt=user_content,
+                    system_prompt=system_prompt,
+                    model_type=model_type,
+                    provider=provider,
+                    model=model,
+                    base_url=base_url,
+                    api_key=api_key,
+                    temperature=temperature,
+                    timeout=effective_timeout,
+                    max_input_tokens=effective_limit,
+                )
+                messages[-1]["content"] = merged_content
+    else:
+        prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+        if prompt_tokens > effective_limit:
+            prompt = _split_and_merge_prompt(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                model_type=model_type,
+                provider=provider,
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                temperature=temperature,
+                timeout=effective_timeout,
+                max_input_tokens=effective_limit,
             )
 
     if messages is not None:
