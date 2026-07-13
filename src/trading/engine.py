@@ -726,8 +726,13 @@ class TradingEngine:
         if self.notifier:
             await self.notifier.send_notification(notification_msg, summary=notification_summary)
 
-    async def _handle_missing_pause_duration(self, pause_start_raw: Optional[bytes]) -> bool:
-        """Handle fallback when no pause_duration was set. Returns True if handled."""
+    async def _handle_missing_pause_duration(self, pause_start_raw: Optional[bytes]) -> Tuple[bool, bool]:
+        """Handle fallback when no pause_duration was set.
+        
+        Returns a tuple (skip_normal_logic, resumed):
+        - skip_normal_logic: True if the caller should skip normal duration logic.
+        - resumed: True if trading was actually resumed.
+        """
         default_max_pause = settings.MIN_LLM_PAUSE_DURATION
         try:
             raw = await self.config_service.get_config("min_llm_pause_duration")
@@ -743,7 +748,7 @@ class TradingEngine:
                 "⏰ Trading auto-resumed (pause had no duration and no start time).",
                 {"action": "RESUME", "reason": "Fallback: no pause start time"}
             )
-            return True
+            return True, True
 
         try:
             elapsed = time.time() - float(pause_start_raw)
@@ -754,9 +759,12 @@ class TradingEngine:
                     "⏰ Trading auto‑resumed after maximum pause duration (no LLM‑set duration).",
                     {"action": "RESUME", "reason": "Fallback pause timeout"}
                 )
+                return True, True
         except (ValueError, TypeError):
             pass
-        return True
+        
+        # Did not resume, but we still need to skip normal duration logic
+        return True, False
 
     async def _handle_pause_duration_elapsed(self, pause_start_raw: bytes, pause_duration_raw: bytes) -> None:
         """Check if the pause duration has elapsed and resume if so."""
@@ -795,8 +803,8 @@ class TradingEngine:
 
                         # --- Fallback if no pause_duration was set ---
                         if not pause_duration_raw:
-                            handled = await self._handle_missing_pause_duration(pause_start_raw)
-                            if handled:
+                            skip_normal, _resumed = await self._handle_missing_pause_duration(pause_start_raw)
+                            if skip_normal:
                                 await asyncio.sleep(30)
                                 continue   # skip the original duration logic, proceed to next loop iteration
 
