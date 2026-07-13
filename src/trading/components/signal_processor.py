@@ -107,6 +107,9 @@ class SignalProcessor:
         self.event_bus.subscribe("detect_entry_signal", self.entry_signal_manager.detect_entry_signal)
         self.event_bus.subscribe("process_pending_entry", self.entry_signal_manager.process_pending_entry)
         self.event_bus.subscribe("check_entry_condition_once", self.entry_signal_manager.check_entry_condition_once)
+        self._skip_config_cache: Dict[str, float] = {}
+        self._skip_config_cache_time: float = 0.0
+        self._skip_config_cache_ttl: float = 300.0  # 5 minutes
 
     @staticmethod
     def _parse_analysis_response(response: str) -> Optional[Dict[str, Any]]:
@@ -1365,6 +1368,49 @@ class SignalProcessor:
             engine._force_eval.pop(symbol, None)
         return True
 
+    async def _get_skip_eval_config(self) -> Dict[str, float]:
+        """Fetch LLM-driven skip thresholds from Redis, with a 5-minute cache."""
+        engine = self.engine
+        now = time.time()
+        if now - self._skip_config_cache_time < self._skip_config_cache_ttl:
+            return self._skip_config_cache
+
+        cache = {
+            "skip_price_mult": 1.0,
+            "skip_rsi": 5.0,
+            "skip_macd": 0.0005,
+            "rsi_oversold": 30.0,
+            "rsi_overbought": 70.0,
+        }
+        try:
+            raw = await engine.config_service.get_config("skip_eval_price_change_atr_mult")
+            if raw:
+                cache["skip_price_mult"] = float(raw)
+            raw = await engine.config_service.get_config("skip_eval_rsi_change")
+            if raw:
+                cache["skip_rsi"] = float(raw)
+            raw = await engine.config_service.get_config("skip_eval_macd_hist_change")
+            if raw:
+                cache["skip_macd"] = float(raw)
+            raw = await engine.config_service.get_config("skip_eval_rsi_oversold")
+            if raw:
+                cache["rsi_oversold"] = float(raw)
+            raw = await engine.config_service.get_config("skip_eval_rsi_overbought")
+            if raw:
+                cache["rsi_overbought"] = float(raw)
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
+            pass
+
+        # Sanity-check: if thresholds are degenerate, fall back to defaults
+        if cache["rsi_oversold"] <= 0 or cache["rsi_oversold"] >= 50:
+            cache["rsi_oversold"] = 30.0
+        if cache["rsi_overbought"] >= 100 or cache["rsi_overbought"] <= 50:
+            cache["rsi_overbought"] = 70.0
+
+        self._skip_config_cache = cache
+        self._skip_config_cache_time = now
+        return cache
+
     async def should_skip_llm_eval(
         self,
         symbol: str,
@@ -1423,19 +1469,11 @@ class SignalProcessor:
         if now - last_time > min(3 * effective_interval, max_skip):
             return False
 
-        # Fetch LLM-driven skip thresholds from Redis.
-        # Fall back to sensible hardcoded defaults when the LLM has not
-        # configured them, so the skip logic is functional even before the
-        # LLM provides values. The LLM can override these at any time via
-        # its stock selection response.
-        skip_price_mult_raw = await engine.config_service.get_config("skip_eval_price_change_atr_mult")
-        skip_price_mult = float(skip_price_mult_raw) if skip_price_mult_raw else 1.0
-
-        skip_rsi_raw = await engine.config_service.get_config("skip_eval_rsi_change")
-        skip_rsi = float(skip_rsi_raw) if skip_rsi_raw else 5.0
-
-        skip_macd_raw = await engine.config_service.get_config("skip_eval_macd_hist_change")
-        skip_macd = float(skip_macd_raw) if skip_macd_raw else 0.0005
+        # Fetch LLM-driven skip thresholds from Redis (cached for 5 minutes).
+        cfg = await self._get_skip_eval_config()
+        skip_price_mult = cfg["skip_price_mult"]
+        skip_rsi = cfg["skip_rsi"]
+        skip_macd = cfg["skip_macd"]
 
         # Price change since last evaluation
         if last_price > 0:
@@ -1464,23 +1502,8 @@ class SignalProcessor:
         if not has_position:
             # Only call if there is a potential entry signal (extreme RSI, MACD crossover, etc.)
             # RSI extreme? (thresholds are LLM-decided)
-            # RSI extremes use sensible defaults (30/70) that the LLM can override.
-            rsi_oversold = 30.0
-            rsi_overbought = 70.0
-            try:
-                raw = await engine.config_service.get_config("skip_eval_rsi_oversold")
-                if raw:
-                    rsi_oversold = float(raw)
-                raw = await engine.config_service.get_config("skip_eval_rsi_overbought")
-                if raw:
-                    rsi_overbought = float(raw)
-            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
-                pass
-            # Sanity-check: if thresholds are degenerate, fall back to defaults
-            if rsi_oversold <= 0 or rsi_oversold >= 50:
-                rsi_oversold = 30.0
-            if rsi_overbought >= 100 or rsi_overbought <= 50:
-                rsi_overbought = 70.0
+            rsi_oversold = cfg["rsi_oversold"]
+            rsi_overbought = cfg["rsi_overbought"]
             if rsi is not None and (rsi < rsi_oversold or rsi > rsi_overbought):
                 return False
             # MACD histogram direction change? (harder to detect without previous sign – skip for simplicity)
