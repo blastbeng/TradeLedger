@@ -59,6 +59,7 @@ class TaskSupervisor:
                         f"Task {self.name} exceeded max_restarts ({self.max_restarts}). "
                         f"Entering cooling off period for {self.cooling_off_period}s before retrying."
                     )
+                    self.is_healthy = False
                     if self._notifier:
                         try:
                             asyncio.create_task(self._notifier.send_notification(
@@ -71,6 +72,7 @@ class TaskSupervisor:
                             pass
                     await asyncio.sleep(self.cooling_off_period)
                     self._restart_count = 0
+                    self.is_healthy = True
                     logger.info(f"Cooling off period ended for task {self.name}. Retrying.")
                     continue
                 logger.info(f"Restarting task {self.name} in {self.restart_delay}s (attempt {self._restart_count}/{self.max_restarts})")
