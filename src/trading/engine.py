@@ -59,7 +59,7 @@ from src.utils.redis_client import get_redis_client, check_redis_connection, is_
 from src.utils.symbol_utils import is_btp_isin
 from src.utils.task_supervisor import TaskSupervisor
 from src.utils.event_bus import EventBus
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, get_latest_ohlcv_timestamps_batch, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data, insert_dividend, cleanup_old_dividends, get_pending_llm_decisions, update_llm_decision_outcome
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, get_latest_ohlcv_timestamps_batch, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data, insert_dividend, cleanup_old_dividends, get_pending_llm_decisions, update_llm_decision_outcome, get_llm_decision_quality_metrics
 from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.buy_executor import BuyExecutor
 from src.trading.components.exit_order_manager import ExitOrderManager
@@ -1791,6 +1791,27 @@ class TradingEngine:
                     )
                 
                 logger.info(f"Evaluated {len(pending_decisions)} LLM decisions for quality tracking.")
+
+                # --- Check for accuracy degradation and alert ---
+                metrics = await asyncio.to_thread(get_llm_decision_quality_metrics, 7)
+                if metrics["total_evaluated"] >= 10 and metrics["accuracy"] < 40.0:
+                    # Check cooldown to avoid spamming
+                    alert_key = "llm:accuracy_alert_cooldown"
+                    cooldown = await asyncio.to_thread(self.redis.get, alert_key)
+                    if not cooldown:
+                        if self.notifier:
+                            await self.notifier.send_notification(
+                                f"⚠️ LLM Decision Quality Alert: Accuracy has dropped to {metrics['accuracy']:.1f}% "
+                                f"over the last 7 days ({metrics['total_evaluated']} evaluated decisions).",
+                                summary={
+                                    "action": "ALERT",
+                                    "reason": "LLM accuracy degradation",
+                                    "accuracy": metrics["accuracy"],
+                                    "total_evaluated": metrics["total_evaluated"]
+                                }
+                            )
+                        # Set cooldown for 24 hours
+                        await asyncio.to_thread(self.redis.setex, alert_key, 86400, "1")
             except Exception as e:
                 logger.error(f"LLM decision evaluation loop error: {type(e).__name__}: {e}", exc_info=True)
             
