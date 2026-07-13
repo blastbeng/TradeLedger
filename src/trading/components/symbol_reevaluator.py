@@ -323,7 +323,7 @@ class SymbolReevaluator:
         )
         if _quotes_result is None:
             return
-        balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs = _quotes_result
+        balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs, btp_ytm = _quotes_result
         logger.info("Re-evaluation step 6/12: Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
         news_sentiment, sentiment_trend, market_trend = await self.data_fetcher.fetch_news_sentiment_and_trends(
             sample_pairs, tickers
@@ -410,6 +410,7 @@ class SymbolReevaluator:
             per_symbol_budget=per_symbol_budget,
             auto_resume_note=auto_resume_note,
             effective_temp=effective_temp,
+            btp_ytm=btp_ytm,
         )
 
         # --- Final selection call ---

@@ -38,6 +38,7 @@ def build_stock_selection_prompt(
     min_hold_time_mult: float = 1.0,
     min_stop_atr_mult: float = 1.0,
     min_viable_trade_amount: float = 0.0,
+    btp_ytm: Optional[Dict[str, float]] = None,
 ) -> str:
     """Build a prompt to ask the LLM which stocks/ETFs to trade."""
     # Trim large lists to prevent context window overflow
@@ -373,6 +374,10 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
             f"\n**Account P&L**: Today's realized P&L = {daily_pnl:.0f} {base_currency}, "
             f"Total realized P&L = {total_pnl:.0f} {base_currency}.\n"
         )
+    if btp_ytm:
+        prompt += "\nBTP YTM:\n"
+        for sym, ytm in btp_ytm.items():
+            prompt += f"  {sym}: {ytm:.2f}%\n"
     if symbol_events:
         prompt += "\n**Upcoming Corporate Events (detected from news):**\n"
         prompt += "These symbols have upcoming or recent corporate events. Consider the risk of holding through these events.\n"

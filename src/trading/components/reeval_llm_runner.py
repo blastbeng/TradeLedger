@@ -44,6 +44,7 @@ class ReevalLLMRunner:
         per_symbol_budget: float,
         auto_resume_note: str,
         effective_temp: float,
+        btp_ytm: Optional[Dict[str, float]] = None,
     ) -> List[Dict[str, Any]]:
         """Evaluate the shortlist in chunks using the LLM.
 
@@ -108,6 +109,7 @@ class ReevalLLMRunner:
                     symbol_trend_scores=chunk_symbol_trend_scores,
                     market_breadth=market_breadth,
                     min_viable_trade_amount=min_viable_amount,
+                    btp_ytm=btp_ytm,
                 )
                 if auto_resume_note:
                     chunk_messages[-1]["content"] += "\n" + auto_resume_note

@@ -317,6 +317,7 @@ class SignalProcessor:
             min_viable_trade_amount=min_viable_amount,
             historical_backtest_results=_ctx["historical_backtest_results"],
             aggregate_sentiment=_ctx["aggregate_sentiment"],
+            ytm=symbol_data["ytm"],
         )
         analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(prompt_data)
 
@@ -689,6 +690,15 @@ class SignalProcessor:
             return None
         current_price = ticker['last']
 
+        # --- Compute YTM for BTP bonds ---
+        ytm = None
+        if is_btp:
+            from src.database import get_btp_details_from_db, compute_btp_ytm
+            btp_details = await asyncio.to_thread(get_btp_details_from_db, [base_symbol])
+            details = btp_details.get(base_symbol)
+            if details:
+                ytm = compute_btp_ytm(details.get("coupon"), details.get("maturity"), ticker.get("last"))
+
         # --- Yahoo Finance fallback for missing bid/ask ---
         if ticker is not None and not is_btp:
             bid = ticker.get('bid')
@@ -772,6 +782,7 @@ class SignalProcessor:
             "keltner_channels": _inds["keltner_channels"],
             "vwap": _inds["vwap"],
             "daily_pivot_points": _inds["daily_pivot_points"],
+            "ytm": ytm,
         }
 
     async def gather_prompt_context(

@@ -159,10 +159,10 @@ class ReevalDataFetcher:
         etf_pairs: List[str],
         now: float,
         last_key: str,
-    ) -> Optional[Tuple[Dict[str, float], float, float, Dict[str, Dict[str, Any]], List[str], List[str]]]:
+    ) -> Optional[Tuple[Dict[str, float], float, float, Dict[str, Dict[str, Any]], List[str], List[str], Dict[str, float]]]:
         """Fetch quotes from cache, apply Yahoo fallback, filter, and sort by volume.
 
-        Returns (balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs)
+        Returns (balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs, btp_ytm)
         or None if no valid price data is found.
         """
         engine = self.engine
@@ -248,6 +248,21 @@ class ReevalDataFetcher:
             return None
         sample_pairs = valid_sample_pairs
 
+        # Compute YTM for all BTPs
+        btp_ytm: Dict[str, float] = {}
+        if btp_pairs:
+            from src.database import get_btp_details_from_db, compute_btp_ytm
+            btp_bases = [p.split("/")[0] for p in btp_pairs]
+            btp_details = await asyncio.to_thread(get_btp_details_from_db, btp_bases)
+            for p in btp_pairs:
+                base = p.split("/")[0]
+                details = btp_details.get(base)
+                if details:
+                    price = tickers.get(p, {}).get("last")
+                    ytm = compute_btp_ytm(details.get("coupon"), details.get("maturity"), price)
+                    if ytm is not None:
+                        btp_ytm[p] = ytm
+
         # Yahoo Finance fallback for missing quotes
         logger.info("Re-evaluation step 5/12: Yahoo Finance fallback for missing quotes...")
         await self.fetch_yahoo_fallback_quotes(sample_pairs, tickers)
@@ -260,7 +275,7 @@ class ReevalDataFetcher:
         etf_sample_sorted = [s for s in sample_pairs if s in etf_pairs]
         sample_pairs = stock_sample_sorted + etf_sample_sorted + [s for s in sample_pairs if s in btp_pairs]
 
-        return balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs
+        return balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs, btp_ytm
 
     async def fetch_ohlcv_from_db(
         self, sorted_by_vol: List[str]

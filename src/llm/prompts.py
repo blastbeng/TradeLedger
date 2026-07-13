@@ -118,6 +118,7 @@ class StrategyPromptData:
     min_stop_atr_mult: float = 1.0
     min_viable_trade_amount: float = 0.0
     historical_backtest_results: Optional[List[Dict[str, Any]]] = None
+    ytm: Optional[float] = None
 
 
 def build_strategy_prompt(
@@ -217,6 +218,7 @@ def build_strategy_prompt(
     min_stop_atr_mult = data.min_stop_atr_mult
     min_viable_trade_amount = data.min_viable_trade_amount
     historical_backtest_results = data.historical_backtest_results
+    ytm = data.ytm
     # Trim large lists to prevent context window overflow
     if recent_trades and len(recent_trades) > 20:
         recent_trades = recent_trades[-20:]
@@ -386,6 +388,8 @@ Maximum symbols to trade: {max_symbols}
                 f"Round-trip@{trade_value:.0f}={total_fees:.2f} ({break_even_pct*100:.2f}%). "
                 f"Smaller trades → higher % due to fixed+min fees. TP must be > {break_even_pct*100:.2f}%.\n"
             )
+if ytm is not None:
+    prompt += f"YTM:{ytm:.2f}%\n"
     # --- Show the LLM its previous decision for this symbol ---
     if last_decision:
         age_seconds = time.time() - last_decision.get("timestamp", 0)

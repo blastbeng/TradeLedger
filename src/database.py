@@ -2438,6 +2438,23 @@ def get_llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = 
         conn.close()
 
 
+def compute_btp_ytm(coupon: Optional[float], maturity: Optional[str], price: Optional[float]) -> Optional[float]:
+    """Compute approximate Yield to Maturity for a BTP bond."""
+    if not coupon or not maturity or not price or price <= 0:
+        return None
+    try:
+        from datetime import datetime
+        maturity_date = datetime.strptime(maturity, "%Y-%m-%d")
+        years_to_maturity = (maturity_date - datetime.now()).days / 365.25
+        if years_to_maturity <= 0:
+            return None
+        # YTM approximation: (Annual Coupon + (100 - Price) / Years) / ((100 + Price) / 2)
+        ytm = (coupon + (100 - price) / years_to_maturity) / ((100 + price) / 2)
+        return round(ytm * 100, 2)
+    except (ValueError, TypeError):
+        return None
+
+
 def close_pool():
     """Close the PostgreSQL connection pool if it exists."""
     global _pg_pool
