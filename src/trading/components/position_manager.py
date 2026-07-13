@@ -223,7 +223,7 @@ class PositionManager:
         pnl_pct = (pnl / engine.initial_balance * 100) if engine.initial_balance else 0.0
 
         # Fetch total dividends for all symbols in trade history
-        all_symbols = list(set(t["symbol"] for t in engine.trade_history))
+        all_symbols = list(set(t["symbol"] for t in self.shared_state.trade_history))
         dividends_map = get_total_dividends_for_symbols(all_symbols)
         total_dividends = sum(dividends_map.values())
         pnl += total_dividends
@@ -234,7 +234,7 @@ class PositionManager:
         position_exposures = []
         total_stop_risk = 0.0
         pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
-        for sym, pos in engine.positions.items():
+        for sym, pos in self.shared_state.positions.items():
             try:
                 t = pos_tickers.get(sym)
                 price = t['last'] if t and t.get('last') else 0.0
@@ -262,7 +262,7 @@ class PositionManager:
         # Trade statistics
         wins = []
         losses = []
-        for t in engine.trade_history:
+        for t in self.shared_state.trade_history:
             if t.get('side') == 'sell' and 'realized_pnl' in t:
                 pnl_val = t['realized_pnl']
                 if pnl_val > 0:
@@ -311,7 +311,7 @@ class PositionManager:
         engine = self.engine
         open_trades = []
         pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
-        for symbol, pos in engine.positions.items():
+        for symbol, pos in self.shared_state.positions.items():
             # Skip invalid positions (zero amount or zero price)
             if pos.get("amount", 0) <= 0 or pos.get("price", 0) <= 0:
                 continue
@@ -329,7 +329,7 @@ class PositionManager:
 
             # Try to get fee from the most recent buy trade for this symbol
             fee = {}
-            for t in reversed(engine.trade_history):
+            for t in reversed(self.shared_state.trade_history):
                 if t['symbol'] == symbol and t['side'] == 'buy':
                     fee = t.get('fee', {})
                     break
