@@ -16,6 +16,7 @@ class ReevalLLMRunner:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
 
     async def evaluate_llm_chunks(
@@ -85,7 +86,7 @@ class ReevalLLMRunner:
                 chunk_messages = await asyncio.to_thread(
                     build_stock_selection_messages,
                     available_symbols=chunk_symbols,
-                    current_symbols=engine.current_symbols,
+                    current_symbols=self.shared_state.current_symbols,
                     max_symbols=engine.effective_max_symbols,
                     base_currency=engine.base_currency,
                     tickers=chunk_tickers,
@@ -101,7 +102,7 @@ class ReevalLLMRunner:
                     session_info=session_info,
                     sentiment_trend=chunk_sentiment_trend,
                     trading_paused=trading_paused_bool,
-                    open_positions=engine.positions,
+                    open_positions=self.shared_state.positions,
                     symbol_tenure=symbol_tenure,
                     symbol_max_tenure=symbol_max_tenure,
                     trade_pattern_analysis=trade_pattern_analysis,
@@ -130,7 +131,7 @@ class ReevalLLMRunner:
                     "open_positions": engine.positions,
                     "base_balance": base_balance,
                     "per_symbol_budget": per_symbol_budget,
-                    "current_symbols": engine.current_symbols,
+                    "current_symbols": self.shared_state.current_symbols,
                 }
                 chunk_market_hash = compute_market_hash(chunk_market_snapshot)
 
@@ -253,13 +254,13 @@ class ReevalLLMRunner:
             final_messages = await asyncio.to_thread(
                 build_final_selection_messages,
                 chunk_results=chunk_results,
-                current_symbols=engine.current_symbols,
+                current_symbols=self.shared_state.current_symbols,
                 max_symbols=engine.effective_max_symbols,
                 base_currency=engine.base_currency,
                 base_balance=base_balance,
                 per_symbol_budget=per_symbol_budget,
                 performance=perf,
-                open_positions=engine.positions,
+                open_positions=self.shared_state.positions,
                 market_breadth=market_breadth,
                 full_market_breadth=full_market_breadth,
                 market_trend=market_trend,
@@ -354,12 +355,12 @@ class ReevalLLMRunner:
 
         # Compute symbol tenure for the prompt
         symbol_tenure = {}
-        for sym, first_seen in engine._symbol_first_seen.items():
+        for sym, first_seen in self.shared_state._symbol_first_seen.items():
             symbol_tenure[sym] = round(now - first_seen)
 
         # Compute current max tenure per symbol for the prompt
         symbol_max_tenure = {}
-        for entry in engine.current_symbols:
+        for entry in self.shared_state.current_symbols:
             if 'max_tenure_hours' in entry:
                 symbol_max_tenure[entry['symbol']] = entry['max_tenure_hours']
 
