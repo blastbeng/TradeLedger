@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
 from src.exchanges.market_data import get_tradable_assets, get_quotes, get_quotes_cached, get_multi_timeframe_bars, get_bars_range, discover_btp_bonds, discover_italian_ucits_etfs, _get_yf_session, _check_yf_circuit
-from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
+from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals, get_yahoo_dividends
 from src.trading.paper_trader import PaperTrader
 from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import (
@@ -58,7 +58,7 @@ from src.utils.redis_client import get_redis_client, check_redis_connection, is_
 from src.utils.symbol_utils import is_btp_isin
 from src.utils.task_supervisor import TaskSupervisor
 from src.utils.event_bus import EventBus
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, get_latest_ohlcv_timestamps_batch, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, get_latest_ohlcv_timestamps_batch, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data, insert_dividend, cleanup_old_dividends
 from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.buy_executor import BuyExecutor
 from src.trading.components.exit_order_manager import ExitOrderManager
@@ -1523,6 +1523,33 @@ class TradingEngine:
                 logger.error(f"Ticker discovery refresh error: {e}", exc_info=True)
             await asyncio.sleep(3600)  # every 60 minutes (medium/long-term)
 
+    async def _fetch_dividends_loop(self):
+        """Periodically fetch and store dividends for tracked symbols."""
+        await asyncio.sleep(300)  # initial delay 5 minutes
+        while self._running:
+            try:
+                symbols = [entry["symbol"] for entry in self.current_symbols]
+                if not symbols:
+                    await asyncio.sleep(3600)
+                    continue
+                # Only fetch for non-BTP symbols (BTPs use coupons, not dividends)
+                stock_symbols = [s for s in symbols if not is_btp_isin(s.split("/")[0])]
+                if stock_symbols:
+                    async def _fetch_dividends(symbol: str):
+                        try:
+                            divs = await asyncio.to_thread(get_yahoo_dividends, symbol)
+                            for d in divs:
+                                await asyncio.to_thread(insert_dividend, symbol, d["date"], d["amount"])
+                        except Exception as e:
+                            logger.debug(f"Dividend fetch failed for {symbol}: {e}")
+                    await asyncio.gather(*[_fetch_dividends(s) for s in stock_symbols])
+                # Cleanup old dividends
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(self._db_executor, cleanup_old_dividends, 365)
+            except Exception as e:
+                logger.error(f"Dividend fetch loop error: {e}", exc_info=True)
+            await asyncio.sleep(86400)  # daily
+
     def _daily_realized_pnl(self) -> float:
         """Return the sum of realized P&L for trades closed today (UTC)."""
         from datetime import datetime, timezone
@@ -1593,6 +1620,7 @@ class TradingEngine:
             self._market_clock_monitor,
             self._refresh_all_quotes_loop,
             self._refresh_ticker_discovery_loop,
+            self._fetch_dividends_loop,
             self._redis_health_check_loop,
             self._health_check_loop,
         ]
