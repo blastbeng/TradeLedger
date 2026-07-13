@@ -169,6 +169,22 @@ def _split_and_merge_prompt(
         + "\n\n".join(summaries)
     )
     
+    # If the merged prompt is still too large, split and merge again
+    if estimate_tokens(merged_prompt) > max_input_tokens:
+        logger.warning("Merged prompt still exceeds limit (%d tokens). Splitting again...", estimate_tokens(merged_prompt))
+        return _split_and_merge_prompt(
+            prompt=merged_prompt,
+            system_prompt=system_prompt,
+            model_type=model_type,
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=temperature,
+            timeout=timeout,
+            max_input_tokens=max_input_tokens,
+        )
+    
     return merged_prompt
 
 
@@ -536,6 +552,46 @@ def get_cached_llm_response(
                     "Primary LLM call failed (%s). Falling back to OpenAI-compatible provider "
                     "for %s role (model=%s).", e, model_type, fallback_model
                 )
+                # Check fallback model context window
+                fb_max_input_tokens = _get_max_input_tokens("openai", model_type, True)
+                fb_effective_limit = int(fb_max_input_tokens * 0.8)
+                if messages is not None:
+                    fb_total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
+                    if fb_total_tokens > fb_effective_limit:
+                        logger.warning("Fallback messages size (~%d tokens) exceeds limit (%d). Splitting...", fb_total_tokens, fb_effective_limit)
+                        messages = [dict(msg) for msg in messages]
+                        if messages and messages[-1]["role"] == "user":
+                            messages[-1]["content"] = _split_and_merge_prompt(
+                                prompt=messages[-1]["content"],
+                                system_prompt=system_prompt,
+                                model_type=model_type,
+                                provider="openai",
+                                model=fallback_model,
+                                base_url=fallback_base_url,
+                                api_key=fallback_api_key,
+                                temperature=temperature,
+                                timeout=effective_timeout,
+                                max_input_tokens=fb_effective_limit,
+                            )
+                            api_messages = []
+                            if system_prompt:
+                                api_messages.append({"role": "system", "content": system_prompt})
+                            api_messages.extend(messages)
+                else:
+                    fb_prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+                    if fb_prompt_tokens > fb_effective_limit:
+                        prompt = _split_and_merge_prompt(
+                            prompt=prompt,
+                            system_prompt=system_prompt,
+                            model_type=model_type,
+                            provider="openai",
+                            model=fallback_model,
+                            base_url=fallback_base_url,
+                            api_key=fallback_api_key,
+                            temperature=temperature,
+                            timeout=effective_timeout,
+                            max_input_tokens=fb_effective_limit,
+                        )
                 fallback_start = time.time()
                 try:
                     from src.llm.llm_client import _get_openai_response
@@ -602,6 +658,46 @@ def get_cached_llm_response(
                     "Primary LLM call failed (%s). Falling back to Ollama provider "
                     "for %s role (model=%s).", e, model_type, fallback_model
                 )
+                # Check fallback model context window
+                fb_max_input_tokens = _get_max_input_tokens("ollama", model_type, True)
+                fb_effective_limit = int(fb_max_input_tokens * 0.8)
+                if messages is not None:
+                    fb_total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
+                    if fb_total_tokens > fb_effective_limit:
+                        logger.warning("Fallback messages size (~%d tokens) exceeds limit (%d). Splitting...", fb_total_tokens, fb_effective_limit)
+                        messages = [dict(msg) for msg in messages]
+                        if messages and messages[-1]["role"] == "user":
+                            messages[-1]["content"] = _split_and_merge_prompt(
+                                prompt=messages[-1]["content"],
+                                system_prompt=system_prompt,
+                                model_type=model_type,
+                                provider="ollama",
+                                model=fallback_model,
+                                base_url=fallback_base_url,
+                                api_key=fallback_api_key,
+                                temperature=temperature,
+                                timeout=effective_timeout,
+                                max_input_tokens=fb_effective_limit,
+                            )
+                            api_messages = []
+                            if system_prompt:
+                                api_messages.append({"role": "system", "content": system_prompt})
+                            api_messages.extend(messages)
+                else:
+                    fb_prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+                    if fb_prompt_tokens > fb_effective_limit:
+                        prompt = _split_and_merge_prompt(
+                            prompt=prompt,
+                            system_prompt=system_prompt,
+                            model_type=model_type,
+                            provider="ollama",
+                            model=fallback_model,
+                            base_url=fallback_base_url,
+                            api_key=fallback_api_key,
+                            temperature=temperature,
+                            timeout=effective_timeout,
+                            max_input_tokens=fb_effective_limit,
+                        )
                 fallback_start = time.time()
                 try:
                     from src.llm.llm_client import _get_ollama_response
