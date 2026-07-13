@@ -28,6 +28,7 @@ class BacktestManager:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self.event_bus.subscribe("run_backtest_and_final_decision", self.run_backtest_and_final_decision)
 
@@ -453,8 +454,8 @@ class BacktestManager:
             historical_backtest_results=historical_bt_results,
         )
         # Append position info if exists
-        if symbol in engine.positions:
-            pos = engine.positions[symbol]
+        if symbol in self.shared_state.positions:
+            pos = self.shared_state.positions[symbol]
             step2_messages[-1]["content"] += (
                 f"\n**Existing Position:** You already hold {pos['amount']:.6f} "
                 f"at entry {pos['price']:.4f}. A BUY will ADD to this position (scale in).\n"
@@ -751,8 +752,8 @@ class BacktestManager:
         )
         
         # Append position info if exists
-        if symbol in engine.positions:
-            pos = engine.positions[symbol]
+        if symbol in self.shared_state.positions:
+            pos = self.shared_state.positions[symbol]
             step2_messages[-1]["content"] += (
                 f"\n**Existing Position:** You already hold {pos['amount']:.6f} "
                 f"at entry {pos['price']:.4f}. A BUY will ADD to this position (scale in).\n"
