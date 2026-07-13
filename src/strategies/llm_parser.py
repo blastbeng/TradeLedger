@@ -4,6 +4,40 @@ from src.config.settings import settings
 from .base import Signal, LLMStrategy
 
 
+def _extract_first_json(text: str) -> dict:
+    """Extracts the first valid JSON object from a string by tracking brace depth."""
+    start = text.find('{')
+    while start != -1:
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(text)):
+            char = text[i]
+            if escape:
+                escape = False
+                continue
+            if char == '\\':
+                escape = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    json_str = text[start:i+1]
+                    try:
+                        return json.loads(json_str)
+                    except json.JSONDecodeError:
+                        break  # Break inner loop to find next '{'
+        start = text.find('{', start + 1)
+    raise ValueError("No valid JSON object found in LLM response")
+
+
 def parse_llm_response(response_text: str) -> Signal:
     """
     Parse the LLM's JSON response into a Signal.
@@ -19,14 +53,8 @@ def parse_llm_response(response_text: str) -> Signal:
             try:
                 data = json.loads(response_text)
             except json.JSONDecodeError:
-                # Fallback: try to extract the first JSON object from the text
-                start = response_text.find('{')
-                end = response_text.rfind('}')
-                if start != -1 and end != -1 and end > start:
-                    json_str = response_text[start:end+1]
-                    data = json.loads(json_str)
-                else:
-                    raise ValueError("No JSON object found in LLM response")
+                # Fallback: try to extract the first valid JSON object from the text
+                data = _extract_first_json(response_text)
 
         if isinstance(data, list):
             if not data:
