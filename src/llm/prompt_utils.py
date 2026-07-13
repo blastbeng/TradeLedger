@@ -146,8 +146,8 @@ def get_cached_news_summary(symbol: str, model_type: str = "weak") -> dict:
             prompt = (
                 f"Here are recent news headlines and summaries for {symbol}:\n\n"
                 f"{formatted}\n\n"
-                "Based on these articles, write a single very short sentence (max 15 words) "
-                "that explains the overall sentiment and the main reason for it. "
+                "Based on these articles, write a single concise sentence (max 20 words) "
+                "that summarizes the overall sentiment and the key reason for it. "
                 "Do not include any other text."
             )
             messages = [

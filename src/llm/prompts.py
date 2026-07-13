@@ -616,7 +616,9 @@ Maximum symbols to trade: {max_symbols}
             # Summarize the news section using the weak model to save tokens
             try:
                 from src.llm.summarizer import summarize_text
-                news_section = summarize_text(raw_news, context="strategy news", max_length=500)
+                # Calculate max_length based on number of articles (e.g., 100 chars per article, capped at 2000)
+                max_news_length = min(2000, len(articles) * 100)
+                news_section = summarize_text(raw_news, context="strategy news", max_length=max_news_length)
             except Exception:
                 news_section = raw_news
     if news_section:

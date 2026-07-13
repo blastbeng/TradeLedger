@@ -367,26 +367,6 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
     # Limit per symbol
     unique = unique[:settings.NEWS_MAX_ARTICLES_PER_SYMBOL]
 
-    # Summarize articles using the weak model to save tokens for the main LLM
-    try:
-        from src.llm.summarizer import summarize_text
-        summarize_tasks = []
-        for article in unique:
-            original_summary = article.get("summary", "")
-            if original_summary:
-                summarize_tasks.append(asyncio.to_thread(summarize_text, original_summary, context="news", max_length=150))
-            else:
-                summarize_tasks.append(asyncio.to_thread(lambda: None))
-
-        summarized_results = await asyncio.gather(*summarize_tasks, return_exceptions=True)
-        for article, result in zip(unique, summarized_results):
-            if isinstance(result, Exception):
-                logger.warning(f"Failed to summarize article for {base_symbol}: {result}")
-            elif result is not None:
-                article["summary"] = result
-    except Exception as e:
-        logger.warning(f"Failed to summarize news articles for {base_symbol}: {type(e).__name__}: {e}")
-
     # Cache
     try:
         redis_client.set(cache_key, json.dumps(unique), ex=settings.NEWS_CACHE_TTL_SECONDS)
