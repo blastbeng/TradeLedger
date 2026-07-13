@@ -17,7 +17,6 @@ from bs4 import BeautifulSoup
 
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
-from src.utils.symbol_utils import is_btp_isin
 from src.utils.btp_policy import BTPPolicy
 from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close_prices
 from src.exchanges.proxy_utils import DynamicProxyRotator, _dynamic_rotator, _get_proxies
@@ -322,7 +321,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
 
     # Filter out BTP ISINs as they are not supported by yfinance and should be served from DB
-    stock_symbols = [s for s in no_isin_symbols if not is_btp_isin(s)]
+    stock_symbols = [s for s in no_isin_symbols if not BTPPolicy.is_btp(s)]
 
     # --- Batch fetch ALL price data using yf.download (single HTTP request) ---
     # This replaces the slow sequential fast_info calls that caused timeouts.
