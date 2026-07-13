@@ -1180,16 +1180,53 @@ class PositionManager:
                         new_cost_basis = self.shared_state.positions[symbol]["cost_basis"]
                         self.shared_state.positions[symbol]["price"] = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
             elif actual_balance > recorded_amount + 1e-8:
-                # External deposit – sync to actual balance
-                logger.warning(
-                    f"Balance of {base} increased externally from {recorded_amount} to {actual_balance}. "
-                    f"Updating position."
-                )
-                async with self.shared_state._positions_lock:
-                    self.shared_state.positions[symbol]["amount"] = actual_balance
-                    self.shared_state.positions[symbol]["net_base"] = actual_balance
-                    cost_basis = self.shared_state.positions[symbol].get("cost_basis", 0.0)
-                    self.shared_state.positions[symbol]["price"] = cost_basis / actual_balance if actual_balance > 0 else 0.0
+                # Check for stock split (balance increased by a known ratio)
+                split_ratio = None
+                if recorded_amount > 0:
+                    ratio = actual_balance / recorded_amount
+                    common_ratios = [1.5, 2.0, 3.0, 4.0, 5.0, 10.0]
+                    for cr in common_ratios:
+                        if abs(ratio - cr) < 0.01:
+                            split_ratio = cr
+                            break
+
+                if split_ratio is not None:
+                    logger.warning(
+                        f"Stock split detected for {symbol}: balance increased from {recorded_amount} to {actual_balance} "
+                        f"(ratio {split_ratio}:1). Adjusting position parameters."
+                    )
+                    async with self.shared_state._positions_lock:
+                        pos = self.shared_state.positions[symbol]
+                        pos["amount"] = actual_balance
+                        pos["net_base"] = pos.get("net_base", recorded_amount) * split_ratio
+                        pos["price"] = pos.get("price", 0.0) / split_ratio
+                        if pos.get("stop_loss") is not None:
+                            pos["stop_loss"] /= split_ratio
+                        if pos.get("take_profit") is not None:
+                            pos["take_profit"] /= split_ratio
+
+                    if engine.notifier:
+                        stock_name = await engine._market_data_manager.get_stock_name(symbol)
+                        display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+                        await engine.notifier.send_notification(
+                            f"🔄 Stock split detected for {display_symbol}: {split_ratio}:1. Adjusted position from {recorded_amount} to {actual_balance} shares.",
+                            summary={
+                                "symbol": symbol,
+                                "action": "SPLIT",
+                                "reason": f"Stock split {split_ratio}:1",
+                            }
+                        )
+                else:
+                    # External deposit – sync to actual balance
+                    logger.warning(
+                        f"Balance of {base} increased externally from {recorded_amount} to {actual_balance}. "
+                        f"Updating position."
+                    )
+                    async with self.shared_state._positions_lock:
+                        self.shared_state.positions[symbol]["amount"] = actual_balance
+                        self.shared_state.positions[symbol]["net_base"] = actual_balance
+                        cost_basis = self.shared_state.positions[symbol].get("cost_basis", 0.0)
+                        self.shared_state.positions[symbol]["price"] = cost_basis / actual_balance if actual_balance > 0 else 0.0
 
         # --- External buys (balance exists but no tracked position) ---
         tracked_bases = {sym.split('/')[0] for sym in self.shared_state.positions}
