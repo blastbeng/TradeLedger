@@ -221,8 +221,6 @@ class TradingEngine:
         # Balance cache – avoids redundant API calls within an evaluation cycle
         self._balance_cache: Optional[Dict[str, float]] = None
         self._balance_cache_time: float = 0.0
-        self._portfolio_exposure_cache: Optional[Dict[str, float]] = None
-        self._portfolio_exposure_cache_time: float = 0.0
         self._position_tickers_cache: Optional[Dict[str, Dict[str, Any]]] = None
         self._position_tickers_cache_time: float = 0.0
         self._sentiment_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, sentiment_dict)
@@ -301,8 +299,6 @@ class TradingEngine:
             self._cycle_spent = 0.0
         self._balance_cache = None
         self._balance_cache_time = 0.0
-        self._portfolio_exposure_cache = None
-        self._portfolio_exposure_cache_time = 0.0
         self._position_tickers_cache = None
         self._position_tickers_cache_time = 0.0
         self._perf_cache = None
@@ -1471,7 +1467,6 @@ class TradingEngine:
                 if all_quote_symbols:
                     # Fetch quotes in batches to avoid yfinance timeouts on large symbol lists
                     await self._market_data_manager._get_quotes_batched(all_quote_symbols, timeout_per_chunk=180.0)
-                    self._portfolio_exposure_cache = None
             except Exception as e:
                 logger.error(f"Background quote refresh error: {e}", exc_info=True)
             finally:

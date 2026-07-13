@@ -848,7 +848,6 @@ class PositionManager:
             pos["timeframe"] = timeframe
 
         logger.info(f"Updated risk parameters for {symbol} from LLM strategy_params")
-        engine._portfolio_exposure_cache = None
         engine._state_dirty = True
 
     async def _close_btp_at_par(self, symbol: str, entry: dict, pos: dict, exit_reason: str, note: str, log_reason: str):
@@ -1211,4 +1210,3 @@ class PositionManager:
 
         # Persist any changes made during reconciliation
         await self.event_bus.publish("save_state", force=True)
-        engine._portfolio_exposure_cache = None
