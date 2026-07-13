@@ -317,7 +317,7 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
         db_name = get_symbol_name_from_db(base_symbol)
         if db_name and db_name not in search_terms:
             search_terms.append(db_name)
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
         logger.debug(f"fetch_news_for_symbol: failed to get DB name for {base_symbol}: {type(e).__name__}: {e}")
 
     start_time = time.time()
@@ -356,7 +356,7 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
     try:
         from src.database import get_symbol_name_from_db
         db_name = get_symbol_name_from_db(base_symbol)
-    except Exception:
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
         pass
     if db_name and db_name != base_symbol and db_name != name:
         combined_query = f'{combined_query} OR "{db_name}"'

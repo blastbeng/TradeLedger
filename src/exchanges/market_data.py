@@ -225,7 +225,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 # Refresh Redis cache from DB data
                 try:
                     redis_client.set(f"quote:{sym}", json.dumps(db_quotes[sym]), ex=300)
-                except Exception:
+                except (TypeError, ValueError, RuntimeError, ConnectionError, TimeoutError, OSError):
                     pass
         if db_quotes:
             logger.debug(f"Loaded {len(db_quotes)} quotes from database (Redis miss fallback)")
@@ -546,7 +546,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                 # Refresh Redis cache from DB data
                 try:
                     redis_client.set(f"quote:{sym}", json.dumps(db_quotes[sym]), ex=300)
-                except Exception:
+                except (TypeError, ValueError, RuntimeError, ConnectionError, TimeoutError, OSError):
                     pass
     except (RuntimeError, ValueError, OSError) as e:
         logger.warning(f"get_quotes_cached: DB quote fetch failed: {type(e).__name__}: {e}", exc_info=True)
@@ -837,7 +837,7 @@ def get_bars_range(
                 borsa_candles = borsa_candles[-limit:]
             try:
                 redis_client.set(cache_key, json.dumps(borsa_candles), ex=300)
-            except Exception:
+            except (TypeError, ValueError, RuntimeError, ConnectionError, TimeoutError, OSError):
                 pass
             return borsa_candles
         return []
