@@ -361,7 +361,7 @@ class SignalProcessor:
         """Check if LLM eval should be skipped and compute model tier. Returns (model_type, temp) or None if skipped."""
         engine = self.engine
         is_critical = flags["max_hold_expired"] or flags["stop_loss_triggered"] or flags["take_profit_triggered"] or flags["partial_tp_triggered"] or flags["dust_sweep_triggered"]
-        has_position = symbol in engine.positions
+        has_position = symbol in self.shared_state.positions
 
         if await self.should_skip_llm_eval(
             symbol=symbol, current_price=ctx["current_price"], atr=ctx["atr"], rsi=ctx["rsi"],
@@ -370,8 +370,8 @@ class SignalProcessor:
             has_position=has_position, is_critical=is_critical,
         ):
             logger.info(f"Skipping LLM for {symbol}: market unchanged, no strong signals.")
-            async with engine._eval_state_lock:
-                engine._force_eval.pop(symbol, None)
+            async with self.shared_state._eval_state_lock:
+                self.shared_state._force_eval.pop(symbol, None)
             # Do NOT update the snapshot timestamp here — it must only be updated
             # after a real LLM call (done in LLMStepManager._update_last_eval_snapshot).
             # Updating it on skip would reset the clock and defeat the time-based
@@ -383,13 +383,13 @@ class SignalProcessor:
             macd_signal=ctx["macd_signal"], macd_hist=ctx["macd_hist"], bb_upper=ctx["bb_upper"], bb_middle=ctx["bb_middle"], bb_lower=ctx["bb_lower"],
             ema_9=ctx["ema_9"], ema_21=ctx["ema_21"], stochastic_k=ctx["stochastic_k"], adx=ctx["adx"], plus_di=ctx["plus_di"], minus_di=ctx["minus_di"],
             mfi=ctx["mfi"], cci=ctx["cci"], williams_r=ctx["williams_r"], ichimoku=ctx["ichimoku"], market_regime=ctx["market_regime"],
-            market_breadth=getattr(engine, '_market_breadth', None), full_market_breadth=ctx.get("full_market_breadth"),
+            market_breadth=self.shared_state._market_breadth, full_market_breadth=ctx.get("full_market_breadth"),
             sentiment_trend_val=ctx.get("sentiment_trend_val"), volume_trend_val=ctx.get("volume_trend_val"),
             unrealized_pnl=ctx.get("unrealized_pnl"), drawdown_pct=ctx.get("drawdown_pct"),
             portfolio_exposure_pct=ctx["portfolio_exposure_pct"], portfolio_stop_risk_pct=ctx["portfolio_stop_risk_pct"],
             is_critical=is_critical, trading_paused=False, symbol_event=ctx.get("symbol_event"),
             fundamentals=ctx.get("fundamentals"), consecutive_losses=ctx.get("consecutive_losses", 0),
-            current_price=ctx["current_price"], num_candidates=len(engine.current_symbols),
+            current_price=ctx["current_price"], num_candidates=len(self.shared_state.current_symbols),
         )
         return strategy_model_type, effective_temp
 
@@ -399,7 +399,7 @@ class SignalProcessor:
         assigned_tf = symbol_entry["timeframe"]
         tf_seconds = engine._timeframe_to_seconds(assigned_tf)
         is_critical = flags["max_hold_expired"] or flags["stop_loss_triggered"] or flags["take_profit_triggered"] or flags["partial_tp_triggered"] or flags["dust_sweep_triggered"]
-        has_position = symbol in engine.positions
+        has_position = symbol in self.shared_state.positions
 
         critical_reason = None
         if is_critical:
