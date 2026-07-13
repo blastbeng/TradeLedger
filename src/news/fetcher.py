@@ -246,6 +246,12 @@ def _is_relevant(symbol: str, title: str, summary: str, name: Optional[str] = No
                 "fed", "interest rate", "inflation", "gdp", "jobs report",
                 "analyst", "upgrade", "downgrade", "ipo", "merger", "acquisition",
                 "bond", "btp", "treasury", "yield", "maturity",
+                # Italian keywords
+                "azioni", "bilancio", "dividendo", "utili", "ricavi", "mercato",
+                "prezzo", "supporto", "resistenza", "analista", "fusione",
+                "acquisizione", "bce", "inflazione", "pil", "titolo",
+                "rendimento", "scadenza", "bot", "crescita", "quotazione",
+                "volatilità", "indice",
             ]
             for kw in stock_keywords:
                 if kw in text:
@@ -264,6 +270,12 @@ def _is_relevant(symbol: str, title: str, summary: str, name: Optional[str] = No
         "fed", "interest rate", "inflation", "gdp", "jobs report",
         "analyst", "upgrade", "downgrade", "ipo", "merger", "acquisition",
         "bond", "btp", "treasury", "yield", "maturity",
+        # Italian keywords
+        "azioni", "bilancio", "dividendo", "utili", "ricavi", "mercato",
+        "prezzo", "supporto", "resistenza", "analista", "fusione",
+        "acquisizione", "bce", "inflazione", "pil", "titolo",
+        "rendimento", "scadenza", "bot", "crescita", "quotazione",
+        "volatilità", "indice",
     ]
     # Score: +2 for symbol in title, +1 for each stock keyword found
     score = 0
