@@ -113,7 +113,6 @@ class TradingEngine:
         self.initial_balance: float = 0.0
         self.last_loss_time = self.shared_state.last_loss_time
         self.cooldown_durations = self.shared_state.cooldown_durations
-        self._global_risk_multiplier: Optional[float] = None
         self._last_strategy_eval = self.shared_state._last_strategy_eval
         self._strategy_intervals = self.shared_state._strategy_intervals
         self._symbol_reevaluation_interval = settings.SYMBOL_REEVALUATION_INTERVAL
@@ -135,17 +134,13 @@ class TradingEngine:
             self.redis.delete(key)
 
         # Track quote currency spent in the current cycle to avoid over-allocating
-        self._cycle_spent = 0.0
         self._symbol_first_seen = self.shared_state._symbol_first_seen
-        self._market_breadth: Optional[Dict[str, Any]] = None
         self._cycle_spent_lock = self.shared_state._cycle_spent_lock
         self._positions_lock = self.shared_state._positions_lock
         self._pending_entries_lock = self.shared_state._pending_entries_lock
         self._queued_orders_lock = self.shared_state._queued_orders_lock
         self._state_lock = self.shared_state._state_lock
         self._trade_history_lock = self.shared_state._trade_history_lock
-        self._state_save_pending = False
-        self._state_dirty: bool = False
         # --- Extracted components ---
         self.event_bus.subscribe("remove_symbol_if_paused", self._remove_symbol_if_paused)
         self._state_persistence = StatePersistence(self, self.event_bus)
@@ -202,8 +197,6 @@ class TradingEngine:
         # Trade pattern analysis cache – recomputed only when new trades are added
         self._trade_pattern_cache: Optional[Dict[str, Any]] = None
         self._trade_pattern_cache_trade_count: int = -1
-        self._trade_history_version: int = 0
-        self._realized_pnl_offset: float = 0.0
 
         # Cache for tradable assets list (refreshed every 5 minutes)
         self._tradable_assets_cache: List[str] = []
@@ -221,10 +214,6 @@ class TradingEngine:
         self._asset_cache_time: Dict[str, float] = {}
 
         # Balance cache – avoids redundant API calls within an evaluation cycle
-        self._balance_cache: Optional[Dict[str, float]] = None
-        self._balance_cache_time: float = 0.0
-        self._position_tickers_cache: Optional[Dict[str, Dict[str, Any]]] = None
-        self._position_tickers_cache_time: float = 0.0
         self._sentiment_cache = self.shared_state._sentiment_cache
         self.queued_orders = self.shared_state.queued_orders
         # Force immediate LLM evaluation when an entry signal is detected
@@ -235,6 +224,103 @@ class TradingEngine:
         self._entry_signal_state = self.shared_state._entry_signal_state
         # Lock to protect _force_eval, _force_eval_time, _last_strategy_eval, and _strategy_intervals
         self._eval_state_lock = self.shared_state._eval_state_lock
+
+    # --- Scalar state properties (proxy to SharedState) ---
+    @property
+    def _cycle_spent(self) -> float:
+        return self.shared_state._cycle_spent
+
+    @_cycle_spent.setter
+    def _cycle_spent(self, value: float) -> None:
+        self.shared_state._cycle_spent = value
+
+    @property
+    def _state_save_pending(self) -> bool:
+        return self.shared_state._state_save_pending
+
+    @_state_save_pending.setter
+    def _state_save_pending(self, value: bool) -> None:
+        self.shared_state._state_save_pending = value
+
+    @property
+    def _state_dirty(self) -> bool:
+        return self.shared_state._state_dirty
+
+    @_state_dirty.setter
+    def _state_dirty(self, value: bool) -> None:
+        self.shared_state._state_dirty = value
+
+    @property
+    def _global_risk_multiplier(self) -> Optional[float]:
+        return self.shared_state._global_risk_multiplier
+
+    @_global_risk_multiplier.setter
+    def _global_risk_multiplier(self, value: Optional[float]) -> None:
+        self.shared_state._global_risk_multiplier = value
+
+    @property
+    def _balance_cache(self) -> Optional[Dict[str, float]]:
+        return self.shared_state._balance_cache
+
+    @_balance_cache.setter
+    def _balance_cache(self, value: Optional[Dict[str, float]]) -> None:
+        self.shared_state._balance_cache = value
+
+    @property
+    def _balance_cache_time(self) -> float:
+        return self.shared_state._balance_cache_time
+
+    @_balance_cache_time.setter
+    def _balance_cache_time(self, value: float) -> None:
+        self.shared_state._balance_cache_time = value
+
+    @property
+    def _position_tickers_cache(self) -> Optional[Dict[str, Dict[str, Any]]]:
+        return self.shared_state._position_tickers_cache
+
+    @_position_tickers_cache.setter
+    def _position_tickers_cache(self, value: Optional[Dict[str, Dict[str, Any]]]) -> None:
+        self.shared_state._position_tickers_cache = value
+
+    @property
+    def _position_tickers_cache_time(self) -> float:
+        return self.shared_state._position_tickers_cache_time
+
+    @_position_tickers_cache_time.setter
+    def _position_tickers_cache_time(self, value: float) -> None:
+        self.shared_state._position_tickers_cache_time = value
+
+    @property
+    def _market_breadth(self) -> Optional[Dict[str, Any]]:
+        return self.shared_state._market_breadth
+
+    @_market_breadth.setter
+    def _market_breadth(self, value: Optional[Dict[str, Any]]) -> None:
+        self.shared_state._market_breadth = value
+
+    @property
+    def _trade_history_version(self) -> int:
+        return self.shared_state._trade_history_version
+
+    @_trade_history_version.setter
+    def _trade_history_version(self, value: int) -> None:
+        self.shared_state._trade_history_version = value
+
+    @property
+    def _realized_pnl_offset(self) -> float:
+        return self.shared_state._realized_pnl_offset
+
+    @_realized_pnl_offset.setter
+    def _realized_pnl_offset(self, value: float) -> None:
+        self.shared_state._realized_pnl_offset = value
+
+    @property
+    def _portfolio_exposure_cache(self) -> Optional[Dict[str, float]]:
+        return self.shared_state._portfolio_exposure_cache
+
+    @_portfolio_exposure_cache.setter
+    def _portfolio_exposure_cache(self, value: Optional[Dict[str, float]]) -> None:
+        self.shared_state._portfolio_exposure_cache = value
 
     async def _initialize_clients(self):
         """Initialize clients and load persisted state (non‑blocking)."""
