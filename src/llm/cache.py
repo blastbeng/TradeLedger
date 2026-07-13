@@ -166,7 +166,7 @@ def get_cached_llm_response(
     # Build cache key
     if messages is not None:
         # Normalize message content for cache key to improve cache hit rate.
-        # Numbers with 3+ decimal places are rounded to 2 in the key only;
+        # Numbers are rounded to 5 significant figures in the key only;
         # the actual messages sent to the LLM retain full precision.
         normalized_messages = [
             {**msg, "content": _normalize_text_for_cache(msg.get("content", ""))}
@@ -540,7 +540,7 @@ def _stringify_keys(obj):
 def _normalize_for_hash(obj, depth=0):
     """Recursively normalize data for stable hashing.
     
-    - Rounds floats to 3 significant figures (percentage-based rounding) to treat small absolute changes on high-priced assets as insignificant while preserving precision for low-priced assets.
+    - Rounds floats to 5 significant figures (percentage-based rounding) to treat small absolute changes on high-priced assets as insignificant while preserving precision for low-priced assets.
     - Excludes keys containing 'timestamp', 'time', 'fetched_at', 'created_at',
       'published_at', 'last_eval', 'last_auto_resume' (volatile fields that
       change every cycle but don't affect trading decisions).
