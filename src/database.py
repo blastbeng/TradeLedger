@@ -7,7 +7,7 @@ import functools
 from datetime import datetime
 import hashlib
 import threading
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from contextlib import contextmanager
 
 from src.config.settings import settings
@@ -2557,6 +2557,85 @@ def get_total_dividends_for_symbols(symbols: List[str]) -> Dict[str, float]:
             total = float(row["total"])
             for orig in base_to_orig.get(base, []):
                 result[orig] = total
+        return result
+    finally:
+        conn.close()
+
+
+def get_next_ex_dividend_date(symbol: str, days_ahead: int = 60) -> Optional[Tuple[str, int]]:
+    """Return (ex_date_str, days_until) for the next upcoming dividend within days_ahead.
+    Returns None if no upcoming dividend found.
+    """
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+    conn = get_connection()
+    try:
+        from datetime import datetime, timedelta
+        cutoff_date = (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        sql = _adapt_sql(
+            "SELECT ex_date, amount FROM dividends "
+            "WHERE symbol = %s AND ex_date >= %s AND ex_date <= %s "
+            "ORDER BY ex_date ASC LIMIT 1"
+        )
+        row = conn.execute(sql, (base, today_str, cutoff_date)).fetchone()
+        if row:
+            ex_date_str = row["ex_date"]
+            ex_dt = datetime.strptime(ex_date_str, "%Y-%m-%d")
+            days_until = (ex_dt - datetime.now()).days
+            return (ex_date_str, days_until)
+        return None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def get_dividend_yields_for_symbols(symbols: List[str], prices: Dict[str, float]) -> Dict[str, float]:
+    """Compute trailing 12-month dividend yield for multiple symbols.
+
+    Args:
+        symbols: List of full pair symbols (e.g., 'AAPL/USD')
+        prices: Dict mapping base symbol -> current price
+
+    Returns dict mapping original input symbol -> yield as a fraction (e.g., 0.032 = 3.2%).
+    Only includes symbols with yield > 0.
+    """
+    if not symbols or not prices:
+        return {}
+    from datetime import datetime, timedelta
+    cutoff_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+
+    base_to_orig: Dict[str, list] = {}
+    for s in symbols:
+        base = s.split("/")[0] if "/" in s else s
+        base_to_orig.setdefault(base, []).append(s)
+    bases = list(base_to_orig.keys())
+
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                "SELECT symbol, SUM(amount) as total FROM dividends "
+                "WHERE symbol = ANY(%s) AND ex_date >= %s GROUP BY symbol"
+            )
+            rows = conn.execute(sql, (bases, cutoff_date)).fetchall()
+        else:
+            placeholders = ",".join(["?" for _ in bases])
+            sql = _adapt_sql(
+                f"SELECT symbol, SUM(amount) as total FROM dividends "
+                f"WHERE symbol IN ({placeholders}) AND ex_date >= %s GROUP BY symbol"
+            )
+            rows = conn.execute(sql, bases + [cutoff_date]).fetchall()
+
+        result = {}
+        for row in rows:
+            base = row["symbol"]
+            total_div = float(row["total"]) if row["total"] else 0.0
+            price = prices.get(base, 0.0)
+            if total_div > 0 and price > 0:
+                yield_frac = total_div / price
+                for orig in base_to_orig.get(base, []):
+                    result[orig] = round(yield_frac, 4)
         return result
     finally:
         conn.close()
