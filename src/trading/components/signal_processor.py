@@ -32,9 +32,10 @@ from src.trading.components.post_decision_manager import PostDecisionManager
 from src.trading.components.pause_resume_manager import PauseResumeManager
 
 try:
-    from src.news.fetcher import detect_upcoming_events
+    from src.news.fetcher import detect_upcoming_events, get_upcoming_earnings
 except ImportError:
     detect_upcoming_events = None
+    get_upcoming_earnings = None
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +208,13 @@ class SignalProcessor:
             except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, json.JSONDecodeError):
                 pass
 
+        upcoming_earnings = None
+        if get_upcoming_earnings is not None:
+            try:
+                upcoming_earnings = await asyncio.to_thread(get_upcoming_earnings, symbol)
+            except Exception:
+                pass
+
         _ctx = await self.gather_prompt_context(
             symbol=symbol, assigned_tf=assigned_tf, tf_seconds=tf_seconds, ticker=ticker,
             base_balance=base_balance, ohlcv_data=ohlcv_data,
@@ -311,6 +319,7 @@ class SignalProcessor:
             max_portfolio_stop_risk_pct=_ctx["max_port_risk"],
             trade_pattern_analysis=trade_pattern_analysis,
             symbol_event=symbol_event,
+            upcoming_earnings=upcoming_earnings,
             queued_orders=self.shared_state.queued_orders,
             fundamentals=symbol_data["fundamentals"],
             min_hold_time_mult=_ctx["min_hold_time_mult"],
