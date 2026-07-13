@@ -39,6 +39,7 @@ def build_stock_selection_prompt(
     min_stop_atr_mult: float = 1.0,
     min_viable_trade_amount: float = 0.0,
     btp_ytm: Optional[Dict[str, float]] = None,
+    news_section: Optional[str] = None,
 ) -> str:
     """Build a prompt to ask the LLM which stocks/ETFs to trade."""
     # Trim large lists to prevent context window overflow
@@ -89,8 +90,7 @@ def build_stock_selection_prompt(
     div_yields = get_dividend_yields_for_symbols(available_symbols, prices)
 
     # --- News section ---
-    news_section = ""
-    if settings.NEWS_ENABLED:
+    if not news_section and settings.NEWS_ENABLED:
         news_lines = []
         # Limit news to top 20 candidates to avoid exceeding LLM context window
         symbols_to_check = available_symbols[:20]
@@ -101,13 +101,7 @@ def build_stock_selection_prompt(
                 formatted = _format_news_for_prompt(articles)
                 news_lines.append(f"**{sym}**\n{formatted}")
         if news_lines:
-            raw_news = "Recent news for all candidate stocks:\n\n" + "\n\n".join(news_lines)
-            # Summarize the combined news section using the weak model to save tokens
-            try:
-                from src.llm.summarizer import summarize_text
-                news_section = summarize_text(raw_news, context="stock selection news", max_length=1000)
-            except Exception:
-                news_section = raw_news
+            news_section = "Recent news for all candidate stocks:\n\n" + "\n\n".join(news_lines)
 
     available_timeframes = [tf for tf in settings.OHLCV_TIMEFRAMES if tf in TIMEFRAME_MAP]
     prompt = f"""Current base currency: {base_currency}

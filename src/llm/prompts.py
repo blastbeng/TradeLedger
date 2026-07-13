@@ -122,6 +122,7 @@ class StrategyPromptData:
     ytm: Optional[float] = None
     dividend_yield: Optional[float] = None
     next_ex_dividend: Optional[Tuple[str, int]] = None
+    news_section: Optional[str] = None
 
 
 def build_strategy_prompt(
@@ -616,19 +617,11 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"\nPivots: P={daily_pivot_points['pivot']:.2f},R1={daily_pivot_points['r1']:.2f},R2={daily_pivot_points['r2']:.2f},S1={daily_pivot_points['s1']:.2f},S2={daily_pivot_points['s2']:.2f}\n"
 
     # --- News section (detailed articles) ---
-    news_section = ""
-    if settings.NEWS_ENABLED:
+    news_section = data.news_section
+    if not news_section and settings.NEWS_ENABLED:
         articles = get_news_for_symbol(symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
         if articles:
-            raw_news = "Recent news articles for this stock:\n" + _format_news_for_prompt(articles)
-            # Summarize the news section using the weak model to save tokens
-            try:
-                from src.llm.summarizer import summarize_text
-                # Calculate max_length based on number of articles (e.g., 100 chars per article, capped at 2000)
-                max_news_length = min(2000, len(articles) * 100)
-                news_section = summarize_text(raw_news, context="strategy news", max_length=max_news_length)
-            except Exception:
-                news_section = raw_news
+            news_section = "Recent news articles for this stock:\n" + _format_news_for_prompt(articles)
     if news_section:
         prompt += f"\n{news_section}\n"
 
