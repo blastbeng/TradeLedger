@@ -104,6 +104,10 @@ class StatePersistence:
         async with self.shared_state._state_lock:
             await self._save_state_impl()
 
+        if force:
+            from src.web.app import invalidate_ws_payload_cache
+            invalidate_ws_payload_cache()
+
     async def _save_state_impl(self):
         """Actual state persistence (must be called under _state_lock)."""
         engine = self.engine

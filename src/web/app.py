@@ -170,6 +170,12 @@ _ws_payload_cache: Optional[dict] = None
 _ws_payload_cache_time: float = 0.0
 _ws_payload_ttl: float = 5.0  # seconds — can be changed via API
 
+def invalidate_ws_payload_cache():
+    """Clear the WebSocket payload cache so clients get fresh data immediately."""
+    global _ws_payload_cache, _ws_payload_cache_time
+    _ws_payload_cache = None
+    _ws_payload_cache_time = 0.0
+
 def set_engine(engine):
     global _engine
     _engine = engine
