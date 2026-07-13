@@ -8,7 +8,7 @@ import time
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from src.config.settings import settings
-from src.database import get_aggregate_sentiment_from_db, insert_signal
+from src.database import get_aggregate_sentiment_from_db, insert_signal, insert_llm_decision
 from src.llm.prompts import get_cached_news_summary
 from src.strategies.base import Signal
 from src.strategies.validator import validate_signal
@@ -158,6 +158,18 @@ class PostDecisionManager:
             "limit_price": _sig_params.get("limit_price"),
         }
         await asyncio.to_thread(insert_signal, signal_record)
+
+        # Record decision for quality tracking
+        try:
+            await asyncio.to_thread(
+                insert_llm_decision,
+                data.symbol,
+                validated.action,
+                data.current_price,
+                data.assigned_tf
+            )
+        except Exception as e:
+            logger.warning(f"Failed to insert LLM decision for quality tracking: {type(e).__name__}: {e}")
 
         if engine.notifier:
             emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⏸️"}.get(validated.action, "❓")
