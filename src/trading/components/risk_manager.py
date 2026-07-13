@@ -102,7 +102,7 @@ class RiskManager:
         # Batch-fetch missing tickers once before the per-position loop
         risk_tickers = await self._fetch_risk_tickers(symbols_to_check)
 
-        for symbol, pos in list(engine.positions.items()):
+        for symbol, pos in list(self.shared_state.positions.items()):
             if symbols_to_check is not None and symbol not in symbols_to_check:
                 continue
             await self._check_position_risk(
@@ -248,14 +248,14 @@ class RiskManager:
         risk_tickers: Dict[str, Dict[str, Any]] = {}
         missing_risk: List[str] = []
 
-        target_symbols = symbols_to_check if symbols_to_check is not None else list(engine.positions.keys())
+        target_symbols = symbols_to_check if symbols_to_check is not None else list(self.shared_state.positions.keys())
 
         for sym in target_symbols:
             missing_risk.append(sym.split("/")[0])
         if missing_risk:
             try:
                 raw = await engine._market_data_manager._get_quotes_batched(missing_risk, timeout_per_chunk=45.0)
-                engine._portfolio_exposure_cache = None
+                self.shared_state._portfolio_exposure_cache = None
                 for sym in target_symbols:
                     base = sym.split("/")[0]
                     if base in raw:
