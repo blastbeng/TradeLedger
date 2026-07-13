@@ -671,7 +671,7 @@ class SignalProcessor:
                 rank = sum(1 for v in sorted_atr if v <= atr)
                 return round(rank / len(sorted_atr) * 100, 1)
         except (json.JSONDecodeError, ValueError, TypeError, ConnectionError, TimeoutError, OSError) as e:
-            logger.info(f"ATR percentile computation failed for {symbol}: {e}")
+            logger.warning(f"ATR percentile computation failed for {symbol}: {type(e).__name__}: {e}")
 
         return None
 
@@ -739,7 +739,7 @@ class SignalProcessor:
                     if db_candles:
                         return tf, [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
                 except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
-                    logger.debug(f"DB OHLCV fetch failed for {symbol} {tf}: {e}")
+                    logger.debug(f"DB OHLCV fetch failed for {symbol} {tf}: {type(e).__name__}: {e}")
                 return tf, None
             ohlcv_results = await asyncio.gather(*[_fetch_ohlcv_tf(tf) for tf in settings.OHLCV_TIMEFRAMES])
             for tf, candles in ohlcv_results:
@@ -917,7 +917,7 @@ class SignalProcessor:
             try:
                 aggregate_sentiment = await engine._get_cached_sentiment(symbol)
             except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
-                logger.info(f"Could not fetch aggregate sentiment for {symbol}: {e}")
+                logger.warning(f"Could not fetch aggregate sentiment for {symbol}: {type(e).__name__}: {e}")
 
         # Sentiment trend
         sentiment_trend_val = None
@@ -1606,5 +1606,5 @@ class SignalProcessor:
                     await asyncio.to_thread(engine.redis.setex, ratio_cache_key, cache_ttl, "1.0")
                 return 1.0
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError) as e:
-            logger.info(f"Volume trend computation failed for {symbol}: {e}")
+            logger.warning(f"Volume trend computation failed for {symbol}: {type(e).__name__}: {e}")
             return None

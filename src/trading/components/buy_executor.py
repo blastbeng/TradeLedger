@@ -681,7 +681,7 @@ class BuyExecutor:
                         }
                     )
         except (AttributeError, TypeError, ValueError, RuntimeError) as e:
-            logger.warning(f"Could not verify/adjust min order size for {symbol}: {e}")
+            logger.warning(f"Could not verify/adjust min order size for {symbol}: {type(e).__name__}: {e}")
 
         return amount
 

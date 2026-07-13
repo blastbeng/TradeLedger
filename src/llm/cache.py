@@ -215,7 +215,7 @@ def get_cached_llm_response(
             except (json.JSONDecodeError, TypeError):
                 pass  # fall through to re-fetch
     except Exception as e:
-        logger.warning(f"Redis cache get failed: {e}. Proceeding without cache.")
+        logger.warning(f"Redis cache get failed: {type(e).__name__}: {e}. Proceeding without cache.")
 
     logger.debug("LLM cache miss: model_type=%s, system_prompt=%.200s..., prompt=%.500s...", model_type, system_prompt, prompt)
     # Context window management: hard limit at 1,000,000 tokens
@@ -512,7 +512,7 @@ def get_cached_llm_response(
         redis_client.set(cache_key, cache_data, ex=ttl)
         logger.debug("LLM cache miss – stored response for key %s (provider=%s, model=%s)", cache_key[:32], used_provider, used_model)
     except Exception as e:
-        logger.warning(f"Redis cache setex failed: {e}. Response will not be cached.")
+        logger.warning(f"Redis cache setex failed: {type(e).__name__}: {e}. Response will not be cached.")
     return {
         "response": response_text,
         "provider": used_provider,

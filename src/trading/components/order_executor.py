@@ -280,7 +280,7 @@ class OrderExecutor:
                     await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
                     logger.info(f"Cancelled OCO pair {oco_pair_id} for {queued['symbol']}")
                 except (RuntimeError, ValueError, ConnectionError) as e:
-                    logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {e}")
+                    logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {type(e).__name__}: {e}")
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders = [
                         q for q in self.shared_state.queued_orders
@@ -450,7 +450,7 @@ class OrderExecutor:
         try:
             await asyncio.to_thread(engine.trader.cancel_order, order_id)
         except (RuntimeError, ValueError, ConnectionError) as e:
-            logger.error(f"Failed to cancel timed-out order {order_id}: {e}")
+            logger.error(f"Failed to cancel timed-out order {order_id}: {type(e).__name__}: {e}")
 
         # Refund remaining reserved capital for buy orders
         if queued['side'] == 'buy':

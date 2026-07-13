@@ -48,7 +48,7 @@ class TaskSupervisor:
                     self._task.cancel()
                 break
             except Exception as e:
-                logger.error(f"Task {self.name} failed: {e}", exc_info=True)
+                logger.error(f"Task {self.name} failed: {type(e).__name__}: {e}", exc_info=True)
                 self._restart_count += 1
                 self.last_failure_time = time.time()
                 self.last_exception = str(e)

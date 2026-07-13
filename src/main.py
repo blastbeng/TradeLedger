@@ -183,7 +183,7 @@ def _validate_startup_settings():
         save_trading_state("__startup_test__", "ok")
         load_trading_state()
     except Exception as e:
-        logging.critical(f"Database is not writable: {e}. Exiting.")
+        logging.critical(f"Database is not writable: {type(e).__name__}: {e}. Exiting.")
         sys.exit(1)
 
 async def main():

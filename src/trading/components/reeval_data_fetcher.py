@@ -302,7 +302,7 @@ class ReevalDataFetcher:
                                 for c in db_candles
                             ]
                     except Exception as e:
-                        logger.debug(f"DB OHLCV fetch failed for {sym} {tf}: {e}")
+                        logger.debug(f"DB OHLCV fetch failed for {sym} {tf}: {type(e).__name__}: {e}")
                 return sym, data
             tasks = [_fetch_ohlcv(sym) for sym in sorted_by_vol]
             results = await asyncio.gather(*tasks)

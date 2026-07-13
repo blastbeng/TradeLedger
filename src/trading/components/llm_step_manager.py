@@ -219,7 +219,7 @@ class LLMStepManager:
             await self._increment_llm_failures()
             # Fall through to fallback HOLD below
         except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
-            logger.error(f"LLM Step 1a failed for {symbol}: {e}")
+            logger.error(f"LLM Step 1a failed for {symbol}: {type(e).__name__}: {e}")
             async with self.shared_state._eval_state_lock:
                 self.shared_state._force_eval[symbol] = True  # Force retry on next cycle
             await self._increment_llm_failures()
@@ -429,7 +429,7 @@ class LLMStepManager:
                 },
             })
         except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
-            logger.error(f"LLM Step 1b failed for {symbol}: {e}. Using Step 1a analysis as fallback.")
+            logger.error(f"LLM Step 1b failed for {symbol}: {type(e).__name__}: {e}. Using Step 1a analysis as fallback.")
             step1b_response = json.dumps({
                 "action": analysis_result.get("action", "HOLD"),
                 "confidence": analysis_result.get("confidence", 0.0),
@@ -469,7 +469,7 @@ class LLMStepManager:
                 llm_provider = response2["provider"]
                 llm_model = response2["model"]
             except (asyncio.TimeoutError, ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e2:
-                logger.error(f"LLM Step 1b response still invalid after retry for {symbol}: {e2}")
+                logger.error(f"LLM Step 1b response still invalid after retry for {symbol}: {type(e2).__name__}: {e2}")
                 preliminary_strategy = LLMStrategy(self._create_fallback_hold_signal(
                     symbol, "Failed to parse LLM Step 1b response after retry", strategy_model_type
                 ))

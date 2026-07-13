@@ -142,7 +142,7 @@ class SellExecutor:
                     )
                 return
         except (AttributeError, TypeError, ValueError, RuntimeError, KeyError) as e:
-            logger.warning(f"Could not verify min sell size for {symbol}: {e}")
+            logger.warning(f"Could not verify min sell size for {symbol}: {type(e).__name__}: {e}")
 
         need_limit = not await engine._is_market_open()
         limit_price = None
@@ -654,7 +654,7 @@ class SellExecutor:
         try:
             balance = await asyncio.to_thread(engine.trader.get_balance, base)
         except (RuntimeError, ValueError, ConnectionError) as e:
-            logger.warning(f"Dust sweep: could not fetch balance for {base}: {e}")
+            logger.warning(f"Dust sweep: could not fetch balance for {base}: {type(e).__name__}: {e}")
             return
         if balance <= 0:
             return
@@ -669,7 +669,7 @@ class SellExecutor:
             ticker = quotes.get(base)
             price = ticker["last"]
         except (KeyError, RuntimeError, ConnectionError, ValueError) as e:
-            logger.warning(f"Dust sweep: could not fetch price for {symbol}: {e}")
+            logger.warning(f"Dust sweep: could not fetch price for {symbol}: {type(e).__name__}: {e}")
             return
 
         # Fetch minimum order size from asset info
@@ -919,7 +919,7 @@ class SellExecutor:
                 )
             return True
         except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
-            logger.error(f"{level_label} sell failed for {symbol}: {e}")
+            logger.error(f"{level_label} sell failed for {symbol}: {type(e).__name__}: {e}")
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"❌ {level_label} sell failed for {display_symbol}: {e}",

@@ -46,7 +46,7 @@ def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optio
                     _time.sleep(0.5 * (2 ** attempt))
                     continue
             except (RuntimeError, ValueError, KeyError, AttributeError, OSError) as e:
-                logger.debug(f"Failed to fetch info for {symbol} (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                logger.debug(f"Failed to fetch info for {symbol} (attempt {attempt + 1}/{max_retries + 1}): {type(e).__name__}: {e}")
                 if attempt < max_retries:
                     _time.sleep(0.5 * (2 ** attempt))
 
@@ -86,7 +86,7 @@ def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
                 warnings.simplefilter("ignore")
                 tables = pd.read_html(response.text)
         except (requests.RequestException, ValueError, OSError) as e:
-            logger.debug(f"Failed to scrape {url}: {str(e)[:200]}")
+            logger.debug(f"Failed to scrape {url}: {type(e).__name__}: {str(e)[:200]}")
             continue
 
         for table in tables:
@@ -329,7 +329,7 @@ def discover_italian_ucits_etfs() -> List[str]:
             if symbols_to_save:
                 save_discovered_symbols_batch(symbols_to_save)
         except (RuntimeError, ValueError, OSError) as e:
-            logger.warning(f"Failed to save ETF symbols to DB: {e}")
+            logger.warning(f"Failed to save ETF symbols to DB: {type(e).__name__}: {e}")
         return base_symbols
     except (ImportError, RuntimeError, ValueError, AttributeError, OSError, TypeError) as e:
         logger.warning(f"Failed to discover Italian UCITS ETFs: {e}")
@@ -368,7 +368,7 @@ def _save_discovered_assets_to_db(base_symbols: List[str], etf_symbols: List[str
             save_discovered_symbols_batch(symbols_to_save)
             logger.info(f"Saved {len(symbols_to_save)} discovered symbols to database")
         except (RuntimeError, ValueError, OSError) as e:
-            logger.warning(f"Failed to save discovered symbols to database: {e}")
+            logger.warning(f"Failed to save discovered symbols to database: {type(e).__name__}: {e}")
 
 
 def get_tradable_assets() -> List[str]:

@@ -165,7 +165,7 @@ class ReevalLLMRunner:
                             logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM failed: {e}. Retrying...")
                             await asyncio.sleep(5 * (attempt + 1))
                         else:
-                            logger.error(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM failed after all retries: {e}")
+                            logger.error(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM failed after all retries: {type(e).__name__}: {e}")
 
                 if chunk_response:
                     try:
@@ -307,7 +307,7 @@ class ReevalLLMRunner:
                         logger.warning(f"Final selection LLM failed: {e}. Retrying...")
                         await asyncio.sleep(5 * (attempt + 1))
                     else:
-                        logger.error(f"Final selection LLM failed after all retries: {e}")
+                        logger.error(f"Final selection LLM failed after all retries: {type(e).__name__}: {e}")
 
             # Fallback: merge all chunk selections if final call failed
             if response is None and chunk_results:

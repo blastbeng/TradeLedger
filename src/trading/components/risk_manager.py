@@ -77,7 +77,7 @@ class RiskManager:
                     pnl_pct=round(pnl_pct, 6),
                 )
             except Exception as e:
-                logger.debug(f"Failed to record P&L snapshot for {symbol}: {e}")
+                logger.debug(f"Failed to record P&L snapshot for {symbol}: {type(e).__name__}: {e}")
 
     async def check_risk_management(self, symbols_to_check: Optional[List[str]] = None):
         """Check open positions and close if stop-loss, take-profit, or trailing stop is hit."""
@@ -196,7 +196,7 @@ class RiskManager:
                         summary={"action": "RESUME", "reason": "Portfolio drawdown recovered"}
                     )
         except Exception as e:
-            logger.error(f"Failed to compute portfolio drawdown for circuit breaker: {e}")
+            logger.error(f"Failed to compute portfolio drawdown for circuit breaker: {type(e).__name__}: {e}")
 
     async def _check_portfolio_loss_cooldown(self) -> None:
         """Check for consecutive losses and trigger a portfolio-level cooldown."""

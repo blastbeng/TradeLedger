@@ -344,7 +344,7 @@ class BacktestManager:
                     variant_params, bt_stats, bt_summary
                 )
             except Exception as e:
-                logger.warning(f"Failed to persist backtest result to DB for {symbol}: {e}")
+                logger.warning(f"Failed to persist backtest result to DB for {symbol}: {type(e).__name__}: {e}")
 
         return bt_stats, bt_summary
 
@@ -386,7 +386,7 @@ class BacktestManager:
                 else:
                     return {"variant_params": vp, "summary": bt_summary or "Insufficient data for backtest.", "stats": {}}
             except Exception as e:
-                logger.warning(f"Backtest variant failed for {symbol}: {e}")
+                logger.warning(f"Backtest variant failed for {symbol}: {type(e).__name__}: {e}")
                 return {"variant_params": vp, "summary": f"Backtest error: {e}", "stats": {}}
 
         return list(await asyncio.gather(*[_run_single_variant(vp) for vp in variants_to_test]))

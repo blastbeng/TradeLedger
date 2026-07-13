@@ -115,6 +115,6 @@ def check_redis_connection() -> bool:
         set_redis_available(True)
         return True
     except Exception as e:
-        logger.critical("Redis connection failed: %s", e)
+        logger.critical("Redis connection failed: %s: %s", type(e).__name__, e)
         set_redis_available(False)
         return False

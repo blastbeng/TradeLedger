@@ -58,7 +58,7 @@ class EntrySignalManager:
                 ind = await asyncio.to_thread(compute_all_indicators, raw_candles)
             except (ValueError, TypeError, IndexError, ZeroDivisionError) as e:
                 logger.debug(
-                    f"Failed to compute indicators on-the-fly for {symbol} {timeframe}: {e}"
+                    f"Failed to compute indicators on-the-fly for {symbol} {timeframe}: {type(e).__name__}: {e}"
                 )
                 return False
             if not ind:

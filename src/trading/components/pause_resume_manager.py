@@ -201,7 +201,7 @@ class PauseResumeManager:
                 llm_model = pause_result["model"]
                 decision = json.loads(response)
             except (asyncio.TimeoutError, ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
-                logger.warning(f"Pause/resume LLM call failed: {e}")
+                logger.warning(f"Pause/resume LLM call failed: {type(e).__name__}: {e}")
                 # Track consecutive failures in Redis
                 fail_key = "trading:pause:llm_fail_count"
                 current_fails = await asyncio.to_thread(engine.redis.incr, fail_key)

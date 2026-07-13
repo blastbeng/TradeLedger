@@ -271,13 +271,13 @@ def _migrate_db():
                     if attempt < max_retries:
                         delay = initial_delay * (2 ** attempt)
                         logger.warning(
-                            f"Migration {sql} failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                            f"Migration {sql} failed (attempt {attempt + 1}/{max_retries + 1}): {type(e).__name__}: {e}. "
                             f"Retrying in {delay:.1f}s..."
                         )
                         time.sleep(delay)
                     else:
                         logger.error(
-                            f"Migration {sql} failed after {max_retries + 1} attempts: {e}"
+                            f"Migration {sql} failed after {max_retries + 1} attempts: {type(e).__name__}: {e}"
                         )
                 finally:
                     conn.close()
@@ -2474,7 +2474,7 @@ def close_pool():
         try:
             _pg_pool.close()
         except Exception as e:
-            logger.warning(f"Error closing connection pool: {e}")
+            logger.warning(f"Error closing connection pool: {type(e).__name__}: {e}")
         _pg_pool = None
         logger.info("PostgreSQL connection pool closed.")
 

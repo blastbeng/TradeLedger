@@ -39,7 +39,7 @@ class DynamicProxyRotator:
                     proxies.append(f"http://{ip}:{port}")
             return proxies
         except (requests.RequestException, ValueError, OSError) as e:
-            logger.warning(f"Error fetching raw proxies: {e}")
+            logger.warning(f"Error fetching raw proxies: {type(e).__name__}: {e}")
             return []
 
     async def _validate_single_proxy(self, client, proxy):

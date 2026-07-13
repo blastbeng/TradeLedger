@@ -172,7 +172,7 @@ class PaperTrader:
             q = quotes.get(base, {})
             return q.get("last")
         except Exception as e:
-            logger.warning(f"Failed to fetch price for {symbol}: {e}")
+            logger.warning(f"Failed to fetch price for {symbol}: {type(e).__name__}: {e}")
             return None
 
     def _get_dynamic_slippage(self, symbol: str, price: float) -> float:
@@ -219,7 +219,7 @@ class PaperTrader:
             self._slippage_cache[symbol] = (time.time(), final_slippage)
             return final_slippage
         except Exception as e:
-            logger.warning(f"Failed to compute dynamic slippage for {symbol}: {e}")
+            logger.warning(f"Failed to compute dynamic slippage for {symbol}: {type(e).__name__}: {e}")
             return self.slippage_base_pct
 
     def _get_max_fillable_volume(self, symbol: str) -> Optional[float]:
@@ -234,7 +234,7 @@ class PaperTrader:
             # Assume we can fill up to 10% of the last minute's volume
             return vol * settings.PARTIAL_FILL_VOLUME_CAP_PCT
         except Exception as e:
-            logger.warning(f"Failed to fetch volume for partial fill check for {symbol}: {e}")
+            logger.warning(f"Failed to fetch volume for partial fill check for {symbol}: {type(e).__name__}: {e}")
             return None
 
     @staticmethod

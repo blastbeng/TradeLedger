@@ -90,7 +90,7 @@ class ExitOrderManager:
                     await asyncio.to_thread(engine.trader.cancel_order, order_id)
                     logger.info(f"Cancelled exit order {order_id} for {symbol}")
                 except (RuntimeError, ValueError, ConnectionError) as e:
-                    logger.warning(f"Failed to cancel exit order {order_id}: {e}")
+                    logger.warning(f"Failed to cancel exit order {order_id}: {type(e).__name__}: {e}")
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders = [
                         q for q in self.shared_state.queued_orders
@@ -187,7 +187,7 @@ class ExitOrderManager:
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders.append(_sl_queued)
             except (RuntimeError, ValueError, ConnectionError) as e:
-                logger.error(f"Failed to place stop-loss order for {symbol}: {e}")
+                logger.error(f"Failed to place stop-loss order for {symbol}: {type(e).__name__}: {e}")
 
         elif sl_ot == "trailing_stop":
             if is_btp_isin(symbol):
@@ -229,7 +229,7 @@ class ExitOrderManager:
                         async with self.shared_state._queued_orders_lock:
                             self.shared_state.queued_orders.append(_trail_queued)
                     except (RuntimeError, ValueError, ConnectionError) as e:
-                        logger.error(f"Failed to place trailing-stop order for {symbol}: {e}")
+                        logger.error(f"Failed to place trailing-stop order for {symbol}: {type(e).__name__}: {e}")
 
         # --- Take-profit order ---
         params = signal.strategy_params or {}
@@ -275,7 +275,7 @@ class ExitOrderManager:
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders.append(_tp_queued)
             except (RuntimeError, ValueError, ConnectionError) as e:
-                logger.error(f"Failed to place take-profit order for {symbol}: {e}")
+                logger.error(f"Failed to place take-profit order for {symbol}: {type(e).__name__}: {e}")
 
         # --- Link OCO pair ---
         if sl_order_id and tp_order_id:
@@ -503,7 +503,7 @@ class ExitOrderManager:
                 await asyncio.to_thread(engine.trader.cancel_order, old_order_id)
                 logger.info(f"Cancelled old stop order {old_order_id} for {symbol} (replaced by {new_order_id})")
             except (RuntimeError, ValueError, ConnectionError) as e:
-                logger.warning(f"Failed to cancel old stop order {old_order_id} (new order {new_order_id} already placed): {e}")
+                logger.warning(f"Failed to cancel old stop order {old_order_id} (new order {new_order_id} already placed): {type(e).__name__}: {e}")
 
             # Remove the old queued entry now that the new one is active
             async with self.shared_state._queued_orders_lock:
