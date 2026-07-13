@@ -142,7 +142,7 @@ class BuyExecutor:
         )
         if _sizing_result is None:
             return
-        amount, desired_amount, available = _sizing_result
+        amount, desired_amount = _sizing_result
 
         # --- Minimum profit check and exchange minimum order size adjustment ---
         amount = await self.check_min_profit_and_order_size(
@@ -152,7 +152,7 @@ class BuyExecutor:
             params=params,
             amount=amount,
             desired_amount=desired_amount,
-            available=available,
+            quote_balance=quote_balance,
             tp_pct=tp_pct,
             current_price=current_price,
         )
@@ -344,7 +344,7 @@ class BuyExecutor:
         desired_amount: float,
         params: Dict[str, Any],
         sl_pct: float,
-    ) -> Optional[Tuple[float, float, float]]:
+    ) -> Optional[Tuple[float, float]]:
         """Compute the final position size applying all risk caps.
 
         Applies global risk multiplier, per-symbol multiplier, and a single
@@ -480,7 +480,7 @@ class BuyExecutor:
                     }
                 )
 
-        return amount, desired_amount, available
+        return amount, desired_amount
 
     async def compute_sl_tp_params(
         self,
@@ -564,7 +564,7 @@ class BuyExecutor:
         params: Dict[str, Any],
         amount: float,
         desired_amount: float,
-        available: float,
+        quote_balance: float,
         tp_pct: float,
         current_price: float,
     ) -> Optional[float]:
@@ -646,6 +646,8 @@ class BuyExecutor:
                 old_amount = amount
                 amount = required_quote
                 # Check if the adjusted amount exceeds remaining cycle budget
+                async with engine._cycle_spent_lock:
+                    available = max(0.0, quote_balance - engine._cycle_spent)
                 if amount > available:
                     logger.info(
                         f"BUY amount adjusted from {old_amount:.2f} to {amount:.2f} {quote} "
