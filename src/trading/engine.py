@@ -624,7 +624,10 @@ class TradingEngine:
         await asyncio.wait([sleep_task, reload_task], return_when=asyncio.FIRST_COMPLETED)
         for task in (sleep_task, reload_task):
             if not task.done():
-                task.cancel()
+                try:
+                    task.cancel()
+                except asyncio.CancelledError:
+                    pass
 
     def _on_settings_reload(self):
         """Update cached settings values when settings are reloaded."""
