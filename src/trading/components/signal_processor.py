@@ -856,8 +856,8 @@ class SignalProcessor:
         # Unrealized P&L for current position
         unrealized_pnl = None
         position_info = None
-        if symbol in engine.positions:
-            pos = engine.positions[symbol]
+        if symbol in self.shared_state.positions:
+            pos = self.shared_state.positions[symbol]
             position_info = pos
             current_price = ticker['last']
             entry_price = pos['price']
@@ -865,7 +865,7 @@ class SignalProcessor:
             unrealized_pnl = (current_price - entry_price) * amount
 
         # Recent trade outcomes (last 5 closed trades)
-        recent_trades = [t for t in engine.trade_history if t.get("side") == "sell"][-5:]
+        recent_trades = [t for t in self.shared_state.trade_history if t.get("side") == "sell"][-5:]
         recent_trades_summary = [
             {
                 "symbol": t["symbol"],
@@ -889,7 +889,7 @@ class SignalProcessor:
 
         # Past trades for this specific symbol (last 10 closed sells)
         past_trades = [
-            t for t in engine.trade_history
+            t for t in self.shared_state.trade_history
             if t.get("symbol") == symbol and t.get("side") == "sell"
         ][-10:]
 
@@ -976,7 +976,7 @@ class SignalProcessor:
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
-        partial_tp_executed_levels = engine.positions[symbol].get("partial_tp_levels_triggered", []) if symbol in engine.positions else []
+        partial_tp_executed_levels = self.shared_state.positions[symbol].get("partial_tp_levels_triggered", []) if symbol in self.shared_state.positions else []
 
         # Validator multipliers
         min_stop_atr_mult = 1.0
