@@ -21,6 +21,7 @@ class LLMStepManager:
     def __init__(self, signal_processor):
         self.sp = signal_processor
         self.engine = signal_processor.engine
+        self.shared_state = self.engine.shared_state
         self.event_bus = signal_processor.event_bus
 
     def _create_fallback_hold_signal(
@@ -38,7 +39,7 @@ class LLMStepManager:
         return signal
 
     def _update_last_eval_snapshot(self, symbol: str, price: float, rsi: Optional[float], macd_hist: Optional[float], tf_seconds: int):
-        self.engine._last_eval_snapshot[symbol] = {
+        self.shared_state._last_eval_snapshot[symbol] = {
             "timestamp": time.time(),
             "price": price,
             "rsi": rsi,
@@ -132,8 +133,8 @@ class LLMStepManager:
         if cb_active:
             logger.error(f"LLM circuit breaker ACTIVE for {symbol} — all signals will be fallback HOLD. Check LLM connectivity.")
             # Clear _force_eval to break the retry loop
-            async with engine._eval_state_lock:
-                engine._force_eval.pop(symbol, None)
+            async with self.shared_state._eval_state_lock:
+                self.shared_state._force_eval.pop(symbol, None)
             return None, None, None, False
 
         try:
@@ -194,8 +195,8 @@ class LLMStepManager:
                 pass
             # Update snapshot after a real LLM call
             self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist, tf_seconds)
-            async with engine._eval_state_lock:
-                engine._force_eval.pop(symbol, None)
+            async with self.shared_state._eval_state_lock:
+                self.shared_state._force_eval.pop(symbol, None)
         except asyncio.TimeoutError:
             logger.warning(f"LLM Step 1a (analysis) timed out for {symbol}.")
             if is_critical and critical_reason is not None:
@@ -213,14 +214,14 @@ class LLMStepManager:
                 )
                 return None, None, None, True
             # Non-critical timeout: fall through to fallback HOLD
-            async with engine._eval_state_lock:
-                engine._force_eval[symbol] = True  # Force retry on next cycle
+            async with self.shared_state._eval_state_lock:
+                self.shared_state._force_eval[symbol] = True  # Force retry on next cycle
             await self._increment_llm_failures()
             # Fall through to fallback HOLD below
         except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
             logger.error(f"LLM Step 1a failed for {symbol}: {e}")
-            async with engine._eval_state_lock:
-                engine._force_eval[symbol] = True  # Force retry on next cycle
+            async with self.shared_state._eval_state_lock:
+                self.shared_state._force_eval[symbol] = True  # Force retry on next cycle
             await self._increment_llm_failures()
             # Fall through to fallback HOLD below
 
@@ -254,8 +255,8 @@ class LLMStepManager:
             except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
                 pass
             if cb_active:
-                async with engine._eval_state_lock:
-                    engine._force_eval.pop(symbol, None)
+                async with self.shared_state._eval_state_lock:
+                    self.shared_state._force_eval.pop(symbol, None)
             # Otherwise, keep _force_eval set to retry on the next cycle.
             # Create a fallback HOLD signal so the bot continues functioning
             preliminary_signal = self._create_fallback_hold_signal(
