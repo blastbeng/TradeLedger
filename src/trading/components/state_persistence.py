@@ -28,6 +28,7 @@ class StatePersistence:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self.event_bus.subscribe("save_state", self.save_state)
         self.event_bus.subscribe("get_pause_status", self.get_pause_status)
@@ -53,13 +54,13 @@ class StatePersistence:
         """Synchronously save state to prevent data loss on crash/shutdown."""
         engine = self.engine
         try:
-            save_trading_state("current_symbols", engine.current_symbols)
-            save_trading_state("positions", dict(engine.positions))
-            save_trading_state("queued_orders", engine.queued_orders)
-            save_trading_state("recent_signals", engine.recent_signals)
+            save_trading_state("current_symbols", self.shared_state.current_symbols)
+            save_trading_state("positions", dict(self.shared_state.positions))
+            save_trading_state("queued_orders", self.shared_state.queued_orders)
+            save_trading_state("recent_signals", self.shared_state.recent_signals)
 
             pending_entries_serializable = {}
-            for symbol, entry in engine._pending_entries.items():
+            for symbol, entry in self.shared_state._pending_entries.items():
                 pending_entries_serializable[symbol] = {
                     "signal": asdict(entry["signal"]),
                     "deadline": entry["deadline"],
@@ -67,16 +68,16 @@ class StatePersistence:
                     "condition": entry["condition"],
                 }
             save_trading_state("pending_entries", pending_entries_serializable)
-            save_trading_state("symbol_first_seen", engine._symbol_first_seen)
-            save_trading_state("entry_signal_state", engine._entry_signal_state)
-            save_trading_state("last_eval_snapshot", engine._last_eval_snapshot)
-            save_trading_state("force_eval", engine._force_eval)
-            save_trading_state("force_eval_time", engine._force_eval_time)
-            save_trading_state("strategy_intervals", engine._strategy_intervals)
-            save_trading_state("last_decisions", engine._last_decisions)
-            save_trading_state("last_loss_time", engine.last_loss_time)
-            save_trading_state("cooldown_durations", engine.cooldown_durations)
-            save_trading_state("global_risk_multiplier", engine._global_risk_multiplier)
+            save_trading_state("symbol_first_seen", self.shared_state._symbol_first_seen)
+            save_trading_state("entry_signal_state", self.shared_state._entry_signal_state)
+            save_trading_state("last_eval_snapshot", self.shared_state._last_eval_snapshot)
+            save_trading_state("force_eval", self.shared_state._force_eval)
+            save_trading_state("force_eval_time", self.shared_state._force_eval_time)
+            save_trading_state("strategy_intervals", self.shared_state._strategy_intervals)
+            save_trading_state("last_decisions", self.shared_state._last_decisions)
+            save_trading_state("last_loss_time", self.shared_state.last_loss_time)
+            save_trading_state("cooldown_durations", self.shared_state.cooldown_durations)
+            save_trading_state("global_risk_multiplier", self.shared_state._global_risk_multiplier)
         except Exception as e:
             logger.critical(f"Failed to save state on exit: {e}", exc_info=True)
 
@@ -91,31 +92,31 @@ class StatePersistence:
         save is in progress.
         """
         engine = self.engine
-        if engine._state_lock.locked():
+        if self.shared_state._state_lock.locked():
             if not force:
-                engine._state_save_pending = True
+                self.shared_state._state_save_pending = True
                 return
 
-        async with engine._state_lock:
+        async with self.shared_state._state_lock:
             await self._save_state_impl()
-            while engine._state_save_pending:
-                engine._state_save_pending = False
+            while self.shared_state._state_save_pending:
+                self.shared_state._state_save_pending = False
                 await self._save_state_impl()
 
     async def _save_state_impl(self):
         """Actual state persistence (must be called under _state_lock)."""
         engine = self.engine
         try:
-            await asyncio.to_thread(save_trading_state, "current_symbols", engine.current_symbols)
-            async with engine._positions_lock:
-                positions_snapshot = dict(engine.positions)
+            await asyncio.to_thread(save_trading_state, "current_symbols", self.shared_state.current_symbols)
+            async with self.shared_state._positions_lock:
+                positions_snapshot = dict(self.shared_state.positions)
             await asyncio.to_thread(save_trading_state, "positions", positions_snapshot)
-            await asyncio.to_thread(save_trading_state, "queued_orders", engine.queued_orders)
-            await asyncio.to_thread(save_trading_state, "recent_signals", engine.recent_signals)
+            await asyncio.to_thread(save_trading_state, "queued_orders", self.shared_state.queued_orders)
+            await asyncio.to_thread(save_trading_state, "recent_signals", self.shared_state.recent_signals)
             # Serialize pending entries (convert Signal objects to dicts for JSON storage)
-            async with engine._pending_entries_lock:
+            async with self.shared_state._pending_entries_lock:
                 pending_entries_serializable = {}
-                for symbol, entry in engine._pending_entries.items():
+                for symbol, entry in self.shared_state._pending_entries.items():
                     pending_entries_serializable[symbol] = {
                         "signal": asdict(entry["signal"]),
                         "deadline": entry["deadline"],
@@ -123,23 +124,23 @@ class StatePersistence:
                         "condition": entry["condition"],
                     }
             await asyncio.to_thread(save_trading_state, "pending_entries", pending_entries_serializable)
-            await asyncio.to_thread(save_trading_state, "symbol_first_seen", engine._symbol_first_seen)
-            await asyncio.to_thread(save_trading_state, "entry_signal_state", engine._entry_signal_state)
-            await asyncio.to_thread(save_trading_state, "last_eval_snapshot", engine._last_eval_snapshot)
-            await asyncio.to_thread(save_trading_state, "force_eval", engine._force_eval)
-            await asyncio.to_thread(save_trading_state, "force_eval_time", engine._force_eval_time)
-            await asyncio.to_thread(save_trading_state, "strategy_intervals", engine._strategy_intervals)
-            await asyncio.to_thread(save_trading_state, "last_decisions", engine._last_decisions)
-            await asyncio.to_thread(save_trading_state, "last_loss_time", engine.last_loss_time)
-            await asyncio.to_thread(save_trading_state, "cooldown_durations", engine.cooldown_durations)
-            await asyncio.to_thread(save_trading_state, "global_risk_multiplier", engine._global_risk_multiplier)
+            await asyncio.to_thread(save_trading_state, "symbol_first_seen", self.shared_state._symbol_first_seen)
+            await asyncio.to_thread(save_trading_state, "entry_signal_state", self.shared_state._entry_signal_state)
+            await asyncio.to_thread(save_trading_state, "last_eval_snapshot", self.shared_state._last_eval_snapshot)
+            await asyncio.to_thread(save_trading_state, "force_eval", self.shared_state._force_eval)
+            await asyncio.to_thread(save_trading_state, "force_eval_time", self.shared_state._force_eval_time)
+            await asyncio.to_thread(save_trading_state, "strategy_intervals", self.shared_state._strategy_intervals)
+            await asyncio.to_thread(save_trading_state, "last_decisions", self.shared_state._last_decisions)
+            await asyncio.to_thread(save_trading_state, "last_loss_time", self.shared_state.last_loss_time)
+            await asyncio.to_thread(save_trading_state, "cooldown_durations", self.shared_state.cooldown_durations)
+            await asyncio.to_thread(save_trading_state, "global_risk_multiplier", self.shared_state._global_risk_multiplier)
         except Exception as e:
             logger.critical(f"Failed to save trading state: {e}", exc_info=True)
             raise RuntimeError(f"Failed to save trading state: {e}")
 
         logger.debug("Saved trading state: %d symbols, %d positions, %d trades",
-                     len(engine.current_symbols), len(engine.positions), len(engine.trade_history))
-        engine._state_dirty = False
+                     len(self.shared_state.current_symbols), len(self.shared_state.positions), len(self.shared_state.trade_history))
+        self.shared_state._state_dirty = False
 
     def load_state(self):
         """Load current symbols, positions, trade history, and initial balance from SQLite."""
