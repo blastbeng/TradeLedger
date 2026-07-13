@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from src.llm.llm_client import get_llm_response
 
@@ -42,3 +43,16 @@ def summarize_text(text: str, context: str = "general", max_length: int = 500) -
     except Exception as e:
         logger.error(f"Failed to summarize text using weak model: {type(e).__name__}: {e}")
         return text
+
+
+async def summarize_text_async(text: str, context: str = "general", max_length: int = 500) -> str:
+    """
+    Asynchronous wrapper for summarize_text.
+    Runs the blocking summarization call in a separate thread to avoid blocking the event loop.
+    """
+    return await asyncio.to_thread(
+        summarize_text,
+        text,
+        context,
+        max_length,
+    )

@@ -176,3 +176,15 @@ def get_cached_news_summary(symbol: str, model_type: str = "weak") -> dict:
         ttl = settings.NEWS_CACHE_TTL_SECONDS
     redis_client.set(cache_key, json.dumps(result), ex=ttl)
     return result
+
+
+async def get_cached_news_summary_async(symbol: str, model_type: str = "weak") -> dict:
+    """
+    Asynchronous wrapper for get_cached_news_summary.
+    Runs the blocking LLM call in a separate thread to avoid blocking the event loop.
+    """
+    return await asyncio.to_thread(
+        get_cached_news_summary,
+        symbol,
+        model_type,
+    )
