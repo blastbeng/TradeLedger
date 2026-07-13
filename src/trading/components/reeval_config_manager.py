@@ -33,7 +33,7 @@ class ReevalConfigManager:
 
         # Parse LLM-decided portfolio risk thresholds
         max_port_exp = parsed.get("max_portfolio_exposure_pct")
-        if max_port_exp is not None and isinstance(max_port_exp, (int, float)) and 0.0 <= float(max_port_exp) <= 1.0:
+        if max_port_exp is not None and isinstance(max_port_exp, (int, float)) and 0.0 <= float(max_port_exp) <= 0.95:
             await engine.config_service.set_llm_config("max_portfolio_exposure_pct", float(max_port_exp))
         else:
             await engine.config_service.clear_llm_config("max_portfolio_exposure_pct")
@@ -45,7 +45,7 @@ class ReevalConfigManager:
             await engine.config_service.clear_llm_config("max_portfolio_stop_risk_pct")
 
         min_rr = parsed.get("min_risk_reward_ratio")
-        if min_rr is not None and isinstance(min_rr, (int, float)) and min_rr > 0:
+        if min_rr is not None and isinstance(min_rr, (int, float)) and min_rr >= 1.0:
             await engine.config_service.set_llm_config("min_risk_reward_ratio", float(min_rr))
         else:
             await engine.config_service.clear_llm_config("min_risk_reward_ratio")
