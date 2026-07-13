@@ -461,13 +461,28 @@ class RiskManager:
             logger.error(f"Risk check failed for {symbol}: {type(e).__name__}: {e}")
 
     async def _is_llm_circuit_breaker_active(self) -> bool:
-        """Check if the LLM circuit breaker is currently active."""
+        """Check if the LLM circuit breaker is currently active.
+
+        The circuit breaker short-circuit is only active during pre-market and
+        market open hours (when primary models are in use). During market closed
+        hours with fallback models, the short-circuit is disabled to allow the
+        fallback model to handle decisions — it may be temporarily rate-limited
+        but should not trigger graceful degradation without consulting the LLM.
+        """
         engine = self.engine
         try:
             cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
             if cb_raw:
                 cb_data = json.loads(cb_raw)
                 if time.time() < cb_data.get("active_until", 0):
+                    # Circuit breaker is active — but only short-circuit if
+                    # primary models are in use (pre-market or market open).
+                    # During market closed hours with fallback models, let the
+                    # normal LLM flow proceed (fallback model may recover).
+                    from src.llm.cache import _should_use_primary_model
+                    use_primary = await asyncio.to_thread(_should_use_primary_model)
+                    if not use_primary:
+                        return False
                     return True
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
             pass
