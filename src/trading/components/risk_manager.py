@@ -661,10 +661,11 @@ class RiskManager:
                         ohlcv_tf = "1d" if tf_secs >= 2_592_000 else tf
                         # Throttle OHLCV fetches: only fetch every ~10% of the
                         # timeframe interval, clamped between 5 min and 1 hour.
-                        # For very long timeframes, fetch every 4 hours (14400s)
-                        # since risk checks run every ~4h.
+                        # For very long timeframes (>= 1 month), fetch every ~5%
+                        # of the timeframe interval, clamped between 4 hours and
+                        # 1 week, to avoid excessive checks on slow-moving positions.
                         if tf_secs >= 2_592_000:
-                            fetch_interval = 14400
+                            fetch_interval = max(14400, min(604800, int(tf_secs * 0.05)))
                         else:
                             fetch_interval = max(300, min(3600, int(tf_secs * 0.1)))
                         # On first check (last_check_ts == 0), initialize
