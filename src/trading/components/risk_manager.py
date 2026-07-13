@@ -957,7 +957,6 @@ class RiskManager:
                             summary={"symbol": symbol, "action": "HOLD", "reason": f"Partial TP level {i} triggered – awaiting LLM"},
                             disable_notification=False
                         )
-                    break  # only handle one new trigger per cycle; others will be picked up after LLM responds
         else:
             # Single partial TP – trigger LLM review instead of immediate execution
             partial_tp_pct = pos.get("partial_take_profit_pct")
