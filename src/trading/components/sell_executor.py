@@ -22,6 +22,7 @@ class SellExecutor:
 
     def __init__(self, engine, event_bus, order_executor):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self._order_executor = order_executor
         self.event_bus.subscribe("handle_queued_sell_fill", self.handle_queued_sell_fill)
@@ -40,7 +41,7 @@ class SellExecutor:
         """Execute a SELL signal."""
         engine = self.engine
         base, quote = symbol.split("/")
-        pos = engine.positions.get(symbol)
+        pos = self.shared_state.positions.get(symbol)
 
         # Cancel any native exit orders before selling
         if pos:
@@ -276,8 +277,8 @@ class SellExecutor:
                     'filled_qty': 0,
                     'filled_cost': 0.0,
                 }
-                async with engine._queued_orders_lock:
-                    engine.queued_orders.append(_sell_queued_entry)
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders.append(_sell_queued_entry)
                 if engine.notifier:
                     await engine.notifier.send_notification(
                         f"⏳ SELL {order_type_str} order for {display_symbol} queued{price_str}",
@@ -314,8 +315,8 @@ class SellExecutor:
                     'filled_qty': 0,
                     'filled_cost': 0.0,
                 }
-                async with engine._queued_orders_lock:
-                    engine.queued_orders.append(_sell_queued_entry)
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders.append(_sell_queued_entry)
             # Compute realized P&L
             fee = order.get('fee', {})
             fee_cost = float(fee.get('cost', 0.0) or 0.0)
@@ -340,9 +341,9 @@ class SellExecutor:
             order["realized_pnl"] = realized_pnl
             # Track loss timestamps for cooldown
             if realized_pnl < 0:
-                engine.last_loss_time[symbol] = time.time()
+                self.shared_state.last_loss_time[symbol] = time.time()
                 cd = pos.get("cooldown_after_loss_seconds", 0) if pos else 0
-                engine.cooldown_durations[symbol] = cd
+                self.shared_state.cooldown_durations[symbol] = cd
             tf = timeframe or (pos.get("timeframe") if pos else None)
             order["timeframe"] = tf
             order["strategy_type"] = signal.strategy_type
@@ -367,59 +368,59 @@ class SellExecutor:
                 remaining_cost_basis = cost_basis - order["cost_basis"]
                 remaining_net_base = net_base - order['amount']
                 if remaining_amount <= 0 or remaining_net_base <= 0:
-                    async with engine._positions_lock:
-                        engine.positions.pop(symbol, None)
-                    engine._strategy_intervals.pop(symbol, None)
-                    engine._last_strategy_eval.pop(symbol, None)
-                    engine._last_decisions.pop(symbol, None)
-                    engine._pending_entries.pop(symbol, None)
+                    async with self.shared_state._positions_lock:
+                        self.shared_state.positions.pop(symbol, None)
+                    self.shared_state._strategy_intervals.pop(symbol, None)
+                    self.shared_state._last_strategy_eval.pop(symbol, None)
+                    self.shared_state._last_decisions.pop(symbol, None)
+                    self.shared_state._pending_entries.pop(symbol, None)
                     await self.event_bus.publish("remove_symbol_if_paused", symbol)
                 else:
-                    async with engine._positions_lock:
-                        engine.positions[symbol]["amount"] = remaining_amount
-                        engine.positions[symbol]["cost_basis"] = remaining_cost_basis
-                        engine.positions[symbol]["net_base"] = remaining_net_base
-                        engine.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
+                    async with self.shared_state._positions_lock:
+                        self.shared_state.positions[symbol]["amount"] = remaining_amount
+                        self.shared_state.positions[symbol]["cost_basis"] = remaining_cost_basis
+                        self.shared_state.positions[symbol]["net_base"] = remaining_net_base
+                        self.shared_state.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
                     # Place replacement exit orders for the remaining position
                     from src.strategies.base import Signal as _Signal
                     _dummy_params = {
-                        "trailing_take_profit": engine.positions[symbol].get("trailing_take_profit", False),
-                        "partial_take_profit_levels": engine.positions[symbol].get("partial_take_profit_levels"),
-                        "partial_take_profit_pct": engine.positions[symbol].get("partial_take_profit_pct"),
+                        "trailing_take_profit": self.shared_state.positions[symbol].get("trailing_take_profit", False),
+                        "partial_take_profit_levels": self.shared_state.positions[symbol].get("partial_take_profit_levels"),
+                        "partial_take_profit_pct": self.shared_state.positions[symbol].get("partial_take_profit_pct"),
                     }
                     _dummy_signal = _Signal(
                         action="BUY",
                         confidence=1.0,
                         reasoning="Replacing exit orders after partial sell",
-                        stop_loss_order_type=engine.positions[symbol].get("stop_loss_order_type"),
-                        stop_loss_stop_price=engine.positions[symbol].get("stop_loss"),
+                        stop_loss_order_type=self.shared_state.positions[symbol].get("stop_loss_order_type"),
+                        stop_loss_stop_price=self.shared_state.positions[symbol].get("stop_loss"),
                         stop_loss_limit_price=None,
-                        take_profit_order_type=engine.positions[symbol].get("take_profit_order_type"),
-                        take_profit_limit_price=engine.positions[symbol].get("take_profit"),
+                        take_profit_order_type=self.shared_state.positions[symbol].get("take_profit_order_type"),
+                        take_profit_limit_price=self.shared_state.positions[symbol].get("take_profit"),
                         strategy_params=_dummy_params,
                     )
                     _exit_prices = {
-                        "stop_loss_price": engine.positions[symbol].get("stop_loss"),
-                        "take_profit_price": engine.positions[symbol].get("take_profit"),
+                        "stop_loss_price": self.shared_state.positions[symbol].get("stop_loss"),
+                        "take_profit_price": self.shared_state.positions[symbol].get("take_profit"),
                     }
                     await self.event_bus.request(
                         "place_replacement_exit_orders_with_retry",
-                        symbol, _dummy_signal, _exit_prices, engine.positions[symbol].get("timeframe")
+                        symbol, _dummy_signal, _exit_prices, self.shared_state.positions[symbol].get("timeframe")
                     )
             else:
                 # Full sell: remove position
-                async with engine._positions_lock:
-                    engine.positions.pop(symbol, None)
-                engine._strategy_intervals.pop(symbol, None)
-                engine._last_strategy_eval.pop(symbol, None)
-                engine._last_decisions.pop(symbol, None)
-                engine._pending_entries.pop(symbol, None)
+                async with self.shared_state._positions_lock:
+                    self.shared_state.positions.pop(symbol, None)
+                self.shared_state._strategy_intervals.pop(symbol, None)
+                self.shared_state._last_strategy_eval.pop(symbol, None)
+                self.shared_state._last_decisions.pop(symbol, None)
+                self.shared_state._pending_entries.pop(symbol, None)
                 await self.event_bus.publish("remove_symbol_if_paused", symbol)
-            engine._append_trade(order)
-            engine._balance_cache = None
+            self.shared_state.append_trade(order, settings.MAX_TRADES_IN_MEMORY)
+            self.shared_state._balance_cache = None
             await asyncio.to_thread(insert_trade, order)
             await self.event_bus.publish("save_state", force=True)
-            engine._portfolio_exposure_cache = None
+            self.shared_state._portfolio_exposure_cache = None
             if engine.notifier:
                 # Human-readable labels for common exit reasons
                 reason_labels = {
@@ -491,7 +492,7 @@ class SellExecutor:
             logger.error(f"Invalid symbol format in queued sell fill: {symbol}")
             return
         base, quote = parts
-        pos = engine.positions.get(symbol)
+        pos = self.shared_state.positions.get(symbol)
         fee = trade_dict.get('fee', {})
         fee_cost = float(fee.get('cost', 0.0) or 0.0)
         fee_currency = fee.get('currency', '')
@@ -529,50 +530,50 @@ class SellExecutor:
             if remaining_amount <= 0 or remaining_net_base <= 0:
                 # Position fully closed via partial fills
                 if realized_pnl < 0:
-                    engine.last_loss_time[symbol] = time.time()
-                    engine.cooldown_durations[symbol] = pos.get("cooldown_after_loss_seconds", 0)
+                    self.shared_state.last_loss_time[symbol] = time.time()
+                    self.shared_state.cooldown_durations[symbol] = pos.get("cooldown_after_loss_seconds", 0)
                 pos.pop("_stop_loss_triggered", None)
                 pos.pop("_stop_loss_review_count", None)
-                async with engine._positions_lock:
-                    engine.positions.pop(symbol, None)
-                engine._strategy_intervals.pop(symbol, None)
-                engine._last_strategy_eval.pop(symbol, None)
-                engine._last_decisions.pop(symbol, None)
-                engine._pending_entries.pop(symbol, None)
+                async with self.shared_state._positions_lock:
+                    self.shared_state.positions.pop(symbol, None)
+                self.shared_state._strategy_intervals.pop(symbol, None)
+                self.shared_state._last_strategy_eval.pop(symbol, None)
+                self.shared_state._last_decisions.pop(symbol, None)
+                self.shared_state._pending_entries.pop(symbol, None)
                 await self.event_bus.publish("remove_symbol_if_paused", symbol)
             else:
-                async with engine._positions_lock:
-                    engine.positions[symbol]["amount"] = remaining_amount
-                    engine.positions[symbol]["cost_basis"] = remaining_cost_basis
-                    engine.positions[symbol]["net_base"] = remaining_net_base
-                    engine.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
+                async with self.shared_state._positions_lock:
+                    self.shared_state.positions[symbol]["amount"] = remaining_amount
+                    self.shared_state.positions[symbol]["cost_basis"] = remaining_cost_basis
+                    self.shared_state.positions[symbol]["net_base"] = remaining_net_base
+                    self.shared_state.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
 
                 # Replace exit orders for the remaining amount
                 from src.strategies.base import Signal
-                async with engine._positions_lock:
+                async with self.shared_state._positions_lock:
                     dummy_params = {
-                        "trailing_take_profit": engine.positions[symbol].get("trailing_take_profit", False),
-                        "partial_take_profit_levels": engine.positions[symbol].get("partial_take_profit_levels"),
-                        "partial_take_profit_pct": engine.positions[symbol].get("partial_take_profit_pct"),
+                        "trailing_take_profit": self.shared_state.positions[symbol].get("trailing_take_profit", False),
+                        "partial_take_profit_levels": self.shared_state.positions[symbol].get("partial_take_profit_levels"),
+                        "partial_take_profit_pct": self.shared_state.positions[symbol].get("partial_take_profit_pct"),
                     }
                     dummy_signal = Signal(
                         action="BUY",
                         confidence=1.0,
                         reasoning="Replacing exit orders after partial sell fill",
-                        stop_loss_order_type=engine.positions[symbol].get("stop_loss_order_type"),
-                        stop_loss_stop_price=engine.positions[symbol].get("stop_loss"),
+                        stop_loss_order_type=self.shared_state.positions[symbol].get("stop_loss_order_type"),
+                        stop_loss_stop_price=self.shared_state.positions[symbol].get("stop_loss"),
                         stop_loss_limit_price=None,
-                        take_profit_order_type=engine.positions[symbol].get("take_profit_order_type"),
-                        take_profit_limit_price=engine.positions[symbol].get("take_profit"),
+                        take_profit_order_type=self.shared_state.positions[symbol].get("take_profit_order_type"),
+                        take_profit_limit_price=self.shared_state.positions[symbol].get("take_profit"),
                         strategy_params=dummy_params,
                     )
                     exit_prices = {
-                        "stop_loss_price": engine.positions[symbol].get("stop_loss"),
-                        "take_profit_price": engine.positions[symbol].get("take_profit"),
+                        "stop_loss_price": self.shared_state.positions[symbol].get("stop_loss"),
+                        "take_profit_price": self.shared_state.positions[symbol].get("take_profit"),
                     }
                 await self.event_bus.request(
                     "place_replacement_exit_orders_with_retry",
-                    symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe")
+                    symbol, dummy_signal, exit_prices, self.shared_state.positions[symbol].get("timeframe")
                 )
         else:
             # Full fill (non-partial) – original logic
@@ -586,24 +587,24 @@ class SellExecutor:
             trade_dict['realized_pnl'] = realized_pnl
             trade_dict['cost_basis'] = pos.get("cost_basis", 0.0) if pos else 0.0
             if realized_pnl < 0:
-                engine.last_loss_time[symbol] = time.time()
-                engine.cooldown_durations[symbol] = pos.get("cooldown_after_loss_seconds", 0) if pos else 0
+                self.shared_state.last_loss_time[symbol] = time.time()
+                self.shared_state.cooldown_durations[symbol] = pos.get("cooldown_after_loss_seconds", 0) if pos else 0
             if pos:
                 pos.pop("_stop_loss_triggered", None)
                 pos.pop("_stop_loss_review_count", None)
-            async with engine._positions_lock:
-                engine.positions.pop(symbol, None)
-            engine._strategy_intervals.pop(symbol, None)
-            engine._last_strategy_eval.pop(symbol, None)
-            engine._last_decisions.pop(symbol, None)
-            engine._pending_entries.pop(symbol, None)
+            async with self.shared_state._positions_lock:
+                self.shared_state.positions.pop(symbol, None)
+            self.shared_state._strategy_intervals.pop(symbol, None)
+            self.shared_state._last_strategy_eval.pop(symbol, None)
+            self.shared_state._last_decisions.pop(symbol, None)
+            self.shared_state._pending_entries.pop(symbol, None)
             await self.event_bus.publish("remove_symbol_if_paused", symbol)
 
-        engine._append_trade(trade_dict)
-        engine._balance_cache = None
+        self.shared_state.append_trade(trade_dict, settings.MAX_TRADES_IN_MEMORY)
+        self.shared_state._balance_cache = None
         await asyncio.to_thread(insert_trade, trade_dict)
         await self.event_bus.publish("save_state", force=True)
-        engine._portfolio_exposure_cache = None
+        self.shared_state._portfolio_exposure_cache = None
         if engine.notifier:
             reason_labels = {
                 "manual_sell": "🖐️ Manual",
@@ -659,7 +660,7 @@ class SellExecutor:
             return
 
         stock_name = await engine._market_data_manager.get_stock_name(symbol)
-        tf = engine.positions.get(symbol, {}).get("timeframe") if symbol in engine.positions else None
+        tf = self.shared_state.positions.get(symbol, {}).get("timeframe") if symbol in self.shared_state.positions else None
         display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
 
         try:
@@ -685,9 +686,9 @@ class SellExecutor:
 
         if not await engine._is_market_open():
             logger.info(f"Dust sweep for {symbol} deferred: market closed. Will retry on next market open.")
-            if symbol in engine.positions:
-                async with engine._positions_lock:
-                    engine.positions[symbol]["_dust_sweep_pending"] = True
+            if symbol in self.shared_state.positions:
+                async with self.shared_state._positions_lock:
+                    self.shared_state.positions[symbol]["_dust_sweep_pending"] = True
             return
 
         need_limit = not await engine._is_market_open()
@@ -714,7 +715,7 @@ class SellExecutor:
             fee = order.get('fee', {})
             fee_cost = float(fee.get('cost', 0.0) or 0.0)
             fee_currency = fee.get('currency', '')
-            pos = engine.positions.get(symbol)
+            pos = self.shared_state.positions.get(symbol)
             if pos:
                 cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
                 net_quote = order['cost'] - (fee_cost if fee_currency == symbol.split('/')[1] else 0.0)
@@ -726,19 +727,19 @@ class SellExecutor:
                 order["timeframe"] = pos.get("timeframe")
                 if "timestamp" in pos:
                     order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
-                engine._append_trade(order)
+                self.shared_state.append_trade(order, settings.MAX_TRADES_IN_MEMORY)
                 await asyncio.to_thread(insert_trade, order)
                 await self.event_bus.publish("save_state", force=True)
-                engine._portfolio_exposure_cache = None
+                self.shared_state._portfolio_exposure_cache = None
 
             # Cancel any remaining exit orders before removing the position
             await self.event_bus.request("cancel_exit_orders", symbol)
 
             # Remove the now-empty position
-            async with engine._positions_lock:
-                engine.positions.pop(symbol, None)
-            engine._strategy_intervals.pop(symbol, None)
-            engine._last_strategy_eval.pop(symbol, None)
+            async with self.shared_state._positions_lock:
+                self.shared_state.positions.pop(symbol, None)
+            self.shared_state._strategy_intervals.pop(symbol, None)
+            self.shared_state._last_strategy_eval.pop(symbol, None)
             await self.event_bus.publish("remove_symbol_if_paused", symbol)
 
             if engine.notifier:
@@ -776,7 +777,7 @@ class SellExecutor:
         after the position amount/cost is updated (only when the position survives).
         """
         engine = self.engine
-        pos = engine.positions.get(symbol)
+        pos = self.shared_state.positions.get(symbol)
         if not pos:
             logger.warning(f"Cannot execute partial sell for {symbol}: no position.")
             return False
@@ -847,20 +848,20 @@ class SellExecutor:
             await self.event_bus.request("cancel_exit_orders", symbol)
 
             if remaining_amount <= 0 or remaining_net_base <= 0:
-                async with engine._positions_lock:
-                    engine.positions.pop(symbol, None)
-                engine._strategy_intervals.pop(symbol, None)
-                engine._last_strategy_eval.pop(symbol, None)
-                engine._pending_entries.pop(symbol, None)
+                async with self.shared_state._positions_lock:
+                    self.shared_state.positions.pop(symbol, None)
+                self.shared_state._strategy_intervals.pop(symbol, None)
+                self.shared_state._last_strategy_eval.pop(symbol, None)
+                self.shared_state._pending_entries.pop(symbol, None)
                 await self.event_bus.publish("remove_symbol_if_paused", symbol)
             else:
-                async with engine._positions_lock:
-                    engine.positions[symbol]["amount"] = remaining_amount
-                    engine.positions[symbol]["cost_basis"] = remaining_cost_basis
-                    engine.positions[symbol]["net_base"] = remaining_net_base
-                    engine.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
+                async with self.shared_state._positions_lock:
+                    self.shared_state.positions[symbol]["amount"] = remaining_amount
+                    self.shared_state.positions[symbol]["cost_basis"] = remaining_cost_basis
+                    self.shared_state.positions[symbol]["net_base"] = remaining_net_base
+                    self.shared_state.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
                     if cleanup_callback:
-                        cleanup_callback(symbol, engine.positions[symbol])
+                        cleanup_callback(symbol, self.shared_state.positions[symbol])
 
                 is_dust = min_amount is not None and remaining_amount < float(min_amount)
                 if is_dust:
@@ -869,34 +870,34 @@ class SellExecutor:
                 else:
                     from src.strategies.base import Signal
                     dummy_params = {
-                        "trailing_take_profit": engine.positions[symbol].get("trailing_take_profit", False),
-                        "partial_take_profit_levels": engine.positions[symbol].get("partial_take_profit_levels"),
-                        "partial_take_profit_pct": engine.positions[symbol].get("partial_take_profit_pct"),
+                        "trailing_take_profit": self.shared_state.positions[symbol].get("trailing_take_profit", False),
+                        "partial_take_profit_levels": self.shared_state.positions[symbol].get("partial_take_profit_levels"),
+                        "partial_take_profit_pct": self.shared_state.positions[symbol].get("partial_take_profit_pct"),
                     }
                     dummy_signal = Signal(
                         action="BUY",
                         confidence=1.0,
                         reasoning=f"Replacing exit orders after {level_label}",
-                        stop_loss_order_type=engine.positions[symbol].get("stop_loss_order_type"),
-                        stop_loss_stop_price=engine.positions[symbol].get("stop_loss"),
+                        stop_loss_order_type=self.shared_state.positions[symbol].get("stop_loss_order_type"),
+                        stop_loss_stop_price=self.shared_state.positions[symbol].get("stop_loss"),
                         stop_loss_limit_price=None,
-                        take_profit_order_type=engine.positions[symbol].get("take_profit_order_type"),
-                        take_profit_limit_price=engine.positions[symbol].get("take_profit"),
+                        take_profit_order_type=self.shared_state.positions[symbol].get("take_profit_order_type"),
+                        take_profit_limit_price=self.shared_state.positions[symbol].get("take_profit"),
                         strategy_params=dummy_params,
                     )
                     exit_prices = {
-                        "stop_loss_price": engine.positions[symbol].get("stop_loss"),
-                        "take_profit_price": engine.positions[symbol].get("take_profit"),
+                        "stop_loss_price": self.shared_state.positions[symbol].get("stop_loss"),
+                        "take_profit_price": self.shared_state.positions[symbol].get("take_profit"),
                     }
                     await self.event_bus.request(
                         "place_replacement_exit_orders_with_retry",
-                        symbol, dummy_signal, exit_prices, engine.positions[symbol].get("timeframe")
+                        symbol, dummy_signal, exit_prices, self.shared_state.positions[symbol].get("timeframe")
                     )
 
-            engine._append_trade(order)
+            self.shared_state.append_trade(order, settings.MAX_TRADES_IN_MEMORY)
             await asyncio.to_thread(insert_trade, order)
             await self.event_bus.publish("save_state", force=True)
-            engine._portfolio_exposure_cache = None
+            self.shared_state._portfolio_exposure_cache = None
 
             if engine.notifier:
                 pnl_pct = (realized_pnl / prorated_cost_basis * 100) if prorated_cost_basis > 0 else 0.0
@@ -964,7 +965,7 @@ class SellExecutor:
     ) -> None:
         """Execute a partial take-profit sell for a specific level."""
         engine = self.engine
-        pos = engine.positions.get(symbol)
+        pos = self.shared_state.positions.get(symbol)
         if not pos:
             logger.warning(f"Cannot execute partial TP level for {symbol}: no position.")
             return
@@ -983,14 +984,14 @@ class SellExecutor:
         sell_amount = pos["amount"] * fraction
 
         # Mark this level as triggered before the sell
-        if symbol in engine.positions:
-            async with engine._positions_lock:
-                triggered = engine.positions[symbol].get("partial_tp_levels_triggered", [])
+        if symbol in self.shared_state.positions:
+            async with self.shared_state._positions_lock:
+                triggered = self.shared_state.positions[symbol].get("partial_tp_levels_triggered", [])
                 if level_index not in triggered:
                     triggered.append(level_index)
-                    engine.positions[symbol]["partial_tp_levels_triggered"] = triggered
-                if "partial_tp_depth_wait_start" in engine.positions[symbol]:
-                    engine.positions[symbol]["partial_tp_depth_wait_start"].pop(level_index, None)
+                    self.shared_state.positions[symbol]["partial_tp_levels_triggered"] = triggered
+                if "partial_tp_depth_wait_start" in self.shared_state.positions[symbol]:
+                    self.shared_state.positions[symbol]["partial_tp_depth_wait_start"].pop(level_index, None)
 
         def _cleanup(sym, position):
             position.pop("_partial_tp_triggered", None)
