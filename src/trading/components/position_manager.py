@@ -1125,6 +1125,10 @@ class PositionManager:
             if actual_balance < recorded_amount - 1e-8:
                 # External sell detected
                 sold_amount = recorded_amount - actual_balance
+                # If the remaining balance is dust, sell the entire position
+                if actual_balance < 1e-8:
+                    sold_amount = recorded_amount
+                    actual_balance = 0.0
                 try:
                     tickers_map = await engine._market_data_manager._get_quotes_async([symbol.split("/")[0]], timeout=45.0)
                     ticker = tickers_map.get(symbol.split("/")[0])
@@ -1159,7 +1163,7 @@ class PositionManager:
                     f"External sell detected for {symbol}: {sold_amount} sold at ~{current_price}. "
                     f"Updating position from {recorded_amount} to {actual_balance}."
                 )
-                if actual_balance == 0.0:
+                if actual_balance < 1e-8:
                     await engine._cancel_exit_orders(symbol)
                     async with engine._positions_lock:
                         del engine.positions[symbol]
@@ -1183,6 +1187,26 @@ class PositionManager:
                     engine.positions[symbol]["net_base"] = actual_balance
                     cost_basis = engine.positions[symbol].get("cost_basis", 0.0)
                     engine.positions[symbol]["price"] = cost_basis / actual_balance if actual_balance > 0 else 0.0
+
+        # --- External buys (balance exists but no tracked position) ---
+        tracked_bases = {sym.split('/')[0] for sym in engine.positions}
+        for base, balance in all_balances.items():
+            if base == engine.base_currency:
+                continue
+            if balance > 1e-8 and base not in tracked_bases:
+                logger.warning(
+                    f"External buy detected for {base}: balance of {balance} found but no tracked position. "
+                    f"Manual review required for potential corporate action or external deposit."
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"⚠️ External buy detected for {base}: balance of {balance} found but no tracked position. Manual review required.",
+                        summary={
+                            "symbol": f"{base}/{engine.base_currency}",
+                            "action": "WARNING",
+                            "reason": "External buy or corporate action",
+                        }
+                    )
 
         # --- Handle positions that were loaded without LLM risk parameters ---
         for symbol, pos in list(engine.positions.items()):
