@@ -78,38 +78,40 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    try:
-        with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
-            response = client.get(url, headers=headers)
-            response.raise_for_status()
-            # Extract token from <chart-allinone ... token="..." ...>
-            # Use BeautifulSoup for robust parsing, with regex as a fallback
-            soup = BeautifulSoup(response.text, "html.parser")
-            chart_tag = soup.find("chart-allinone")
-            token = chart_tag.get("token") if chart_tag else None
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
+                response = client.get(url, headers=headers)
+                response.raise_for_status()
+                # Extract token from <chart-allinone ... token="..." ...>
+                # Use BeautifulSoup for robust parsing, with regex as a fallback
+                soup = BeautifulSoup(response.text, "html.parser")
+                chart_tag = soup.find("chart-allinone")
+                token = chart_tag.get("token") if chart_tag else None
 
+                if not token:
+                    # Fallback to regex if BeautifulSoup fails to find the tag
+                    match = re.search(r'<chart-allinone[^>]*token="([^"]+)"', response.text)
+                    if match:
+                        token = match.group(1)
 
-            if not token:
-                # Fallback to regex if BeautifulSoup fails to find the tag
-                match = re.search(r'<chart-allinone[^>]*token="([^"]+)"', response.text)
-                if match:
-                    token = match.group(1)
+                if token:
+                    # Cache the token
+                    with _borsa_token_cache_lock:
+                        _borsa_token_cache[cache_key] = (now, token)
+                    _reset_bi_circuit()
+                    return token
 
-
-            if token:
-                # Cache the token
-                with _borsa_token_cache_lock:
-                    _borsa_token_cache[cache_key] = (now, token)
-                _reset_bi_circuit()
-                return token
-
-
-            logger.warning(f"Could not find Borsa Italiana token for {isin}-{market_code}")
-            return None
-    except (httpx.RequestError, httpx.HTTPStatusError, ValueError, AttributeError, OSError) as e:
-        _record_bi_error(e)
-        logger.warning(f"Failed to fetch Borsa Italiana token for {isin}-{market_code}: {e}")
-        return None
+                logger.warning(f"Could not find Borsa Italiana token for {isin}-{market_code}")
+                return None
+        except (httpx.RequestError, httpx.HTTPStatusError, ValueError, AttributeError, OSError) as e:
+            _record_bi_error(e)
+            logger.warning(f"Failed to fetch Borsa Italiana token for {isin}-{market_code} (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(1)
+            else:
+                return None
 
 
 def _invalidate_borsa_token_cache(isin: str, market_code: str) -> None:
