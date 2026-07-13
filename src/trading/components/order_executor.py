@@ -22,6 +22,7 @@ class OrderExecutor:
 
     def __init__(self, engine, event_bus):
         self.engine = engine
+        self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self._exit_order_manager = None
         self._buy_executor = None
@@ -49,7 +50,7 @@ class OrderExecutor:
         engine = self.engine
         # --- Format symbol for notifications ---
         stock_name = await engine._market_data_manager.get_stock_name(symbol)
-        tf = timeframe or (engine.positions.get(symbol, {}).get("timeframe") if symbol in engine.positions else None)
+        tf = timeframe or (self.shared_state.positions.get(symbol, {}).get("timeframe") if symbol in self.shared_state.positions else None)
         display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
 
         # --- Notify mode: do not execute any orders, only send notifications ---
@@ -72,16 +73,16 @@ class OrderExecutor:
 
         # Prevent executing new signals if an order is already queued for this symbol
         # (unless it's a manual override)
-        async with engine._queued_orders_lock:
-            has_queued = any(q['symbol'] == symbol for q in engine.queued_orders)
+        async with self.shared_state._queued_orders_lock:
+            has_queued = any(q['symbol'] == symbol for q in self.shared_state.queued_orders)
         if has_queued and not (exit_reason and exit_reason.startswith("manual")):
             logger.info(f"Skipping {signal.action} for {symbol}: order already queued.")
             return
 
         # If this is a manual sell, cancel any queued SELL order for this symbol to avoid duplicate sells
         if exit_reason and exit_reason.startswith("manual") and signal.action == "SELL":
-            async with engine._queued_orders_lock:
-                engine.queued_orders = [q for q in engine.queued_orders if not (q['symbol'] == symbol and q['side'] == 'sell')]
+            async with self.shared_state._queued_orders_lock:
+                self.shared_state.queued_orders = [q for q in self.shared_state.queued_orders if not (q['symbol'] == symbol and q['side'] == 'sell')]
 
         # In live mode, only execute during regular market hours (manual overrides are allowed anytime)
         if not await engine._is_market_open() and not (exit_reason and exit_reason.startswith("manual")):
@@ -136,7 +137,7 @@ class OrderExecutor:
                     summary={"action": "SKIP", "reason": "Market closed"}
                 )
             return
-        for symbol in list(engine.positions.keys()):
+        for symbol in list(self.shared_state.positions.keys()):
             await self.execute_signal(
                 symbol,
                 Signal(action="SELL", confidence=1.0, reasoning="Manual sell all"),
@@ -154,7 +155,7 @@ class OrderExecutor:
                     summary={"symbol": symbol, "action": "SKIP", "reason": "Market closed"}
                 )
             return
-        if symbol in engine.positions:
+        if symbol in self.shared_state.positions:
             await self.execute_signal(
                 symbol,
                 Signal(action="SELL", confidence=1.0, reasoning="Manual sell"),
