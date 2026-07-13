@@ -5,6 +5,7 @@ and other risk rule checks on open positions.
 Extracted from TradingEngine to reduce class size and improve maintainability.
 """
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -458,6 +459,19 @@ class RiskManager:
                     return
         except Exception as e:
             logger.error(f"Risk check failed for {symbol}: {type(e).__name__}: {e}")
+
+    async def _is_llm_circuit_breaker_active(self) -> bool:
+        """Check if the LLM circuit breaker is currently active."""
+        engine = self.engine
+        try:
+            cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
+            if cb_raw:
+                cb_data = json.loads(cb_raw)
+                if time.time() < cb_data.get("active_until", 0):
+                    return True
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
+            pass
+        return False
 
     async def read_review_limits(self) -> Dict[str, int]:
         """Read LLM-decided review limits from Redis, falling back to settings defaults."""
@@ -1435,6 +1449,33 @@ class RiskManager:
         Force-sells after max reviews are reached.
         """
         engine = self.engine
+
+        # --- Circuit breaker: sell immediately without LLM review ---
+        if await self._is_llm_circuit_breaker_active():
+            logger.warning(
+                f"LLM circuit breaker active — selling {symbol} at stop-loss "
+                f"{current_price:.4f} without LLM review."
+            )
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⛔ Stop‑loss triggered for {display_symbol} at {current_price:.4f} – "
+                    f"LLM unavailable (circuit breaker), selling.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SELL",
+                        "reason": "Stop-loss (circuit breaker active)",
+                        "price": current_price,
+                        "exit_reason": "stop_loss_circuit_breaker",
+                    }
+                )
+            await self.event_bus.publish(
+                "execute_signal",
+                symbol,
+                Signal(action="SELL", confidence=1.0, reasoning="Stop-loss (circuit breaker active)"),
+                exit_reason="stop_loss_circuit_breaker"
+            )
+            return
+
         effective_max_sl_reviews = max_sl_reviews
         pos_tf = pos.get("timeframe")
         if pos_tf:
@@ -1515,6 +1556,33 @@ class RiskManager:
         to the next position), False otherwise.
         """
         engine = self.engine
+
+        # --- Circuit breaker: sell immediately without LLM review ---
+        if await self._is_llm_circuit_breaker_active():
+            logger.warning(
+                f"LLM circuit breaker active — selling {symbol} at take-profit "
+                f"{current_price:.4f} without LLM review."
+            )
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"🎯 Take‑profit triggered for {display_symbol} at {current_price:.4f} – "
+                    f"LLM unavailable (circuit breaker), selling.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "SELL",
+                        "reason": "Take-profit (circuit breaker active)",
+                        "price": current_price,
+                        "exit_reason": "take_profit_circuit_breaker",
+                    }
+                )
+            await self.event_bus.publish(
+                "execute_signal",
+                symbol,
+                Signal(action="SELL", confidence=1.0, reasoning="Take-profit (circuit breaker active)"),
+                exit_reason="take_profit_circuit_breaker"
+            )
+            return True
+
         review_count = pos.get("_take_profit_review_count", 0)
         if review_count >= max_tp_reviews:
             logger.warning(
