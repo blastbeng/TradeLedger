@@ -18,6 +18,7 @@ from bs4 import BeautifulSoup
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
 from src.utils.symbol_utils import is_btp_isin
+from src.utils.btp_policy import BTPPolicy
 from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close_prices
 from src.exchanges.proxy_utils import DynamicProxyRotator, _dynamic_rotator, _get_proxies
 from src.exchanges.borsa_italiana_utils import (
@@ -148,7 +149,7 @@ TIMEFRAME_MS = {
 
 def _enrich_quotes_with_btp_details(result: Dict[str, Dict[str, Any]], symbols: List[str]):
     """Enrich quote results with BTP maturity, coupon, and name from discovered_symbols."""
-    btp_symbols = [s for s in symbols if is_btp_isin(s)]
+    btp_symbols = [s for s in symbols if BTPPolicy.is_btp(s)]
     if not btp_symbols:
         return
     try:
@@ -687,7 +688,7 @@ def get_multi_timeframe_bars(
             pass
 
         # BTPs: only borsaitaliana, no yfinance
-        if is_btp_isin(symbol):
+        if BTPPolicy.is_btp(symbol):
             borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
             result[tf] = borsa_candles or []
             if borsa_candles:
@@ -810,7 +811,7 @@ def get_bars_range(
         pass
 
     # BTPs: only borsaitaliana, no yfinance
-    if is_btp_isin(symbol):
+    if BTPPolicy.is_btp(symbol):
         borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
         if borsa_candles:
             try:

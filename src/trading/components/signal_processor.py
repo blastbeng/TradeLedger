@@ -21,7 +21,7 @@ from src.llm.prompts import build_analysis_prompt, compact_prompt, build_backtes
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
-from src.utils.symbol_utils import is_btp_isin
+from src.utils.btp_policy import BTPPolicy
 
 from src.trading.components.signal_market_data import SignalMarketDataFetcher
 from src.trading.components.model_tier_manager import ModelTierManager
@@ -682,7 +682,7 @@ class SignalProcessor:
         """
         engine = self.engine
         base_symbol = symbol.split("/")[0]
-        is_btp = is_btp_isin(base_symbol)
+        is_btp = BTPPolicy.is_btp(base_symbol)
         tf_seconds = engine._timeframe_to_seconds(assigned_tf)
 
         # --- Fetch ticker ---
@@ -901,7 +901,7 @@ class SignalProcessor:
         # Fetch dividend data for non-BTP symbols
         dividend_yield = None
         next_ex_dividend = None
-        if not is_btp_isin(symbol.split("/")[0]):
+        if not BTPPolicy.is_btp(symbol.split("/")[0]):
             from src.database import get_dividend_yields_for_symbols, get_next_ex_dividend_date
             base = symbol.split("/")[0] if "/" in symbol else symbol
             prices = {base: ticker['last']} if ticker.get('last') else {}

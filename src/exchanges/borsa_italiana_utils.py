@@ -11,7 +11,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from src.config.settings import settings
-from src.utils.symbol_utils import is_btp_isin
+from src.utils.btp_policy import BTPPolicy
 from src.exchanges.proxy_utils import _get_proxies
 from src.exchanges.candle_utils import _validate_and_clean_candles
 from src.utils.redis_client import get_redis_client
@@ -179,7 +179,7 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
 
     base = symbol.split("/")[0] if "/" in symbol else symbol
 
-    if is_btp_isin(base):
+    if BTPPolicy.is_btp(base):
         isin = base
     else:
         from src.exchanges.market_data import _get_isin_from_yfinance
@@ -284,7 +284,7 @@ def get_borsa_italiana_candles(
     base = symbol.split("/")[0] if "/" in symbol else symbol
 
     # For BTPs, the symbol IS the ISIN
-    if is_btp_isin(base):
+    if BTPPolicy.is_btp(base):
         isin = base
     else:
         from src.database import get_isin_from_db

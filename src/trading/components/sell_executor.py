@@ -12,7 +12,6 @@ from typing import Any, Dict, Optional
 from src.config.settings import settings
 from src.database import insert_trade
 from src.strategies.base import Signal
-from src.utils.symbol_utils import is_btp_isin
 
 logger = logging.getLogger(__name__)
 
