@@ -482,6 +482,18 @@ def _get_init_statements() -> List[str]:
         "CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol ON backtest_results(symbol)",
         "CREATE INDEX IF NOT EXISTS idx_backtest_results_symbol_tf_hash ON backtest_results(symbol, timeframe, params_hash, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_backtest_results_created_at ON backtest_results(created_at)",
+        f"""
+        CREATE TABLE IF NOT EXISTS dividends (
+            id {pk_type},
+            symbol TEXT NOT NULL,
+            ex_date TEXT NOT NULL,
+            amount REAL NOT NULL,
+            source TEXT,
+            fetched_at {float_type} NOT NULL,
+            UNIQUE(symbol, ex_date)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_dividends_symbol ON dividends(symbol)",
     ]
     return statements
 
@@ -2479,3 +2491,88 @@ def get_pool_stats() -> dict:
         return stats
     except Exception:
         return {"status": "unknown"}
+
+
+@retry_on_db_lock()
+def insert_dividend(symbol: str, ex_date: str, amount: float, source: str = "yahoo"):
+    """Insert or update a dividend payment."""
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                "INSERT INTO dividends (symbol, ex_date, amount, source, fetched_at) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (symbol, ex_date) DO UPDATE SET amount = EXCLUDED.amount, "
+                "source = EXCLUDED.source, fetched_at = EXCLUDED.fetched_at"
+            )
+        else:
+            sql = _adapt_sql(
+                "INSERT OR REPLACE INTO dividends (symbol, ex_date, amount, source, fetched_at) "
+                "VALUES (%s, %s, %s, %s, %s)"
+            )
+        conn.execute(sql, (base, ex_date, amount, source, time.time()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_total_dividends_for_symbol(symbol: str) -> float:
+    """Return total dividends received for a symbol (base symbol without /currency)."""
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+    conn = get_connection()
+    try:
+        sql = _adapt_sql("SELECT COALESCE(SUM(amount), 0) as total FROM dividends WHERE symbol = %s")
+        row = conn.execute(sql, (base,)).fetchone()
+        return float(row["total"]) if row else 0.0
+    finally:
+        conn.close()
+
+
+def get_total_dividends_for_symbols(symbols: List[str]) -> Dict[str, float]:
+    """Return total dividends for multiple symbols in a single query.
+    Accepts full pair symbols (e.g., 'AAPL/USD') and normalizes to base.
+    Returns dict mapping the original input symbol -> total dividends.
+    """
+    if not symbols:
+        return {}
+    # Build mapping from base symbol to original input symbol(s)
+    base_to_orig: Dict[str, list] = {}
+    for s in symbols:
+        base = s.split("/")[0] if "/" in s else s
+        base_to_orig.setdefault(base, []).append(s)
+    bases = list(base_to_orig.keys())
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql("SELECT symbol, COALESCE(SUM(amount), 0) as total FROM dividends WHERE symbol = ANY(%s) GROUP BY symbol")
+            rows = conn.execute(sql, (bases,)).fetchall()
+        else:
+            placeholders = ",".join(["?" for _ in bases])
+            sql = _adapt_sql(f"SELECT symbol, COALESCE(SUM(amount), 0) as total FROM dividends WHERE symbol IN ({placeholders}) GROUP BY symbol")
+            rows = conn.execute(sql, bases).fetchall()
+        result = {s: 0.0 for s in symbols}
+        for row in rows:
+            base = row["symbol"]
+            total = float(row["total"])
+            for orig in base_to_orig.get(base, []):
+                result[orig] = total
+        return result
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def cleanup_old_dividends(retention_days: int = 365):
+    """Delete dividend records older than retention_days."""
+    conn = get_connection()
+    try:
+        cutoff = time.time() - retention_days * 24 * 60 * 60
+        sql = _adapt_sql("DELETE FROM dividends WHERE fetched_at < %s")
+        deleted = conn.execute(sql, (cutoff,)).rowcount
+        conn.commit()
+        if deleted:
+            logger.info(f"Cleaned up {deleted} old dividend records (older than {retention_days} days)")
+        return deleted
+    finally:
+        conn.close()
