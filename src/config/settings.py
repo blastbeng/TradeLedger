@@ -1,9 +1,12 @@
 import uuid
-from pydantic import field_validator, model_validator
+from pydantic import field_validator, model_validator, PrivateAttr
 from pydantic_settings import BaseSettings
 from typing import Optional
 
 class Settings(BaseSettings):
+    # Private attribute to hold reload callbacks
+    _reload_callbacks: list = PrivateAttr(default_factory=list)
+
     # Trading mode
     TRADING_MODE: str = "paper"   # "paper" or "notify"
 
@@ -16,6 +19,16 @@ class Settings(BaseSettings):
     @classmethod
     def validate_target_country(cls, v: str) -> str:
         return v.lower()
+
+    def register_reload_callback(self, callback):
+        """Register a callback to be invoked when settings are reloaded."""
+        if callback not in self._reload_callbacks:
+            self._reload_callbacks.append(callback)
+
+    def unregister_reload_callback(self, callback):
+        """Unregister a previously registered reload callback."""
+        if callback in self._reload_callbacks:
+            self._reload_callbacks.remove(callback)
 
     # Paper trading initial balance (only used in paper mode)
     PAPER_INITIAL_BALANCE: float = 10000.0
@@ -1241,6 +1254,13 @@ class Settings(BaseSettings):
 
         if self.PAPER_INITIAL_BALANCE != old_paper_balance:
             self.PAPER_BALANCE_CHANGED = True
+
+        # Notify registered callbacks (e.g., running asyncio tasks) that settings have been reloaded
+        for cb in self._reload_callbacks:
+            try:
+                cb()
+            except Exception:
+                pass
 
     class Config:
         env_file = ".env"
