@@ -16,6 +16,7 @@ from src.database import insert_position_pnl_snapshot, get_indicators, get_lates
 from src.strategies.base import Signal
 from src.utils.symbol_utils import is_btp_isin
 from src.utils.redis_client import is_redis_available
+from src.exchanges.fees import calculate_transaction_costs
 
 logger = logging.getLogger(__name__)
 
@@ -1537,14 +1538,20 @@ class RiskManager:
         if breakeven_activation is not None and breakeven_activation > 0:
             entry_price = pos["price"]
             if current_price >= entry_price * (1 + breakeven_activation):
-                # Compute exact break-even price that covers exit fee
-                # For stocks, exit fees (commission + fixed fee) are roughly 0.5%.
+                # Compute exact break-even price that covers actual exit fees
                 # BTPs have different fee structures, so we only apply the buffer
                 # to non-BTP assets.
                 if is_btp_isin(symbol):
                     breakeven_price = entry_price
                 else:
-                    breakeven_price = entry_price * 1.005
+                    amount = pos.get("amount", 0.0)
+                    if amount > 0:
+                        costs = calculate_transaction_costs("SELL", entry_price, amount, symbol)
+                        exit_fee_per_share = costs["bank_fee"] / amount
+                        breakeven_price = entry_price + exit_fee_per_share
+                    else:
+                        # Fallback if amount is missing or zero
+                        breakeven_price = entry_price * 1.005
                 async with self.shared_state._positions_lock:
                     if breakeven_price > pos["stop_loss"]:
                         pos["stop_loss"] = breakeven_price
