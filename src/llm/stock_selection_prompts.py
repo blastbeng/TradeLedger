@@ -77,6 +77,17 @@ def build_stock_selection_prompt(
                 if agg:
                     ticker_summary[symbol]["sentiment"] = agg
 
+    # Fetch dividend yields for candidate symbols
+    from src.database import get_dividend_yields_for_symbols
+    prices = {}
+    for sym in available_symbols:
+        if sym in tickers:
+            last = tickers[sym].get("last")
+            if last is not None and last > 0:
+                base = sym.split("/")[0] if "/" in sym else sym
+                prices[base] = last
+    div_yields = get_dividend_yields_for_symbols(available_symbols, prices)
+
     # --- News section ---
     news_section = ""
     if settings.NEWS_ENABLED:
@@ -378,6 +389,10 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
         prompt += "\nBTP YTM:\n"
         for sym, ytm in btp_ytm.items():
             prompt += f"  {sym}: {ytm:.2f}%\n"
+    if div_yields:
+        prompt += "\nDivYields (12m):\n"
+        for sym, yld in div_yields.items():
+            prompt += f"  {sym}: {yld*100:.2f}%\n"
     if symbol_events:
         prompt += "\n**Upcoming Corporate Events (detected from news):**\n"
         prompt += "These symbols have upcoming or recent corporate events. Consider the risk of holding through these events.\n"

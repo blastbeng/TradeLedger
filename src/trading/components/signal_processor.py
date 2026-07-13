@@ -318,6 +318,8 @@ class SignalProcessor:
             historical_backtest_results=_ctx["historical_backtest_results"],
             aggregate_sentiment=_ctx["aggregate_sentiment"],
             ytm=symbol_data["ytm"],
+            dividend_yield=_ctx.get("dividend_yield"),
+            next_ex_dividend=_ctx.get("next_ex_dividend"),
         )
         analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(prompt_data)
 
@@ -895,6 +897,19 @@ class SignalProcessor:
             get_backtest_results_for_symbol, symbol, assigned_tf, 10
         )
 
+        # Fetch dividend data for non-BTP symbols
+        dividend_yield = None
+        next_ex_dividend = None
+        if not is_btp_isin(symbol.split("/")[0]):
+            from src.database import get_dividend_yields_for_symbols, get_next_ex_dividend_date
+            base = symbol.split("/")[0] if "/" in symbol else symbol
+            prices = {base: ticker['last']} if ticker.get('last') else {}
+            if prices:
+                div_yields = get_dividend_yields_for_symbols([symbol], prices)
+                if symbol in div_yields:
+                    dividend_yield = div_yields[symbol]
+            next_ex_dividend = get_next_ex_dividend_date(symbol)
+
         # Fetch aggregate sentiment
         aggregate_sentiment = None
         if settings.NEWS_ENABLED:
@@ -1005,6 +1020,8 @@ class SignalProcessor:
             "min_hold_time_mult": min_hold_time_mult,
             "global_min_rr": global_min_rr,
             "historical_backtest_results": historical_backtest_results,
+            "dividend_yield": dividend_yield,
+            "next_ex_dividend": next_ex_dividend,
         }
 
     async def build_analysis_prompt_and_snapshot(
