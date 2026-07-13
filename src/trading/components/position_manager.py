@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from src.config.settings import settings
-from src.database import insert_trade
+from src.database import insert_trade, get_total_dividends_for_symbol, get_total_dividends_for_symbols
 from src.strategies.base import Signal
 from src.utils.symbol_utils import is_btp_isin
 
@@ -170,7 +170,12 @@ class PositionManager:
                 price = t.get('price', 0.0)
                 total_fees += fee_cost * price
         total_value = current_balance + open_value
-        pnl = total_value - engine.initial_balance
+        # Fetch total dividends for all symbols in trade history
+        all_symbols = list(set(t["symbol"] for t in engine.trade_history))
+        dividends_map = get_total_dividends_for_symbols(all_symbols)
+        total_dividends = sum(dividends_map.values())
+
+        pnl = total_value + total_dividends - engine.initial_balance
         pnl_percent = (pnl / engine.initial_balance * 100) if engine.initial_balance else 0.0
 
         # Win/Loss stats
@@ -204,6 +209,7 @@ class PositionManager:
             "queued_buy_quote_total": queued_buy_quote_total,
             "queued_sell_base_total": queued_sell_base_total,
             "queued_sell_value": queued_sell_value,
+            "total_dividends": round(total_dividends, 4),
         }
 
     async def get_risk_metrics(self) -> Dict[str, Any]:
@@ -213,6 +219,13 @@ class PositionManager:
         total_balance = balance.get(engine.base_currency, 0.0)
 
         pnl = total_balance - engine.initial_balance
+        pnl_pct = (pnl / engine.initial_balance * 100) if engine.initial_balance else 0.0
+
+        # Fetch total dividends for all symbols in trade history
+        all_symbols = list(set(t["symbol"] for t in engine.trade_history))
+        dividends_map = get_total_dividends_for_symbols(all_symbols)
+        total_dividends = sum(dividends_map.values())
+        pnl += total_dividends
         pnl_pct = (pnl / engine.initial_balance * 100) if engine.initial_balance else 0.0
 
         # Open positions exposure and stop‑loss risk
@@ -289,6 +302,7 @@ class PositionManager:
             'avg_win': avg_win,
             'avg_loss': avg_loss,
             'total_trades': total_trades,
+            'total_dividends': round(total_dividends, 4),
         }
 
     async def get_open_trades(self) -> List[Dict[str, Any]]:
@@ -333,7 +347,7 @@ class PositionManager:
             })
         return open_trades
 
-    def compute_equity_and_drawdown(self, trades_snapshot: List[Dict[str, Any]]) -> Dict[str, float]:
+    def compute_equity_and_drawdown(self, trades_snapshot: List[Dict[str, Any]], total_dividends: float = 0.0) -> Dict[str, float]:
         """Compute current equity, peak, and drawdown percentage.
         
         Returns a dict with keys: current_realized_equity, unrealized_pnl,
@@ -358,7 +372,7 @@ class PositionManager:
                     unrealized_pnl += (t['last'] - pos['price']) * pos['amount']
         except Exception:
             pass
-        current_equity = current_realized_equity + unrealized_pnl
+        current_equity = current_realized_equity + unrealized_pnl + total_dividends
         if current_equity > peak:
             peak = current_equity
         drawdown_pct = ((peak - current_equity) / peak * 100) if peak > 0 else 0.0
@@ -440,12 +454,17 @@ class PositionManager:
                 "total_pnl": round(s["total_pnl"], 4),
             }
 
+        # Fetch total dividends for all symbols that have closed trades
+        all_symbols = list(symbol_stats.keys())
+        dividends_map = get_total_dividends_for_symbols(all_symbols)
+        total_dividends = sum(dividends_map.values())
+
         recent_sells = [t for t in trades_snapshot if t.get("side") == "sell"][-10:]
         recent_pnl = [t.get("realized_pnl", 0.0) for t in recent_sells]
         total_recent_pnl = sum(recent_pnl)
         trend = "up" if total_recent_pnl > 0 else "down" if total_recent_pnl < 0 else "flat"
 
-        _equity = self.compute_equity_and_drawdown(trades_snapshot)
+        _equity = self.compute_equity_and_drawdown(trades_snapshot, total_dividends=total_dividends)
         current_realized_equity = _equity["current_realized_equity"]
         unrealized_pnl = _equity["unrealized_pnl"]
         current_equity = _equity["current_equity"]
@@ -467,7 +486,8 @@ class PositionManager:
             "stock_performance": symbol_perf,
             "strategy_performance": strategy_perf,
             "equity_curve": {
-                "total_pnl": round(engine._realized_pnl_offset + sum(t.get("realized_pnl", 0.0) for t in trades_snapshot if t.get("side") == "sell"), 4),
+                "total_pnl": round(engine._realized_pnl_offset + sum(t.get("realized_pnl", 0.0) for t in trades_snapshot if t.get("side") == "sell") + total_dividends, 4),
+                "total_dividends": round(total_dividends, 4),
                 "recent_10_trades_pnl": round(total_recent_pnl, 4),
                 "trend": trend,
                 "drawdown_pct": round(drawdown_pct, 2),
