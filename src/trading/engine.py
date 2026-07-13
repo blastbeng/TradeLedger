@@ -84,6 +84,7 @@ class TradingEngine:
         self.base_currency = settings.BASE_CURRENCY
         self.max_symbols = settings.MAX_SYMBOLS
         self.effective_max_symbols = self.max_symbols
+        self._symbol_reevaluation_interval = settings.SYMBOL_REEVALUATION_INTERVAL
         self.redis = get_redis_client()
         self.event_bus = EventBus()
         self.config_service = UnifiedConfigService(self.redis)
