@@ -60,14 +60,19 @@ def _split_and_merge_prompt(
     temperature: Optional[float],
     timeout: float,
     max_input_tokens: int,
+    depth: int = 0,
 ) -> str:
     """
     Splits an oversized prompt into chunks, summarizes each chunk using the LLM,
     and merges the summaries into a single prompt that fits within the context window.
     """
+    if depth >= 3:
+        logger.warning("Max split/merge depth reached. Truncating prompt.")
+        return prompt[:max_input_tokens * 4]  # 4 chars per token approx
+
     logger.warning(
-        "Prompt size exceeds context window limit (%d tokens). Splitting and merging...",
-        max_input_tokens
+        "Prompt size exceeds context window limit (%d tokens). Splitting and merging (depth=%d)...",
+        max_input_tokens, depth
     )
 
     # Reserve 30% for summary instructions and completion
@@ -130,37 +135,41 @@ def _split_and_merge_prompt(
             f"Chunk:\n{chunk}"
         )
         
-        # Call the LLM to summarize the chunk
-        if provider == "openai":
-            from src.llm.llm_client import _get_openai_response
-            result = _get_openai_response(
-                prompt=summary_prompt,
-                system_prompt="You are an expert summarizer for a stock trading bot.",
-                model=model,
-                base_url=base_url,
-                api_key=api_key,
-                temperature=temperature,
-                timeout=timeout,
-                messages=None,
-                add_cache_control=False,
-                thinking_enabled=False,
-            )
-        else:
-            from src.llm.llm_client import _get_ollama_response
-            result = _get_ollama_response(
-                prompt=summary_prompt,
-                system_prompt="You are an expert summarizer for a stock trading bot.",
-                model=model,
-                base_url=base_url,
-                api_key=api_key,
-                temperature=temperature,
-                timeout=timeout,
-                messages=None,
-                add_cache_control=False,
-                thinking_enabled=False,
-            )
-        
-        summaries.append(result["content"])
+        try:
+            # Call the LLM to summarize the chunk
+            if provider == "openai":
+                from src.llm.llm_client import _get_openai_response
+                result = _get_openai_response(
+                    prompt=summary_prompt,
+                    system_prompt="You are an expert summarizer for a stock trading bot.",
+                    model=model,
+                    base_url=base_url,
+                    api_key=api_key,
+                    temperature=temperature,
+                    timeout=timeout,
+                    messages=None,
+                    add_cache_control=False,
+                    thinking_enabled=False,
+                )
+            else:
+                from src.llm.llm_client import _get_ollama_response
+                result = _get_ollama_response(
+                    prompt=summary_prompt,
+                    system_prompt="You are an expert summarizer for a stock trading bot.",
+                    model=model,
+                    base_url=base_url,
+                    api_key=api_key,
+                    temperature=temperature,
+                    timeout=timeout,
+                    messages=None,
+                    add_cache_control=False,
+                    thinking_enabled=False,
+                )
+            summaries.append(result["content"])
+        except Exception as e:
+            logger.error("Failed to summarize chunk %d: %s. Truncating instead.", i + 1, e)
+            # If summarization fails, truncate the chunk to fit
+            summaries.append(chunk[:chunk_limit * 4])
     
     # Combine summaries into a new prompt
     merged_prompt = (
@@ -183,6 +192,7 @@ def _split_and_merge_prompt(
             temperature=temperature,
             timeout=timeout,
             max_input_tokens=max_input_tokens,
+            depth=depth + 1,
         )
     
     return merged_prompt
