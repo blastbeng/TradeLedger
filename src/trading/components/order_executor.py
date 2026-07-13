@@ -264,7 +264,7 @@ class OrderExecutor:
             # Update remaining base amount
             original_amount = queued.get('original_amount', queued['amount'])
             queued['amount'] = original_amount - filled_qty
-            await self._sell_executor.handle_queued_sell_fill(trade_dict, queued, partial=True)
+            await self.event_bus.request("handle_queued_sell_fill", trade_dict, queued, partial=True)
 
         # --- OCO handling for exit orders ---
         if queued.get("is_exit_order"):
