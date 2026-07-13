@@ -16,7 +16,7 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
-from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol
+from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics
 from typing import Optional
 from pydantic import BaseModel
 
@@ -746,6 +746,14 @@ async def llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] 
     """Return aggregated LLM metrics for charting based on period and date range."""
     try:
         return await run_in_threadpool(get_llm_metrics_timeseries, period, from_date, to_date, model_filter)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@http_router.get("/api/llm-decision-quality")
+async def llm_decision_quality(period_days: int = 7):
+    """Return LLM decision quality metrics for the dashboard."""
+    try:
+        return await run_in_threadpool(get_llm_decision_quality_metrics, period_days)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
