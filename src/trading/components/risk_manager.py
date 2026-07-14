@@ -699,6 +699,49 @@ class RiskManager:
                     logger.warning(f"News sentiment check failed for {symbol}: {type(e).__name__}: {e}")
         return False
 
+    async def _get_current_atr(self, symbol: str, pos: Dict[str, Any], tf: Optional[str]) -> Optional[float]:
+        """Fetch and validate ATR for trailing stop calculation.
+        
+        Returns None if the timeframe is too long, the ATR is stale, or fetch fails.
+        """
+        engine = self.engine
+        if not tf:
+            return None
+            
+        tf_secs_atr = engine._timeframe_to_seconds(tf)
+        # For very long timeframes (>= 1 month), ATR is computed from
+        # too few candles (2-10) to be statistically reliable.
+        if tf_secs_atr >= 2_592_000:
+            return None
+
+        if "_current_atr" not in pos or time.time() - pos.get("_atr_fetched_at", 0) > 300:
+            try:
+                ind = await asyncio.to_thread(get_indicators, symbol, tf)
+                if ind and ind.get("atr") and ind["atr"] > 0:
+                    ind_ts = ind.get("_indicator_timestamp")
+                    atr_is_stale = False
+                    if ind_ts is not None:
+                        latest_candle_ts = await asyncio.to_thread(
+                            get_latest_ohlcv_timestamp, symbol, tf
+                        )
+                        if latest_candle_ts is not None:
+                            tf_ms = engine._timeframe_to_ms(tf)
+                            if (latest_candle_ts - ind_ts) > 2 * tf_ms:
+                                logger.info(
+                                    f"ATR for {symbol} {tf} is stale "
+                                    f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
+                                    f"gap={latest_candle_ts - ind_ts}ms > {2 * tf_ms}ms). "
+                                    f"Falling back to fixed-percentage trailing stop."
+                                )
+                                atr_is_stale = True
+                    async with self.shared_state._positions_lock:
+                        pos["_current_atr"] = ind["atr"] if not atr_is_stale else None
+                        pos["_atr_fetched_at"] = time.time()
+            except Exception as e:
+                logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {e}")
+
+        return pos.get("_current_atr")
+
     async def update_trailing_stop(
         self,
         symbol: str,
@@ -811,56 +854,7 @@ class RiskManager:
                 # ATR-based trailing stop (Chandelier Exit)
                 atr_mult = pos.get("trailing_stop_atr_multiple")
                 if atr_mult is not None and atr_mult > 0:
-                    # Determine the position timeframe for ATR reliability check
-                    tf_for_atr = pos.get("timeframe")
-                    if not tf_for_atr:
-                        for entry in self.shared_state.current_symbols:
-                            if entry["symbol"] == symbol:
-                                tf_for_atr = entry.get("timeframe")
-                                break
-                    tf_secs_atr = engine._timeframe_to_seconds(tf_for_atr) if tf_for_atr else 0
-                    # For very long timeframes (>= 1 month), ATR is computed from
-                    # too few candles (2-10) to be statistically reliable.
-                    # Skip ATR fetch and fall back to fixed percentage trailing stop.
-                    skip_atr = tf_secs_atr >= 2_592_000
-
-                    if not skip_atr:
-                        # Fetch ATR from DB if we don't have it in this loop
-                        if "_current_atr" not in pos or time.time() - pos.get("_atr_fetched_at", 0) > 300:
-                            tf = pos.get("timeframe")
-                            if tf:
-                                try:
-                                    ind = await asyncio.to_thread(get_indicators, symbol, tf)
-                                    if ind and ind.get("atr") and ind["atr"] > 0:
-                                        # Check indicator staleness: if the latest candle
-                                        # used to compute ATR is older than 2× the timeframe
-                                        # interval, the ATR may not reflect current volatility.
-                                        ind_ts = ind.get("_indicator_timestamp")
-                                        atr_is_stale = False
-                                        if ind_ts is not None:
-                                            latest_candle_ts = await asyncio.to_thread(
-                                                get_latest_ohlcv_timestamp, symbol, tf
-                                            )
-                                            if latest_candle_ts is not None:
-                                                tf_ms = engine._timeframe_to_ms(tf)
-                                                if (latest_candle_ts - ind_ts) > 2 * tf_ms:
-                                                    logger.info(
-                                                        f"ATR for {symbol} {tf} is stale "
-                                                        f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
-                                                        f"gap={latest_candle_ts - ind_ts}ms > {2 * tf_ms}ms). "
-                                                        f"Falling back to fixed-percentage trailing stop."
-                                                    )
-                                                    atr_is_stale = True
-                                        async with self.shared_state._positions_lock:
-                                            if not atr_is_stale:
-                                                pos["_current_atr"] = ind["atr"]
-                                            else:
-                                                pos["_current_atr"] = None
-                                            pos["_atr_fetched_at"] = time.time()
-                                except Exception as e:
-                                    logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {e}")
-
-                    current_atr = pos.get("_current_atr") if not skip_atr else None
+                    current_atr = await self._get_current_atr(symbol, pos, tf)
                     if current_atr is not None and current_atr > 0:
                         new_stop = highest_price - (current_atr * atr_mult)
                     else:
