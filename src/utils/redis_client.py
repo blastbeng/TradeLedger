@@ -38,7 +38,7 @@ class DummyRedis:
         return False
 
     def incr(self, *args, **kwargs):
-        self._warn("incr")
+        self._warn("incr", is_write=True)
         return 0
 
     # Write operations – log error every time to indicate data loss risk
