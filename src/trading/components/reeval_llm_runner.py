@@ -5,10 +5,31 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
-from src.llm.cache import get_cached_llm_response, compute_market_hash
+from src.llm.cache import get_cached_llm_response, compute_market_hash, estimate_tokens
 from src.llm.prompts import build_stock_selection_prompt, build_system_prompt, compact_prompt, build_stock_selection_messages, build_final_selection_messages
 
 logger = logging.getLogger(__name__)
+
+
+class _TokenBudgetSemaphore:
+    """Asynchronous semaphore that limits concurrent token usage."""
+    def __init__(self, budget: int):
+        self._budget = budget
+        self._used = 0
+        self._cond = asyncio.Condition()
+
+    async def acquire(self, tokens: int):
+        async with self._cond:
+            # If a single chunk exceeds the budget, cap it to the budget to avoid deadlock
+            tokens = min(tokens, self._budget)
+            while self._used + tokens > self._budget:
+                await self._cond.wait()
+            self._used += tokens
+
+    async def release(self, tokens: int):
+        async with self._cond:
+            self._used -= tokens
+            self._cond.notify_all()
 
 
 class ReevalLLMRunner:
@@ -62,6 +83,7 @@ class ReevalLLMRunner:
         logger.info("Re-evaluation step 11/%d: Evaluating %d chunks of ~%d symbols each...", total_steps, len(chunks), CHUNK_SIZE)
 
         semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent chunk evaluations
+        token_limiter = _TokenBudgetSemaphore(40000)  # Limit concurrent token usage to avoid rate limits
 
         async def _evaluate_chunk(chunk_idx: int, chunk_symbols: List[str]) -> Optional[Dict[str, Any]]:
             async with semaphore:
@@ -157,91 +179,97 @@ class ReevalLLMRunner:
                 # Keep prompt text for correction retries
                 chunk_prompt = chunk_messages[-1]["content"]
 
-                # Build market snapshot for caching
-                chunk_market_snapshot = {
-                    "chunk_idx": chunk_idx,
-                    "available_pairs": chunk_symbols,
-                    "tickers": chunk_tickers,
-                    "ohlcv_data": {s: ohlcv_data.get(s, {}) for s in chunk_symbols},
-                    "symbol_indicators": chunk_symbol_indicators,
-                    "performance": perf,
-                    "session_info": session_info,
-                    "market_breadth": market_breadth,
-                    "trading_paused": trading_paused_bool,
-                    "open_positions": self.shared_state.positions,
-                    "base_balance": base_balance,
-                    "per_symbol_budget": per_symbol_budget,
-                    "current_symbols": self.shared_state.current_symbols,
-                }
-                chunk_market_hash = compute_market_hash(chunk_market_snapshot)
+                # Estimate tokens for this chunk to manage concurrent token budget
+                chunk_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in chunk_messages)
+                await token_limiter.acquire(chunk_tokens)
+                try:
+                    # Build market snapshot for caching
+                    chunk_market_snapshot = {
+                        "chunk_idx": chunk_idx,
+                        "available_pairs": chunk_symbols,
+                        "tickers": chunk_tickers,
+                        "ohlcv_data": {s: ohlcv_data.get(s, {}) for s in chunk_symbols},
+                        "symbol_indicators": chunk_symbol_indicators,
+                        "performance": perf,
+                        "session_info": session_info,
+                        "market_breadth": market_breadth,
+                        "trading_paused": trading_paused_bool,
+                        "open_positions": self.shared_state.positions,
+                        "base_balance": base_balance,
+                        "per_symbol_budget": per_symbol_budget,
+                        "current_symbols": self.shared_state.current_symbols,
+                    }
+                    chunk_market_hash = compute_market_hash(chunk_market_snapshot)
 
-                # Call LLM for this chunk
-                chunk_response = None
-                max_retries = 2
-                for attempt in range(max_retries + 1):
-                    try:
-                        result = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                get_cached_llm_response,
-                                "", "", 300,
-                                market_hash=chunk_market_hash,
-                                model_type="mind",
-                                temperature=effective_temp,
-                                messages=chunk_messages,
-                                request_type="symbol_reeval_chunk",
-                            ),
-                            timeout=settings.LLM_TIMEOUT
-                        )
-                        chunk_response = result["response"]
-                        break
-                    except asyncio.TimeoutError:
-                        if attempt < max_retries:
-                            logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM timed out (attempt {attempt + 1}). Retrying...")
-                            await asyncio.sleep(5 * (attempt + 1))
-                        else:
-                            logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM timed out after all retries. Skipping.")
-                    except Exception as e:
-                        if attempt < max_retries:
-                            logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM failed: {e}. Retrying...")
-                            await asyncio.sleep(5 * (attempt + 1))
-                        else:
-                            logger.error(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM failed after all retries: {type(e).__name__}: {e}")
-
-                if chunk_response:
-                    try:
-                        chunk_parsed = json.loads(chunk_response)
-                        logger.info("Chunk %d/%d: received %d symbol selections", chunk_idx + 1, len(chunks), len(chunk_parsed.get("stocks", [])))
-                        return chunk_parsed
-                    except json.JSONDecodeError:
-                        logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)}: invalid JSON, retrying with correction.")
-                        correction = (
-                            "Your previous response was not valid JSON. "
-                            "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
-                            "Here is the original request:\n\n" + chunk_prompt
-                        )
-                        correction_messages = [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": compact_prompt(correction)},
-                        ]
+                    # Call LLM for this chunk
+                    chunk_response = None
+                    max_retries = 2
+                    for attempt in range(max_retries + 1):
                         try:
-                            correction_result = await asyncio.wait_for(
+                            result = await asyncio.wait_for(
                                 asyncio.to_thread(
-                                    get_cached_llm_response, "", "", 120,
-                                    model_type="actuator", temperature=effective_temp,
-                                    messages=correction_messages,
-                                    request_type="symbol_reeval_chunk_retry",
+                                    get_cached_llm_response,
+                                    "", "", 300,
+                                    market_hash=chunk_market_hash,
+                                    model_type="mind",
+                                    temperature=effective_temp,
+                                    messages=chunk_messages,
+                                    request_type="symbol_reeval_chunk",
                                 ),
                                 timeout=settings.LLM_TIMEOUT
                             )
-                            chunk_parsed = json.loads(correction_result["response"])
-                            logger.info("Chunk %d/%d: corrected, received %d selections", chunk_idx + 1, len(chunks), len(chunk_parsed.get("stocks", [])))
-                            return chunk_parsed
+                            chunk_response = result["response"]
+                            break
+                        except asyncio.TimeoutError:
+                            if attempt < max_retries:
+                                logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM timed out (attempt {attempt + 1}). Retrying...")
+                                await asyncio.sleep(5 * (attempt + 1))
+                            else:
+                                logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM timed out after all retries. Skipping.")
                         except Exception as e:
-                            logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)}: correction also failed: {e}")
-                else:
-                    logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)}: no response, skipping.")
+                            if attempt < max_retries:
+                                logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM failed: {e}. Retrying...")
+                                await asyncio.sleep(5 * (attempt + 1))
+                            else:
+                                logger.error(f"Chunk {chunk_idx + 1}/{len(chunks)} LLM failed after all retries: {type(e).__name__}: {e}")
 
-                return None
+                    if chunk_response:
+                        try:
+                            chunk_parsed = json.loads(chunk_response)
+                            logger.info("Chunk %d/%d: received %d symbol selections", chunk_idx + 1, len(chunks), len(chunk_parsed.get("stocks", [])))
+                            return chunk_parsed
+                        except json.JSONDecodeError:
+                            logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)}: invalid JSON, retrying with correction.")
+                            correction = (
+                                "Your previous response was not valid JSON. "
+                                "You MUST output ONLY a single JSON object, with no markdown fences, no explanations, no extra text. "
+                                "Here is the original request:\n\n" + chunk_prompt
+                            )
+                            correction_messages = [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": compact_prompt(correction)},
+                            ]
+                            try:
+                                correction_result = await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        get_cached_llm_response, "", "", 120,
+                                        model_type="actuator", temperature=effective_temp,
+                                        messages=correction_messages,
+                                        request_type="symbol_reeval_chunk_retry",
+                                    ),
+                                    timeout=settings.LLM_TIMEOUT
+                                )
+                                chunk_parsed = json.loads(correction_result["response"])
+                                logger.info("Chunk %d/%d: corrected, received %d selections", chunk_idx + 1, len(chunks), len(chunk_parsed.get("stocks", [])))
+                                return chunk_parsed
+                            except Exception as e:
+                                logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)}: correction also failed: {e}")
+                    else:
+                        logger.warning(f"Chunk {chunk_idx + 1}/{len(chunks)}: no response, skipping.")
+
+                    return None
+                finally:
+                    await token_limiter.release(chunk_tokens)
 
         tasks = [_evaluate_chunk(idx, chunk) for idx, chunk in enumerate(chunks)]
         results = await asyncio.gather(*tasks)
