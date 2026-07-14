@@ -79,7 +79,7 @@ class _PgConnectionWrapper:
         # This prevents "INTRANS" state leaks when exceptions occur before commit()
         try:
             self._conn.rollback()
-        except Exception:
+        except psycopg.Error:
             pass  # Ignore rollback errors (e.g., no transaction in progress)
         try:
             self._pool.putconn(self._conn)
@@ -88,7 +88,7 @@ class _PgConnectionWrapper:
             # Try to close the connection directly as fallback
             try:
                 self._conn.close()
-            except Exception:
+            except psycopg.Error:
                 pass
 
     def commit(self):
@@ -128,7 +128,7 @@ class _SqliteConnectionWrapper:
     def _close_conn(conn):
         try:
             conn.close()
-        except Exception:
+        except sqlite3.Error:
             pass
 
     def __getattr__(self, name):
@@ -2584,7 +2584,7 @@ def close_pool():
     if _pg_pool is not None:
         try:
             _pg_pool.close()
-        except Exception as e:
+        except (psycopg.Error, RuntimeError) as e:
             logger.warning(f"Error closing connection pool: {type(e).__name__}: {e}")
         _pg_pool = None
         logger.info("PostgreSQL connection pool closed.")
@@ -2600,7 +2600,7 @@ def get_pool_stats() -> dict:
         stats["min_size"] = _pg_pool._min_size
         stats["max_size"] = _pg_pool._max_size
         return stats
-    except Exception:
+    except (psycopg.Error, AttributeError):
         return {"status": "unknown"}
 
 
