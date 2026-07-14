@@ -294,6 +294,9 @@ def _is_relevant(symbol: str, title: str, summary: str, name: Optional[str] = No
         name_lower = name.lower()
         if name_lower in title.lower() or (" " in name_lower and name_lower.split()[0] in title.lower()):
             score += 2
+    # +1 for symbol or name mentioned in body (but not title)
+    if score == 0:
+        score += 1
     for kw in stock_keywords:
         if kw in text:
             score += 1
