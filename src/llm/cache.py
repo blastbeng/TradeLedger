@@ -7,7 +7,7 @@ import math
 import time
 import concurrent.futures
 from datetime import datetime, timezone
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
 from src.database import save_llm_metrics
@@ -300,6 +300,457 @@ def _compute_fee_fingerprint() -> str:
     return hashlib.md5(raw.encode()).hexdigest()[:8]
 
 
+def _save_metric(metric_data: dict) -> None:
+    """Helper to save LLM metrics and log warnings on failure."""
+    try:
+        save_llm_metrics(metric_data)
+    except Exception as metric_err:
+        logger.warning("Failed to save LLM metric: %s", metric_err)
+
+
+def _build_cache_key(
+    messages: Optional[List[Dict[str, str]]],
+    system_prompt: str,
+    model_type: str,
+    provider: str,
+    model: str,
+    cache_temp: Optional[float],
+    market_hash: Optional[str],
+    prompt: str,
+) -> str:
+    """Build the Redis cache key based on prompt/messages and model config."""
+    fee_fp = _compute_fee_fingerprint()
+    if messages is not None:
+        normalized_messages = [
+            {**msg, "content": _normalize_text_for_cache(msg.get("content", ""))}
+            for msg in messages
+        ]
+        key_data = json.dumps(
+            {"messages": normalized_messages, "system": _normalize_text_for_cache(system_prompt), "model_type": model_type,
+             "provider": provider, "model": model,
+             "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE,
+             "cache_version": settings.LLM_CACHE_VERSION,
+             "fee_fp": fee_fp},
+            sort_keys=True
+        )
+        return f"llm:{hashlib.sha256(key_data.encode()).hexdigest()}"
+    elif market_hash:
+        sys_hash = hashlib.sha256(system_prompt.encode()).hexdigest()[:16] if system_prompt else "none"
+        return f"llm:{settings.LLM_CACHE_VERSION}:{fee_fp}:{provider}:{model}:{model_type}:market:{market_hash}:sys:{sys_hash}:t{cache_temp if cache_temp is not None else 'def'}"
+    else:
+        key_data = json.dumps(
+            {"prompt": _normalize_text_for_cache(prompt), "system": _normalize_text_for_cache(system_prompt), "model_type": model_type,
+             "provider": provider, "model": model,
+             "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE,
+             "cache_version": settings.LLM_CACHE_VERSION,
+             "fee_fp": fee_fp},
+            sort_keys=True
+        )
+        return f"llm:{hashlib.sha256(key_data.encode()).hexdigest()}"
+
+
+def _get_cached_response(
+    redis_client,
+    cache_key: str,
+    model_type: str,
+    provider: str,
+    model: str,
+    request_type: Optional[str],
+) -> Optional[dict]:
+    """Attempt to fetch a cached LLM response from Redis."""
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            try:
+                data = json.loads(cached)
+                if isinstance(data, dict) and "response" in data:
+                    logger.info("LLM cache hit: key=%.32s, model_type=%s", cache_key, model_type)
+                    _save_metric({
+                        "timestamp": time.time(),
+                        "provider": data.get("provider", provider),
+                        "model": data.get("model", model),
+                        "model_type": model_type,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                        "cache_hit": 1,
+                        "latency_ms": 0,
+                        "error": None,
+                        "request_type": request_type,
+                        "is_fallback": data.get("is_fallback", False),
+                    })
+                    return data
+            except (json.JSONDecodeError, TypeError):
+                pass
+    except Exception as e:
+        logger.warning(f"Redis cache get failed: {type(e).__name__}: {e}. Proceeding without cache.")
+    return None
+
+
+def _manage_context_window(
+    messages: Optional[List[Dict[str, str]]],
+    prompt: str,
+    system_prompt: str,
+    model_type: str,
+    provider: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    temperature: Optional[float],
+    effective_timeout: float,
+    max_input_tokens: int,
+    effective_limit: int,
+) -> Tuple[Optional[List[Dict[str, str]]], str]:
+    """Manage context window limits by splitting and merging oversized prompts."""
+    if messages is not None:
+        total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
+        if total_tokens > effective_limit:
+            logger.warning(
+                "Messages size (~%d tokens) exceeds context window limit (%d). Splitting and merging...",
+                total_tokens, effective_limit
+            )
+            messages = [dict(msg) for msg in messages]
+            if messages and messages[-1]["role"] == "user":
+                user_content = messages[-1]["content"]
+                merged_content = _split_and_merge_prompt(
+                    prompt=user_content,
+                    system_prompt=system_prompt,
+                    model_type=model_type,
+                    provider=provider,
+                    model=model,
+                    base_url=base_url,
+                    api_key=api_key,
+                    temperature=temperature,
+                    timeout=effective_timeout,
+                    max_input_tokens=effective_limit - estimate_tokens(system_prompt),
+                )
+                messages[-1]["content"] = merged_content
+    else:
+        prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+        if prompt_tokens > effective_limit:
+            prompt = _split_and_merge_prompt(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                model_type=model_type,
+                provider=provider,
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                temperature=temperature,
+                timeout=effective_timeout,
+                max_input_tokens=effective_limit - estimate_tokens(system_prompt),
+            )
+    return messages, prompt
+
+
+def _execute_primary_call(
+    provider: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    temperature: Optional[float],
+    effective_timeout: float,
+    messages: Optional[List[Dict[str, str]]],
+    api_messages: Optional[List[Dict[str, str]]],
+    prompt: str,
+    system_prompt: str,
+    add_cache_control: bool,
+    thinking_enabled: bool,
+    model_type: str,
+    request_type: Optional[str],
+    is_fallback: bool,
+) -> Tuple[str, dict, str, str, bool]:
+    """Execute the primary LLM call and return response, usage, and model info."""
+    start_time = time.time()
+    try:
+        if provider == "openai":
+            from src.llm.llm_client import _get_openai_response
+            result = _get_openai_response(
+                prompt=prompt if messages is None else "",
+                system_prompt=system_prompt if messages is None else "",
+                model=model, base_url=base_url, api_key=api_key,
+                temperature=temperature, timeout=effective_timeout,
+                messages=api_messages,
+                add_cache_control=add_cache_control,
+                thinking_enabled=thinking_enabled,
+            )
+        else:
+            from src.llm.llm_client import _get_ollama_response
+            result = _get_ollama_response(
+                prompt=prompt if messages is None else "",
+                system_prompt=system_prompt if messages is None else "",
+                model=model, base_url=base_url, api_key=api_key,
+                temperature=temperature, timeout=effective_timeout,
+                messages=api_messages,
+                add_cache_control=add_cache_control,
+                thinking_enabled=thinking_enabled,
+            )
+
+        response_text = result["content"]
+        usage = result.get("usage", {})
+
+        if not response_text or not response_text.strip():
+            raise RuntimeError("LLM returned an empty response")
+        return response_text, usage, provider, model, is_fallback
+    except Exception as e:
+        latency_ms = (time.time() - start_time) * 1000
+        _save_metric({
+            "timestamp": time.time(),
+            "provider": provider,
+            "model": model,
+            "model_type": model_type,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cache_hit": 0,
+            "latency_ms": latency_ms,
+            "error": str(e)[:500],
+            "request_type": request_type,
+            "is_fallback": is_fallback,
+        })
+        logger.error("LLM primary call failed (provider=%s, model=%s, model_type=%s): %s", provider, model, model_type, e, exc_info=True)
+        raise
+
+
+def _execute_fallback_call(
+    e: Exception,
+    model_type: str,
+    messages: Optional[List[Dict[str, str]]],
+    prompt: str,
+    system_prompt: str,
+    temperature: Optional[float],
+    effective_timeout: float,
+    api_messages: Optional[List[Dict[str, str]]],
+    add_cache_control: bool,
+    thinking_enabled: bool,
+    request_type: Optional[str],
+) -> Tuple[str, dict, str, str, bool]:
+    """Execute fallback LLM call if primary fails."""
+    if not settings.LLM_FALLBACK_ENABLED:
+        logger.warning(
+            "LLM primary call failed and fallback is disabled (LLM_FALLBACK_ENABLED=False). "
+            "Original error: %s", e
+        )
+        raise
+
+    if model_type == "mind":
+        fallback_provider = settings.LLM_MIND_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+    elif model_type == "weak":
+        fallback_provider = settings.LLM_WEAK_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+    else:
+        fallback_provider = settings.LLM_ACTUATOR_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+
+    if not fallback_provider:
+        logger.warning(
+            "LLM primary call failed and no fallback provider configured. "
+            "Original error: %s", e
+        )
+        raise
+
+    if fallback_provider == "openai":
+        if model_type == "mind":
+            fallback_model = settings.OPENAI_MIND_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fallback_base_url = settings.OPENAI_MIND_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
+            fallback_api_key = settings.OPENAI_MIND_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
+        elif model_type == "weak":
+            fallback_model = settings.OPENAI_WEAK_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fallback_base_url = settings.OPENAI_WEAK_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
+            fallback_api_key = settings.OPENAI_WEAK_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
+        else:
+            fallback_model = settings.OPENAI_ACTUATOR_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fallback_base_url = settings.OPENAI_ACTUATOR_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
+            fallback_api_key = settings.OPENAI_ACTUATOR_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
+
+        if fallback_api_key or fallback_base_url:
+            logger.warning(
+                "Primary LLM call failed (%s). Falling back to OpenAI-compatible provider "
+                "for %s role (model=%s).", e, model_type, fallback_model
+            )
+            fb_max_input_tokens = _get_max_input_tokens("openai", model_type, True)
+            fb_effective_limit = int(fb_max_input_tokens * 0.8)
+            if messages is not None:
+                fb_total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
+                if fb_total_tokens > fb_effective_limit:
+                    logger.warning("Fallback messages size (~%d tokens) exceeds limit (%d). Splitting...", fb_total_tokens, fb_effective_limit)
+                    messages = [dict(msg) for msg in messages]
+                    if messages and messages[-1]["role"] == "user":
+                        messages[-1]["content"] = _split_and_merge_prompt(
+                            prompt=messages[-1]["content"],
+                            system_prompt=system_prompt,
+                            model_type=model_type,
+                            provider="openai",
+                            model=fallback_model,
+                            base_url=fallback_base_url,
+                            api_key=fallback_api_key,
+                            temperature=temperature,
+                            timeout=effective_timeout,
+                            max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
+                        )
+                        api_messages = []
+                        if system_prompt:
+                            api_messages.append({"role": "system", "content": system_prompt})
+                        api_messages.extend(messages)
+            else:
+                fb_prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+                if fb_prompt_tokens > fb_effective_limit:
+                    prompt = _split_and_merge_prompt(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        model_type=model_type,
+                        provider="openai",
+                        model=fallback_model,
+                        base_url=fallback_base_url,
+                        api_key=fallback_api_key,
+                        temperature=temperature,
+                        timeout=effective_timeout,
+                        max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
+                    )
+            fallback_start = time.time()
+            try:
+                from src.llm.llm_client import _get_openai_response
+                result = _get_openai_response(
+                    prompt=prompt if messages is None else "",
+                    system_prompt=system_prompt if messages is None else "",
+                    model=fallback_model,
+                    base_url=fallback_base_url,
+                    api_key=fallback_api_key,
+                    temperature=temperature,
+                    timeout=settings.LLM_FALLBACK_TIMEOUT,
+                    messages=api_messages,
+                    add_cache_control=add_cache_control,
+                    thinking_enabled=thinking_enabled,
+                )
+                response_text = result["content"]
+                usage = result.get("usage", {})
+                return response_text, usage, "openai", fallback_model, True
+            except Exception as fallback_e:
+                fallback_latency = (time.time() - fallback_start) * 1000
+                _save_metric({
+                    "timestamp": time.time(),
+                    "provider": "openai",
+                    "model": fallback_model,
+                    "model_type": model_type,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "cache_hit": 0,
+                    "latency_ms": fallback_latency,
+                    "error": str(fallback_e)[:500],
+                    "request_type": request_type,
+                    "is_fallback": True,
+                })
+                logger.error("OpenAI fallback also failed: %s", fallback_e, exc_info=True)
+                raise
+        else:
+            logger.warning(
+                "Fallback provider is openai but no API key or base URL configured. "
+                "Original error: %s", e
+            )
+            raise
+    elif fallback_provider == "ollama":
+        if model_type == "mind":
+            fallback_model = settings.OLLAMA_MIND_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fallback_base_url = settings.OLLAMA_MIND_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
+            fallback_api_key = settings.OLLAMA_MIND_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
+        elif model_type == "weak":
+            fallback_model = settings.OLLAMA_WEAK_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fallback_base_url = settings.OLLAMA_WEAK_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
+            fallback_api_key = settings.OLLAMA_WEAK_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
+        else:
+            fallback_model = settings.OLLAMA_ACTUATOR_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fallback_base_url = settings.OLLAMA_ACTUATOR_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
+            fallback_api_key = settings.OLLAMA_ACTUATOR_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
+
+        if fallback_base_url:
+            logger.warning(
+                "Primary LLM call failed (%s). Falling back to Ollama provider "
+                "for %s role (model=%s).", e, model_type, fallback_model
+            )
+            fb_max_input_tokens = _get_max_input_tokens("ollama", model_type, True)
+            fb_effective_limit = int(fb_max_input_tokens * 0.8)
+            if messages is not None:
+                fb_total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
+                if fb_total_tokens > fb_effective_limit:
+                    logger.warning("Fallback messages size (~%d tokens) exceeds limit (%d). Splitting...", fb_total_tokens, fb_effective_limit)
+                    messages = [dict(msg) for msg in messages]
+                    if messages and messages[-1]["role"] == "user":
+                        messages[-1]["content"] = _split_and_merge_prompt(
+                            prompt=messages[-1]["content"],
+                            system_prompt=system_prompt,
+                            model_type=model_type,
+                            provider="ollama",
+                            model=fallback_model,
+                            base_url=fallback_base_url,
+                            api_key=fallback_api_key,
+                            temperature=temperature,
+                            timeout=effective_timeout,
+                            max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
+                        )
+                        api_messages = []
+                        if system_prompt:
+                            api_messages.append({"role": "system", "content": system_prompt})
+                        api_messages.extend(messages)
+            else:
+                fb_prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+                if fb_prompt_tokens > fb_effective_limit:
+                    prompt = _split_and_merge_prompt(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        model_type=model_type,
+                        provider="ollama",
+                        model=fallback_model,
+                        base_url=fallback_base_url,
+                        api_key=fallback_api_key,
+                        temperature=temperature,
+                        timeout=effective_timeout,
+                        max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
+                    )
+            fallback_start = time.time()
+            try:
+                from src.llm.llm_client import _get_ollama_response
+                result = _get_ollama_response(
+                    prompt=prompt if messages is None else "",
+                    system_prompt=system_prompt if messages is None else "",
+                    model=fallback_model,
+                    base_url=fallback_base_url,
+                    api_key=fallback_api_key,
+                    temperature=temperature,
+                    timeout=settings.LLM_FALLBACK_TIMEOUT,
+                    messages=api_messages,
+                    add_cache_control=add_cache_control,
+                    thinking_enabled=thinking_enabled,
+                )
+                response_text = result["content"]
+                usage = result.get("usage", {})
+                return response_text, usage, "ollama", fallback_model, True
+            except Exception as fallback_e:
+                fallback_latency = (time.time() - fallback_start) * 1000
+                _save_metric({
+                    "timestamp": time.time(),
+                    "provider": "ollama",
+                    "model": fallback_model,
+                    "model_type": model_type,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "cache_hit": 0,
+                    "latency_ms": fallback_latency,
+                    "error": str(fallback_e)[:500],
+                    "request_type": request_type,
+                    "is_fallback": True,
+                })
+                logger.error("Ollama fallback also failed: %s", fallback_e, exc_info=True)
+                raise
+        else:
+            logger.warning(
+                "Fallback provider is ollama but no base URL configured. "
+                "Original error: %s", e
+            )
+            raise
+    else:
+        raise
+
+
 def get_cached_llm_response(
     prompt: str,
     system_prompt: str = "",
@@ -425,119 +876,20 @@ def get_cached_llm_response(
         else:
             logger.warning("Market is closed but no fallback model is configured for model_type=%s. Using primary model to avoid downtime.", model_type)
 
-    # Build cache key
-    if messages is not None:
-        # Normalize message content for cache key to improve cache hit rate.
-        # Numbers are rounded to 5 significant figures in the key only;
-        # the actual messages sent to the LLM retain full precision.
-        normalized_messages = [
-            {**msg, "content": _normalize_text_for_cache(msg.get("content", ""))}
-            for msg in messages
-        ]
-        fee_fp = _compute_fee_fingerprint()
-        key_data = json.dumps(
-            {"messages": normalized_messages, "system": _normalize_text_for_cache(system_prompt), "model_type": model_type,
-             "provider": provider, "model": model,
-             "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE,
-             "cache_version": settings.LLM_CACHE_VERSION,
-             "fee_fp": fee_fp},
-            sort_keys=True
-        )
-        cache_key = f"llm:{hashlib.sha256(key_data.encode()).hexdigest()}"
-    elif market_hash:
-        sys_hash = hashlib.sha256(system_prompt.encode()).hexdigest()[:16] if system_prompt else "none"
-        fee_fp = _compute_fee_fingerprint()
-        cache_key = f"llm:{settings.LLM_CACHE_VERSION}:{fee_fp}:{provider}:{model}:{model_type}:market:{market_hash}:sys:{sys_hash}:t{cache_temp if cache_temp is not None else 'def'}"
-    else:
-        fee_fp = _compute_fee_fingerprint()
-        key_data = json.dumps(
-            {"prompt": _normalize_text_for_cache(prompt), "system": _normalize_text_for_cache(system_prompt), "model_type": model_type,
-             "provider": provider, "model": model,
-             "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE,
-             "cache_version": settings.LLM_CACHE_VERSION,
-             "fee_fp": fee_fp},
-            sort_keys=True
-        )
-        cache_key = f"llm:{hashlib.sha256(key_data.encode()).hexdigest()}"
+    cache_key = _build_cache_key(messages, system_prompt, model_type, provider, model, cache_temp, market_hash, prompt)
 
-    # Try cache
-    try:
-        cached = redis_client.get(cache_key)
-        if cached:
-            try:
-                data = json.loads(cached)
-                if isinstance(data, dict) and "response" in data:
-                    logger.info("LLM cache hit: key=%.32s, model_type=%s", cache_key, model_type)
-                    # Record cache hit metric
-                    try:
-                        save_llm_metrics({
-                            "timestamp": time.time(),
-                            "provider": data.get("provider", provider),
-                            "model": data.get("model", model),
-                            "model_type": model_type,
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0,
-                            "total_tokens": 0,
-                            "cache_hit": 1,
-                            "latency_ms": 0,
-                            "error": None,
-                            "request_type": request_type,
-                            "is_fallback": data.get("is_fallback", False),
-                        })
-                    except Exception as metric_err:
-                        logger.warning("Failed to save cache hit metric: %s", metric_err)
-                    return data
-            except (json.JSONDecodeError, TypeError):
-                pass  # fall through to re-fetch
-    except Exception as e:
-        logger.warning(f"Redis cache get failed: {type(e).__name__}: {e}. Proceeding without cache.")
+    cached_data = _get_cached_response(redis_client, cache_key, model_type, provider, model, request_type)
+    if cached_data:
+        return cached_data
 
     logger.debug("LLM cache miss: model_type=%s, system_prompt=%.200s..., prompt=%.500s...", model_type, system_prompt, prompt)
-    # Context window management
+    
     max_input_tokens = _get_max_input_tokens(provider, model_type, is_fallback)
-    # Reserve some tokens for the system prompt and completion
     effective_limit = int(max_input_tokens * 0.8)
 
-    if messages is not None:
-        total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
-        if total_tokens > effective_limit:
-            logger.warning(
-                "Messages size (~%d tokens) exceeds context window limit (%d). Splitting and merging...",
-                total_tokens, effective_limit
-            )
-            # Copy messages to avoid mutating the caller's list
-            messages = [dict(msg) for msg in messages]
-            # Assume the last message is the user prompt that needs splitting
-            if messages and messages[-1]["role"] == "user":
-                user_content = messages[-1]["content"]
-                merged_content = _split_and_merge_prompt(
-                    prompt=user_content,
-                    system_prompt=system_prompt,
-                    model_type=model_type,
-                    provider=provider,
-                    model=model,
-                    base_url=base_url,
-                    api_key=api_key,
-                    temperature=temperature,
-                    timeout=effective_timeout,
-                    max_input_tokens=effective_limit - estimate_tokens(system_prompt),
-                )
-                messages[-1]["content"] = merged_content
-    else:
-        prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
-        if prompt_tokens > effective_limit:
-            prompt = _split_and_merge_prompt(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                model_type=model_type,
-                provider=provider,
-                model=model,
-                base_url=base_url,
-                api_key=api_key,
-                temperature=temperature,
-                timeout=effective_timeout,
-                max_input_tokens=effective_limit - estimate_tokens(system_prompt),
-            )
+    messages, prompt = _manage_context_window(
+        messages, prompt, system_prompt, model_type, provider, model, base_url, api_key, temperature, effective_timeout, max_input_tokens, effective_limit
+    )
 
     if messages is not None:
         api_messages = []
@@ -548,344 +900,50 @@ def get_cached_llm_response(
     else:
         api_messages = None  # will be built inside _get_*_response from prompt/system_prompt
 
-    # --- Primary call ---
-    response_text = None
-    used_provider = provider
-    used_model = model
-    usage = None
-
     start_time = time.time()
     try:
-        if provider == "openai":
-            from src.llm.llm_client import _get_openai_response
-            result = _get_openai_response(
-                prompt=prompt if messages is None else "",
-                system_prompt=system_prompt if messages is None else "",
-                model=model, base_url=base_url, api_key=api_key,
-                temperature=temperature, timeout=effective_timeout,
-                messages=api_messages,
-                add_cache_control=add_cache_control,
-                thinking_enabled=thinking_enabled,
-            )
-        else:
-            from src.llm.llm_client import _get_ollama_response
-            result = _get_ollama_response(
-                prompt=prompt if messages is None else "",
-                system_prompt=system_prompt if messages is None else "",
-                model=model, base_url=base_url, api_key=api_key,
-                temperature=temperature, timeout=effective_timeout,
-                messages=api_messages,
-                add_cache_control=add_cache_control,
-                thinking_enabled=thinking_enabled,
-            )
-
-        response_text = result["content"]
-        usage = result.get("usage", {})
-        
-        if not response_text or not response_text.strip():
-            raise RuntimeError("LLM returned an empty response")
+        response_text, usage, used_provider, used_model, is_fallback = _execute_primary_call(
+            provider, model, base_url, api_key, temperature, effective_timeout, messages, api_messages, prompt, system_prompt, add_cache_control, thinking_enabled, model_type, request_type, is_fallback
+        )
     except Exception as e:
-        latency_ms = (time.time() - start_time) * 1000
-        # Record error metric for primary call
-        try:
-            save_llm_metrics({
-                "timestamp": time.time(),
-                "provider": provider,
-                "model": model,
-                "model_type": model_type,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-                "cache_hit": 0,
-                "latency_ms": latency_ms,
-                "error": str(e)[:500],
-                "request_type": request_type,
-                "is_fallback": is_fallback,
-            })
-        except Exception as metric_err:
-            logger.warning("Failed to save primary error metric: %s", metric_err)
-
-        logger.error("LLM primary call failed (provider=%s, model=%s, model_type=%s): %s", provider, model, model_type, e, exc_info=True)
-        if not settings.LLM_FALLBACK_ENABLED:
-            logger.warning(
-                "LLM primary call failed and fallback is disabled (LLM_FALLBACK_ENABLED=False). "
-                "Original error: %s", e
-            )
-            raise
-
-        # Determine fallback provider
-        if model_type == "mind":
-            fallback_provider = settings.LLM_MIND_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
-        elif model_type == "weak":
-            fallback_provider = settings.LLM_WEAK_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
-        else:
-            fallback_provider = settings.LLM_ACTUATOR_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
-
-        if not fallback_provider:
-            logger.warning(
-                "LLM primary call failed and no fallback provider configured. "
-                "Original error: %s", e
-            )
-            raise
-
-        if fallback_provider == "openai":
-            if model_type == "mind":
-                fallback_model = settings.OPENAI_MIND_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
-                fallback_base_url = settings.OPENAI_MIND_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
-                fallback_api_key = settings.OPENAI_MIND_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
-            elif model_type == "weak":
-                fallback_model = settings.OPENAI_WEAK_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
-                fallback_base_url = settings.OPENAI_WEAK_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
-                fallback_api_key = settings.OPENAI_WEAK_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
-            else:
-                fallback_model = settings.OPENAI_ACTUATOR_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
-                fallback_base_url = settings.OPENAI_ACTUATOR_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
-                fallback_api_key = settings.OPENAI_ACTUATOR_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
-
-            if fallback_api_key or fallback_base_url:
-                logger.warning(
-                    "Primary LLM call failed (%s). Falling back to OpenAI-compatible provider "
-                    "for %s role (model=%s).", e, model_type, fallback_model
-                )
-                # Check fallback model context window
-                fb_max_input_tokens = _get_max_input_tokens("openai", model_type, True)
-                fb_effective_limit = int(fb_max_input_tokens * 0.8)
-                if messages is not None:
-                    fb_total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
-                    if fb_total_tokens > fb_effective_limit:
-                        logger.warning("Fallback messages size (~%d tokens) exceeds limit (%d). Splitting...", fb_total_tokens, fb_effective_limit)
-                        messages = [dict(msg) for msg in messages]
-                        if messages and messages[-1]["role"] == "user":
-                            messages[-1]["content"] = _split_and_merge_prompt(
-                                prompt=messages[-1]["content"],
-                                system_prompt=system_prompt,
-                                model_type=model_type,
-                                provider="openai",
-                                model=fallback_model,
-                                base_url=fallback_base_url,
-                                api_key=fallback_api_key,
-                                temperature=temperature,
-                                timeout=effective_timeout,
-                                max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
-                            )
-                            api_messages = []
-                            if system_prompt:
-                                api_messages.append({"role": "system", "content": system_prompt})
-                            api_messages.extend(messages)
-                else:
-                    fb_prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
-                    if fb_prompt_tokens > fb_effective_limit:
-                        prompt = _split_and_merge_prompt(
-                            prompt=prompt,
-                            system_prompt=system_prompt,
-                            model_type=model_type,
-                            provider="openai",
-                            model=fallback_model,
-                            base_url=fallback_base_url,
-                            api_key=fallback_api_key,
-                            temperature=temperature,
-                            timeout=effective_timeout,
-                            max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
-                        )
-                fallback_start = time.time()
-                try:
-                    from src.llm.llm_client import _get_openai_response
-                    result = _get_openai_response(
-                        prompt=prompt if messages is None else "",
-                        system_prompt=system_prompt if messages is None else "",
-                        model=fallback_model,
-                        base_url=fallback_base_url,
-                        api_key=fallback_api_key,
-                        temperature=temperature,
-                        timeout=settings.LLM_FALLBACK_TIMEOUT,
-                        messages=api_messages,
-                        add_cache_control=add_cache_control,
-                        thinking_enabled=thinking_enabled,
-                    )
-                    response_text = result["content"]
-                    usage = result.get("usage", {})
-                    used_provider = "openai"
-                    used_model = fallback_model
-                    is_fallback = True
-                except Exception as fallback_e:
-                    fallback_latency = (time.time() - fallback_start) * 1000
-                    try:
-                        save_llm_metrics({
-                            "timestamp": time.time(),
-                            "provider": "openai",
-                            "model": fallback_model,
-                            "model_type": model_type,
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0,
-                            "total_tokens": 0,
-                            "cache_hit": 0,
-                            "latency_ms": fallback_latency,
-                            "error": str(fallback_e)[:500],
-                            "request_type": request_type,
-                            "is_fallback": True,
-                        })
-                    except Exception as metric_err:
-                        logger.warning("Failed to save fallback error metric: %s", metric_err)
-                    logger.error("OpenAI fallback also failed: %s", fallback_e, exc_info=True)
-                    raise
-            else:
-                logger.warning(
-                    "Fallback provider is openai but no API key or base URL configured. "
-                    "Original error: %s", e
-                )
-                raise
-        elif fallback_provider == "ollama":
-            if model_type == "mind":
-                fallback_model = settings.OLLAMA_MIND_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
-                fallback_base_url = settings.OLLAMA_MIND_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
-                fallback_api_key = settings.OLLAMA_MIND_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
-            elif model_type == "weak":
-                fallback_model = settings.OLLAMA_WEAK_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
-                fallback_base_url = settings.OLLAMA_WEAK_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
-                fallback_api_key = settings.OLLAMA_WEAK_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
-            else:
-                fallback_model = settings.OLLAMA_ACTUATOR_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
-                fallback_base_url = settings.OLLAMA_ACTUATOR_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
-                fallback_api_key = settings.OLLAMA_ACTUATOR_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
-
-            if fallback_base_url:
-                logger.warning(
-                    "Primary LLM call failed (%s). Falling back to Ollama provider "
-                    "for %s role (model=%s).", e, model_type, fallback_model
-                )
-                # Check fallback model context window
-                fb_max_input_tokens = _get_max_input_tokens("ollama", model_type, True)
-                fb_effective_limit = int(fb_max_input_tokens * 0.8)
-                if messages is not None:
-                    fb_total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
-                    if fb_total_tokens > fb_effective_limit:
-                        logger.warning("Fallback messages size (~%d tokens) exceeds limit (%d). Splitting...", fb_total_tokens, fb_effective_limit)
-                        messages = [dict(msg) for msg in messages]
-                        if messages and messages[-1]["role"] == "user":
-                            messages[-1]["content"] = _split_and_merge_prompt(
-                                prompt=messages[-1]["content"],
-                                system_prompt=system_prompt,
-                                model_type=model_type,
-                                provider="ollama",
-                                model=fallback_model,
-                                base_url=fallback_base_url,
-                                api_key=fallback_api_key,
-                                temperature=temperature,
-                                timeout=effective_timeout,
-                                max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
-                            )
-                            api_messages = []
-                            if system_prompt:
-                                api_messages.append({"role": "system", "content": system_prompt})
-                            api_messages.extend(messages)
-                else:
-                    fb_prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
-                    if fb_prompt_tokens > fb_effective_limit:
-                        prompt = _split_and_merge_prompt(
-                            prompt=prompt,
-                            system_prompt=system_prompt,
-                            model_type=model_type,
-                            provider="ollama",
-                            model=fallback_model,
-                            base_url=fallback_base_url,
-                            api_key=fallback_api_key,
-                            temperature=temperature,
-                            timeout=effective_timeout,
-                            max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
-                        )
-                fallback_start = time.time()
-                try:
-                    from src.llm.llm_client import _get_ollama_response
-                    result = _get_ollama_response(
-                        prompt=prompt if messages is None else "",
-                        system_prompt=system_prompt if messages is None else "",
-                        model=fallback_model,
-                        base_url=fallback_base_url,
-                        api_key=fallback_api_key,
-                        temperature=temperature,
-                        timeout=settings.LLM_FALLBACK_TIMEOUT,
-                        messages=api_messages,
-                        add_cache_control=add_cache_control,
-                        thinking_enabled=thinking_enabled,
-                    )
-                    response_text = result["content"]
-                    usage = result.get("usage", {})
-                    used_provider = "ollama"
-                    used_model = fallback_model
-                    is_fallback = True
-                except Exception as fallback_e:
-                    fallback_latency = (time.time() - fallback_start) * 1000
-                    try:
-                        save_llm_metrics({
-                            "timestamp": time.time(),
-                            "provider": "ollama",
-                            "model": fallback_model,
-                            "model_type": model_type,
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0,
-                            "total_tokens": 0,
-                            "cache_hit": 0,
-                            "latency_ms": fallback_latency,
-                            "error": str(fallback_e)[:500],
-                            "request_type": request_type,
-                            "is_fallback": True,
-                        })
-                    except Exception as metric_err:
-                        logger.warning("Failed to save fallback error metric: %s", metric_err)
-                    logger.error("Ollama fallback also failed: %s", fallback_e, exc_info=True)
-                    raise
-            else:
-                logger.warning(
-                    "Fallback provider is ollama but no base URL configured. "
-                    "Original error: %s", e
-                )
-                raise
-        else:
-            raise
-
+        response_text, usage, used_provider, used_model, is_fallback = _execute_fallback_call(
+            e, model_type, messages, prompt, system_prompt, temperature, effective_timeout, api_messages, add_cache_control, thinking_enabled, request_type
+        )
     if response_text is None:
         logger.warning("LLM returned None response; not caching.")
-        try:
-            save_llm_metrics({
-                "timestamp": time.time(),
-                "provider": used_provider,
-                "model": used_model,
-                "model_type": model_type,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-                "cache_hit": 0,
-                "latency_ms": (time.time() - start_time) * 1000,
-                "error": "LLM returned None response",
-                "request_type": request_type,
-                "is_fallback": is_fallback,
-            })
-        except Exception as metric_err:
-            logger.warning("Failed to save None response metric: %s", metric_err)
-        return None
-
-    # Record success metric (primary or fallback)
-    latency_ms = (time.time() - start_time) * 1000
-    try:
-        save_llm_metrics({
+        _save_metric({
             "timestamp": time.time(),
             "provider": used_provider,
             "model": used_model,
             "model_type": model_type,
-            "prompt_tokens": usage.get("prompt_tokens", 0) if usage else 0,
-            "completion_tokens": usage.get("completion_tokens", 0) if usage else 0,
-            "total_tokens": usage.get("total_tokens", 0) if usage else 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
             "cache_hit": 0,
-            "latency_ms": latency_ms,
-            "error": None,
+            "latency_ms": (time.time() - start_time) * 1000,
+            "error": "LLM returned None response",
             "request_type": request_type,
             "is_fallback": is_fallback,
         })
-    except Exception as metric_err:
-        logger.warning("Failed to save success metric: %s", metric_err)
+        return None
+
+    latency_ms = (time.time() - start_time) * 1000
+    _save_metric({
+        "timestamp": time.time(),
+        "provider": used_provider,
+        "model": used_model,
+        "model_type": model_type,
+        "prompt_tokens": usage.get("prompt_tokens", 0) if usage else 0,
+        "completion_tokens": usage.get("completion_tokens", 0) if usage else 0,
+        "total_tokens": usage.get("total_tokens", 0) if usage else 0,
+        "cache_hit": 0,
+        "latency_ms": latency_ms,
+        "error": None,
+        "request_type": request_type,
+        "is_fallback": is_fallback,
+    })
 
     logger.debug("LLM response cached: %.500s...", response_text)
-    # Store in cache as JSON
     cache_data = json.dumps({
         "response": response_text,
         "provider": used_provider,
