@@ -134,7 +134,7 @@ class RiskManager:
             # Compute drawdown based on realized equity (initial balance + realized P&L)
             # plus current unrealized P&L to catch deep drawdowns from open positions.
             initial_balance = engine.initial_balance
-            cumulative_pnl = 0.0
+            cumulative_pnl = self.shared_state._realized_pnl_offset
             for trade in sorted(trades_snapshot, key=lambda x: x.get("timestamp", 0)):
                 if trade.get("side") == "sell":
                     cumulative_pnl += trade.get("realized_pnl", 0.0)
