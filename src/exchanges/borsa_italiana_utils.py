@@ -24,6 +24,21 @@ _bi_last_error_time = 0.0
 _bi_circuit_open_until = 0.0
 _bi_lock = threading.Lock()
 
+_bi_http_client: Optional[httpx.Client] = None
+_bi_http_client_lock = threading.Lock()
+
+def _get_bi_client(timeout: float = 15.0) -> httpx.Client:
+    """Return a shared httpx.Client with connection pooling for Borsa Italiana requests."""
+    global _bi_http_client
+    with _bi_http_client_lock:
+        if _bi_http_client is None or _bi_http_client.is_closed:
+            _bi_http_client = httpx.Client(
+                proxy=_get_proxies(),
+                timeout=timeout,
+                follow_redirects=True,
+            )
+        return _bi_http_client
+
 BI_MAX_ERRORS = 20
 BI_CIRCUIT_COOLDOWN = 300  # 5 minutes
 
@@ -81,30 +96,30 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
-                response = client.get(url, headers=headers)
-                response.raise_for_status()
-                # Extract token from <chart-allinone ... token="..." ...>
-                # Use BeautifulSoup for robust parsing, with regex as a fallback
-                soup = BeautifulSoup(response.text, "html.parser")
-                chart_tag = soup.find("chart-allinone")
-                token = chart_tag.get("token") if chart_tag else None
+            client = _get_bi_client(timeout=15.0)
+            response = client.get(url, headers=headers)
+            response.raise_for_status()
+            # Extract token from <chart-allinone ... token="..." ...>
+            # Use BeautifulSoup for robust parsing, with regex as a fallback
+            soup = BeautifulSoup(response.text, "html.parser")
+            chart_tag = soup.find("chart-allinone")
+            token = chart_tag.get("token") if chart_tag else None
 
-                if not token:
-                    # Fallback to regex if BeautifulSoup fails to find the tag
-                    match = re.search(r'<chart-allinone[^>]*token="([^"]+)"', response.text)
-                    if match:
-                        token = match.group(1)
+            if not token:
+                # Fallback to regex if BeautifulSoup fails to find the tag
+                match = re.search(r'<chart-allinone[^>]*token="([^"]+)"', response.text)
+                if match:
+                    token = match.group(1)
 
-                if token:
-                    # Cache the token
-                    with _borsa_token_cache_lock:
-                        _borsa_token_cache[cache_key] = (now, token)
-                    _reset_bi_circuit()
-                    return token
+            if token:
+                # Cache the token
+                with _borsa_token_cache_lock:
+                    _borsa_token_cache[cache_key] = (now, token)
+                _reset_bi_circuit()
+                return token
 
-                logger.warning(f"Could not find Borsa Italiana token for {isin}-{market_code}")
-                return None
+            logger.warning(f"Could not find Borsa Italiana token for {isin}-{market_code}")
+            return None
         except (httpx.RequestError, httpx.HTTPStatusError, ValueError, AttributeError, OSError) as e:
             _record_bi_error(e)
             logger.warning(f"Failed to fetch Borsa Italiana token for {isin}-{market_code} (attempt {attempt + 1}/{max_retries}): {e}")
@@ -208,52 +223,52 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
     }
 
     try:
-        with httpx.Client(proxy=_get_proxies(), timeout=10.0, follow_redirects=True) as client:
-            url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/intraday?resolution=1MN"
-            for attempt in range(2):
-                try:
-                    response = client.get(url, headers=headers)
-                    response.raise_for_status()
-                    break
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code in (401, 403) and attempt == 0:
-                        logger.debug(f"Borsa Italiana token expired for {symbol}, refreshing...")
-                        _invalidate_borsa_token_cache(isin, market_code)
-                        token = _get_borsa_italiana_token(isin, market_code)
-                        if not token:
-                            return None
-                        headers["authorization"] = f"Bearer {token}"
-                        continue
-                    raise
-
+        client = _get_bi_client(timeout=10.0)
+        url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/intraday?resolution=1MN"
+        for attempt in range(2):
             try:
-                data = response.json()
-            except (json.JSONDecodeError, ValueError):
-                match = re.search(r'<pre>(.*?)</pre>', response.text, re.DOTALL)
-                if match:
-                    try:
-                        data = json.loads(match.group(1))
-                    except json.JSONDecodeError:
+                response = client.get(url, headers=headers)
+                response.raise_for_status()
+                break
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (401, 403) and attempt == 0:
+                    logger.debug(f"Borsa Italiana token expired for {symbol}, refreshing...")
+                    _invalidate_borsa_token_cache(isin, market_code)
+                    token = _get_borsa_italiana_token(isin, market_code)
+                    if not token:
                         return None
-                else:
-                    return None
+                    headers["authorization"] = f"Bearer {token}"
+                    continue
+                raise
 
-            intraday_points = data.get("intradayPoint", [])
-            if intraday_points:
-                latest = intraday_points[-1]
-                last_price = float(latest.get("endPx", 0))
-                if last_price > 0:
-                    vol = float(latest.get("vol", 0) or 0)
-                    _reset_bi_circuit()
-                    return {
-                        "last": last_price,
-                        "bid": last_price,
-                        "ask": last_price,
-                        "volume": vol,
-                        "quoteVolume": vol,
-                        "last_update": int(time.time() * 1000),
-                        "source": "borsa_italiana",
-                    }
+        try:
+            data = response.json()
+        except (json.JSONDecodeError, ValueError):
+            match = re.search(r'<pre>(.*?)</pre>', response.text, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    return None
+            else:
+                return None
+
+        intraday_points = data.get("intradayPoint", [])
+        if intraday_points:
+            latest = intraday_points[-1]
+            last_price = float(latest.get("endPx", 0))
+            if last_price > 0:
+                vol = float(latest.get("vol", 0) or 0)
+                _reset_bi_circuit()
+                return {
+                    "last": last_price,
+                    "bid": last_price,
+                    "ask": last_price,
+                    "volume": vol,
+                    "quoteVolume": vol,
+                    "last_update": int(time.time() * 1000),
+                    "source": "borsa_italiana",
+                }
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
         _record_bi_error(e)
         logger.warning(f"Borsa Italiana quote fetch failed for {symbol}: {type(e).__name__}: {e}")
@@ -322,30 +337,30 @@ def get_borsa_italiana_candles(
     }
 
     try:
-        with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
-            if timeframe == "1d":
-                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=1M&adjustment=true&add-last-price=true"
-                logger.debug(f"Fetching 1d data from history endpoint: {url}")
-            else:
-                period = BORSA_TIMEFRAME_MAP.get(timeframe)
-                url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period={period}&adjustment=true&add-last-price=true"
+        client = _get_bi_client(timeout=15.0)
+        if timeframe == "1d":
+            url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period=1M&adjustment=true&add-last-price=true"
+            logger.debug(f"Fetching 1d data from history endpoint: {url}")
+        else:
+            period = BORSA_TIMEFRAME_MAP.get(timeframe)
+            url = f"https://grafici.borsaitaliana.it/api/instruments/{isin},{market_code},ISIN/history/period?period={period}&adjustment=true&add-last-price=true"
 
-            for attempt in range(2):
-                try:
-                    response = client.get(url, headers=headers)
-                    response.raise_for_status()
-                    break
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code in (401, 403) and attempt == 0:
-                        logger.debug(f"Borsa Italiana token expired for {symbol}, refreshing...")
-                        _invalidate_borsa_token_cache(isin, market_code)
-                        token = _get_borsa_italiana_token(isin, market_code)
-                        if not token:
-                            logger.warning(f"Skipping Borsa Italiana download for {symbol} {timeframe}: no token found after refresh.")
-                            return None
-                        headers["authorization"] = f"Bearer {token}"
-                        continue
-                    raise
+        for attempt in range(2):
+            try:
+                response = client.get(url, headers=headers)
+                response.raise_for_status()
+                break
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (401, 403) and attempt == 0:
+                    logger.debug(f"Borsa Italiana token expired for {symbol}, refreshing...")
+                    _invalidate_borsa_token_cache(isin, market_code)
+                    token = _get_borsa_italiana_token(isin, market_code)
+                    if not token:
+                        logger.warning(f"Skipping Borsa Italiana download for {symbol} {timeframe}: no token found after refresh.")
+                        return None
+                    headers["authorization"] = f"Bearer {token}"
+                    continue
+                raise
 
         # The API returns JSON wrapped in HTML <pre> tags
         text = response.text
@@ -510,44 +525,44 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
-            response = client.get(url, headers=headers)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
+        client = _get_bi_client(timeout=15.0)
+        response = client.get(url, headers=headers)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
 
-            details: Dict[str, Optional[Any]] = {}
+        details: Dict[str, Optional[Any]] = {}
 
-            # Robust approach: find ALL tables on the page and look for the
-            # relevant keys in any of them. The "Info Strumento" section is
-            # the only place with "Scadenza" and "Tasso Cedola" fields.
-            for table in soup.find_all("table"):
-                for row in table.find_all("tr"):
-                    cells = row.find_all("td")
-                    if len(cells) >= 2:
-                        key = cells[0].get_text(strip=True)
-                        val = cells[1].get_text(strip=True)
-                        if "Scadenza" in key:
-                            details["maturity"] = val
-                        elif "Tasso Cedola su base Annua" in key:
-                            if val:
-                                val_cleaned = val.replace(",", ".")
-                                try:
-                                    details["coupon"] = float(val_cleaned)
-                                except ValueError:
-                                    details["coupon"] = val
-                            # If empty, leave coupon unset (zero-coupon bond)
-                        elif "Denominazione" in key:
-                            details["name"] = val
+        # Robust approach: find ALL tables on the page and look for the
+        # relevant keys in any of them. The "Info Strumento" section is
+        # the only place with "Scadenza" and "Tasso Cedola" fields.
+        for table in soup.find_all("table"):
+            for row in table.find_all("tr"):
+                cells = row.find_all("td")
+                if len(cells) >= 2:
+                    key = cells[0].get_text(strip=True)
+                    val = cells[1].get_text(strip=True)
+                    if "Scadenza" in key:
+                        details["maturity"] = val
+                    elif "Tasso Cedola su base Annua" in key:
+                        if val:
+                            val_cleaned = val.replace(",", ".")
+                            try:
+                                details["coupon"] = float(val_cleaned)
+                            except ValueError:
+                                details["coupon"] = val
+                        # If empty, leave coupon unset (zero-coupon bond)
+                    elif "Denominazione" in key:
+                        details["name"] = val
 
-            # Cache the result (24h for populated details, 1h for empty to allow retry)
-            cache_ttl = 86400 if details else 3600
-            try:
-                redis_client.set(cache_key, json.dumps(details), ex=cache_ttl)
-            except (TypeError, ValueError, RuntimeError):
-                pass
+        # Cache the result (24h for populated details, 1h for empty to allow retry)
+        cache_ttl = 86400 if details else 3600
+        try:
+            redis_client.set(cache_key, json.dumps(details), ex=cache_ttl)
+        except (TypeError, ValueError, RuntimeError):
+            pass
 
-            _reset_bi_circuit()
-            return details
+        _reset_bi_circuit()
+        return details
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, AttributeError, OSError) as e:
         _record_bi_error(e)
         logger.warning(f"Failed to fetch BTP details for {isin}: {type(e).__name__}: {e}")
@@ -583,8 +598,8 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
         for page in range(1, 11):
             page_url = f"{url}?&page={page}"
             try:
-                with httpx.Client(proxy=_get_proxies(), timeout=15.0, follow_redirects=True) as client:
-                    response = client.get(page_url, headers=headers)
+                client = _get_bi_client(timeout=15.0)
+                response = client.get(page_url, headers=headers)
                 if response.status_code != 200:
                     break
 
