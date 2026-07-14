@@ -7,7 +7,11 @@ bidirectional coupling.
 """
 import asyncio
 import threading
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
+
+from src.config.settings import settings
 
 
 class SharedState:
@@ -93,11 +97,27 @@ class SharedState:
         # --- Delayed entry tasks ---
         self._delayed_entry_tasks: set = set()
 
+        # --- Daily P&L and fee tracking (avoids pruning issues) ---
+        self._daily_realized_pnl: Dict[str, float] = {}
+        self._daily_buy_fees: Dict[str, float] = {}
+
     def append_trade(self, trade: Dict[str, Any], max_trades: int = 500):
         """Append a trade to history and prune old entries."""
         with self._trade_history_lock:
             self._trade_history_version += 1
             self.trade_history.append(trade)
+
+            # Track daily P&L and buy fees to avoid issues with pruned trade history
+            ts = trade.get("timestamp", 0)
+            if ts:
+                tz = ZoneInfo(settings.MARKET_TIMEZONE)
+                trade_date = datetime.fromtimestamp(ts / 1000.0, tz=tz).date().isoformat()
+                if trade.get("side") == "sell":
+                    self._daily_realized_pnl[trade_date] = self._daily_realized_pnl.get(trade_date, 0.0) + trade.get("realized_pnl", 0.0)
+                elif trade.get("side") == "buy":
+                    fee = trade.get("fee", {})
+                    self._daily_buy_fees[trade_date] = self._daily_buy_fees.get(trade_date, 0.0) + float(fee.get("cost", 0.0) or 0.0)
+
             if len(self.trade_history) > max_trades:
                 pruned = self.trade_history[:-max_trades]
                 for t in pruned:

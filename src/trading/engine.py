@@ -317,6 +317,8 @@ class TradingEngine:
         self.shared_state._symbol_first_seen.clear()
         self.shared_state._sentiment_cache.clear()
         self.shared_state._market_breadth = None
+        self.shared_state._daily_realized_pnl.clear()
+        self.shared_state._daily_buy_fees.clear()
         self.initial_balance = settings.PAPER_INITIAL_BALANCE
 
         # Clear the persisted peak total equity so drawdown starts fresh
@@ -1642,21 +1644,9 @@ class TradingEngine:
 
     def _daily_realized_pnl(self) -> float:
         """Return the sum of realized P&L for trades closed today (market timezone)."""
-        from datetime import datetime, timezone
         tz = ZoneInfo(settings.MARKET_TIMEZONE)
-        today = datetime.now(tz).date()
-        total = 0.0
-        with self.shared_state._trade_history_lock:
-            trades_snapshot = list(self.shared_state.trade_history)
-        for trade in trades_snapshot:
-            if trade.get("side") != "sell":
-                continue
-            ts = trade.get("timestamp", 0)
-            if ts:
-                trade_date = datetime.fromtimestamp(ts / 1000.0, tz=tz).date()
-                if trade_date == today:
-                    total += trade.get("realized_pnl", 0.0)
-        return total
+        today = datetime.now(tz).date().isoformat()
+        return self.shared_state._daily_realized_pnl.get(today, 0.0)
 
     def _daily_buy_fees(self) -> float:
         """Return the sum of buy-side fees for trades opened today (market timezone).
@@ -1666,20 +1656,8 @@ class TradingEngine:
         in the daily loss limit check.
         """
         tz = ZoneInfo(settings.MARKET_TIMEZONE)
-        today = datetime.now(tz).date()
-        total = 0.0
-        with self.shared_state._trade_history_lock:
-            trades_snapshot = list(self.shared_state.trade_history)
-        for trade in trades_snapshot:
-            if trade.get("side") != "buy":
-                continue
-            ts = trade.get("timestamp", 0)
-            if ts:
-                trade_date = datetime.fromtimestamp(ts / 1000.0, tz=tz).date()
-                if trade_date == today:
-                    fee = trade.get("fee", {})
-                    total += float(fee.get("cost", 0.0) or 0.0)
-        return total
+        today = datetime.now(tz).date().isoformat()
+        return self.shared_state._daily_buy_fees.get(today, 0.0)
 
     def _log_task_exception(self, task: asyncio.Task) -> None:
         """Log exceptions from background tasks to prevent silent failures."""
