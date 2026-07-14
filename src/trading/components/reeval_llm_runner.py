@@ -29,12 +29,10 @@ class ReevalLLMRunner:
         symbol_events: Dict[str, Dict[str, Any]],
         symbol_trend_scores: Dict[str, float],
         sentiment_trend: Dict[str, Optional[float]],
-        news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
         correlation_matrix: Dict[str, Dict[str, float]],
         ohlcv_data: Dict[str, Dict[str, List[List]]],
         perf: Dict[str, Any],
         market_trend: Optional[Dict[str, Any]],
-        news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
         session_info: dict,
         market_breadth: Dict[str, Any],
         trading_paused_bool: bool,
@@ -48,6 +46,7 @@ class ReevalLLMRunner:
         auto_resume_note: str,
         effective_temp: float,
         btp_ytm: Optional[Dict[str, float]] = None,
+        news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """Evaluate the shortlist in chunks using the LLM.
 
@@ -272,6 +271,7 @@ class ReevalLLMRunner:
         available_timeframes_by_symbol: Dict[str, List[str]],
         auto_resume_note: str,
         effective_temp: float,
+        news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
     ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """Run the final selection LLM call with retries and fallback merge.
 
