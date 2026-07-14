@@ -213,6 +213,9 @@ class TradingEngine:
         # Lock to protect _force_eval, _force_eval_time, _last_strategy_eval, and _strategy_intervals
         self._eval_state_lock = self.shared_state._eval_state_lock
 
+        # Log the complete event subscription registry after all components are initialized
+        self.event_bus.log_subscription_summary()
+
     def _clear_time_sensitive_redis_keys(self):
         """Clear time-sensitive Redis keys on startup to prevent stale data."""
         keys_to_clear = [
