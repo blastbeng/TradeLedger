@@ -106,9 +106,9 @@ class EvaluationScheduler:
 
             # Use the dynamically computed tf_base_interval, but allow LLM to override per-symbol
             default_interval = tf_base_interval
-            async with engine._eval_state_lock:
-                interval = engine._strategy_intervals.get(symbol, default_interval)
-                last_eval = engine._last_strategy_eval.get(symbol, 0)
+            async with engine.shared_state._eval_state_lock:
+                interval = engine.shared_state._strategy_intervals.get(symbol, default_interval)
+                last_eval = engine.shared_state._last_strategy_eval.get(symbol, 0)
             if now - last_eval >= interval:
                 symbols_to_process.append(symbol_entry)
 

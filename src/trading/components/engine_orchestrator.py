@@ -99,8 +99,8 @@ class EngineOrchestrator:
                                         engine.event_bus.request("process_symbol", entry, trading_paused=trading_paused),
                                         timeout=settings.LLM_TIMEOUT + 10
                                     )
-                                    async with engine._eval_state_lock:
-                                        engine._last_strategy_eval[sym] = now
+                                    async with engine.shared_state._eval_state_lock:
+                                        engine.shared_state._last_strategy_eval[sym] = now
                                 except asyncio.TimeoutError:
                                     logger.error(f"Timeout processing symbol {sym} – skipping. Will retry on next loop iteration.")
                                     if engine.notifier:
