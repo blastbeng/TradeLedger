@@ -1546,6 +1546,7 @@ class RiskManager:
                 
                 if tp_filled:
                     logger.info(f"Take-profit order {tp_order_id} filled for {symbol}, processing native fill.")
+                    pos.pop("take_profit_order_id", None)  # Pop to prevent double processing
                 else:
                     pos.pop("take_profit_order_id", None)
                     manual_sell = True
