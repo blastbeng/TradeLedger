@@ -130,7 +130,10 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         chat_id = update.effective_chat.id
-        await asyncio.to_thread(set_telegram_chat_id, chat_id)
+        try:
+            await asyncio.wait_for(asyncio.to_thread(set_telegram_chat_id, chat_id), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("set_telegram_chat_id timed out")
         await update.message.reply_text(
             "Bot started! You will receive trade notifications here.\nUse the buttons below or type /menu to see them again.",
             reply_markup=self.keyboard,
@@ -662,7 +665,12 @@ class TelegramBot:
             await update.message.reply_text(f"No recent news for {symbol}.", reply_markup=self.keyboard)
             return
 
-        formatted = await asyncio.to_thread(_format_news_for_prompt, articles)
+        try:
+            formatted = await asyncio.wait_for(asyncio.to_thread(_format_news_for_prompt, articles), timeout=15.0)
+        except asyncio.TimeoutError:
+            logger.warning("_format_news_for_prompt timed out")
+            await update.message.reply_text("⚠️ News formatting timed out.", reply_markup=self.keyboard)
+            return
         msg = f"*{symbol}*\n{formatted}"
         # Send as plain text to avoid Markdown parsing errors
         await self._send_long_reply(update, msg, parse_mode=None, reply_markup=self.keyboard)
@@ -1176,7 +1184,12 @@ class TelegramBot:
             # Compact the summary to keep the log small
             summary = self._compact_summary(summary)
 
-            await asyncio.to_thread(self._write_notification_log, log_path, summary)
+            try:
+                await asyncio.wait_for(asyncio.to_thread(self._write_notification_log, log_path, summary), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("_write_notification_log timed out")
+            except Exception as e:
+                logger.warning(f"Failed to write notification log: {type(e).__name__}: {e}")
 
     async def start(self):
         """Start the bot (initialize, start polling, start application)."""
