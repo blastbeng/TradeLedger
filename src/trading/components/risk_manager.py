@@ -539,7 +539,15 @@ class RiskManager:
         }
 
     def _get_hard_max_loss_pct(self, symbol: str, pos: Dict[str, Any]) -> float:
-        """Determine the hard max loss percentage based on asset type and timeframe."""
+        """Determine the hard max loss percentage based on asset type and timeframe.
+
+        Longer timeframes inherently exhibit higher volatility, so a uniform
+        hard stop percentage is inappropriate. This method selects a
+        timeframe-specific loss threshold from settings (e.g., 1h vs 5Y)
+        to ensure the hard stop is proportional to the expected volatility
+        of the position's holding period. BTPs use their own dedicated
+        policy thresholds.
+        """
         _is_btp = BTPPolicy.is_btp(symbol)
         default_loss = settings.BTP_HARD_MAX_LOSS_PCT if _is_btp else settings.HARD_MAX_LOSS_PCT
 
@@ -577,6 +585,12 @@ class RiskManager:
         display_symbol: str,
     ) -> bool:
         """Check if the position has exceeded the hard maximum loss threshold.
+
+        The maximum loss threshold is dynamically determined based on the
+        position's assigned timeframe and asset type (via
+        `_get_hard_max_loss_pct`). This prevents uniform hard stops from
+        prematurely liquidating long-term positions (e.g., 5Y) that
+        naturally experience wider price swings than short-term ones (e.g., 1h).
 
         Returns True if the hard stop was triggered (caller should skip to
         the next position), False otherwise.
