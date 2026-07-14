@@ -10,6 +10,7 @@ class BTPPolicy:
     """Centralizes all BTP-specific trading rules and policies."""
 
     PAR_VALUE = 100.0
+    BTP_SLIPPAGE_PCT = 0.001  # 0.1% fixed slippage for BTPs
 
     @staticmethod
     def is_btp(symbol: str) -> bool:
@@ -72,3 +73,10 @@ class BTPPolicy:
             return 0.0
         raw_fee = gross_value * settings.BTP_FEE_PERC
         return max(raw_fee, settings.BTP_MIN_FEE)
+
+    @staticmethod
+    def get_slippage_pct(symbol: str) -> Optional[float]:
+        """Return a fixed slippage percentage for BTPs, or None for non-BTPs."""
+        if BTPPolicy.is_btp(symbol):
+            return BTPPolicy.BTP_SLIPPAGE_PCT
+        return None

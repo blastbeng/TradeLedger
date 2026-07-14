@@ -9,6 +9,7 @@ from src.database import load_paper_balances, save_paper_balances, load_paper_or
 from src.exchanges.market_data import get_quotes, get_quotes_cached
 from src.exchanges.fees import calculate_transaction_costs
 from src.indicators import compute_atr
+from src.utils.btp_policy import BTPPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,10 @@ class PaperTrader:
         Adapts the backtester's dynamic slippage model to live trading by using
         the most recent daily candle and a 20-day average volume.
         """
+        btp_slippage = BTPPolicy.get_slippage_pct(symbol)
+        if btp_slippage is not None:
+            return btp_slippage
+
         # Check cache first
         cached = self._slippage_cache.get(symbol)
         if cached:

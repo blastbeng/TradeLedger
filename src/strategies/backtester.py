@@ -332,7 +332,9 @@ def backtest_strategy(
         entry_ts = entry_candle[0]
 
         # Compute effective slippage for entry candle
-        if config.slippage_model == "dynamic" and avg_volume_series:
+        if config.is_btp:
+            entry_slippage = BTPPolicy.BTP_SLIPPAGE_PCT
+        elif config.slippage_model == "dynamic" and avg_volume_series:
             entry_slippage = _compute_dynamic_slippage(
                 i, candles, avg_volume_series, config.atr_values,
                 config.slippage_base_pct, config.slippage_max_pct,
@@ -426,7 +428,9 @@ def backtest_strategy(
             candle_close = candle[4]
 
             # Compute effective slippage for this candle
-            if config.slippage_model == "dynamic" and avg_volume_series:
+            if config.is_btp:
+                effective_slippage = BTPPolicy.BTP_SLIPPAGE_PCT
+            elif config.slippage_model == "dynamic" and avg_volume_series:
                 effective_slippage = _compute_dynamic_slippage(
                     j, candles, avg_volume_series, config.atr_values,
                     config.slippage_base_pct, config.slippage_max_pct,
