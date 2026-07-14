@@ -1334,9 +1334,16 @@ class Settings(BaseSettings):
 
         # LLM-related fields that should trigger cache invalidation if changed.
         # Automatically identified by prefix to avoid manual maintenance.
+        # Temperature changes do not affect cache validity for the same prompt.
+        temperature_fields = {
+            "LLM_TEMPERATURE",
+            "LLM_MIND_TEMPERATURE",
+            "LLM_ACTUATOR_TEMPERATURE",
+            "LLM_WEAK_TEMPERATURE",
+        }
         llm_fields = {
             f for f in self.model_fields
-            if f.startswith(("LLM_", "OLLAMA_", "OPENAI_"))
+            if f.startswith(("LLM_", "OLLAMA_", "OPENAI_")) and f not in temperature_fields
         }
         # Include fee and system-prompt-related fields that affect LLM cache validity.
         # When these change, LLM_CACHE_VERSION is regenerated to invalidate all cached responses.
