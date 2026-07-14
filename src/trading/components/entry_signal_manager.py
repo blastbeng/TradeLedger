@@ -189,6 +189,26 @@ class EntrySignalManager:
             # No long-term entry signal detected
             return False
 
+        # --- Trend strength filter for medium/long-term timeframes ---
+        # For timeframes >= 1 day, require sufficient overall trend strength
+        # rather than relying solely on individual indicator thresholds.
+        if tf_seconds >= 86_400:  # >= 1 day
+            trend_score = 0
+            if adx is not None and adx > adx_moderate:
+                trend_score += 1
+            if macd_hist is not None and macd_hist > 0:
+                trend_score += 1
+            if plus_di is not None and minus_di is not None and plus_di > minus_di:
+                trend_score += 1
+            if ema_9 is not None and ema_21 is not None and ema_9 > ema_21:
+                trend_score += 1
+            if current_close is not None and ema_21 is not None and current_close > ema_21:
+                trend_score += 1
+            
+            # Require at least 3 out of 5 trend strength conditions
+            if trend_score < 3:
+                return False
+
         # --- Condition checks ---
         # 1. RSI oversold
         if rsi is not None and rsi < rsi_oversold:
