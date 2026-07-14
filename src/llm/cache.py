@@ -105,8 +105,9 @@ def _split_and_merge_prompt(
     weak_provider, weak_model, weak_base_url, weak_api_key = _get_weak_model_config()
     weak_max_tokens = _get_max_input_tokens(weak_provider, "weak", False)
 
-    # The chunk limit must fit within the weak model's context window, leaving room for instructions
-    chunk_limit = int(weak_max_tokens * 0.6)
+    # The chunk limit must fit within the weak model's context window, leaving room for instructions.
+    # Decrease the chunk limit with each recursion depth to ensure the merged prompt shrinks.
+    chunk_limit = int(weak_max_tokens * 0.6 / (depth + 1))
 
     def _split_text(text: str, limit: int) -> List[str]:
         """Recursively split text by paragraphs, lines, and words to fit within limit."""
