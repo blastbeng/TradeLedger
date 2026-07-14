@@ -471,7 +471,8 @@ class OrderExecutor:
         base_timeout = settings.QUEUED_ORDER_TIMEOUT_SECONDS
         if queued_tf:
             tf_secs = engine._timeframe_to_seconds(queued_tf)
-            scaled_timeout = max(base_timeout, int(tf_secs * 0.5))
+            # Scale timeout by timeframe, but cap at 30 days to avoid excessively long waits
+            scaled_timeout = min(max(base_timeout, int(tf_secs * 0.5)), 30 * 24 * 3600)
         else:
             scaled_timeout = base_timeout
 
