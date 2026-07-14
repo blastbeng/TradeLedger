@@ -598,10 +598,8 @@ def _validate_signal_impl(
             if bec_error:
                 return bec_error
 
-        # Read take-profit values early so default stop-loss consistency checks can use them
+        # Read take-profit value early so default stop-loss consistency checks can use it
         tp = params.get("take_profit_pct")
-        tp_atr = params.get("take_profit_atr_multiple")
-        
         sl_error = _validate_stop_loss(params, symbol, atr, price, timeframe_seconds, min_stop_atr_mult, tp)
         if sl_error:
             return sl_error
