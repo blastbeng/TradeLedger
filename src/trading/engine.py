@@ -586,6 +586,8 @@ class TradingEngine:
         self.notifier = notifier
         from src.exchanges import market_data
         market_data.set_notifier(notifier)
+        if hasattr(self, '_market_data_manager') and self._market_data_manager:
+            self._market_data_manager.notifier = notifier
 
     def trigger_symbol_reevaluation(self, force: bool = False):
         """Signal the periodic reevaluate loop to run immediately."""

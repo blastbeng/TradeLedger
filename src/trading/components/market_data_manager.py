@@ -60,6 +60,7 @@ class MarketDataManager:
         self.event_bus.subscribe("compute_and_store_indicators", self.compute_and_store_indicators)
         self._clock_cache: Optional[Any] = None
         self._clock_cache_time: float = 0.0
+        self.notifier = None
 
     def invalidate_clock_cache(self):
         self._clock_cache = None
@@ -615,6 +616,14 @@ class MarketDataManager:
 
             if not candles:
                 break
+
+            from src.exchanges.candle_utils import detect_data_quality_issues
+            alert_msg = detect_data_quality_issues(candles, symbol)
+            if alert_msg and self.notifier:
+                try:
+                    await self.notifier.send_notification(alert_msg)
+                except Exception as e:
+                    logger.warning(f"Failed to send data quality alert: {e}")
 
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(self.engine._db_executor, insert_ohlcv_batch, symbol, timeframe, candles)
