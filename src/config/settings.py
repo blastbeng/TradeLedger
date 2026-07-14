@@ -1311,8 +1311,16 @@ class Settings(BaseSettings):
             f for f in self.model_fields
             if f.startswith(("LLM_", "OLLAMA_", "OPENAI_"))
         }
+        # Include fee and system-prompt-related fields that affect LLM cache validity.
+        # When these change, LLM_CACHE_VERSION is regenerated to invalidate all cached responses.
+        prompt_fields = {
+            "STOCK_FEE_PERC", "STOCK_FEE_MIN", "STOCK_FEE_FIXED",
+            "TOBIN_TAX_RATE", "BTP_FEE_PERC", "BTP_MIN_FEE",
+            "BTP_IS_PRIMARY_ISSUANCE", "MAX_BACKTEST_VARIANTS",
+            "ENTRY_CONDITION_MIN_TIMEOUT_MULT",
+        }
 
-        llm_changed = any(getattr(self, f) != getattr(new_settings, f) for f in llm_fields)
+        llm_changed = any(getattr(self, f) != getattr(new_settings, f) for f in llm_fields | prompt_fields)
 
         for field_name in self.model_fields:
             if field_name in unsafe_fields or field_name == "LLM_CACHE_VERSION":
