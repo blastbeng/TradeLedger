@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # Risk check interval for very long timeframes (>= 1 year).
     # Overrides RISK_CHECK_INTERVAL_SECONDS for positions on 1Y/3Y/5Y timeframes.
-    RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS: int = 14400  # 4 hours
+    RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS: int = 3600  # 1 hour
 
     @field_validator("RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS")
     @classmethod
