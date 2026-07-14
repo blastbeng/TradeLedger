@@ -149,22 +149,22 @@ def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[s
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        with httpx.Client(proxy=_get_proxies(), timeout=10.0, follow_redirects=True) as client:
-            response = client.get(url, headers=headers)
-            response.raise_for_status()
+        client = _get_bi_client(timeout=10.0)
+        response = client.get(url, headers=headers)
+        response.raise_for_status()
 
-            soup = BeautifulSoup(response.text, "html.parser")
-            for a_tag in soup.find_all("a", href=True):
-                href = a_tag["href"]
-                if "/borsa/search/scheda.html?code=" in href:
-                    match = re.search(r'code=([^&]+)', href)
-                    if match:
-                        isin = match.group(1)
-                        if re.match(r'^[A-Z]{2}[A-Z0-9]{9}\d$', isin):
-                            name = a_tag.get_text(strip=True)
-                            if name.lower() == base_symbol.lower():
-                                _reset_bi_circuit()
-                                return isin, "Italy", name
+        soup = BeautifulSoup(response.text, "html.parser")
+        for a_tag in soup.find_all("a", href=True):
+            href = a_tag["href"]
+            if "/borsa/search/scheda.html?code=" in href:
+                match = re.search(r'code=([^&]+)', href)
+                if match:
+                    isin = match.group(1)
+                    if re.match(r'^[A-Z]{2}[A-Z0-9]{9}\d$', isin):
+                        name = a_tag.get_text(strip=True)
+                        if name.lower() == base_symbol.lower():
+                            _reset_bi_circuit()
+                            return isin, "Italy", name
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
         _record_bi_error(e)
         logger.error(f"Borsa Italiana search failed for {base_symbol}: {type(e).__name__}: {e}")
