@@ -915,7 +915,7 @@ class TelegramBot:
                     return None
                 try:
                     news_data = await asyncio.wait_for(
-                        get_cached_news_summary(symbol),
+                        asyncio.to_thread(get_cached_news_summary, symbol),
                         timeout=30.0
                     )
                     summary_text = html.escape(news_data["summary"])

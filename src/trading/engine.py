@@ -1201,7 +1201,7 @@ class TradingEngine:
                 # Cache the fact that we found 0 articles to avoid re-fetching too soon
                 try:
                     await asyncio.to_thread(
-                        self.redis.setex, no_news_cache_key, settings.NEWS_CACHE_TTL_SECONDS, "1"
+                        self.redis.setex, no_news_cache_key, 300, "1"
                     )
                 except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                     pass

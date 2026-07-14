@@ -261,7 +261,15 @@ def _is_relevant(symbol: str, title: str, summary: str, name: Optional[str] = No
 
     # Must mention the symbol at least once
     if sym_lower not in text:
-        return False
+        # Check if the company name is mentioned instead of the ticker
+        if name:
+            name_lower = name.lower()
+            if name_lower in text or (" " in name_lower and name_lower.split()[0] in text):
+                pass  # Name found, continue to keyword scoring
+            else:
+                return False
+        else:
+            return False
     # Stock/ETF‑specific keywords that indicate relevance
     stock_keywords = [
         "stock", "equity", "etf", "market", "trading", "bullish", "bearish",
@@ -363,19 +371,19 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
 
     for source in enabled:
         if source == "newsapi":
-            tasks.append(asyncio.to_thread(_fetch_newsapi, combined_query, name))
+            tasks.append(asyncio.to_thread(_fetch_newsapi, base_symbol, name, combined_query))
         elif source == "twitter":
             tasks.append(asyncio.to_thread(_fetch_twitter, base_symbol, use_cashtag=True, name=name))
             if name and name != base_symbol:
                 tasks.append(asyncio.to_thread(_fetch_twitter, name, use_cashtag=False, name=name))
         elif source == "reddit":
-            tasks.append(asyncio.to_thread(_fetch_reddit, combined_query, name))
+            tasks.append(asyncio.to_thread(_fetch_reddit, base_symbol, name, combined_query))
         elif source == "facebook":
             tasks.append(asyncio.to_thread(_fetch_facebook, base_symbol, name))
         elif source == "youtube":
-            tasks.append(asyncio.to_thread(_fetch_youtube, combined_query, name))
+            tasks.append(asyncio.to_thread(_fetch_youtube, base_symbol, name, combined_query))
         elif source == "googlenews":
-            tasks.append(asyncio.to_thread(_fetch_googlenews, combined_query, name))
+            tasks.append(asyncio.to_thread(_fetch_googlenews, base_symbol, name, combined_query))
         elif source == "stocktwits":
             tasks.append(asyncio.to_thread(_fetch_stocktwits, base_symbol, name))
         elif source == "rss":
@@ -567,16 +575,17 @@ def _source_fingerprint() -> str:
 # NewsAPI.org
 # ---------------------------------------------------------------------------
 
-def _fetch_newsapi(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
+def _fetch_newsapi(symbol: str, name: Optional[str] = None, search_query: Optional[str] = None) -> List[Dict[str, str]]:
     if not settings.NEWS_API_KEY:
         return []
     try:
         _get_rate_limiter().wait("newsapi")
         logger.debug(f"Fetching NewsAPI for {symbol}...")
         url = "https://newsapi.org/v2/everything"
-        # Use the query as-is (it may be a combined query with OR).
-        # Only append " stock" if the query is a single ticker (no spaces/quotes).
-        base = symbol.split('/')[0]
+        # Use search_query for the API call (may be a combined query with OR),
+        # but use the clean symbol for relevance checking.
+        query = search_query or symbol
+        base = query.split('/')[0]
         if " " in base or '"' in base:
             q = base
         else:
@@ -682,7 +691,7 @@ def _fetch_twitter(symbol: str, use_cashtag: bool = True, name: Optional[str] = 
 # Reddit
 # ---------------------------------------------------------------------------
 
-def _fetch_reddit(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
+def _fetch_reddit(symbol: str, name: Optional[str] = None, search_query: Optional[str] = None) -> List[Dict[str, str]]:
     if not settings.REDDIT_CLIENT_ID or not settings.REDDIT_CLIENT_SECRET:
         return []
     try:
@@ -699,7 +708,8 @@ def _fetch_reddit(symbol: str, name: Optional[str] = None) -> List[Dict[str, str
             user_agent=settings.REDDIT_USER_AGENT,
             timeout=settings.NEWS_HTTP_TIMEOUT_SECONDS,
         )
-        base = symbol.split('/')[0]
+        query = search_query or symbol
+        base = query.split('/')[0]
         if " " in base or '"' in base:
             q = base
         else:
@@ -785,14 +795,15 @@ def _fetch_facebook(symbol: str, name: Optional[str] = None) -> List[Dict[str, s
 # YouTube Data API v3
 # ---------------------------------------------------------------------------
 
-def _fetch_youtube(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
+def _fetch_youtube(symbol: str, name: Optional[str] = None, search_query: Optional[str] = None) -> List[Dict[str, str]]:
     if not settings.YOUTUBE_API_KEY:
         return []
     try:
         _get_rate_limiter().wait("youtube")
         logger.debug(f"Fetching YouTube for {symbol}...")
         url = "https://www.googleapis.com/youtube/v3/search"
-        base = symbol.split('/')[0]
+        query = search_query or symbol
+        base = query.split('/')[0]
         if " " in base or '"' in base:
             q = base
         else:
@@ -839,12 +850,13 @@ def _fetch_youtube(symbol: str, name: Optional[str] = None) -> List[Dict[str, st
 # Google News RSS
 # ---------------------------------------------------------------------------
 
-def _fetch_googlenews(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
+def _fetch_googlenews(symbol: str, name: Optional[str] = None, search_query: Optional[str] = None) -> List[Dict[str, str]]:
     """Fetch news from Google News RSS feed."""
     try:
         _get_rate_limiter().wait("googlenews")
         logger.debug(f"Fetching Google News for {symbol}...")
-        base = symbol.split("/")[0]
+        query = search_query or symbol
+        base = query.split("/")[0]
         encoded_base = quote(base)
         # Use the query as-is (it may be a combined query with OR).
         # Only append "+stock" if the query is a single ticker (no spaces/quotes).
