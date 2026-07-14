@@ -652,7 +652,7 @@ async def ticker(symbol: str):
     engine = get_engine()
     base_symbol = symbol.split("/")[0]
     try:
-        quotes = await engine._market_data_manager._get_quotes_async([base_symbol], timeout=300.0)
+        quotes = await engine._market_data_manager._get_quotes_async([base_symbol], timeout=15.0)
         q = quotes.get(base_symbol)
         if q:
             return {
@@ -684,7 +684,7 @@ async def tickers(symbols: str = ""):
     base_symbol_list = [s.split("/")[0] for s in full_symbol_list]
     result = {}
     try:
-        quotes = await engine._market_data_manager._get_quotes_async(base_symbol_list, timeout=300.0)
+        quotes = await engine._market_data_manager._get_quotes_async(base_symbol_list, timeout=15.0)
         for full_sym, base_sym in zip(full_symbol_list, base_symbol_list):
             q = quotes.get(base_sym)
             if q:
