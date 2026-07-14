@@ -95,12 +95,19 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `LLM_ACTUATOR_MODEL` | Model name for actuator role (e.g., `gpt-4o-mini`) | |
 | `LLM_WEAK_MODEL` | Model name for weak role | |
 | `LLM_FALLBACK_ENABLED` | Enable automatic fallback to secondary provider | `true` |
+| `LLM_MIND_PROVIDER` | Provider for mind model (empty = use global) | |
+| `LLM_ACTUATOR_PROVIDER` | Provider for actuator model (empty = use global) | |
 | `MAX_DAILY_LOSS_PCT` | Maximum daily loss as a fraction of initial balance (0.05 = 5%) | `0.05` |
 | `HARD_MAX_LOSS_PCT` | Hard maximum unrealized loss percentage that forces exit (0.15 = 15%) | `0.15` |
 | `BTP_MAX_TAKE_PROFIT_PCT` | Maximum take-profit percentage for BTPs (0.03 = 3%) | `0.03` |
 | `BTP_MAX_STOP_LOSS_PCT` | Maximum stop-loss percentage for BTPs (0.03 = 3%) | `0.03` |
+| `BTP_HARD_MAX_LOSS_PCT` | Hard maximum unrealized loss percentage for BTPs (0.05 = 5%) | `0.05` |
 | `PORTFOLIO_REBALANCE_ENABLED` | Enable periodic portfolio rebalancing | `true` |
 | `PORTFOLIO_REBALANCE_INTERVAL_SECONDS` | Interval for portfolio rebalance | `7776000` |
+| `MAX_POSITION_AGE_MULTIPLIER` | Maximum position age as a multiple of the original max_hold_time_seconds | `2.0` |
+| `PORTFOLIO_COOLDOWN_MAX_CONSEC_LOSSES` | Maximum consecutive losses before portfolio cooldown | `5` |
+| `PORTFOLIO_COOLDOWN_SECONDS` | Portfolio cooldown duration in seconds | `3600` |
+| `REINVEST_DIVIDENDS` | Enable dividend reinvestment | `false` |
 | `NEWS_ENABLED` | Enable news fetching and sentiment | `false` |
 | `NEWS_API_KEY` | NewsAPI.org API key | |
 | `TWITTER_BEARER_TOKEN` | Twitter API v2 bearer token | |
@@ -108,10 +115,18 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `REDDIT_CLIENT_SECRET` | Reddit API client secret | |
 | `RSS_FEEDS` | List of RSS feed URLs | `[]` |
 | `YOUTUBE_API_KEY` | YouTube Data API v3 key | |
+| `YAHOO_FINANCE_ENABLED` | Enable Yahoo Finance fallback for quotes | `true` |
+| `ALPHAVANTAGE_ENABLED` | Enable Alpha Vantage for quotes/candles | `false` |
+| `ALPHAVANTAGE_API_KEY` | Alpha Vantage API key | |
+| `IEX_ENABLED` | Enable IEX Cloud for quotes/candles | `false` |
+| `IEX_API_KEY` | IEX Cloud API key | |
+| `BANCA_D_ITALIA_BTP_NEWS_ENABLED` | Enable Banca d'Italia BTP news scraping | `false` |
 | `FACEBOOK_PAGE_ACCESS_TOKEN` | Facebook Graph API token | |
 | `FACEBOOK_PAGE_ID` | Facebook Page ID | |
 | `WEB_USERNAME` | Web dashboard username (optional) | |
 | `WEB_PASSWORD` | Web dashboard password (optional) | |
+| `WEB_RATE_LIMIT_REQUESTS` | Web rate limit requests per window | `300` |
+| `WEB_RATE_LIMIT_WINDOW` | Web rate limit window in seconds | `60` |
 | `BTP_FEE_PERC` | Fee percentage for BTP trades | `0.0024` |
 | `BTP_MIN_FEE` | Minimum fee for BTP trades | `3.50` |
 | `BTP_IS_PRIMARY_ISSUANCE` | Whether BTPs are primary issuance (zero fees) | `false` |
@@ -126,6 +141,7 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `WEB_HOST` | Web server host | `0.0.0.0` |
 | `WEB_PORT` | Web server port | `8083` |
 | `LOG_LEVEL` | Logging level | `INFO` |
+| `NOTIFICATION_VERBOSITY` | Notification verbosity: all, errors_only, trades_only, none | `all` |
 | `OHLCV_TIMEFRAMES` | List of timeframes to fetch | `["5Y", "3Y", "1Y", "6M", "3M", "1M", "1w", "1d", "1h"]` |
 | `OHLCV_RETENTION_DAYS` | Days of historical OHLCV data to keep | `3650` |
 | `MARKET_DATA_REFRESH_SECONDS` | Interval for tracked symbol OHLCV download | `900` |
