@@ -7,6 +7,7 @@ import functools
 from datetime import datetime
 import hashlib
 import threading
+import weakref
 from typing import Dict, List, Any, Optional, Tuple
 from contextlib import contextmanager
 
@@ -110,15 +111,28 @@ class _PgConnectionWrapper:
 _sqlite_local = threading.local()
 
 class _SqliteConnectionWrapper:
-    """Wraps a sqlite3 connection so that close() is a no-op, allowing reuse."""
+    """Wraps a sqlite3 connection so that close() is a no-op, allowing reuse.
+    
+    A finalizer is registered to ensure the underlying SQLite connection is
+    closed when the thread dies and the thread-local wrapper is garbage collected.
+    """
     def __init__(self, conn):
         self._conn = conn
+        self._finalizer = weakref.finalize(self, self._close_conn, conn)
+
+    @staticmethod
+    def _close_conn(conn):
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     def __getattr__(self, name):
         return getattr(self._conn, name)
 
     def close(self):
-        # Do not close the persistent thread-local connection
+        # Do not close the persistent thread-local connection during normal operation.
+        # The finalizer handles cleanup when the thread dies.
         pass
 
     def commit(self):
