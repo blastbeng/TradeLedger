@@ -443,6 +443,7 @@ class SimulationManager:
             fundamentals=fundamentals,
             consecutive_losses=perf.get("equity_curve", {}).get("consecutive_losses", 0),
             current_price=current_price,
+            timeframe=assigned_tf,
             num_candidates=len(self.shared_state.current_symbols),
         )
 

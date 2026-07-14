@@ -410,7 +410,8 @@ class SignalProcessor:
             portfolio_exposure_pct=ctx["portfolio_exposure_pct"], portfolio_stop_risk_pct=ctx["portfolio_stop_risk_pct"],
             is_critical=is_critical, trading_paused=False, symbol_event=ctx.get("symbol_event"),
             fundamentals=ctx.get("fundamentals"), consecutive_losses=ctx.get("consecutive_losses", 0),
-            current_price=ctx["current_price"], num_candidates=len(self.shared_state.current_symbols),
+            current_price=ctx["current_price"], timeframe=ctx.get("assigned_tf"),
+            num_candidates=len(self.shared_state.current_symbols),
         )
         return strategy_model_type, effective_temp
 
