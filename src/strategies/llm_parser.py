@@ -45,10 +45,13 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
     """
     issues = []
     
-    stop_loss = params.get("stop_loss_pct")
-    take_profit = params.get("take_profit_pct")
-    
     if action == "BUY":
+        stop_loss = params.get("stop_loss_pct")
+        take_profit = params.get("take_profit_pct")
+        stop_loss_atr = params.get("stop_loss_atr_multiple")
+        take_profit_atr = params.get("take_profit_atr_multiple")
+        position_size = params.get("position_size_fraction")
+        
         if stop_loss is not None:
             if stop_loss <= 0 or stop_loss > 0.5:
                 issues.append(f"unreasonable stop_loss_pct ({stop_loss})")
@@ -60,6 +63,18 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
         if stop_loss is not None and take_profit is not None:
             if take_profit < stop_loss:
                 issues.append(f"take_profit_pct ({take_profit}) < stop_loss_pct ({stop_loss})")
+                
+        if stop_loss_atr is not None:
+            if stop_loss_atr <= 0 or stop_loss_atr > 10.0:
+                issues.append(f"unreasonable stop_loss_atr_multiple ({stop_loss_atr})")
+                
+        if take_profit_atr is not None:
+            if take_profit_atr <= 0 or take_profit_atr > 20.0:
+                issues.append(f"unreasonable take_profit_atr_multiple ({take_profit_atr})")
+                
+        if position_size is not None:
+            if position_size <= 0:
+                issues.append(f"non-positive position_size_fraction ({position_size})")
                 
     if issues:
         new_reasoning = f"{reasoning} [Semantic validation failed: {'; '.join(issues)}. Downgraded to HOLD.]"
