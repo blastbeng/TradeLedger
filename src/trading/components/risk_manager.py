@@ -1428,6 +1428,8 @@ class RiskManager:
                     logger.info(f"Stop-loss order {sl_order_id} filled for {symbol}, processing native fill.")
                     pos.pop("_native_stop_trigger_ts", None)
                     pos.pop("stop_loss_order_id", None)  # Pop to prevent double processing
+                    pos.pop("stop_loss_order_type", None)
+                    pos.pop("_native_stop_price", None)
                 else:
                     now_ts = time.time()
                     trigger_ts = pos.get("_native_stop_trigger_ts")
