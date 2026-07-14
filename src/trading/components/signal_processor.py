@@ -373,6 +373,7 @@ class SignalProcessor:
             "drawdown_pct": perf.get("equity_curve", {}).get("drawdown_pct"),
             "full_market_breadth": _ctx["full_market_breadth"],
             "symbol_event": symbol_event,
+            "upcoming_earnings": upcoming_earnings,
             "consecutive_losses": perf.get("equity_curve", {}).get("consecutive_losses", 0),
             "atr_percentile": _ctx["atr_percentile"],
             "fundamentals": symbol_data["fundamentals"],
@@ -471,6 +472,31 @@ class SignalProcessor:
                 market_hash=ctx["market_hash"],
                 is_critical=is_critical,
             )
+
+        # --- Automatic adjustment for upcoming earnings ---
+        upcoming_earnings = ctx.get("upcoming_earnings")
+        if upcoming_earnings and signal:
+            try:
+                earnings_date = datetime.strptime(upcoming_earnings, '%Y-%m-%d').date()
+                days_to_earnings = (earnings_date - datetime.now(timezone.utc).date()).days
+                if 0 <= days_to_earnings <= 3:
+                    logger.info(f"Upcoming earnings for {symbol} in {days_to_earnings} days. Adjusting signal for earnings risk.")
+                    if signal.action == "BUY":
+                        original_size = signal.position_size if signal.position_size is not None else 1.0
+                        signal.position_size = original_size * 0.5
+                        logger.info(f"Reduced position size for {symbol} from {original_size:.2f} to {signal.position_size:.2f} due to upcoming earnings.")
+                    if signal.stop_loss is not None:
+                        original_sl = signal.stop_loss
+                        signal.stop_loss = min(signal.stop_loss, 0.03)
+                        if signal.stop_loss != original_sl:
+                            logger.info(f"Tightened stop_loss for {symbol} from {original_sl:.3f} to {signal.stop_loss:.3f} due to upcoming earnings.")
+                    if signal.stop_loss_atr_multiple is not None:
+                        original_sl_atr = signal.stop_loss_atr_multiple
+                        signal.stop_loss_atr_multiple = min(signal.stop_loss_atr_multiple, 1.0)
+                        if signal.stop_loss_atr_multiple != original_sl_atr:
+                            logger.info(f"Tightened stop_loss_atr_multiple for {symbol} from {original_sl_atr:.2f} to {signal.stop_loss_atr_multiple:.2f} due to upcoming earnings.")
+            except (ValueError, TypeError):
+                pass
 
         return {"signal": signal, "llm_provider": llm_provider, "llm_model": llm_model}
 
