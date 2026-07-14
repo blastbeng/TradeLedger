@@ -203,7 +203,7 @@ def _get_yf_session():
             _yf_session_cache = None
             _yf_session_created = True
             return None
-        except (ImportError, RuntimeError, OSError, AttributeError) as e:
+        except (RuntimeError, OSError, AttributeError) as e:
             logger.warning(f"Failed to create curl_cffi session: {e}")
             # Don't set _yf_session_created so we retry on the next call
             return None
