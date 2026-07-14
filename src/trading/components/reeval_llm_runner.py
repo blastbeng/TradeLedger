@@ -29,10 +29,12 @@ class ReevalLLMRunner:
         symbol_events: Dict[str, Dict[str, Any]],
         symbol_trend_scores: Dict[str, float],
         sentiment_trend: Dict[str, Optional[float]],
+        news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
         correlation_matrix: Dict[str, Dict[str, float]],
         ohlcv_data: Dict[str, Dict[str, List[List]]],
         perf: Dict[str, Any],
         market_trend: Optional[Dict[str, Any]],
+        news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
         session_info: dict,
         market_breadth: Dict[str, Any],
         trading_paused_bool: bool,
@@ -104,6 +106,21 @@ class ReevalLLMRunner:
                     except Exception as e:
                         logger.warning(f"Failed to pre-summarize news for chunk: {e}")
 
+                # Build compact per-symbol sentiment summary for this chunk
+                chunk_sentiment_lines = []
+                for sym in chunk_symbols:
+                    base = sym.split("/")[0] if "/" in sym else sym
+                    agg = news_sentiment.get(base) if news_sentiment else None
+                    if agg and agg.get("total_articles", 0) > 0:
+                        chunk_sentiment_lines.append(
+                            f"  {base}: compound={agg['avg_compound']:+.2f}, "
+                            f"pos={agg['positive']}, neg={agg['negative']}, "
+                            f"neu={agg['neutral']}, articles={agg['total_articles']}"
+                        )
+                chunk_sentiment_section = None
+                if chunk_sentiment_lines:
+                    chunk_sentiment_section = "Per-symbol news sentiment:\n" + "\n".join(chunk_sentiment_lines)
+
                 chunk_messages = await asyncio.to_thread(
                     build_stock_selection_messages,
                     available_symbols=chunk_symbols,
@@ -134,6 +151,8 @@ class ReevalLLMRunner:
                     btp_ytm=btp_ytm,
                     news_section=chunk_news_section,
                 )
+                if chunk_sentiment_section:
+                    chunk_messages[-1]["content"] += "\n" + chunk_sentiment_section
                 if auto_resume_note:
                     chunk_messages[-1]["content"] += "\n" + auto_resume_note
                 # Keep prompt text for correction retries
@@ -297,6 +316,31 @@ class ReevalLLMRunner:
                 market_limits=market_limits,
                 available_timeframes_by_symbol=available_timeframes_by_symbol,
             )
+            # Append per-symbol sentiment summary for symbols mentioned in chunk results
+            if news_sentiment:
+                sentiment_lines = []
+                for chunk in chunk_results:
+                    for stock in chunk.get("stocks", []):
+                        if isinstance(stock, dict):
+                            sym = stock.get("symbol", "")
+                            base = sym.split("/")[0] if "/" in sym else sym
+                            agg = news_sentiment.get(base)
+                            if agg and agg.get("total_articles", 0) > 0:
+                                sentiment_lines.append(
+                                    f"  {base}: compound={agg['avg_compound']:+.2f}, "
+                                    f"pos={agg['positive']}, neg={agg['negative']}, "
+                                    f"articles={agg['total_articles']}"
+                                )
+                if sentiment_lines:
+                    # Deduplicate while preserving order
+                    seen = set()
+                    unique_lines = []
+                    for line in sentiment_lines:
+                        sym_key = line.split(":")[0].strip()
+                        if sym_key not in seen:
+                            seen.add(sym_key)
+                            unique_lines.append(line)
+                    final_messages[-1]["content"] += "\nNews sentiment for selected symbols:\n" + "\n".join(unique_lines)
             if auto_resume_note:
                 final_messages[-1]["content"] += "\n" + auto_resume_note
 
