@@ -14,6 +14,12 @@ from src.database import save_llm_metrics
 
 logger = logging.getLogger(__name__)
 
+# Shared thread pool for chunk summarization to avoid creating/destroying
+# a pool on every split/merge operation.
+_split_merge_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=5, thread_name_prefix="split-merge"
+)
+
 def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
     return len(text) // 4
@@ -207,23 +213,22 @@ def _split_and_merge_prompt(
             # If summarization fails, truncate the chunk to fit the weak model's limit
             return chunk[:chunk_limit * 4]
 
-    # Summarize chunks in parallel using a thread pool
+    # Summarize chunks in parallel using the shared module-level thread pool
     summaries = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(chunks))) as executor:
-        future_to_chunk = {
-            executor.submit(_summarize_chunk, i, chunk): i
-            for i, chunk in enumerate(chunks)
-        }
-        # Collect results in order
-        results = [None] * len(chunks)
-        for future in concurrent.futures.as_completed(future_to_chunk):
-            idx = future_to_chunk[future]
-            try:
-                results[idx] = future.result()
-            except Exception as e:
-                logger.error("Chunk %d summarization failed unexpectedly: %s", idx, e)
-                results[idx] = chunks[idx][:chunk_limit * 4]
-        summaries = [r for r in results if r is not None]
+    future_to_chunk = {
+        _split_merge_executor.submit(_summarize_chunk, i, chunk): i
+        for i, chunk in enumerate(chunks)
+    }
+    # Collect results in order
+    results = [None] * len(chunks)
+    for future in concurrent.futures.as_completed(future_to_chunk):
+        idx = future_to_chunk[future]
+        try:
+            results[idx] = future.result()
+        except Exception as e:
+            logger.error("Chunk %d summarization failed unexpectedly: %s", idx, e)
+            results[idx] = chunks[idx][:chunk_limit * 4]
+    summaries = [r for r in results if r is not None]
     
     # Combine summaries into a new prompt
     merged_prompt = (
