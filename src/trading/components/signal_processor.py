@@ -239,8 +239,8 @@ class SignalProcessor:
                 news_summary = await get_cached_news_summary_async(symbol, model_type="weak")
                 if news_summary and news_summary.get("summary") and news_summary["summary"] != "No recent news.":
                     news_section = f"Recent news summary for {symbol}: {news_summary['summary']}"
-            except Exception as e:
-                logger.warning(f"Failed to pre-summarize news for {symbol}: {e}")
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError) as e:
+                logger.warning(f"Failed to pre-summarize news for {symbol}: {type(e).__name__}: {e}")
 
         prompt_data = StrategyPromptData(
             symbol=symbol,
@@ -532,6 +532,14 @@ class SignalProcessor:
             raise
         except (ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Network/IO error processing {symbol}: {type(e).__name__}: {e}")
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+            logger.error(f"Data/logic error processing {symbol}: {type(e).__name__}: {e}", exc_info=True)
+            await self.engine._record_unexpected_exception("process_symbol", e)
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"❌ Error processing {display_symbol}: {e}",
+                    summary={"symbol": symbol, "action": "ERROR", "reason": str(e)[:200]}
+                )
         except Exception as e:
             logger.error(f"Error processing {symbol}: {type(e).__name__}: {e}", exc_info=True)
             await self.engine._record_unexpected_exception("process_symbol", e)

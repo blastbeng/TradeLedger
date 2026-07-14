@@ -657,6 +657,9 @@ class TradingEngine:
             raise
         except (ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Force download network/IO error: {type(e).__name__}: {e}")
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+            logger.error(f"Force download data/logic error: {type(e).__name__}: {e}", exc_info=True)
+            await self._record_unexpected_exception("force_download_all_assets", e)
         except Exception as e:
             logger.error(f"Force download error: {type(e).__name__}: {e}", exc_info=True)
             await self._record_unexpected_exception("force_download_all_assets", e)
@@ -691,6 +694,9 @@ class TradingEngine:
             raise
         except (ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Force download tracked symbols network/IO error: {type(e).__name__}: {e}")
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+            logger.error(f"Force download tracked symbols data/logic error: {type(e).__name__}: {e}", exc_info=True)
+            await self._record_unexpected_exception("force_download_tracked_symbols", e)
         except Exception as e:
             logger.error(f"Force download tracked symbols error: {type(e).__name__}: {e}", exc_info=True)
             await self._record_unexpected_exception("force_download_tracked_symbols", e)
@@ -806,6 +812,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Reconcile network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Reconcile data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("reconcile", e)
             except Exception as e:
                 logger.error(f"Reconcile error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("reconcile", e)
@@ -842,6 +851,17 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Stock re-evaluation network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Stock re-evaluation data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("reevaluate", e)
+                if self.notifier:
+                    await self.notifier.send_notification(
+                        f"❌ Stock re-evaluation failed: {str(e)[:200]}",
+                        summary={
+                            "action": "ERROR",
+                            "reason": f"Re-evaluation error: {str(e)[:200]}",
+                        }
+                    )
             except Exception as e:
                 logger.error(f"Stock re-evaluation error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("reevaluate", e)
@@ -977,6 +997,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Pause check network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Pause check data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("pause_check", e)
             except Exception as e:
                 logger.error(f"Pause check error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("pause_check", e)
@@ -1089,6 +1112,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Full market breadth computation network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Full market breadth computation data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("full_market_breadth", e)
             except Exception as e:
                 logger.error(f"Full market breadth computation error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("full_market_breadth", e)
@@ -1112,6 +1138,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Market condition check network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Market condition check data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("market_condition_check", e)
             except Exception as e:
                 logger.error(f"Market condition check error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("market_condition_check", e)
@@ -1133,6 +1162,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Periodic portfolio rebalance network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Periodic portfolio rebalance data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("periodic_portfolio_rebalance", e)
             except Exception as e:
                 logger.error(f"Periodic portfolio rebalance error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("periodic_portfolio_rebalance", e)
@@ -1478,6 +1510,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Market data download loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Market data download loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("market_data_download_loop", e)
             except Exception as e:
                 logger.error(f"Market data download loop error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("market_data_download_loop", e)
@@ -1570,6 +1605,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Full asset download loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Full asset download loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("full_asset_download_loop", e)
             except Exception as e:
                 logger.error(f"Full asset download loop error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("full_asset_download_loop", e)
@@ -1626,6 +1664,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Full asset news download loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Full asset news download loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("full_asset_news_download_loop", e)
             except Exception as e:
                 logger.error(f"Full asset news download loop error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("full_asset_news_download_loop", e)
@@ -1660,6 +1701,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Background quote refresh network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Background quote refresh data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("quote_refresh_loop", e)
             except Exception as e:
                 logger.error(f"Background quote refresh error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("quote_refresh_loop", e)
@@ -1704,6 +1748,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Ticker discovery refresh network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Ticker discovery refresh data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("ticker_discovery_loop", e)
             except Exception as e:
                 logger.error(f"Ticker discovery refresh error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("ticker_discovery_loop", e)
@@ -1736,6 +1783,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Dividend fetch loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Dividend fetch loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("dividend_fetch_loop", e)
             except Exception as e:
                 logger.error(f"Dividend fetch loop error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("dividend_fetch_loop", e)
@@ -1871,6 +1921,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"LLM decision evaluation loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"LLM decision evaluation loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("llm_decision_eval_loop", e)
             except Exception as e:
                 logger.error(f"LLM decision evaluation loop error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("llm_decision_eval_loop", e)
@@ -1925,6 +1978,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Pause/resume check network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Pause/resume check data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("pause_resume_check", e)
             except Exception as e:
                 logger.error(f"Pause/resume check error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("pause_resume_check", e)
@@ -1968,6 +2024,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Redis health check loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Redis health check loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("redis_health_check_loop", e)
             except Exception as e:
                 logger.error(f"Redis health check loop error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("redis_health_check_loop", e)
@@ -1997,6 +2056,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Health check loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Health check loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("health_check_loop", e)
             except Exception as e:
                 logger.error(f"Health check loop error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("health_check_loop", e)
@@ -2122,6 +2184,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Entry signal monitor network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Entry signal monitor data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("entry_signal_monitor", e)
             except Exception as e:
                 logger.error(f"Entry signal monitor error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("entry_signal_monitor", e)
@@ -2139,6 +2204,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Pending entries check network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Error checking pending entries data/logic: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("check_pending_entries", e)
             except Exception as e:
                 logger.error(f"Error checking pending entries: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("check_pending_entries", e)
@@ -2231,6 +2299,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Queued orders processing network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Error processing queued orders data/logic: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("process_queued_orders", e)
             except Exception as e:
                 logger.error(f"Error processing queued orders: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("process_queued_orders", e)
@@ -2250,6 +2321,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Orphaned order cleanup network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Orphaned order cleanup data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("cleanup_orphaned_orders", e)
             except Exception as e:
                 logger.error(f"Orphaned order cleanup error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("cleanup_orphaned_orders", e)
