@@ -36,7 +36,7 @@ The bot operates through a series of asynchronous background loops managed by th
 
 - **Stocks**: Italian stocks listed on Borsa Italiana (suffix `.MI`). Discovered via Wikipedia, FinanceDatabase, and static lists.
 - **ETFs**: Italian UCITS ETFs.
-- **BTPs**: Italian government bonds (BTPs) discovered from Borsa Italiana. Candle data is fetched from Investing.com and Borsa Italiana.
+- **BTPs**: Italian government bonds (BTPs) discovered from Borsa Italiana. Candle data is fetched from Borsa Italiana.
 
 ## Technical Indicators
 
@@ -58,16 +58,16 @@ The bot can fetch and analyze news from the following sources (if API keys are p
 - Facebook Graph API
 - Banca d'Italia BTP News
 
-Sentiment is analyzed using VADER Sentiment, and results are cached in SQLite to provide context to the LLM during strategy generation.
+Sentiment is analyzed using an LLM, and results are cached in the database to provide context to the LLM during strategy generation.
 
 ## Libraries & Technologies
 
 - **Language**: Python 3.11+
 - **Web Framework**: FastAPI, Uvicorn, WebSockets
-- **Database**: SQLite (via `sqlite3`) or PostgreSQL (via `psycopg2`)
+- **Database**: SQLite (via `sqlite3`) or PostgreSQL (via `psycopg`)
 - **Caching/Queue**: Redis
 - **Market Data**: `yfinance`, `pandas_market_calendars`, `financedatabase`, `beautifulsoup4` (for scraping Borsa Italiana and Banca d'Italia)
-- **LLM**: `ollama`, `openai`
+- **LLM**: `httpx` (for OpenAI-compatible API and Ollama API)
 - **Telegram**: `python-telegram-bot`
 - **Data Validation**: `pydantic`, `pydantic-settings`
 - **Data Processing**: `pandas`, `numpy`, `TA-Lib`
@@ -89,6 +89,36 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `LLM_TEMPERATURE` | Base LLM temperature (0.0–2.0) | `0.1` |
 | `LLM_MIND_TEMPERATURE` | Temperature range for mind model (e.g. "0.2-0.5") | |
 | `LLM_ACTUATOR_TEMPERATURE` | Temperature range for actuator model (e.g. "0.0-0.1") | |
+| `LLM_WEAK_PROVIDER` | Provider for weak model (empty = use global) | |
+| `LLM_WEAK_TEMPERATURE` | Temperature range for weak model (e.g. "0.1") | |
+| `LLM_MIND_MODEL` | Model name for mind role (e.g., `gpt-4o`) | |
+| `LLM_ACTUATOR_MODEL` | Model name for actuator role (e.g., `gpt-4o-mini`) | |
+| `LLM_WEAK_MODEL` | Model name for weak role | |
+| `LLM_FALLBACK_ENABLED` | Enable automatic fallback to secondary provider | `true` |
+| `MAX_DAILY_LOSS_PCT` | Maximum daily loss as a fraction of initial balance (0.05 = 5%) | `0.05` |
+| `HARD_MAX_LOSS_PCT` | Hard maximum unrealized loss percentage that forces exit (0.15 = 15%) | `0.15` |
+| `BTP_MAX_TAKE_PROFIT_PCT` | Maximum take-profit percentage for BTPs (0.03 = 3%) | `0.03` |
+| `BTP_MAX_STOP_LOSS_PCT` | Maximum stop-loss percentage for BTPs (0.03 = 3%) | `0.03` |
+| `PORTFOLIO_REBALANCE_ENABLED` | Enable periodic portfolio rebalancing | `true` |
+| `PORTFOLIO_REBALANCE_INTERVAL_SECONDS` | Interval for portfolio rebalance | `7776000` |
+| `NEWS_ENABLED` | Enable news fetching and sentiment | `false` |
+| `NEWS_API_KEY` | NewsAPI.org API key | |
+| `TWITTER_BEARER_TOKEN` | Twitter API v2 bearer token | |
+| `REDDIT_CLIENT_ID` | Reddit API client ID | |
+| `REDDIT_CLIENT_SECRET` | Reddit API client secret | |
+| `RSS_FEEDS` | List of RSS feed URLs | `[]` |
+| `YOUTUBE_API_KEY` | YouTube Data API v3 key | |
+| `FACEBOOK_PAGE_ACCESS_TOKEN` | Facebook Graph API token | |
+| `FACEBOOK_PAGE_ID` | Facebook Page ID | |
+| `WEB_USERNAME` | Web dashboard username (optional) | |
+| `WEB_PASSWORD` | Web dashboard password (optional) | |
+| `BTP_FEE_PERC` | Fee percentage for BTP trades | `0.0024` |
+| `BTP_MIN_FEE` | Minimum fee for BTP trades | `3.50` |
+| `BTP_IS_PRIMARY_ISSUANCE` | Whether BTPs are primary issuance (zero fees) | `false` |
+| `STOCK_FEE_PERC` | Fee percentage for stock trades | `0.0024` |
+| `STOCK_FEE_MIN` | Minimum fee for stock trades | `3.50` |
+| `STOCK_FEE_FIXED` | Fixed fee for stock trades | `2.50` |
+| `TOBIN_TAX_RATE` | Tobin tax rate for stock buys | `0.0012` |
 | `REDIS_HOST` | Redis host | `redis` |
 | `REDIS_PORT` | Redis port | `6379` |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (optional) | |
@@ -154,6 +184,9 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `/news` | Show news summaries for tracked symbols |
 | `/news_status` | Show news article counts for tracked symbols |
 | `/sell` | Sell all positions or a specific one by ID |
+| `/reset` | Reset paper trading state |
+| `/backfill` | Force backfill of all discovered symbols |
+| `/signals` | Show latest LLM signals |
 
 ## Web API Endpoints
 
@@ -179,6 +212,23 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `POST /api/simulate/backtest/{symbol}` | Simulate a backtest for a symbol |
 | `POST /api/simulate/decision/{symbol}` | Simulate an LLM decision for a symbol |
 | `WS /ws` | Real-time dashboard data |
+| `POST /api/force-backfill` | Force backfill of all discovered symbols |
+| `POST /api/reload` | Reload settings from `.env` |
+| `POST /api/restart` | Restart the application |
+| `GET /api/discovered-symbols` | Return all discovered symbols for autocomplete |
+| `GET /api/ticker/{symbol}` | Return quote for a single symbol |
+| `GET /api/tickers` | Return quotes for a comma-separated list of symbols |
+| `GET /api/llm-metrics` | Return aggregated LLM metrics for the dashboard |
+| `POST /api/llm-metrics/reset` | Wipe all LLM metrics |
+| `GET /api/llm-metrics/timeseries` | Return aggregated LLM metrics for charting |
+| `GET /api/llm-decision-quality` | Return LLM decision quality metrics |
+| `GET /api/logs` | Return the most recent log entries from Redis |
+| `GET /api/messages` | Return messages stored for the web interface |
+| `GET /api/market-status` | Return market status |
+| `GET /api/news` | Return news summaries for tracked symbols |
+| `POST /api/config/update-interval` | Update the WebSocket payload cache TTL |
+| `POST /api/login` | Authenticate and set session cookie |
+| `POST /api/logout` | Clear session cookie |
 
 ## Project Structure
 
