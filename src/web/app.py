@@ -801,7 +801,6 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info("WebSocket client connected")
     last_sent_str = None
-    last_session_check = time.time()
     try:
         while True:
             try:
@@ -810,17 +809,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 # Re-check session token to handle expiration during active connection
                 if settings.WEB_USERNAME and settings.WEB_PASSWORD:
-                    now_check = time.time()
-                    if now_check - last_session_check > 60:
-                        token = websocket.cookies.get("session_token")
-                        if not token:
-                            await websocket.close(code=1008)  # Policy Violation
-                            break
-                        session = await asyncio.to_thread(redis.get, f"session:{token}")
-                        if not session:
-                            await websocket.close(code=1008)
-                            break
-                        last_session_check = now_check
+                    token = websocket.cookies.get("session_token")
+                    if not token:
+                        await websocket.close(code=1008)  # Policy Violation
+                        break
+                    session = await asyncio.to_thread(redis.get, f"session:{token}")
+                    if not session:
+                        await websocket.close(code=1008)
+                        break
 
                 # --- Cached payload: share across all WebSocket clients ---
                 now = time.time()
