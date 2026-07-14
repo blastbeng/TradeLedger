@@ -80,6 +80,8 @@ class RiskManager:
                     current_price=current_price,
                     pnl_pct=round(pnl_pct, 6),
                 )
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                logger.debug(f"Failed to record P&L snapshot for {symbol}: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.debug(f"Failed to record P&L snapshot for {symbol}: {type(e).__name__}: {e}")
 
@@ -199,6 +201,8 @@ class RiskManager:
                         "▶️ Portfolio drawdown recovered, trading resumed.",
                         summary={"action": "RESUME", "reason": "Portfolio drawdown recovered"}
                     )
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+            logger.error(f"Failed to compute portfolio drawdown for circuit breaker: {type(e).__name__}: {e}")
         except Exception as e:
             logger.error(f"Failed to compute portfolio drawdown for circuit breaker: {type(e).__name__}: {e}")
 
@@ -343,6 +347,8 @@ class RiskManager:
                     base = sym.split("/")[0]
                     if base in raw:
                         risk_tickers[sym] = raw[base]
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Batch quote fetch failed in risk management: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.warning(f"Batch quote fetch failed in risk management: {type(e).__name__}: {e}")
         return risk_tickers
@@ -462,6 +468,8 @@ class RiskManager:
                     symbol, pos, current_price, display_symbol, max_tp_reviews
                 ):
                     return
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+            logger.error(f"Risk check failed for {symbol}: {type(e).__name__}: {e}")
         except Exception as e:
             logger.error(f"Risk check failed for {symbol}: {type(e).__name__}: {e}")
 
@@ -700,6 +708,8 @@ class RiskManager:
                             exit_reason="news_sentiment_exit"
                         )
                         return True
+                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                    logger.warning(f"News sentiment check failed for {symbol}: {type(e).__name__}: {e}")
                 except Exception as e:
                     logger.warning(f"News sentiment check failed for {symbol}: {type(e).__name__}: {e}")
         return False
@@ -742,6 +752,8 @@ class RiskManager:
                     async with self.shared_state._positions_lock:
                         pos["_current_atr"] = ind["atr"] if not atr_is_stale else None
                         pos["_atr_fetched_at"] = time.time()
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {e}")
 
@@ -845,6 +857,8 @@ class RiskManager:
                                 candidate_prices.append(candle_high)
                             async with self.shared_state._positions_lock:
                                 pos["_last_trailing_check_ts"] = now_ts
+                    except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                        logger.warning(f"Failed to fetch OHLCV for trailing stop on {symbol}: {type(e).__name__}: {e}")
                     except Exception as e:
                         logger.warning(f"Failed to fetch OHLCV for trailing stop on {symbol}: {type(e).__name__}: {e}")
 
@@ -1345,6 +1359,8 @@ class RiskManager:
                     tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
                     if tp_order_obj is not None and tp_order_obj.status == "filled":
                         tp_already_filled = True
+                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                    logger.debug(f"check_native_exit_triggers: failed to check TP fill status for {symbol}: {type(e).__name__}: {e}")
                 except Exception as e:
                     logger.debug(f"check_native_exit_triggers: failed to check TP fill status for {symbol}: {type(e).__name__}: {e}")
 
@@ -1379,6 +1395,8 @@ class RiskManager:
                         f"Risk check: stop price reached for {symbol}, "
                         f"cancelled OCO take-profit {tp_order_id}"
                     )
+                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                    logger.warning(f"Failed to cancel OCO TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
                 except Exception as e:
                     logger.warning(f"Failed to cancel OCO TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
 
@@ -1459,6 +1477,8 @@ class RiskManager:
             elif manual_sell:
                 try:
                     await asyncio.to_thread(engine.trader.cancel_order, sl_order_id)
+                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                    logger.warning(f"Failed to cancel native stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
                 except Exception as e:
                     logger.warning(f"Failed to cancel native stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
                 
@@ -1489,6 +1509,8 @@ class RiskManager:
                 sl_order_obj_check = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
                 if sl_order_obj_check is not None and sl_order_obj_check.status == "filled":
                     sl_already_filled = True
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                logger.debug(f"check_native_exit_triggers: failed to check SL fill status for {symbol}: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.debug(f"check_native_exit_triggers: failed to check SL fill status for {symbol}: {type(e).__name__}: {e}")
 
@@ -1528,6 +1550,8 @@ class RiskManager:
                     f"Risk check: take-profit price reached for {symbol}, "
                     f"cancelled OCO stop {sl_order_id}"
                 )
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Failed to cancel OCO stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.warning(f"Failed to cancel OCO stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
 
@@ -1555,6 +1579,8 @@ class RiskManager:
             if manual_sell:
                 try:
                     await asyncio.to_thread(engine.trader.cancel_order, tp_order_id)
+                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                    logger.debug(f"check_native_exit_triggers: failed to cancel TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
                 except Exception as e:
                     logger.debug(f"check_native_exit_triggers: failed to cancel TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
 
