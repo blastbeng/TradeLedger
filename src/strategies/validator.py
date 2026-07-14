@@ -79,6 +79,110 @@ def _validate_backtest_entry_config(params: Dict[str, Any], symbol: Optional[str
     return None
 
 
+def _validate_stop_loss(
+    params: Dict[str, Any],
+    symbol: Optional[str],
+    atr: Optional[float],
+    price: Optional[float],
+    timeframe_seconds: Optional[int],
+    min_stop_atr_mult: float,
+    tp: Optional[float],
+) -> Optional[Signal]:
+    """Validates stop-loss parameters. Returns a HOLD Signal on failure, None on success."""
+    stop_method = params.get("stop_loss_method", "fixed")
+    if stop_method not in ("fixed", "atr_multiple"):
+        return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_method")
+
+    if stop_method == "atr_multiple":
+        # stop_loss_atr_multiple is required
+        if "stop_loss_atr_multiple" not in params:
+            params["stop_loss_atr_multiple"] = 2.0
+            logger.info(f"Validator: defaulting stop_loss_atr_multiple to 2.0 for {symbol}")
+        atr_mult = params["stop_loss_atr_multiple"]
+        if not isinstance(atr_mult, (int, float)) or atr_mult <= 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_atr_multiple")
+        # stop_loss_pct is used as a fallback when ATR is unavailable at execution time.
+        # If the LLM omitted it, use a sensible default rather than rejecting the signal.
+        if "stop_loss_pct" not in params:
+            # Calculate from ATR multiplier when ATR is available
+            if atr is not None and price is not None and price > 0 and atr > 0:
+                sl = (atr_mult * atr) / price
+                # For long timeframes, scale ATR to daily equivalent to avoid absurdly wide stops
+                if timeframe_seconds is not None and timeframe_seconds > 86400:
+                    daily_equiv = atr / price * (86400 / timeframe_seconds) ** 0.5
+                    sl = min(sl, daily_equiv * atr_mult * 3)  # cap at 3x daily-equivalent ATR
+                sl = max(sl, 0.01)  # floor at 1%
+                sl = min(sl, 0.50)  # cap at 50%
+            else:
+                # ATR truly unavailable — use a conservative default scaled by timeframe
+                if timeframe_seconds is not None and timeframe_seconds >= 31_536_000:  # >= 1Y
+                    sl = 0.15  # 15% for very long timeframes
+                elif timeframe_seconds is not None and timeframe_seconds >= 2_592_000:  # >= 1M
+                    sl = 0.10  # 10% for long timeframes
+                else:
+                    sl = 0.05  # 5% for medium-term
+            # Ensure default sl < tp if tp is already known
+            if tp is not None and sl >= tp:
+                sl = tp * 0.5  # Half the take-profit as a sensible stop
+                logger.info(f"Validator: adjusted default stop_loss_pct to {sl:.4f} (must be < take_profit_pct={tp:.4f}) for {symbol}")
+            params["stop_loss_pct"] = sl
+            logger.info(f"Validator: using default stop_loss_pct={sl} for {symbol} (atr_multiple method)")
+        else:
+            sl = params["stop_loss_pct"]
+            if not isinstance(sl, (int, float)) or not (0 < sl < 1.0):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_pct")
+    else:  # "fixed"
+        if "stop_loss_pct" not in params:
+            # Calculate from ATR when available, using min_stop_atr_mult as the floor
+            if atr is not None and price is not None and price > 0 and atr > 0:
+                atr_pct = atr / price
+                # For long timeframes, scale ATR to daily equivalent
+                if timeframe_seconds is not None and timeframe_seconds > 86400:
+                    atr_pct = atr_pct * (86400 / timeframe_seconds) ** 0.5
+                sl = max(min_stop_atr_mult * atr_pct, 2.0 * atr_pct)  # at least 2x ATR, but not below validator minimum
+                sl = max(sl, 0.01)  # floor at 1%
+                sl = min(sl, 0.50)  # cap at 50%
+            else:
+                # ATR truly unavailable — scale by timeframe
+                if timeframe_seconds is not None and timeframe_seconds >= 31_536_000:
+                    sl = 0.15
+                elif timeframe_seconds is not None and timeframe_seconds >= 2_592_000:
+                    sl = 0.10
+                else:
+                    sl = 0.05
+            # Ensure default sl < tp if tp is already known
+            if tp is not None and sl >= tp:
+                sl = tp * 0.5
+                logger.info(f"Validator: adjusted default stop_loss_pct to {sl:.4f} (must be < take_profit_pct={tp:.4f}) for {symbol}")
+            params["stop_loss_pct"] = sl
+            logger.info(f"Validator: using default stop_loss_pct={sl} for {symbol}")
+        else:
+            sl = params["stop_loss_pct"]
+            if not isinstance(sl, (int, float)) or not (0 < sl < 1.0):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_pct")
+
+    # Enforce minimum fixed stop-loss relative to ATR (if ATR and price are available)
+    if stop_method == "fixed" and atr is not None and price is not None and price > 0 and atr > 0:
+        atr_pct = atr / price
+        # Scale ATR to a daily equivalent if the timeframe is longer than 1 day
+        # to avoid absurdly wide stop-loss requirements for long timeframes (e.g., 5Y)
+        if timeframe_seconds is not None and timeframe_seconds > 86400:
+            atr_pct = atr_pct * (86400 / timeframe_seconds) ** 0.5
+        min_sl = min_stop_atr_mult * atr_pct
+        if sl < min_sl:
+            # Instead of rejecting, adjust the stop-loss to the minimum required
+            sl = min_sl
+            params["stop_loss_pct"] = sl
+            logger.info(f"Validator: adjusted stop_loss_pct to {sl:.4f} (minimum {min_stop_atr_mult}x ATR) for {symbol}")
+            # Re-check consistency with take_profit
+            if tp is not None and sl >= tp:
+                tp = sl * 1.5
+                params["take_profit_pct"] = tp
+                logger.info(f"Validator: adjusted take_profit_pct to {tp:.4f} (must be > adjusted stop_loss_pct={sl:.4f}) for {symbol}")
+
+    return None
+
+
 def _validate_signal_impl(
     signal: Signal,
     market_data: Optional[Dict[str, Any]] = None,
@@ -111,100 +215,19 @@ def _validate_signal_impl(
             if bec_error:
                 return bec_error
 
-        # Determine stop-loss method (default "fixed")
         # Read take-profit values early so default stop-loss consistency checks can use them
         tp = params.get("take_profit_pct")
         tp_atr = params.get("take_profit_atr_multiple")
+        
+        sl_error = _validate_stop_loss(params, symbol, atr, price, timeframe_seconds, min_stop_atr_mult, tp)
+        if sl_error:
+            return sl_error
+        
+        # Re-read values that may have been updated by _validate_stop_loss
+        tp = params.get("take_profit_pct")
+        sl = params.get("stop_loss_pct")
         stop_method = params.get("stop_loss_method", "fixed")
-        if stop_method not in ("fixed", "atr_multiple"):
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_method")
-
-        if stop_method == "atr_multiple":
-            # stop_loss_atr_multiple is required
-            if "stop_loss_atr_multiple" not in params:
-                params["stop_loss_atr_multiple"] = 2.0
-                logger.info(f"Validator: defaulting stop_loss_atr_multiple to 2.0 for {symbol}")
-            atr_mult = params["stop_loss_atr_multiple"]
-            if not isinstance(atr_mult, (int, float)) or atr_mult <= 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_atr_multiple")
-            # stop_loss_pct is used as a fallback when ATR is unavailable at execution time.
-            # If the LLM omitted it, use a sensible default rather than rejecting the signal.
-            if "stop_loss_pct" not in params:
-                # Calculate from ATR multiplier when ATR is available
-                if atr is not None and price is not None and price > 0 and atr > 0:
-                    sl = (atr_mult * atr) / price
-                    # For long timeframes, scale ATR to daily equivalent to avoid absurdly wide stops
-                    if timeframe_seconds is not None and timeframe_seconds > 86400:
-                        daily_equiv = atr / price * (86400 / timeframe_seconds) ** 0.5
-                        sl = min(sl, daily_equiv * atr_mult * 3)  # cap at 3x daily-equivalent ATR
-                    sl = max(sl, 0.01)  # floor at 1%
-                    sl = min(sl, 0.50)  # cap at 50%
-                else:
-                    # ATR truly unavailable — use a conservative default scaled by timeframe
-                    if timeframe_seconds is not None and timeframe_seconds >= 31_536_000:  # >= 1Y
-                        sl = 0.15  # 15% for very long timeframes
-                    elif timeframe_seconds is not None and timeframe_seconds >= 2_592_000:  # >= 1M
-                        sl = 0.10  # 10% for long timeframes
-                    else:
-                        sl = 0.05  # 5% for medium-term
-                # Ensure default sl < tp if tp is already known
-                if tp is not None and sl >= tp:
-                    sl = tp * 0.5  # Half the take-profit as a sensible stop
-                    logger.info(f"Validator: adjusted default stop_loss_pct to {sl:.4f} (must be < take_profit_pct={tp:.4f}) for {symbol}")
-                params["stop_loss_pct"] = sl
-                logger.info(f"Validator: using default stop_loss_pct={sl} for {symbol} (atr_multiple method)")
-            else:
-                sl = params["stop_loss_pct"]
-                if not isinstance(sl, (int, float)) or not (0 < sl < 1.0):
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_pct")
-        else:  # "fixed"
-            if "stop_loss_pct" not in params:
-                # Calculate from ATR when available, using min_stop_atr_mult as the floor
-                if atr is not None and price is not None and price > 0 and atr > 0:
-                    atr_pct = atr / price
-                    # For long timeframes, scale ATR to daily equivalent
-                    if timeframe_seconds is not None and timeframe_seconds > 86400:
-                        atr_pct = atr_pct * (86400 / timeframe_seconds) ** 0.5
-                    sl = max(min_stop_atr_mult * atr_pct, 2.0 * atr_pct)  # at least 2x ATR, but not below validator minimum
-                    sl = max(sl, 0.01)  # floor at 1%
-                    sl = min(sl, 0.50)  # cap at 50%
-                else:
-                    # ATR truly unavailable — scale by timeframe
-                    if timeframe_seconds is not None and timeframe_seconds >= 31_536_000:
-                        sl = 0.15
-                    elif timeframe_seconds is not None and timeframe_seconds >= 2_592_000:
-                        sl = 0.10
-                    else:
-                        sl = 0.05
-                # Ensure default sl < tp if tp is already known
-                if tp is not None and sl >= tp:
-                    sl = tp * 0.5
-                    logger.info(f"Validator: adjusted default stop_loss_pct to {sl:.4f} (must be < take_profit_pct={tp:.4f}) for {symbol}")
-                params["stop_loss_pct"] = sl
-                logger.info(f"Validator: using default stop_loss_pct={sl} for {symbol}")
-            else:
-                sl = params["stop_loss_pct"]
-                if not isinstance(sl, (int, float)) or not (0 < sl < 1.0):
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid stop_loss_pct")
-
-        # Enforce minimum fixed stop-loss relative to ATR (if ATR and price are available)
-        if stop_method == "fixed" and atr is not None and price is not None and price > 0 and atr > 0:
-            atr_pct = atr / price
-            # Scale ATR to a daily equivalent if the timeframe is longer than 1 day
-            # to avoid absurdly wide stop-loss requirements for long timeframes (e.g., 5Y)
-            if timeframe_seconds is not None and timeframe_seconds > 86400:
-                atr_pct = atr_pct * (86400 / timeframe_seconds) ** 0.5
-            min_sl = min_stop_atr_mult * atr_pct
-            if sl < min_sl:
-                # Instead of rejecting, adjust the stop-loss to the minimum required
-                sl = min_sl
-                params["stop_loss_pct"] = sl
-                logger.info(f"Validator: adjusted stop_loss_pct to {sl:.4f} (minimum {min_stop_atr_mult}x ATR) for {symbol}")
-                # Re-check consistency with take_profit
-                if tp is not None and sl >= tp:
-                    tp = sl * 1.5
-                    params["take_profit_pct"] = tp
-                    logger.info(f"Validator: adjusted take_profit_pct to {tp:.4f} (must be > adjusted stop_loss_pct={sl:.4f}) for {symbol}")
+        atr_mult = params.get("stop_loss_atr_multiple")
 
         # take_profit_pct is validated separately below (may use take_profit_atr_multiple instead)
         required = ["trailing_stop", "position_size_fraction", "max_hold_time_seconds"]
