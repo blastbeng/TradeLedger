@@ -209,7 +209,7 @@ class SignalProcessor:
                 pass
 
         upcoming_earnings = None
-        if get_upcoming_earnings is not None and symbol in self.shared_state.positions:
+        if get_upcoming_earnings is not None:
             try:
                 upcoming_earnings = await asyncio.to_thread(get_upcoming_earnings, symbol)
             except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
@@ -486,16 +486,16 @@ class SignalProcessor:
                         original_size = signal.position_size if signal.position_size is not None else 1.0
                         signal.position_size = original_size * 0.5
                         logger.info(f"Reduced position size for {symbol} from {original_size:.2f} to {signal.position_size:.2f} due to upcoming earnings.")
-                    if signal.stop_loss is not None:
-                        original_sl = signal.stop_loss
-                        signal.stop_loss = min(signal.stop_loss, 0.03)
-                        if signal.stop_loss != original_sl:
-                            logger.info(f"Tightened stop_loss for {symbol} from {original_sl:.3f} to {signal.stop_loss:.3f} due to upcoming earnings.")
-                    if signal.stop_loss_atr_multiple is not None:
-                        original_sl_atr = signal.stop_loss_atr_multiple
-                        signal.stop_loss_atr_multiple = min(signal.stop_loss_atr_multiple, 1.0)
-                        if signal.stop_loss_atr_multiple != original_sl_atr:
-                            logger.info(f"Tightened stop_loss_atr_multiple for {symbol} from {original_sl_atr:.2f} to {signal.stop_loss_atr_multiple:.2f} due to upcoming earnings.")
+                        if signal.stop_loss is not None:
+                            original_sl = signal.stop_loss
+                            signal.stop_loss = min(signal.stop_loss, 0.03)
+                            if signal.stop_loss != original_sl:
+                                logger.info(f"Tightened stop_loss for {symbol} from {original_sl:.3f} to {signal.stop_loss:.3f} due to upcoming earnings.")
+                        if signal.stop_loss_atr_multiple is not None:
+                            original_sl_atr = signal.stop_loss_atr_multiple
+                            signal.stop_loss_atr_multiple = min(signal.stop_loss_atr_multiple, 1.0)
+                            if signal.stop_loss_atr_multiple != original_sl_atr:
+                                logger.info(f"Tightened stop_loss_atr_multiple for {symbol} from {original_sl_atr:.2f} to {signal.stop_loss_atr_multiple:.2f} due to upcoming earnings.")
             except (ValueError, TypeError):
                 pass
 
