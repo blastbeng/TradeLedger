@@ -53,7 +53,7 @@ class PostDecisionManager:
                 if summary in ("No recent news.", "Could not generate summary."):
                     summary = ""
             except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError) as e:
-                logger.debug(f"_get_sentiment_str: failed to get LLM summary for {symbol}: {type(e).__name__}: {e}")
+                logger.debug(f"_get_sentiment_str: failed to get LLM summary for {symbol}: {type(e).__name__}: {e}", extra={"event": "llm_summary_fetch_failed", "symbol": symbol, "error_type": type(e).__name__})
 
             base = f"📰 (sentiment: {compound:+.2f}[{sentiment_label}], {total} articles)"
             if summary:
