@@ -543,6 +543,29 @@ def _validate_required_params(
     return None
 
 
+def _validate_logical_consistency(
+    params: Dict[str, Any],
+    symbol: Optional[str],
+    sl: Optional[float],
+    tp: Optional[float],
+    stop_method: str,
+    tp_atr_valid: bool,
+    trailing: bool,
+) -> Optional[Signal]:
+    """Validates logical consistency between parameters. Returns a HOLD Signal on failure, None on success."""
+    # Skip the fixed percentage comparison if both stop and take-profit are ATR-based
+    if not (stop_method == "atr_multiple" and tp_atr_valid):
+        if sl is not None and tp <= sl:
+            return Signal(action="HOLD", confidence=0.0, reasoning="take_profit_pct must be greater than stop_loss_pct")
+    if trailing:
+        if symbol and not BTPPolicy.supports_trailing_stop(symbol):
+            return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")
+        tsd = params.get("trailing_stop_distance_pct")
+        if tsd is not None and sl is not None and tsd >= sl:
+            return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop_distance_pct must be less than stop_loss_pct")
+    return None
+
+
 def _validate_signal_impl(
     signal: Signal,
     market_data: Optional[Dict[str, Any]] = None,
@@ -617,16 +640,8 @@ def _validate_signal_impl(
         if opt_error:
             return opt_error
 
-        # Logical consistency checks (no hardcoded values)
-        # Skip the fixed percentage comparison if both stop and take-profit are ATR-based
-        if not (stop_method == "atr_multiple" and tp_atr_valid):
-            if sl is not None and tp <= sl:
-                return Signal(action="HOLD", confidence=0.0, reasoning="take_profit_pct must be greater than stop_loss_pct")
-        if trailing:
-            if symbol and not BTPPolicy.supports_trailing_stop(symbol):
-                return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")
-            tsd = params.get("trailing_stop_distance_pct")
-            if tsd is not None and sl is not None and tsd >= sl:
-                return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop_distance_pct must be less than stop_loss_pct")
+        cons_error = _validate_logical_consistency(params, symbol, sl, tp, stop_method, tp_atr_valid, trailing)
+        if cons_error:
+            return cons_error
 
     return signal
