@@ -242,7 +242,7 @@ def backtest_strategy(
             result = _empty_result()
             result["gap_warning"] = gap_warning
             return result
-        combined = _compute_stats(all_trades, buy_and_hold_pct=buy_and_hold_pct)
+        combined = _compute_stats(all_trades, buy_and_hold_pct=buy_and_hold_pct, total_time_years=total_time_years)
         combined["gap_warning"] = gap_warning
         return combined
 
@@ -594,9 +594,11 @@ def backtest_strategy(
                             "exit_price": actual_tp_fill,
                             "exit_reason": f"partial_tp_{lvl_idx}",
                             "pnl_pct": partial_net,
+                            "gross_pnl_pct": partial_gross,
                             "hold_time_seconds": (candle_ts - entry_ts) / 1000.0,
                             "trade_amount": trade_amount,
                             "pnl_currency": trade_amount * partial_net if _psim else 0.0,
+                            "gross_pnl_currency": trade_amount * partial_gross if _psim else 0.0,
                         })
 
             # --- If all partial TPs executed, exit the remaining position ---
@@ -705,9 +707,11 @@ def backtest_strategy(
                 "exit_price": exit_price,
                 "exit_reason": exit_reason,
                 "pnl_pct": net_pnl_pct,
+                "gross_pnl_pct": gross_pnl_pct,
                 "hold_time_seconds": hold_time_seconds,
                 "trade_amount": trade_amount,
                 "pnl_currency": trade_amount * net_pnl_pct if _psim else 0.0,
+                "gross_pnl_currency": trade_amount * gross_pnl_pct if _psim else 0.0,
             })
 
         # --- Update portfolio after all trades for this entry ---
@@ -748,6 +752,7 @@ def backtest_strategy(
         final_cash=cash if _psim else 0.0,
         total_pnl_currency=total_pnl_currency if _psim else 0.0,
         simulate_position_sizing=_psim,
+        total_time_years=total_time_years,
     )
     stats["gap_warning"] = gap_warning
     if config._return_trades:
@@ -776,6 +781,10 @@ def _empty_result() -> Dict[str, Any]:
         "final_balance": 0.0,
         "total_return_pct": 0.0,
         "gap_warning": "",
+        "total_fees_pct": 0.0,
+        "total_fees_currency": 0.0,
+        "annualized_net_return": 0.0,
+        "annualized_gross_return": 0.0,
     }
 
 
@@ -786,6 +795,7 @@ def _compute_stats(
     final_cash: float = 0.0,
     total_pnl_currency: float = 0.0,
     simulate_position_sizing: bool = False,
+    total_time_years: float = 0.0,
 ) -> Dict[str, Any]:
     wins = [t for t in trades if t["pnl_pct"] > 0]
     losses = [t for t in trades if t["pnl_pct"] < 0]
@@ -836,6 +846,31 @@ def _compute_stats(
         1 for t in trades if t.get("exit_reason", "").startswith("partial_tp_")
     )
 
+    total_gross_pnl = sum(t.get("gross_pnl_pct", t["pnl_pct"]) for t in trades)
+    total_fees_pct = total_gross_pnl - total_pnl
+
+    total_gross_pnl_currency = sum(t.get("gross_pnl_currency", 0.0) for t in trades)
+    total_fees_currency = total_gross_pnl_currency - total_pnl_currency if simulate_position_sizing else 0.0
+
+    def _annualize(ret: float, years: float) -> float:
+        if years <= 0:
+            return 0.0
+        if 1 + ret <= 0:
+            return -1.0
+        return (1 + ret) ** (1 / years) - 1
+
+    annualized_net_return = 0.0
+    annualized_gross_return = 0.0
+    if total_time_years > 0:
+        if simulate_position_sizing and initial_balance > 0:
+            net_return = (final_cash - initial_balance) / initial_balance
+            gross_return = total_gross_pnl_currency / initial_balance
+            annualized_net_return = _annualize(net_return, total_time_years)
+            annualized_gross_return = _annualize(gross_return, total_time_years)
+        else:
+            annualized_net_return = _annualize(total_pnl, total_time_years)
+            annualized_gross_return = _annualize(total_gross_pnl, total_time_years)
+
     return {
         "total_trades": len(trades),
         "wins": len(wins),
@@ -854,6 +889,10 @@ def _compute_stats(
         "total_pnl_currency": round(total_pnl_currency, 4) if simulate_position_sizing and initial_balance > 0 else 0.0,
         "final_balance": round(final_cash, 4) if simulate_position_sizing and initial_balance > 0 else 0.0,
         "total_return_pct": round((final_cash - initial_balance) / initial_balance, 4) if simulate_position_sizing and initial_balance > 0 else 0.0,
+        "total_fees_pct": round(total_fees_pct, 6),
+        "total_fees_currency": round(total_fees_currency, 4) if simulate_position_sizing else 0.0,
+        "annualized_net_return": round(annualized_net_return, 4),
+        "annualized_gross_return": round(annualized_gross_return, 4),
     }
 
 
@@ -871,6 +910,9 @@ def format_backtest_summary(stats: Dict[str, Any], entry_config_used: bool = Tru
     gap_part = ""
     if stats.get("gap_warning"):
         gap_part = " ⚠GAPS"
+    ann_part = ""
+    if stats.get("annualized_net_return", 0) != 0 or stats.get("annualized_gross_return", 0) != 0:
+        ann_part = f",AnnNet={stats.get('annualized_net_return', 0)*100:+.1f}%,AnnGross={stats.get('annualized_gross_return', 0)*100:+.1f}%"
     return (
         f"BT({stats['total_trades']}t){entry_note}:"
         f"WR={stats['win_rate']*100:.0f}%,"
@@ -882,6 +924,7 @@ def format_backtest_summary(stats: Dict[str, Any], entry_config_used: bool = Tru
         f"H={stats['avg_hold_time_seconds']/3600:.1f}h,"
         f"CL={stats['max_consecutive_losses']}"
         f"{portfolio_part}"
+        f"{ann_part}"
         f"{gap_part}"
     )
 
@@ -937,7 +980,13 @@ def walk_forward_backtest(
     buy_and_hold_pct = 0.0
     if len(candles) >= 2 and candles[0][4] > 0:
         buy_and_hold_pct = (candles[-1][4] - candles[0][4]) / candles[0][4]
-    combined = _compute_stats(all_trades, buy_and_hold_pct=buy_and_hold_pct) if all_trades else _empty_result()
+    
+    total_time_seconds = 0.0
+    if len(candles) >= 2:
+        total_time_seconds = (candles[-1][0] - candles[0][0]) / 1000.0
+    total_time_years = total_time_seconds / (365.25 * 24 * 3600)
+    
+    combined = _compute_stats(all_trades, buy_and_hold_pct=buy_and_hold_pct, total_time_years=total_time_years) if all_trades else _empty_result()
 
     return {
         "per_window": per_window_stats,
