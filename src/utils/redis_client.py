@@ -17,8 +17,10 @@ class DummyRedis:
     """
     _warned = False
 
-    def _warn(self, method: str):
-        if not DummyRedis._warned:
+    def _warn(self, method: str, is_write: bool = False):
+        if is_write:
+            logger.error("Redis unavailable – DummyRedis.%s called (data loss risk)", method)
+        elif not DummyRedis._warned:
             logger.warning("Redis unavailable – DummyRedis.%s called (degraded mode)", method)
             DummyRedis._warned = True
 
@@ -39,26 +41,26 @@ class DummyRedis:
         self._warn("incr")
         return 0
 
-    # Write operations – log and return safe defaults to allow degraded operation
+    # Write operations – log error every time to indicate data loss risk
     def set(self, *args, **kwargs):
-        self._warn("set")
+        self._warn("set", is_write=True)
         return True
 
     def setex(self, *args, **kwargs):
-        self._warn("setex")
+        self._warn("setex", is_write=True)
         return True
 
     def delete(self, *args, **kwargs):
-        self._warn("delete")
+        self._warn("delete", is_write=True)
         return 1
 
     def expire(self, *args, **kwargs):
-        self._warn("expire")
+        self._warn("expire", is_write=True)
         return True
 
     def __getattr__(self, name):
         def method(*args, **kwargs):
-            self._warn(name)
+            self._warn(name, is_write=True)
             return None
         return method
 
