@@ -29,6 +29,13 @@ class BTPPolicy:
         return None
 
     @staticmethod
+    def get_max_stop_loss_pct(symbol: str) -> Optional[float]:
+        """Return the maximum stop-loss percentage for a symbol, or None if no cap."""
+        if BTPPolicy.is_btp(symbol):
+            return settings.BTP_MAX_STOP_LOSS_PCT
+        return None
+
+    @staticmethod
     def get_hard_max_loss_pct(symbol: str, timeframe: Optional[str] = None) -> float:
         """Determine the hard max loss percentage based on asset type and timeframe."""
         if not BTPPolicy.is_btp(symbol):

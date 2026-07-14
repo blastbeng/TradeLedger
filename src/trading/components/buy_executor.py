@@ -557,6 +557,16 @@ class BuyExecutor:
                     )
                 return None
 
+        # --- BTP stop-loss cap: enforce tighter stops for bonds ---
+        if is_btp and sl_pct is not None and sl_pct > 0:
+            max_sl = BTPPolicy.get_max_stop_loss_pct(symbol)
+            if max_sl is not None and sl_pct > max_sl:
+                logger.info(
+                    f"BTP stop-loss capped for {symbol}: {sl_pct:.4%} -> "
+                    f"{max_sl:.4%}"
+                )
+                sl_pct = max_sl
+
         return sl_pct, tp_pct, trailing_stop, trailing_stop_distance_pct
 
     async def check_min_profit_and_order_size(
