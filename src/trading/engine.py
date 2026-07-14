@@ -1303,6 +1303,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Fast news refresh network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Fast news refresh data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("fast_news_refresh", e)
             except Exception as e:
                 logger.error(f"Fast news refresh error: {type(e).__name__}: {e}")
                 await self._record_unexpected_exception("fast_news_refresh", e)
@@ -1367,6 +1370,9 @@ class TradingEngine:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Background news refresh network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Background news refresh data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("news_cache_refresh", e)
             except Exception as e:
                 logger.error(f"Background news refresh error: {type(e).__name__}: {e}")
                 await self._record_unexpected_exception("news_cache_refresh", e)
