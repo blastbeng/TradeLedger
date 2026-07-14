@@ -239,6 +239,45 @@ def _validate_take_profit(
     return None
 
 
+def _validate_trailing_stop(
+    params: Dict[str, Any],
+    symbol: Optional[str],
+    atr: Optional[float],
+    price: Optional[float],
+    timeframe_seconds: Optional[int],
+    sl: Optional[float],
+) -> Optional[Signal]:
+    """Validates trailing_stop parameters. Returns a HOLD Signal on failure, None on success."""
+    trailing = params["trailing_stop"]
+    if not isinstance(trailing, bool):
+        return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop must be boolean")
+    if trailing:
+        if symbol and not BTPPolicy.supports_trailing_stop(symbol):
+            return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")
+        tsd = params.get("trailing_stop_distance_pct")
+        ts_atr = params.get("trailing_stop_atr_multiple")
+        tsd_valid = tsd is not None and isinstance(tsd, (int, float)) and (0 < tsd < 1.0)
+        ts_atr_valid = ts_atr is not None and isinstance(ts_atr, (int, float)) and ts_atr > 0
+        if not tsd_valid and not ts_atr_valid:
+            # Calculate from ATR when available
+            if atr is not None and price is not None and price > 0 and atr > 0:
+                atr_pct = atr / price
+                if timeframe_seconds is not None and timeframe_seconds > 86400:
+                    atr_pct = atr_pct * (86400 / timeframe_seconds) ** 0.5
+                tsd = max(1.5 * atr_pct, sl * 0.5)  # 1.5x ATR or half the stop-loss
+                tsd = min(tsd, 0.20)  # cap at 20%
+            else:
+                tsd = sl * 0.5 if sl is not None else 0.03  # half the stop-loss, or 3% fallback
+            # Ensure default tsd < sl to avoid logical consistency rejection
+            if sl is not None and tsd >= sl:
+                tsd = sl * 0.5  # Half the stop-loss as a sensible trailing distance
+                logger.info(f"Validator: adjusted default trailing_stop_distance_pct to {tsd:.4f} (must be < stop_loss_pct={sl:.4f}) for {symbol}")
+            params["trailing_stop_distance_pct"] = tsd
+            tsd_valid = True
+            logger.info(f"Validator: using default trailing_stop_distance_pct={tsd} for {symbol}")
+    return None
+
+
 def _validate_signal_impl(
     signal: Signal,
     market_data: Optional[Dict[str, Any]] = None,
@@ -325,33 +364,11 @@ def _validate_signal_impl(
         tp_atr = params.get("take_profit_atr_multiple")
         tp_valid = tp is not None and isinstance(tp, (int, float)) and (0 < tp < 10.0)
         tp_atr_valid = tp_atr is not None and isinstance(tp_atr, (int, float)) and tp_atr > 0
+        ts_error = _validate_trailing_stop(params, symbol, atr, price, timeframe_seconds, sl)
+        if ts_error:
+            return ts_error
+        
         trailing = params["trailing_stop"]
-        if not isinstance(trailing, bool):
-            return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop must be boolean")
-        if trailing:
-            if symbol and not BTPPolicy.supports_trailing_stop(symbol):
-                return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")
-            tsd = params.get("trailing_stop_distance_pct")
-            ts_atr = params.get("trailing_stop_atr_multiple")
-            tsd_valid = tsd is not None and isinstance(tsd, (int, float)) and (0 < tsd < 1.0)
-            ts_atr_valid = ts_atr is not None and isinstance(ts_atr, (int, float)) and ts_atr > 0
-            if not tsd_valid and not ts_atr_valid:
-                # Calculate from ATR when available
-                if atr is not None and price is not None and price > 0 and atr > 0:
-                    atr_pct = atr / price
-                    if timeframe_seconds is not None and timeframe_seconds > 86400:
-                        atr_pct = atr_pct * (86400 / timeframe_seconds) ** 0.5
-                    tsd = max(1.5 * atr_pct, sl * 0.5)  # 1.5x ATR or half the stop-loss
-                    tsd = min(tsd, 0.20)  # cap at 20%
-                else:
-                    tsd = sl * 0.5 if sl is not None else 0.03  # half the stop-loss, or 3% fallback
-                # Ensure default tsd < sl to avoid logical consistency rejection
-                if sl is not None and tsd >= sl:
-                    tsd = sl * 0.5  # Half the stop-loss as a sensible trailing distance
-                    logger.info(f"Validator: adjusted default trailing_stop_distance_pct to {tsd:.4f} (must be < stop_loss_pct={sl:.4f}) for {symbol}")
-                params["trailing_stop_distance_pct"] = tsd
-                tsd_valid = True
-                logger.info(f"Validator: using default trailing_stop_distance_pct={tsd} for {symbol}")
         psf = params["position_size_fraction"]
         if not isinstance(psf, (int, float)) or not (0 < psf <= 1.0):
             return Signal(action="HOLD", confidence=0.0, reasoning="Invalid position_size_fraction")
