@@ -135,18 +135,9 @@ class RiskManager:
             # plus current unrealized P&L to catch deep drawdowns from open positions.
             initial_balance = engine.initial_balance
             cumulative_pnl = 0.0
-            peak_equity = initial_balance
-            max_dd_pct = 0.0
             for trade in sorted(trades_snapshot, key=lambda x: x.get("timestamp", 0)):
                 if trade.get("side") == "sell":
                     cumulative_pnl += trade.get("realized_pnl", 0.0)
-                    current_equity = initial_balance + cumulative_pnl
-                    if current_equity > peak_equity:
-                        peak_equity = current_equity
-                    if peak_equity > 0:
-                        dd_pct = (peak_equity - current_equity) / peak_equity
-                        if dd_pct > max_dd_pct:
-                            max_dd_pct = dd_pct
 
             # Include unrealized P&L from open positions in the current equity
             unrealized_pnl = 0.0
@@ -160,14 +151,26 @@ class RiskManager:
                     unrealized_pnl += (current_price - entry_price) * amount
 
             current_equity = initial_balance + cumulative_pnl + unrealized_pnl
+
+            # Fetch or initialize peak total equity from Redis to persist
+            # high-water marks driven by unrealized P&L across calls.
+            peak_equity_raw = await asyncio.to_thread(engine.redis.get, "trading:peak_total_equity")
+            if peak_equity_raw:
+                try:
+                    peak_equity = float(peak_equity_raw)
+                except (ValueError, TypeError):
+                    peak_equity = initial_balance
+            else:
+                peak_equity = initial_balance
+
+            # Update peak equity if current total equity is higher
             if current_equity > peak_equity:
                 peak_equity = current_equity
-            if peak_equity > 0:
-                dd_pct = (peak_equity - current_equity) / peak_equity
-                if dd_pct > max_dd_pct:
-                    max_dd_pct = dd_pct
+                await asyncio.to_thread(engine.redis.set, "trading:peak_total_equity", str(peak_equity))
 
-            drawdown_pct = max_dd_pct
+            drawdown_pct = 0.0
+            if peak_equity > 0:
+                drawdown_pct = (peak_equity - current_equity) / peak_equity
 
             paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
             source_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
