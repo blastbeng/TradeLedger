@@ -222,22 +222,6 @@ class TradingEngine:
 
     # --- Scalar state properties (proxy to SharedState) ---
     @property
-    def current_symbols(self) -> List[Dict[str, str]]:
-        return self.shared_state.current_symbols
-
-    @current_symbols.setter
-    def current_symbols(self, value: List[Dict[str, str]]) -> None:
-        self.shared_state.current_symbols = value
-
-    @property
-    def positions(self) -> Dict[str, Dict[str, Any]]:
-        return self.shared_state.positions
-
-    @positions.setter
-    def positions(self, value: Dict[str, Dict[str, Any]]) -> None:
-        self.shared_state.positions = value
-
-    @property
     def trade_history(self) -> List[Dict[str, Any]]:
         return self.shared_state.trade_history
 
@@ -507,9 +491,9 @@ class TradingEngine:
         logger.info("Resetting paper trading state...")
 
         # Clear in-memory state
-        self.positions.clear()
+        self.shared_state.positions.clear()
         self.queued_orders.clear()
-        self.current_symbols.clear()
+        self.shared_state.current_symbols.clear()
         self._pending_entries.clear()
         async with self._eval_state_lock:
             self._last_strategy_eval.clear()
@@ -657,7 +641,7 @@ class TradingEngine:
         """Immediately download OHLCV data for currently tracked symbols only."""
         logger.info("Force download: starting immediate OHLCV download for tracked symbols...")
         try:
-            tracked_pairs = [entry["symbol"] for entry in self.current_symbols]
+            tracked_pairs = [entry["symbol"] for entry in self.shared_state.current_symbols]
             if not tracked_pairs:
                 logger.warning("Force download: no tracked symbols found.")
                 return
@@ -1220,7 +1204,7 @@ class TradingEngine:
                 now = time.time()
                 symbols_to_check = []
                 min_interval = settings.RISK_CHECK_INTERVAL_SECONDS
-                for symbol, pos in self.positions.items():
+                for symbol, pos in self.shared_state.positions.items():
                     pos_tf = pos.get("timeframe")
                     if not pos_tf:
                         pos_tf_secs = settings.RISK_CHECK_INTERVAL_SECONDS
@@ -1243,7 +1227,7 @@ class TradingEngine:
                         last_risk_check[symbol] = now
 
                 # Clean up last_risk_check for closed positions
-                closed_symbols = [s for s in last_risk_check if s not in self.positions]
+                closed_symbols = [s for s in last_risk_check if s not in self.shared_state.positions]
                 for s in closed_symbols:
                     del last_risk_check[s]
 
@@ -1285,7 +1269,7 @@ class TradingEngine:
                 continue
             self._news_fast_running = True
             try:
-                symbols = [entry["symbol"] for entry in self.current_symbols]
+                symbols = [entry["symbol"] for entry in self.shared_state.current_symbols]
                 if symbols:
                     logger.info(f"Fast news refresh for {len(symbols)} current symbols")
                     async def _fetch_news_with_limit(sym):
@@ -1330,7 +1314,7 @@ class TradingEngine:
             try:
                 cycle_start = time.time()
                 # Slow refresh: all available pairs EXCEPT the stocks already handled by the fast loop
-                current_symbols = {entry["symbol"] for entry in self.current_symbols}
+                current_symbols = {entry["symbol"] for entry in self.shared_state.current_symbols}
                 symbols_to_refresh = set()
                 try:
                     plain_assets = await self._market_data_manager.get_tradable_assets()
@@ -1414,11 +1398,11 @@ class TradingEngine:
         loop_type: "quotes" for quote refresh, "data" for OHLCV downloads,
                    "news" for news downloads.
         """
-        if not self.current_symbols:
+        if not self.shared_state.current_symbols:
             return base_interval
 
         max_tf_seconds = 0
-        for entry in self.current_symbols:
+        for entry in self.shared_state.current_symbols:
             tf = entry.get("timeframe", "1d")
             tf_secs = self._timeframe_to_seconds(tf)
             if tf_secs > max_tf_seconds:
@@ -1474,7 +1458,7 @@ class TradingEngine:
                 continue
             self._market_data_running = True
             try:
-                if not self.current_symbols:
+                if not self.shared_state.current_symbols:
                     logger.info("No symbols tracked; skipping market data download.")
                 else:
                     logger.info("Starting market data download cycle...")
@@ -1487,7 +1471,7 @@ class TradingEngine:
                         logger.debug(f"Downloading market data for {symbol} ({tf})")
                         await self._market_data_manager._download_symbol_ohlcv(symbol, tf, start_ms, now_ms)
 
-                    shuffled_symbols = list(self.current_symbols)
+                    shuffled_symbols = list(self.shared_state.current_symbols)
                     random.shuffle(shuffled_symbols)
                     download_tasks = [_download_symbol_data(entry) for entry in shuffled_symbols]
                     await asyncio.gather(*download_tasks)
@@ -1632,7 +1616,7 @@ class TradingEngine:
                     continue
 
                 # Prioritize currently tracked symbols first, then the rest.
-                current_symbol_set = {entry["symbol"] for entry in self.current_symbols}
+                current_symbol_set = {entry["symbol"] for entry in self.shared_state.current_symbols}
                 priority_pairs = [p for p in all_pairs if p in current_symbol_set]
                 other_pairs = [p for p in all_pairs if p not in current_symbol_set]
                 ordered_pairs = priority_pairs + other_pairs
@@ -1750,7 +1734,7 @@ class TradingEngine:
         await self._interruptible_sleep(300)  # initial delay 5 minutes
         while self._running:
             try:
-                symbols = [entry["symbol"] for entry in self.current_symbols]
+                symbols = [entry["symbol"] for entry in self.shared_state.current_symbols]
                 if not symbols:
                     await self._interruptible_sleep(3600)
                     continue
@@ -1791,7 +1775,7 @@ class TradingEngine:
         await self._interruptible_sleep(3600)  # initial delay 1 hour
         while self._running:
             try:
-                for symbol, pos in list(self.positions.items()):
+                for symbol, pos in list(self.shared_state.positions.items()):
                     if is_btp_isin(symbol.split("/")[0]):
                         continue  # BTPs use coupons, not dividends
 
@@ -1828,8 +1812,8 @@ class TradingEngine:
                             
                             # Update position
                             async with self._positions_lock:
-                                if symbol in self.positions:
-                                    pos = self.positions[symbol]
+                                if symbol in self.shared_state.positions:
+                                    pos = self.shared_state.positions[symbol]
                                     old_amount = pos.get("amount", 0.0)
                                     old_cost = pos.get("cost_basis", 0.0)
                                     new_amount = old_amount + filled_qty
@@ -2230,7 +2214,7 @@ class TradingEngine:
         await asyncio.sleep(10)  # initial delay
         while self._running:
             try:
-                for entry in self.current_symbols:
+                for entry in self.shared_state.current_symbols:
                     symbol = entry["symbol"]
                     tf = entry["timeframe"]
                     # Skip entry signal monitoring for very long timeframes (>= 1 month)
@@ -2300,7 +2284,7 @@ class TradingEngine:
                 )
             return
         # Check if the symbol already has a position (may have been bought by another path)
-        if symbol in self.positions:
+        if symbol in self.shared_state.positions:
             logger.info(f"Skipping delayed BUY for {symbol}: position already exists.")
             return
         # Check trading pause

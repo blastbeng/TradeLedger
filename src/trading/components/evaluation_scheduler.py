@@ -48,7 +48,7 @@ class EvaluationScheduler:
                 is_highly_active = True
 
         # Snapshot current_symbols to avoid race condition
-        current_symbols_snapshot = list(engine.current_symbols)
+        current_symbols_snapshot = list(engine.shared_state.current_symbols)
 
         # Check for significant news sentiment shifts for all tracked symbols
         symbol_has_significant_news: Dict[str, bool] = {}
