@@ -2,13 +2,76 @@ import asyncio
 import json
 import logging
 import time
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Callable
 
 import httpx
 
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _execute_llm_request(
+    provider: str,
+    url: str,
+    headers: dict,
+    payload: dict,
+    timeout: Optional[float],
+    system_prompt: str,
+    prompt: str,
+    parse_response_fn: Callable[[dict], dict],
+) -> dict:
+    """Executes the LLM HTTP request with retries and standard error handling."""
+    logger.info("LLM request (%s): model=%s, system_prompt=%.200s..., prompt=%.500s...", provider, payload.get("model"), system_prompt, prompt)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            httpx_timeout = httpx.Timeout(
+                connect=10.0,
+                read=timeout if timeout is not None else settings.LLM_TIMEOUT,
+                write=10.0,
+                pool=5.0,
+            )
+            def _do_request():
+                with httpx.Client(timeout=httpx_timeout) as client:
+                    response = client.post(url, json=payload, headers=headers)
+                    response.raise_for_status()
+                    return response.json()
+
+            data = _do_request()
+            
+            result = parse_response_fn(data)
+            logger.info("LLM response (%s): %.500s...", result["content"])
+            return result
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code not in (429, 500, 502, 503, 504):
+                logger.error(
+                    "%s request failed with HTTP %d (non-retryable). "
+                    "URL: %s\nResponse body: %s\nRequest payload model: %s, messages count: %d",
+                    provider.capitalize(),
+                    e.response.status_code,
+                    str(e.request.url),
+                    e.response.text[:2000],
+                    payload.get("model"),
+                    len(payload.get("messages", [])),
+                    exc_info=True,
+                )
+                raise RuntimeError(f"{provider.capitalize()} request failed with HTTP {e.response.status_code}: {e.response.text[:500]}") from e
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                logger.warning(f"{provider.capitalize()} request failed with HTTP {e.response.status_code}. Response: {e.response.text[:500]}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+                continue
+            raise RuntimeError(f"{provider.capitalize()} request failed: {e.response.status_code} - {e.response.text[:500]}") from e
+        except httpx.HTTPError as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                logger.warning(f"{provider.capitalize()} request failed with network error: {e}. Retrying in {wait_time}s...", exc_info=True)
+                time.sleep(wait_time)
+                continue
+            logger.error("%s request failed with network error after all retries: %s", provider.capitalize(), e, exc_info=True)
+            raise RuntimeError(f"{provider.capitalize()} request failed: {e}") from e
+    raise RuntimeError(f"{provider.capitalize()} request failed after all retries")
 
 
 def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str = None,
@@ -46,84 +109,36 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
     if not thinking_enabled:
         payload["reasoning_effort"] = "low"
 
-    logger.info("LLM request (ollama): model=%s, system_prompt=%.200s..., prompt=%.500s...", model, system_prompt, prompt)
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            httpx_timeout = httpx.Timeout(
-                connect=10.0,
-                read=timeout if timeout is not None else settings.LLM_TIMEOUT,
-                write=10.0,
-                pool=5.0,
+    def _parse_ollama(data: dict) -> dict:
+        if "message" not in data or "content" not in data["message"]:
+            logger.error(
+                "Ollama response missing 'message.content' key. Full response: %s",
+                json.dumps(data)[:2000]
             )
-            def _do_request():
-                with httpx.Client(timeout=httpx_timeout) as client:
-                    response = client.post(url, json=payload, headers=headers)
-                    response.raise_for_status()
-                    return response.json()
-
-            data = _do_request()
-                                                                                                                                                                                                                                                                                   
-            # Validate response structure                                                                                                                                                                                                                                          
-            if "message" not in data or "content" not in data["message"]:                                                                                                                                                                                                          
-                logger.error(                                                                                                                                                                                                                                                      
-                    "Ollama response missing 'message.content' key. Full response: %s",                                                                                                                                                                                            
-                    json.dumps(data)[:2000]                                                                                                                                                                                                                                        
-                )                                                                                                                                                                                                                                                                  
-                raise RuntimeError(f"Ollama API returned unexpected format: missing 'message.content'. Response: {str(data)[:500]}")                                                                                                                                               
-                                                                                                                                                                                                                                                                                   
-            content = data["message"]["content"]                                                                                                                                                                                                                                   
-            logger.info("LLM response (ollama): %.500s...", content)
-
-            # Extract token usage from Ollama response (prompt_eval_count / eval_count)
-            prompt_eval_count = data.get("prompt_eval_count")
-            eval_count = data.get("eval_count")
-            if prompt_eval_count is not None and eval_count is not None:
-                prompt_tokens = prompt_eval_count
-                completion_tokens = eval_count
-            else:
-                # Fallback to rough estimate
-                from src.llm.cache import estimate_tokens
-                prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
-                completion_tokens = estimate_tokens(content)
-            total_tokens = prompt_tokens + completion_tokens
-
-            return {
-                "content": content,
-                "usage": {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": total_tokens,
-                }
+            raise RuntimeError(f"Ollama API returned unexpected format: missing 'message.content'. Response: {str(data)[:500]}")
+        
+        content = data["message"]["content"]
+        prompt_eval_count = data.get("prompt_eval_count")
+        eval_count = data.get("eval_count")
+        if prompt_eval_count is not None and eval_count is not None:
+            prompt_tokens = prompt_eval_count
+            completion_tokens = eval_count
+        else:
+            from src.llm.cache import estimate_tokens
+            prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+            completion_tokens = estimate_tokens(content)
+        total_tokens = prompt_tokens + completion_tokens
+        
+        return {
+            "content": content,
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
             }
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code not in (429, 500, 502, 503, 504):
-                logger.error(
-                    "Ollama request failed with HTTP %d (non-retryable). "
-                    "URL: %s\nResponse body: %s\nRequest payload model: %s, messages count: %d",
-                    e.response.status_code,
-                    str(e.request.url),
-                    e.response.text[:2000],
-                    payload.get("model"),
-                    len(payload.get("messages", [])),
-                    exc_info=True,
-                )
-                raise RuntimeError(f"Ollama request failed with HTTP {e.response.status_code}: {e.response.text[:500]}") from e
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                logger.warning(f"Ollama request failed with HTTP {e.response.status_code}. Response: {e.response.text[:500]}. Retrying in {wait_time}s...")
-                time.sleep(wait_time)
-                continue
-            raise RuntimeError(f"Ollama request failed: {e.response.status_code} - {e.response.text[:500]}") from e
-        except httpx.HTTPError as e:
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                logger.warning(f"Ollama request failed with network error: {e}. Retrying in {wait_time}s...", exc_info=True)
-                time.sleep(wait_time)
-                continue
-            logger.error("Ollama request failed with network error after all retries: %s", e, exc_info=True)
-            raise RuntimeError(f"Ollama request failed: {e}") from e
-    raise RuntimeError("Ollama request failed after all retries")
+        }
+
+    return _execute_llm_request("ollama", url, headers, payload, timeout, system_prompt, prompt, _parse_ollama)
 
 
 def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str = None,
@@ -172,82 +187,30 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
     if not thinking_enabled:
         payload["reasoning_effort"] = "low"
 
-    logger.info("LLM request (openai): model=%s, system_prompt=%.200s..., prompt=%.500s...", model, system_prompt, prompt)
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            httpx_timeout = httpx.Timeout(
-                connect=10.0,
-                read=timeout if timeout is not None else settings.LLM_TIMEOUT,
-                write=10.0,
-                pool=5.0,
+    def _parse_openai(data: dict) -> dict:
+        if "choices" not in data or not data["choices"]:
+            logger.error(
+                "OpenAI response missing 'choices' key. Full response: %s",
+                json.dumps(data)[:2000]
             )
-            def _do_request():
-                with httpx.Client(timeout=httpx_timeout) as client:
-                    response = client.post(url, json=payload, headers=headers)
-                    response.raise_for_status()
-                    return response.json()
-
-            data = _do_request()
-
-
-                                                                                                                                                                                                                                                                                   
-            # Validate response structure                                                                                                                                                                                                                                          
-            if "choices" not in data or not data["choices"]:                                                                                                                                                                                                                       
-                logger.error(                                                                                                                                                                                                                                                      
-                    "OpenAI response missing 'choices' key. Full response: %s",                                                                                                                                                                                                    
-                    json.dumps(data)[:2000]                                                                                                                                                                                                                                        
-                )                                                                                                                                                                                                                                                                  
-                raise RuntimeError(f"OpenAI API returned unexpected format: missing 'choices'. Response: {str(data)[:500]}")                                                                                                                                                       
-                                                                                                                                                                                                                                                                                   
-
-
-            content = data["choices"][0]["message"]["content"]                                                                                                                                                                                                                     
-            logger.info("LLM response (openai): %.500s...", content)
-
-            # Extract token usage from the API response
-            usage_data = data.get("usage", {})
-            prompt_tokens = usage_data.get("prompt_tokens", 0)
-            completion_tokens = usage_data.get("completion_tokens", 0)
-            total_tokens = usage_data.get("total_tokens", 0)
-
-            return {
-                "content": content,
-                "usage": {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": total_tokens,
-                }
+            raise RuntimeError(f"OpenAI API returned unexpected format: missing 'choices'. Response: {str(data)[:500]}")
+            
+        content = data["choices"][0]["message"]["content"]
+        usage_data = data.get("usage", {})
+        prompt_tokens = usage_data.get("prompt_tokens", 0)
+        completion_tokens = usage_data.get("completion_tokens", 0)
+        total_tokens = usage_data.get("total_tokens", 0)
+        
+        return {
+            "content": content,
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
             }
-        except httpx.HTTPStatusError as e:
-            # Log the full response body for non-retryable errors (especially 400)
-            if e.response.status_code not in (429, 500, 502, 503, 504):
-                logger.error(
-                    "OpenAI request failed with HTTP %d (non-retryable). "
-                    "URL: %s\nResponse body: %s\nRequest payload model: %s, messages count: %d",
-                    e.response.status_code,
-                    str(e.request.url),
-                    e.response.text[:2000],
-                    payload.get("model"),
-                    len(payload.get("messages", [])),
-                    exc_info=True,
-                )
-                raise RuntimeError(f"OpenAI request failed with HTTP {e.response.status_code}: {e.response.text[:500]}") from e
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                logger.warning(f"OpenAI request failed with HTTP {e.response.status_code}. Response: {e.response.text[:500]}. Retrying in {wait_time}s...")
-                time.sleep(wait_time)
-                continue
-            raise RuntimeError(f"OpenAI request failed: {e.response.status_code} - {e.response.text[:500]}") from e
-        except httpx.HTTPError as e:
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                logger.warning(f"OpenAI request failed with network error: {e}. Retrying in {wait_time}s...", exc_info=True)
-                time.sleep(wait_time)
-                continue
-            logger.error("OpenAI request failed with network error after all retries: %s", e, exc_info=True)
-            raise RuntimeError(f"OpenAI request failed: {e}") from e
-    raise RuntimeError("OpenAI request failed after all retries")
+        }
+
+    return _execute_llm_request("openai", url, headers, payload, timeout, system_prompt, prompt, _parse_openai)
 
 
 def get_llm_response(prompt: str, system_prompt: str = "", model_type: str = "actuator", symbol: Optional[str] = None, messages: Optional[List[Dict[str, str]]] = None, request_type: Optional[str] = None) -> str:
