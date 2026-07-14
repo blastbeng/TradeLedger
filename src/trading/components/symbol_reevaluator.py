@@ -421,6 +421,7 @@ class SymbolReevaluator:
             auto_resume_note=auto_resume_note,
             effective_temp=effective_temp,
             btp_ytm=btp_ytm,
+            news_sentiment=news_sentiment,
         )
 
         # --- Final selection call ---
@@ -444,6 +445,7 @@ class SymbolReevaluator:
             available_timeframes_by_symbol=available_timeframes_by_symbol,
             auto_resume_note=auto_resume_note,
             effective_temp=effective_temp,
+            news_sentiment=news_sentiment,
         )
 
         parsed, pause_trading, pause_reason, pause_duration, deduped, llm_provider, llm_model = await self.process_llm_response(

@@ -177,6 +177,7 @@ def build_strategy_prompt(
     session_info = data.session_info
     sentiment_trend = data.sentiment_trend
     volume_trend = data.volume_trend
+    aggregate_sentiment = data.aggregate_sentiment
     ichimoku = data.ichimoku
     market_breadth = data.market_breadth
     full_market_breadth = data.full_market_breadth
@@ -589,6 +590,14 @@ Maximum symbols to trade: {max_symbols}
             for bt in historical_backtest_results
         ]
         prompt += f"\n**HistBT({symbol}):** {_to_toon(_ht_compact)}\n"
+
+    # --- Aggregate sentiment from news articles ---
+    if aggregate_sentiment:
+        prompt += (
+            f"\nNewsSentiment: compound={aggregate_sentiment['avg_compound']:+.2f}, "
+            f"pos={aggregate_sentiment['positive']}, neg={aggregate_sentiment['negative']}, "
+            f"neu={aggregate_sentiment['neutral']}, total={aggregate_sentiment['total_articles']} articles\n"
+        )
 
     # --- Aggregate sentiment summary ---
     if sentiment_trend is not None:
