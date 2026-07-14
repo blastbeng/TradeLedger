@@ -176,7 +176,6 @@ class TradingEngine:
         self._full_breadth_running = False
         self._full_download_running = False
         self._quotes_fetch_running = False
-        self._delayed_entry_tasks = self.shared_state._delayed_entry_tasks
         self._supervisors: list = []
         self._background_tasks: list = []
 
@@ -456,6 +455,14 @@ class TradingEngine:
     @_portfolio_exposure_cache.setter
     def _portfolio_exposure_cache(self, value: Optional[Dict[str, float]]) -> None:
         self.shared_state._portfolio_exposure_cache = value
+
+    @property
+    def _delayed_entry_tasks(self) -> set:
+        return self.shared_state._delayed_entry_tasks
+
+    @_delayed_entry_tasks.setter
+    def _delayed_entry_tasks(self, value: set) -> None:
+        self.shared_state._delayed_entry_tasks = value
 
     async def _initialize_clients(self):
         """Initialize clients and load persisted state (non‑blocking)."""
