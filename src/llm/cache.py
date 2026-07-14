@@ -7,7 +7,7 @@ import math
 import random
 import time
 import concurrent.futures
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
@@ -1071,7 +1071,8 @@ def _is_italian_holiday(dt) -> bool:
     day = ((h + l - 7 * m + 114) % 31) + 1
     
     # Easter Monday is the day after Easter Sunday
-    if dt.month == month and dt.day == day + 1:
+    easter_monday = datetime(y, month, day) + timedelta(days=1)
+    if dt.month == easter_monday.month and dt.day == easter_monday.day:
         return True
 
     return False
