@@ -240,6 +240,11 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             db_candles = get_latest_close_prices(missing_symbols)
             for sym in list(missing_symbols):
                 if sym in db_candles and db_candles[sym].get("last", 0) > 0:
+                    candle_ts = db_candles[sym].get("candle_timestamp")
+                    if candle_ts and (int(time.time() * 1000) - candle_ts > 48 * 3600 * 1000):
+                        logger.debug(f"get_quotes: DB close price for {sym} is stale (older than 48h), skipping.")
+                        continue
+
                     last = db_candles[sym]["last"]
                     prev_close = db_candles[sym].get("prev_close")
                     volume = db_candles[sym].get("volume")
@@ -557,6 +562,11 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
             db_candles = get_latest_close_prices(missing_symbols)
             for sym in list(missing_symbols):
                 if sym in db_candles and db_candles[sym].get("last", 0) > 0:
+                    candle_ts = db_candles[sym].get("candle_timestamp")
+                    if candle_ts and (int(time.time() * 1000) - candle_ts > 48 * 3600 * 1000):
+                        logger.debug(f"get_quotes_cached: DB close price for {sym} is stale (older than 48h), skipping.")
+                        continue
+
                     last = db_candles[sym]["last"]
                     prev_close = db_candles[sym].get("prev_close")
                     volume = db_candles[sym].get("volume")
