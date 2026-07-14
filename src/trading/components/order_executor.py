@@ -486,7 +486,7 @@ class OrderExecutor:
         )
         try:
             await asyncio.to_thread(engine.trader.cancel_order, order_id)
-        except (RuntimeError, ValueError, ConnectionError) as e:
+        except (RuntimeError, ValueError, ConnectionError, KeyError, TypeError, AttributeError) as e:
             logger.error(f"Failed to cancel timed-out order {order_id}: {type(e).__name__}: {e}")
 
         # Refund remaining reserved capital for buy orders
