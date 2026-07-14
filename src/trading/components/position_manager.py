@@ -1016,7 +1016,7 @@ class PositionManager:
                 logger.warning(f"Could not parse maturity date '{maturity_str}' for BTP {symbol}")
                 pos = self.shared_state.positions.get(symbol)
                 if pos:
-                    grace_period = 2 * 24 * 3600  # 2 days
+                    grace_period = 30 * 24 * 3600  # 30 days
                     unparseable_since = pos.get("_unparseable_maturity_since")
                     if unparseable_since is None:
                         pos["_unparseable_maturity_since"] = time.time()
@@ -1024,7 +1024,7 @@ class PositionManager:
                             stock_name = await engine._market_data_manager.get_stock_name(symbol)
                             display_symbol = engine._format_symbol_display(symbol, stock_name, None)
                             await engine.notifier.send_notification(
-                                f"⚠️ Could not parse maturity date '{maturity_str}' for BTP {display_symbol}. Manual check required. Will auto-close at par in 2 days.",
+                                f"⚠️ Could not parse maturity date '{maturity_str}' for BTP {display_symbol}. Manual check required. Will auto-close at par in 30 days.",
                                 summary={
                                     "symbol": symbol,
                                     "action": "WARNING",
