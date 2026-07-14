@@ -126,8 +126,10 @@ def _split_and_merge_prompt(
         current_chunk = ""
         for part in parts:
             candidate = current_chunk + separator + part if current_chunk else part
-            if estimate_tokens(candidate) > limit and current_chunk:
-                chunks.append(current_chunk)
+            if estimate_tokens(candidate) > limit:
+                # Flush the current chunk if it has content
+                if current_chunk:
+                    chunks.append(current_chunk)
                 # If the part itself is too large, split it recursively
                 if estimate_tokens(part) > limit:
                     chunks.extend(_split_text(part, limit))
