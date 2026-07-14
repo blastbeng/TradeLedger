@@ -142,6 +142,8 @@ class BuyExecutor:
             desired_amount=desired_amount,
             params=params,
             sl_pct=sl_pct,
+            atr=atr,
+            current_price=current_price,
         )
         if _sizing_result is None:
             return
@@ -347,6 +349,8 @@ class BuyExecutor:
         desired_amount: float,
         params: Dict[str, Any],
         sl_pct: float,
+        atr: Optional[float] = None,
+        current_price: Optional[float] = None,
     ) -> Optional[Tuple[float, float, float]]:
         """Compute the final position size applying all risk caps.
 
@@ -394,6 +398,18 @@ class BuyExecutor:
                     desired_amount *= per_symbol_mult
             except (ValueError, TypeError):
                 pass
+
+        # --- Volatility-based position sizing adjustment ---
+        if atr is not None and atr > 0 and current_price is not None and current_price > 0:
+            atr_pct = atr / current_price
+            if atr_pct > 0.05:
+                vol_mult = 0.5
+                desired_amount *= vol_mult
+                logger.info(f"Volatility sizing applied: ATR%={atr_pct:.2%}, multiplier={vol_mult}")
+            elif atr_pct > 0.02:
+                vol_mult = 0.75
+                desired_amount *= vol_mult
+                logger.info(f"Volatility sizing applied: ATR%={atr_pct:.2%}, multiplier={vol_mult}")
 
         # --- Compute individual caps ---
         caps = []
