@@ -225,6 +225,12 @@ def backtest_strategy(
                 return [], result
             return result
 
+    # Calculate total time span for annualized returns
+    total_time_seconds = 0.0
+    if len(candles) >= 2:
+        total_time_seconds = (candles[-1][0] - candles[0][0]) / 1000.0
+    total_time_years = total_time_seconds / (365.25 * 24 * 3600)
+
     if config.direction == "both":
         long_trades, _ = backtest_strategy(
             candles=candles,
