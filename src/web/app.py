@@ -173,6 +173,7 @@ async def logout(request: Request, response: Response):
         redis = get_redis_client()
         await asyncio.to_thread(redis.delete, f"session:{token}", f"csrf:{token}")
     response.delete_cookie("session_token")
+    response.delete_cookie("csrf_token")
     return {"status": "ok"}
 
 # Serve static files (dashboard)
