@@ -97,7 +97,7 @@ class OrderExecutor:
                 order_id = q.get('order_id')
                 try:
                     await asyncio.to_thread(engine.trader.cancel_order, order_id)
-                except (RuntimeError, ValueError, ConnectionError) as e:
+                except (RuntimeError, ValueError, ConnectionError, KeyError, TypeError, AttributeError) as e:
                     logger.warning(f"Failed to cancel queued order {order_id} for {symbol}: {type(e).__name__}: {e}")
                 # Refund remaining reserved capital for buy orders
                 if q['side'] == 'buy':
@@ -304,7 +304,7 @@ class OrderExecutor:
                 try:
                     await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
                     logger.info(f"Cancelled OCO pair {oco_pair_id} for {queued['symbol']}")
-                except (RuntimeError, ValueError, ConnectionError) as e:
+                except (RuntimeError, ValueError, ConnectionError, KeyError, TypeError, AttributeError) as e:
                     logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {type(e).__name__}: {e}")
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders = [
@@ -319,7 +319,7 @@ class OrderExecutor:
                 try:
                     await asyncio.to_thread(engine.trader.cancel_order, order_id)
                     logger.info(f"Cancelled remaining part of partially filled exit order {order_id} for {queued['symbol']}")
-                except (RuntimeError, ValueError, ConnectionError) as e:
+                except (RuntimeError, ValueError, ConnectionError, KeyError, TypeError, AttributeError) as e:
                     logger.warning(f"Failed to cancel remaining part of exit order {order_id}: {e}")
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders = [
@@ -565,7 +565,7 @@ class OrderExecutor:
                 try:
                     await asyncio.to_thread(engine.trader.cancel_order, oco_pair_id)
                     logger.info(f"Cancelled OCO pair {oco_pair_id} for {status} exit order {order_id}")
-                except (RuntimeError, ValueError, ConnectionError) as e:
+                except (RuntimeError, ValueError, ConnectionError, KeyError, TypeError, AttributeError) as e:
                     logger.warning(f"Failed to cancel OCO order {oco_pair_id}: {type(e).__name__}: {e}")
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders = [
@@ -725,7 +725,7 @@ class OrderExecutor:
                     "place_replacement_exit_orders_with_retry",
                     symbol, reconstructed_signal, exit_prices, queued.get('timeframe')
                 )
-            except (TypeError, ValueError, RuntimeError, AttributeError) as e:
+            except (RuntimeError, ValueError, ConnectionError, KeyError, TypeError, AttributeError) as e:
                 logger.error(f"Failed to setup exit orders after queued buy fill for {symbol}: {type(e).__name__}: {e}")
                 if engine.notifier:
                     stock_name = await engine._market_data_manager.get_stock_name(symbol)

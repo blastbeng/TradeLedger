@@ -241,9 +241,9 @@ def retry_on_db_lock(max_retries=3, initial_delay=0.5):
                             time.sleep(delay)
                             continue
                     raise
-                except Exception as e:
+                except psycopg.Error as e:
                     # Retry on PostgreSQL deadlock (40P01) or serialization failure (40001)
-                    sqlstate = getattr(e.diag, 'sqlstate', None) if hasattr(e, 'diag') else None
+                    sqlstate = e.diag.sqlstate if e.diag else None
                     if sqlstate in ('40P01', '40001'):
                         last_exc = e
                         if attempt < max_retries:
@@ -313,7 +313,7 @@ def _migrate_db():
                     logger.info(f"Migration succeeded: {sql}")
                     last_exc = None
                     break
-                except Exception as e:
+                except (sqlite3.Error, psycopg.Error) as e:
                     last_exc = e
                     if attempt < max_retries:
                         delay = initial_delay * (2 ** attempt)

@@ -185,7 +185,7 @@ def _get_yf_session():
                     kwargs.setdefault('timeout', 15.0)
                     try:
                         response = super().request(*args, **kwargs)
-                    except Exception as e:
+                    except Exception:
                         # Record error to potentially invalidate session or trip circuit
                         _record_yf_error()
                         raise
