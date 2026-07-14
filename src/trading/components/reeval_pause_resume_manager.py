@@ -105,6 +105,7 @@ class ReevalPauseResumeManager:
                                             f"({required_pause}s) not yet elapsed ({remaining:.0f}s remaining)."
                                         )
                                         skip_resume = True
+                                        pause_trading = True
                                 except (ValueError, TypeError):
                                     pass
                             if not skip_resume:
