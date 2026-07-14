@@ -223,16 +223,27 @@ class PaperTrader:
             return self.slippage_base_pct
 
     def _get_max_fillable_volume(self, symbol: str) -> Optional[float]:
-        """Estimate max fillable volume based on recent 1m candle volume."""
+        """Estimate max fillable volume based on recent 1m candle volume, with daily fallback."""
         base = symbol.split("/")[0] if "/" in symbol else symbol
         try:
             candles = get_ohlcv(base, "1m", limit=2)
-            if not candles:
-                return None
-            # Use the most recent completed candle's volume
-            vol = candles[-2]["volume"] if len(candles) >= 2 else candles[-1]["volume"]
-            # Assume we can fill up to 10% of the last minute's volume
-            return vol * settings.PARTIAL_FILL_VOLUME_CAP_PCT
+            if candles:
+                # Use the most recent completed candle's volume
+                vol = candles[-2]["volume"] if len(candles) >= 2 else candles[-1]["volume"]
+                return vol * settings.PARTIAL_FILL_VOLUME_CAP_PCT
+
+            # Fallback to daily volume if 1m is unavailable
+            logger.info(f"1m volume unavailable for {symbol}, falling back to daily volume for fill cap.")
+            daily_candles = get_ohlcv(base, "1d", limit=21)
+            if daily_candles:
+                volumes = [c["volume"] for c in daily_candles[:-1]]
+                avg_vol = sum(volumes) / len(volumes) if volumes else 0.0
+                # Estimate 1m volume as average daily volume / 390 (minutes in a day)
+                est_1m_vol = avg_vol / 390.0
+                return est_1m_vol * settings.PARTIAL_FILL_VOLUME_CAP_PCT
+
+            logger.warning(f"No volume data available for {symbol}, skipping partial fill cap.")
+            return None
         except Exception as e:
             logger.warning(f"Failed to fetch volume for partial fill check for {symbol}: {type(e).__name__}: {e}")
             return None
