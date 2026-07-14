@@ -234,7 +234,14 @@ class TelegramBot:
         try:
             symbols = self.engine.current_symbols
             positions = self.engine.positions
-            balance = await asyncio.to_thread(self.engine.trader.fetch_balance)
+            balance = await asyncio.wait_for(
+                asyncio.to_thread(self.engine.trader.fetch_balance),
+                timeout=15.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning("fetch_balance timed out for status command")
+            await update.message.reply_text("⚠️ Balance fetch timed out.", reply_markup=self.keyboard)
+            return
         except Exception as e:
             logger.error(f"Failed to get status: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve status.", reply_markup=self.keyboard)
@@ -695,7 +702,14 @@ class TelegramBot:
                 await update.message.reply_text("Usage: /signals <limit> (e.g., /signals 10)", reply_markup=self.keyboard)
                 return
 
-        result = await asyncio.to_thread(get_signals, limit, 0)
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(get_signals, limit, 0),
+                timeout=15.0
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ Signal fetch timed out.", reply_markup=self.keyboard)
+            return
         signals = result.get("signals", [])
 
         if not signals:
@@ -767,11 +781,14 @@ class TelegramBot:
                 news_name = await self.engine._market_data_manager.get_stock_name(symbol)
                 news_display = self.engine._format_symbol_display(symbol, news_name, news_tf)
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
-                articles = await asyncio.to_thread(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
+                articles = await asyncio.wait_for(
+                    asyncio.to_thread(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS),
+                    timeout=15.0
+                )
                 if not articles:
                     return None
                 try:
-                    news_data = await asyncio.to_thread(get_cached_news_summary, symbol)
+                    news_data = await get_cached_news_summary(symbol)
                     summary_text = html.escape(news_data["summary"])
                     provider = news_data.get("provider", "")
                     model = news_data.get("model", "")
@@ -817,7 +834,10 @@ class TelegramBot:
                 ns_name = await self.engine._market_data_manager.get_stock_name(symbol)
                 ns_display = self.engine._format_symbol_display(symbol, ns_name, ns_tf)
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
-                articles = await asyncio.to_thread(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
+                articles = await asyncio.wait_for(
+                    asyncio.to_thread(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS),
+                    timeout=15.0
+                )
                 return f"<b>{ns_display}</b>: {len(articles)} articles\n"
 
             msg_lines = await asyncio.gather(*[_get_news_count(entry) for entry in symbols])
@@ -1000,7 +1020,14 @@ class TelegramBot:
             if exc_info[0] is not None:
                 summary["traceback"] = "".join(traceback.format_exception(*exc_info))
 
-        chat_id = await asyncio.to_thread(get_telegram_chat_id)
+        try:
+            chat_id = await asyncio.wait_for(
+                asyncio.to_thread(get_telegram_chat_id),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning("get_telegram_chat_id timed out")
+            return
         logger.info(f"send_notification called, chat_id={chat_id}, message={message[:50]}...")
         if not chat_id:
             logger.warning("No chat_id stored – cannot send notification. Use /start first.")
