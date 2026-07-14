@@ -822,6 +822,21 @@ class SignalProcessor:
             "ytm": ytm,
         }
 
+    async def _fetch_dividend_data(self, symbol: str, ticker: Dict[str, Any]) -> Tuple[Optional[float], Optional[Any]]:
+        """Fetch dividend yield and next ex-dividend date concurrently."""
+        if BTPPolicy.is_btp(symbol.split("/")[0]):
+            return None, None
+        from src.database import get_dividend_yields_for_symbols, get_next_ex_dividend_date
+        base = symbol.split("/")[0] if "/" in symbol else symbol
+        prices = {base: ticker['last']} if ticker.get('last') else {}
+        dividend_yield = None
+        if prices:
+            div_yields = await asyncio.to_thread(get_dividend_yields_for_symbols, [symbol], prices)
+            if symbol in div_yields:
+                dividend_yield = div_yields[symbol]
+        next_ex_dividend = await asyncio.to_thread(get_next_ex_dividend_date, symbol)
+        return dividend_yield, next_ex_dividend
+
     async def gather_prompt_context(
         self,
         symbol: str,
@@ -927,31 +942,51 @@ class SignalProcessor:
             if t.get("symbol") == symbol and t.get("side") == "sell"
         ][-10:]
 
-        # Fetch historical backtest results for this symbol
-        historical_backtest_results = await asyncio.to_thread(
-            get_backtest_results_for_symbol, symbol, assigned_tf, 10
+        # Run independent I/O-bound tasks concurrently
+        (
+            historical_backtest_results,
+            dividend_data,
+            aggregate_sentiment,
+            global_risk_mult,
+            full_breadth_raw,
+            max_port_exp_raw,
+            max_port_risk_raw,
+            min_stop_atr_mult_raw,
+            min_hold_time_mult_raw,
+            global_min_rr_raw,
+        ) = await asyncio.gather(
+            asyncio.to_thread(get_backtest_results_for_symbol, symbol, assigned_tf, 10),
+            self._fetch_dividend_data(symbol, ticker),
+            engine._get_cached_sentiment(symbol) if settings.NEWS_ENABLED else None,
+            engine._get_global_risk_multiplier(),
+            asyncio.to_thread(engine.redis.get, "market:breadth:full"),
+            engine.config_service.get_config("max_portfolio_exposure_pct"),
+            engine.config_service.get_config("max_portfolio_stop_risk_pct"),
+            engine.config_service.get_config("min_stop_loss_atr_mult"),
+            engine.config_service.get_config("min_max_hold_time_mult"),
+            engine.config_service.get_config("min_risk_reward_ratio"),
+            return_exceptions=True,
         )
 
-        # Fetch dividend data for non-BTP symbols
-        dividend_yield = None
-        next_ex_dividend = None
-        if not BTPPolicy.is_btp(symbol.split("/")[0]):
-            from src.database import get_dividend_yields_for_symbols, get_next_ex_dividend_date
-            base = symbol.split("/")[0] if "/" in symbol else symbol
-            prices = {base: ticker['last']} if ticker.get('last') else {}
-            if prices:
-                div_yields = get_dividend_yields_for_symbols([symbol], prices)
-                if symbol in div_yields:
-                    dividend_yield = div_yields[symbol]
-            next_ex_dividend = get_next_ex_dividend_date(symbol)
+        # Process results with original error handling
+        dividend_yield, next_ex_dividend = dividend_data if not isinstance(dividend_data, Exception) else (None, None)
+        if isinstance(aggregate_sentiment, Exception):
+            logger.warning(f"Could not fetch aggregate sentiment for {symbol}: {type(aggregate_sentiment).__name__}: {aggregate_sentiment}")
+            aggregate_sentiment = None
 
-        # Fetch aggregate sentiment
-        aggregate_sentiment = None
-        if settings.NEWS_ENABLED:
+        full_market_breadth = None
+        if not isinstance(full_breadth_raw, Exception) and full_breadth_raw:
             try:
-                aggregate_sentiment = await engine._get_cached_sentiment(symbol)
-            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
-                logger.warning(f"Could not fetch aggregate sentiment for {symbol}: {type(e).__name__}: {e}")
+                full_market_breadth = json.loads(full_breadth_raw)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                pass
+
+        max_port_exp = float(max_port_exp_raw) if not isinstance(max_port_exp_raw, Exception) and max_port_exp_raw else None
+        max_port_risk = float(max_port_risk_raw) if not isinstance(max_port_risk_raw, Exception) and max_port_risk_raw else None
+
+        min_stop_atr_mult = float(min_stop_atr_mult_raw) if not isinstance(min_stop_atr_mult_raw, Exception) and min_stop_atr_mult_raw else 1.0
+        min_hold_time_mult = float(min_hold_time_mult_raw) if not isinstance(min_hold_time_mult_raw, Exception) and min_hold_time_mult_raw else 1.0
+        global_min_rr = float(global_min_rr_raw) if not isinstance(global_min_rr_raw, Exception) and global_min_rr_raw else None
 
         # Sentiment trend
         sentiment_trend_val = None
@@ -972,14 +1007,6 @@ class SignalProcessor:
         if current_volume > 0:
             volume_trend_val = await self._compute_volume_trend(symbol, current_volume, timeframe=assigned_tf)
 
-        # Full market breadth from Redis
-        full_market_breadth = None
-        try:
-            full_breadth_raw = await asyncio.to_thread(engine.redis.get, "market:breadth:full")
-            if full_breadth_raw:
-                full_market_breadth = json.loads(full_breadth_raw)
-        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
-            pass
         session_info = engine._market_data_manager._get_session_info()
 
         # Compute minutes until market close
@@ -994,40 +1021,7 @@ class SignalProcessor:
         else:
             minutes_to_market_close = None
 
-        # Global risk multiplier
-        global_risk_mult = await engine._get_global_risk_multiplier()
-
-        # Portfolio risk thresholds
-        max_port_exp = None
-        max_port_risk = None
-        try:
-            raw = await engine.config_service.get_config("max_portfolio_exposure_pct")
-            if raw:
-                max_port_exp = float(raw)
-            raw = await engine.config_service.get_config("max_portfolio_stop_risk_pct")
-            if raw:
-                max_port_risk = float(raw)
-        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
-            pass
-
         partial_tp_executed_levels = self.shared_state.positions[symbol].get("partial_tp_levels_triggered", []) if symbol in self.shared_state.positions else []
-
-        # Validator multipliers
-        min_stop_atr_mult = 1.0
-        min_hold_time_mult = 1.0
-        global_min_rr = None
-        try:
-            raw = await engine.config_service.get_config("min_stop_loss_atr_mult")
-            if raw:
-                min_stop_atr_mult = float(raw)
-            raw = await engine.config_service.get_config("min_max_hold_time_mult")
-            if raw:
-                min_hold_time_mult = float(raw)
-            raw = await engine.config_service.get_config("min_risk_reward_ratio")
-            if raw:
-                global_min_rr = float(raw)
-        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
-            pass
 
         return {
             "atr_multi_tf": atr_multi_tf,
