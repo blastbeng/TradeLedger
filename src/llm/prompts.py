@@ -123,6 +123,7 @@ class StrategyPromptData:
     dividend_yield: Optional[float] = None
     next_ex_dividend: Optional[Tuple[str, int]] = None
     news_section: Optional[str] = None
+    macro_economic_context: Optional[Dict[str, Any]] = None
 
 
 def build_strategy_prompt(
@@ -227,6 +228,7 @@ def build_strategy_prompt(
     ytm = data.ytm
     dividend_yield = data.dividend_yield
     next_ex_dividend = data.next_ex_dividend
+    macro_economic_context = data.macro_economic_context
     # Trim large lists to prevent context window overflow
     if recent_trades and len(recent_trades) > 20:
         recent_trades = recent_trades[-20:]
@@ -342,6 +344,10 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"TF:{assigned_timeframe}\n"
     if market_regime:
         prompt += f"Regime:{market_regime}\n"
+    if macro_economic_context:
+        prompt += "\n**Macro Economic Context:**\n"
+        for key, value in macro_economic_context.items():
+            prompt += f"  {key}: {value}\n"
 
     long_term_timeframes = {"1w", "1M", "3M", "6M", "1Y", "3Y", "5Y"}
     is_long_term = assigned_timeframe in long_term_timeframes

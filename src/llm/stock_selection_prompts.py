@@ -40,6 +40,7 @@ def build_stock_selection_prompt(
     min_viable_trade_amount: float = 0.0,
     btp_ytm: Optional[Dict[str, float]] = None,
     news_section: Optional[str] = None,
+    macro_economic_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Build a prompt to ask the LLM which stocks/ETFs to trade."""
     # Trim large lists to prevent context window overflow
@@ -336,6 +337,10 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
         elif breadth_pct < 40:
             regime_label = "RISK-OFF (broad market weakness)"
     prompt += f"\n**Market Regime: {regime_label}**\n"
+    if macro_economic_context:
+        prompt += "\n**Macro Economic Context:**\n"
+        for key, value in macro_economic_context.items():
+            prompt += f"  {key}: {value}\n"
     if sentiment_trend:
         prompt += "\nSentiment trend (change in compound score since last cycle):\n"
         for base, delta in sentiment_trend.items():
@@ -424,6 +429,7 @@ def build_final_selection_prompt(
     available_timeframes: Optional[List[str]] = None,
     market_limits: Optional[Dict[str, Dict[str, Any]]] = None,
     available_timeframes_by_symbol: Optional[Dict[str, List[str]]] = None,
+    macro_economic_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Build a prompt for the final symbol selection from chunk results.
 
@@ -583,6 +589,10 @@ Currently tracked stocks (with assigned timeframes): {_to_toon(current_symbols) 
         elif breadth_pct < 40:
             regime_label = "RISK-OFF (broad market weakness)"
     prompt += f"\n**Market Regime: {regime_label}**\n"
+    if macro_economic_context:
+        prompt += "\n**Macro Economic Context:**\n"
+        for key, value in macro_economic_context.items():
+            prompt += f"  {key}: {value}\n"
 
     # Pause/resume guidance
     if trading_paused:
