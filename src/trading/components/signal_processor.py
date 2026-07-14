@@ -775,7 +775,7 @@ class SignalProcessor:
                         ticker['bid'] = yahoo.get('bid')
                     if ask is None:
                         ticker['ask'] = yahoo.get('ask')
-                    logger.info(f"Yahoo Finance quote merged for {symbol}: bid={ticker.get('bid')}, ask={ticker.get('ask')}")
+                    logger.info(f"Yahoo Finance quote merged for {symbol}: bid={ticker.get('bid')}, ask={ticker.get('ask')}", extra={"event": "yahoo_quote_merged", "symbol": symbol, "bid": ticker.get('bid'), "ask": ticker.get('ask')})
 
         # --- Fetch fundamental data ---
         fundamentals = None
@@ -1214,7 +1214,7 @@ class SignalProcessor:
         if max_tenure_hours is not None and max_tenure_hours > 0 and 'entry_time' in symbol_entry:
             tenure_seconds = max_tenure_hours * 3600
             if time.time() - symbol_entry['entry_time'] > tenure_seconds:
-                logger.info(f"Max symbol tenure reached for {symbol} ({max_tenure_hours:.1f}h), forcing sell")
+                logger.info(f"Max symbol tenure reached for {symbol} ({max_tenure_hours:.1f}h), forcing sell", extra={"event": "max_tenure_reached", "symbol": symbol, "max_tenure_hours": max_tenure_hours})
                 from src.strategies.base import Signal
                 signal = Signal(action="SELL", confidence=1.0, reasoning="Max symbol tenure reached")
                 await self.event_bus.publish("execute_signal", symbol, signal, exit_reason="max_tenure")

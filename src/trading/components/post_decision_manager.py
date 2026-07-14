@@ -526,7 +526,7 @@ class PostDecisionManager:
         if etype == "delay":
             # Delay entries are simple time-based waits – schedule directly
             delay_sec = validated.entry_condition.get("delay_seconds", 0)
-            logger.info(f"Scheduling delayed BUY for {symbol} in {delay_sec}s")
+            logger.info(f"Scheduling delayed BUY for {symbol} in {delay_sec}s", extra={"event": "delayed_entry_scheduled", "symbol": symbol, "delay_seconds": delay_sec})
             task = asyncio.create_task(
                 engine._execute_delayed_entry(symbol, validated, assigned_tf, delay_sec)
             )
@@ -601,7 +601,7 @@ class PostDecisionManager:
                 try:
                     conf_threshold = float(conf_rejection_raw)
                     if conf_threshold > 0 and validated.confidence < conf_threshold:
-                        logger.info(f"Skipping {symbol}: confidence {validated.confidence:.2f} below global rejection threshold {conf_threshold:.2f}")
+                        logger.info(f"Skipping {symbol}: confidence {validated.confidence:.2f} below global rejection threshold {conf_threshold:.2f}", extra={"event": "skip_confidence_threshold", "symbol": symbol, "confidence": validated.confidence, "threshold": conf_threshold})
                         if engine.notifier:
                             await engine.notifier.send_notification(
                                 f"⚠️ Skipping {display_symbol}: confidence {validated.confidence:.2f} below threshold {conf_threshold:.2f}",
@@ -619,7 +619,7 @@ class PostDecisionManager:
 
         min_conf = params.get("min_confidence")
         if min_conf is not None and validated.confidence < min_conf:
-            logger.info(f"Skipping {symbol}: confidence {validated.confidence:.2f} below LLM min {min_conf:.2f}")
+            logger.info(f"Skipping {symbol}: confidence {validated.confidence:.2f} below LLM min {min_conf:.2f}", extra={"event": "skip_confidence_min", "symbol": symbol, "confidence": validated.confidence, "min_confidence": min_conf})
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"⚠️ Skipping {display_symbol}: confidence too low ({validated.confidence:.2f})",
@@ -635,7 +635,7 @@ class PostDecisionManager:
 
         # Prevent SELL without an open position (no shorting)
         if validated.action == "SELL" and symbol not in self.shared_state.positions:
-            logger.info(f"Skipping SELL for {symbol}: no open position.")
+            logger.info(f"Skipping SELL for {symbol}: no open position.", extra={"event": "skip_sell_no_position", "symbol": symbol})
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"⚠️ Skipping SELL for {display_symbol}: no open position.",
@@ -693,7 +693,8 @@ class PostDecisionManager:
         if sector_count >= max_positions_per_sector:
             logger.info(
                 f"Skipping BUY {symbol}: sector '{current_sector}' already has "
-                f"{sector_count} open positions (max {max_positions_per_sector})"
+                f"{sector_count} open positions (max {max_positions_per_sector})",
+                extra={"event": "skip_sector_concentration", "symbol": symbol, "sector": current_sector, "sector_count": sector_count, "max_positions_per_sector": max_positions_per_sector}
             )
             if engine.notifier:
                 stock_name = await engine._market_data_manager.get_stock_name(symbol)
