@@ -999,9 +999,9 @@ def _normalize_for_hash(obj, depth=0):
       change every cycle but don't affect trading decisions).
     - Converts None values to a string "null" for consistent serialization.
     """
-    _VOLATILE_KEY_FRAGMENTS = ("timestamp", "time", "fetched_at", "created_at",
+    _VOLATILE_KEY_FRAGMENTS = ("timestamp", "fetched_at", "created_at",
                                 "published_at", "last_eval", "last_auto_resume",
-                                "_last_state_save")
+                                "_last_state_save", "datetime")
     if depth > 10:
         return None
     if isinstance(obj, dict):
@@ -1009,6 +1009,8 @@ def _normalize_for_hash(obj, depth=0):
         for k, v in obj.items():
             key_str = str(k).lower()
             if any(frag in key_str for frag in _VOLATILE_KEY_FRAGMENTS):
+                continue
+            if key_str == "time" or key_str.endswith("_time") or key_str.startswith("time_"):
                 continue
             result[k] = _normalize_for_hash(v, depth + 1)
         return result
