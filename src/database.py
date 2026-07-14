@@ -116,9 +116,13 @@ class _SqliteConnectionWrapper:
     A finalizer is registered to ensure the underlying SQLite connection is
     closed when the thread dies and the thread-local wrapper is garbage collected.
     """
+    _all_wrappers = weakref.WeakSet()
+
     def __init__(self, conn):
         self._conn = conn
+        self._closed = False
         self._finalizer = weakref.finalize(self, self._close_conn, conn)
+        _SqliteConnectionWrapper._all_wrappers.add(self)
 
     @staticmethod
     def _close_conn(conn):
@@ -134,6 +138,18 @@ class _SqliteConnectionWrapper:
         # Do not close the persistent thread-local connection during normal operation.
         # The finalizer handles cleanup when the thread dies.
         pass
+
+    def force_close(self):
+        """Explicitly close the underlying connection and clear the thread-local reference."""
+        if self._closed:
+            return
+        self._closed = True
+        self._finalizer()  # runs _close_conn, which closes the sqlite connection
+        # Clear the thread-local attribute if it still points to this wrapper.
+        # This only works when called from the owning thread; cross-thread closure
+        # is handled by the _closed check in get_connection().
+        if getattr(_sqlite_local, 'connection', None) is self:
+            del _sqlite_local.connection
 
     def commit(self):
         self._conn.commit()
@@ -156,12 +172,17 @@ def get_connection():
         conn = _pg_pool.getconn()
         return _PgConnectionWrapper(conn, _pg_pool)
     else:
-        if not hasattr(_sqlite_local, 'connection'):
-            os.makedirs(os.path.dirname(settings.DATABASE_PATH), exist_ok=True)
-            conn = sqlite3.connect(settings.DATABASE_PATH, timeout=30)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            _sqlite_local.connection = _SqliteConnectionWrapper(conn)
+        if hasattr(_sqlite_local, 'connection'):
+            wrapper = _sqlite_local.connection
+            if wrapper._closed:
+                del _sqlite_local.connection
+            else:
+                return wrapper
+        os.makedirs(os.path.dirname(settings.DATABASE_PATH), exist_ok=True)
+        conn = sqlite3.connect(settings.DATABASE_PATH, timeout=30)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        _sqlite_local.connection = _SqliteConnectionWrapper(conn)
         return _sqlite_local.connection
 
 
@@ -183,6 +204,17 @@ def get_connection_ctx():
     finally:
         if _backend == "postgresql":
             conn.close()
+
+
+def close_all_sqlite_connections():
+    """Force-close all active SQLite connections across all threads.
+
+    Useful when the database file needs to be replaced (e.g., during a reset
+    or migration). After calling this, each thread will automatically create
+    a fresh connection on its next get_connection() call.
+    """
+    for wrapper in list(_SqliteConnectionWrapper._all_wrappers):
+        wrapper.force_close()
 
 
 def _normalize_symbol(symbol: str) -> str:
