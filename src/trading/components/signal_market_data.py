@@ -40,41 +40,42 @@ class SignalMarketDataFetcher:
         symbol_inds = batch_inds.get(symbol, {})
 
         for tf in settings.OHLCV_TIMEFRAMES:
-            if tf in ohlcv_data and ohlcv_data[tf]:
-                candles = ohlcv_data[tf]
-                multi_tf_raw_candles[tf] = candles
-                ind = symbol_inds.get(tf)
-                if ind:
-                    # --- Staleness check: recompute if indicators are older than 2× the candle interval ---
-                    ind_ts = ind.get("_indicator_timestamp", None)
-                    latest_candle_ts = candles[-1][0] if candles else None
-                    if ind_ts is not None and latest_candle_ts is not None:
-                        tf_ms = engine._timeframe_to_ms(tf)
-                        staleness = latest_candle_ts - ind_ts
-                        if staleness > 4 * tf_ms:
-                            logger.info(
-                                f"Indicators for {symbol} {tf} are severely stale "
-                                f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
-                                f"gap={staleness}ms > {4 * tf_ms}ms). Blocking for recomputation."
-                            )
-                            # Block and await recomputation, then use the fresh indicators
-                            updated_ind = await engine._market_data_manager.compute_and_store_indicators(
-                                symbol, tf, candles
-                            )
-                            if updated_ind:
-                                ind = updated_ind
-                        elif staleness > 2 * tf_ms:
-                            logger.info(
-                                f"Indicators for {symbol} {tf} are stale "
-                                f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
-                                f"gap={staleness}ms > {2 * tf_ms}ms). Scheduling background recomputation."
-                            )
-                            # Schedule background recomputation — don't block the evaluation loop.
-                            asyncio.create_task(
-                                engine._market_data_manager.compute_and_store_indicators(symbol, tf, candles)
-                            )
+            ind = symbol_inds.get(tf)
+            if tf == assigned_tf:
+                if tf in ohlcv_data and ohlcv_data[tf]:
+                    candles = ohlcv_data[tf]
+                    multi_tf_raw_candles[tf] = candles
+                    if ind:
+                        # --- Staleness check: recompute if indicators are older than 2× the candle interval ---
+                        ind_ts = ind.get("_indicator_timestamp", None)
+                        latest_candle_ts = candles[-1][0] if candles else None
+                        if ind_ts is not None and latest_candle_ts is not None:
+                            tf_ms = engine._timeframe_to_ms(tf)
+                            staleness = latest_candle_ts - ind_ts
+                            if staleness > 4 * tf_ms:
+                                logger.info(
+                                    f"Indicators for {symbol} {tf} are severely stale "
+                                    f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
+                                    f"gap={staleness}ms > {4 * tf_ms}ms). Blocking for recomputation."
+                                )
+                                # Block and await recomputation, then use the fresh indicators
+                                updated_ind = await engine._market_data_manager.compute_and_store_indicators(
+                                    symbol, tf, candles
+                                )
+                                if updated_ind:
+                                    ind = updated_ind
+                            elif staleness > 2 * tf_ms:
+                                logger.info(
+                                    f"Indicators for {symbol} {tf} are stale "
+                                    f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
+                                    f"gap={staleness}ms > {2 * tf_ms}ms). Scheduling background recomputation."
+                                )
+                                # Schedule background recomputation — don't block the evaluation loop.
+                                asyncio.create_task(
+                                    engine._market_data_manager.compute_and_store_indicators(symbol, tf, candles)
+                                )
                     multi_tf_indicators[tf] = ind
-                    if tf == assigned_tf:
+                    if ind:
                         atr = ind.get('atr')
                         rsi = ind.get('rsi')
                         macd = ind.get('macd')
@@ -99,6 +100,10 @@ class SignalMarketDataFetcher:
                         parabolic_sar = ind.get('parabolic_sar')
                         keltner_channels = ind.get('keltner_channels')
                         vwap = compute_vwap(candles)
+            else:
+                # For non-assigned timeframes, use precomputed indicators without staleness check
+                if ind:
+                    multi_tf_indicators[tf] = ind
 
         # Compute daily pivot points from the 1d timeframe (if available)
         if "1d" in multi_tf_raw_candles and len(multi_tf_raw_candles["1d"]) >= 2:

@@ -750,27 +750,18 @@ class SignalProcessor:
         balance = await engine._get_cached_balance()
         base_balance = balance.get(engine.base_currency, 0.0)
 
-        # --- Fetch OHLCV from database ---
+        # --- Fetch OHLCV from database (only for assigned timeframe) ---
         ohlcv_data = {}
         if settings.OHLCV_TIMEFRAMES:
-            async def _fetch_ohlcv_tf(tf):
-                try:
-                    if tf == assigned_tf:
-                        since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
-                        tf_seconds = engine._timeframe_to_seconds(tf)
-                        hist_limit = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds) + 100
-                        db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, since_ms=since_ms, limit=hist_limit)
-                    else:
-                        db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, limit=100)
-                    if db_candles:
-                        return tf, [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
-                except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
-                    logger.debug(f"DB OHLCV fetch failed for {symbol} {tf}: {type(e).__name__}: {e}")
-                return tf, None
-            ohlcv_results = await asyncio.gather(*[_fetch_ohlcv_tf(tf) for tf in settings.OHLCV_TIMEFRAMES])
-            for tf, candles in ohlcv_results:
-                if candles:
-                    ohlcv_data[tf] = candles
+            try:
+                since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+                tf_seconds = engine._timeframe_to_seconds(assigned_tf)
+                hist_limit = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds) + 100
+                db_candles = await asyncio.to_thread(get_ohlcv, symbol, assigned_tf, since_ms=since_ms, limit=hist_limit)
+                if db_candles:
+                    ohlcv_data[assigned_tf] = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+                logger.debug(f"DB OHLCV fetch failed for {symbol} {assigned_tf}: {type(e).__name__}: {e}")
 
         # --- Compute multi-TF indicators ---
         _inds = await self.market_data_fetcher.compute_multi_tf_indicators(symbol, ohlcv_data, assigned_tf)
