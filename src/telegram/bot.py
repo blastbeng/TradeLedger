@@ -914,10 +914,18 @@ class TelegramBot:
                 if not articles:
                     return None
                 try:
-                    news_data = await get_cached_news_summary(symbol)
+                    news_data = await asyncio.wait_for(
+                        get_cached_news_summary(symbol),
+                        timeout=30.0
+                    )
                     summary_text = html.escape(news_data["summary"])
                     provider = news_data.get("provider", "")
                     model = news_data.get("model", "")
+                except asyncio.TimeoutError:
+                    logger.warning(f"get_cached_news_summary timed out for {symbol}")
+                    summary_text = ""
+                    provider = ""
+                    model = ""
                 except Exception:
                     summary_text = ""
                     provider = ""
@@ -1301,10 +1309,13 @@ class TelegramBot:
 
                         chunks = self._split_text(message)
                         for chunk in chunks:
-                            await self.app.bot.send_message(
-                                chat_id=int(chat_id),
-                                text=chunk,
-                                disable_notification=disable_notification,
+                            await asyncio.wait_for(
+                                self.app.bot.send_message(
+                                    chat_id=int(chat_id),
+                                    text=chunk,
+                                    disable_notification=disable_notification,
+                                ),
+                                timeout=15.0
                             )
                         logger.debug(f"Notification sent successfully (silent={disable_notification}).")
                         break
