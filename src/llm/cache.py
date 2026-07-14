@@ -85,6 +85,17 @@ def _split_and_merge_prompt(
         logger.warning("Max split/merge depth reached. Truncating prompt.")
         return prompt[:max_input_tokens * 4]  # 4 chars per token approx
 
+    # Extract output format instructions from the end of the prompt
+    # to preserve them verbatim in the merged result.  Without this,
+    # summarization condenses the exact JSON schema into a generic
+    # description, and the LLM may return free-form text instead of
+    # valid JSON.
+    output_format_section = ""
+    json_marker_idx = prompt.rfind("Return JSON:")
+    if json_marker_idx != -1:
+        output_format_section = prompt[json_marker_idx:]
+        prompt = prompt[:json_marker_idx].rstrip()
+
     logger.warning(
         "Prompt size exceeds context window limit (%d tokens). Splitting and merging (depth=%d)...",
         max_input_tokens, depth
@@ -219,7 +230,12 @@ def _split_and_merge_prompt(
         "Use this information to make your trading decision.\n\n"
         + "\n\n".join(summaries)
     )
-    
+
+    # Append the preserved output format section verbatim so the LLM
+    # always receives the exact JSON schema instructions.
+    if output_format_section:
+        merged_prompt = merged_prompt + "\n\n" + output_format_section
+
     # If the merged prompt is still too large, split and merge again
     if estimate_tokens(merged_prompt) > max_input_tokens:
         logger.warning("Merged prompt still exceeds limit (%d tokens). Splitting again...", estimate_tokens(merged_prompt))
