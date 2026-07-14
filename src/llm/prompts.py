@@ -343,13 +343,16 @@ Maximum symbols to trade: {max_symbols}
     if market_regime:
         prompt += f"Regime:{market_regime}\n"
 
-    if session_info:
-        prompt += f"UTC:{session_info['utc_hour']}h({session_info['session']})\n"
-    if minutes_to_market_close is not None:
-        if minutes_to_market_close > 0:
-            prompt += f"MktClose:{minutes_to_market_close}min\n"
-        else:
-            prompt += "Mkt:Closed\n"
+    long_term_timeframes = {"1w", "1M", "3M", "6M", "1Y", "3Y", "5Y"}
+    is_long_term = assigned_timeframe in long_term_timeframes
+    if not is_long_term:
+        if session_info:
+            prompt += f"UTC:{session_info['utc_hour']}h({session_info['session']})\n"
+        if minutes_to_market_close is not None:
+            if minutes_to_market_close > 0:
+                prompt += f"MktClose:{minutes_to_market_close}min\n"
+            else:
+                prompt += "Mkt:Closed\n"
     if current_strategy_interval_seconds is not None:
         prompt += f"EvalInt:{current_strategy_interval_seconds}s\n"
 
@@ -451,8 +454,6 @@ Maximum symbols to trade: {max_symbols}
             prompt += f"Max hold: {max_hold:.0f}s total, {int(remaining // 60)}m remaining\n"
 
     # --- Multi-timeframe OHLCV summary and indicators ---
-    long_term_timeframes = {"1w", "1M", "3M", "6M", "1Y", "3Y", "5Y"}
-    is_long_term = assigned_timeframe in long_term_timeframes
     if multi_tf_raw_candles:
         tf_summaries = []
         for tf in settings.OHLCV_TIMEFRAMES:
@@ -592,23 +593,25 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"\n**HistBT({symbol}):** {_to_toon(_ht_compact)}\n"
 
     # --- Aggregate sentiment from news articles ---
-    if aggregate_sentiment:
-        prompt += (
-            f"\nNewsSentiment: compound={aggregate_sentiment['avg_compound']:+.2f}, "
-            f"pos={aggregate_sentiment['positive']}, neg={aggregate_sentiment['negative']}, "
-            f"neu={aggregate_sentiment['neutral']}, total={aggregate_sentiment['total_articles']} articles\n"
-        )
+    if not is_long_term:
+        if aggregate_sentiment:
+            prompt += (
+                f"\nNewsSentiment: compound={aggregate_sentiment['avg_compound']:+.2f}, "
+                f"pos={aggregate_sentiment['positive']}, neg={aggregate_sentiment['negative']}, "
+                f"neu={aggregate_sentiment['neutral']}, total={aggregate_sentiment['total_articles']} articles\n"
+            )
 
-    # --- Aggregate sentiment summary ---
-    if sentiment_trend is not None:
-        prompt += f"\nSentimentTrend: {sentiment_trend:+.2f} (delta compound since last cycle)\n"
-        prompt += "Set `news_sentiment_exit_threshold` (-1.0 to 0.0, MUST be negative) to auto-exit on negative sentiment. Omit to disable.\n"
-    if volume_trend is not None:
-        prompt += f"\nVolTrend: {volume_trend:.2f}x (current vs avg). >2.0=spike, <1.0=low.\n"
-    if market_breadth:
-        prompt += f"\nMktBreadth: {market_breadth['positive_pct']}% pos ({market_breadth['positive_count']}/{market_breadth['total_count']})\n"
-    if full_market_breadth:
-        prompt += f"FullMktBreadth: {full_market_breadth['positive_pct']}% pos ({full_market_breadth['positive_count']}/{full_market_breadth['total_count']})\n"
+        # --- Aggregate sentiment summary ---
+        if sentiment_trend is not None:
+            prompt += f"\nSentimentTrend: {sentiment_trend:+.2f} (delta compound since last cycle)\n"
+            prompt += "Set `news_sentiment_exit_threshold` (-1.0 to 0.0, MUST be negative) to auto-exit on negative sentiment. Omit to disable.\n"
+        if volume_trend is not None:
+            prompt += f"\nVolTrend: {volume_trend:.2f}x (current vs avg). >2.0=spike, <1.0=low.\n"
+    if not is_long_term:
+        if market_breadth:
+            prompt += f"\nMktBreadth: {market_breadth['positive_pct']}% pos ({market_breadth['positive_count']}/{market_breadth['total_count']})\n"
+        if full_market_breadth:
+            prompt += f"FullMktBreadth: {full_market_breadth['positive_pct']}% pos ({full_market_breadth['positive_count']}/{full_market_breadth['total_count']})\n"
     if donchian_channels:
         prompt += (
             f"\nDonchian ({assigned_timeframe or 'default'}): "
@@ -626,13 +629,14 @@ Maximum symbols to trade: {max_symbols}
         prompt += f"\nPivots: P={daily_pivot_points['pivot']:.2f},R1={daily_pivot_points['r1']:.2f},R2={daily_pivot_points['r2']:.2f},S1={daily_pivot_points['s1']:.2f},S2={daily_pivot_points['s2']:.2f}\n"
 
     # --- News section (detailed articles) ---
-    news_section = data.news_section
-    if not news_section and settings.NEWS_ENABLED:
-        articles = get_news_for_symbol(symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
-        if articles:
-            news_section = "Recent news articles for this stock:\n" + _format_news_for_prompt(articles)
-    if news_section:
-        prompt += f"\n{news_section}\n"
+    if not is_long_term:
+        news_section = data.news_section
+        if not news_section and settings.NEWS_ENABLED:
+            articles = get_news_for_symbol(symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
+            if articles:
+                news_section = "Recent news articles for this stock:\n" + _format_news_for_prompt(articles)
+        if news_section:
+            prompt += f"\n{news_section}\n"
 
     # Cap the validator minimum for long timeframes to avoid rejecting reasonable hold times
     if assigned_timeframe in ("3Y", "5Y"):
@@ -719,11 +723,12 @@ Maximum symbols to trade: {max_symbols}
         prompt += (
             f"\n**🧹 DUST ({dust_sweep_review_count}/{max_dust_sweep_reviews}):** SELL to sweep dust or HOLD to keep.\n"
         )
-    if symbol_event and symbol_event.get("has_event"):
-        prompt += f"\n**⚠️ Event({symbol}):** {', '.join(symbol_event.get('event_types', []))} [{', '.join(symbol_event.get('keywords', [])[:5])}]\n"
-    if upcoming_earnings:
-        prompt += f"\n**📅 Upcoming Earnings:** {upcoming_earnings}\n"
-        prompt += "Warning: Earnings can cause significant price gaps. Consider reducing position size or tightening stop loss.\n"
+    if not is_long_term:
+        if symbol_event and symbol_event.get("has_event"):
+            prompt += f"\n**⚠️ Event({symbol}):** {', '.join(symbol_event.get('event_types', []))} [{', '.join(symbol_event.get('keywords', [])[:5])}]\n"
+        if upcoming_earnings:
+            prompt += f"\n**📅 Upcoming Earnings:** {upcoming_earnings}\n"
+            prompt += "Warning: Earnings can cause significant price gaps. Consider reducing position size or tightening stop loss.\n"
     return prompt
 
 
