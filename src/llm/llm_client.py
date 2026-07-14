@@ -41,7 +41,7 @@ def _execute_llm_request(
             data = _do_request()
             
             result = parse_response_fn(data)
-            logger.info("LLM response (%s): %.500s...", result["content"])
+            logger.info("LLM response (%s): %.500s...", provider, result["content"])
             return result
         except httpx.HTTPStatusError as e:
             if e.response.status_code not in (429, 500, 502, 503, 504):
