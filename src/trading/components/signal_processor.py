@@ -392,7 +392,7 @@ class SignalProcessor:
             sentiment_trend_val=ctx.get("sentiment_trend_val"), timeframe_seconds=engine._timeframe_to_seconds(ctx.get("assigned_tf", "1d")),
             has_position=has_position, is_critical=is_critical,
         ):
-            logger.info(f"Skipping LLM for {symbol}: market unchanged, no strong signals.")
+            logger.info(f"Skipping LLM for {symbol}: market unchanged, no strong signals.", extra={"event": "skip_llm_unchanged", "symbol": symbol})
             async with self.shared_state._eval_state_lock:
                 self.shared_state._force_eval.pop(symbol, None)
             # Do NOT update the snapshot timestamp here — it must only be updated
@@ -559,9 +559,9 @@ class SignalProcessor:
         except asyncio.CancelledError:
             raise
         except (ConnectionError, TimeoutError, OSError) as e:
-            logger.warning(f"Network/IO error processing {symbol}: {type(e).__name__}: {e}")
+            logger.warning(f"Network/IO error processing {symbol}: {type(e).__name__}: {e}", extra={"event": "process_symbol_error", "symbol": symbol, "error_type": type(e).__name__})
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
-            logger.error(f"Data/logic error processing {symbol}: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(f"Data/logic error processing {symbol}: {type(e).__name__}: {e}", exc_info=True, extra={"event": "process_symbol_error", "symbol": symbol, "error_type": type(e).__name__})
             await self.engine._record_unexpected_exception("process_symbol", e)
             if engine.notifier:
                 await engine.notifier.send_notification(
@@ -569,7 +569,7 @@ class SignalProcessor:
                     summary={"symbol": symbol, "action": "ERROR", "reason": str(e)[:200]}
                 )
         except Exception as e:
-            logger.error(f"Error processing {symbol}: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(f"Error processing {symbol}: {type(e).__name__}: {e}", exc_info=True, extra={"event": "process_symbol_error", "symbol": symbol, "error_type": type(e).__name__})
             await self.engine._record_unexpected_exception("process_symbol", e)
             if engine.notifier:
                 await engine.notifier.send_notification(
@@ -1341,7 +1341,8 @@ class SignalProcessor:
         # --- Staleness guard: skip symbols with stale quotes (unless we have an open position) ---
         if not has_position and await engine._is_quote_too_stale(ticker, assigned_tf):
             logger.info(
-                f"Skipping {symbol}: quote data is too stale for timeframe {assigned_tf}."
+                f"Skipping {symbol}: quote data is too stale for timeframe {assigned_tf}.",
+                extra={"event": "skip_stale_quote", "symbol": symbol, "timeframe": assigned_tf}
             )
             stale_notify_key = f"trading:stale_quote_notify:{symbol}"
             should_notify = True
@@ -1374,7 +1375,8 @@ class SignalProcessor:
         if not has_position and (base_balance <= 0 or engine.effective_max_symbols == 0):
             logger.warning(
                 f"Skipping {symbol}: {engine.base_currency} balance={base_balance:.2f}, "
-                f"effective_max_symbols={engine.effective_max_symbols}"
+                f"effective_max_symbols={engine.effective_max_symbols}",
+                extra={"event": "skip_no_balance", "symbol": symbol, "balance": base_balance, "effective_max_symbols": engine.effective_max_symbols}
             )
             return True
 
@@ -1401,7 +1403,8 @@ class SignalProcessor:
             return False
 
         logger.info(
-            f"Skipping {symbol}: no OHLCV data – market data unavailable."
+            f"Skipping {symbol}: no OHLCV data – market data unavailable.",
+            extra={"event": "skip_no_ohlcv", "symbol": symbol}
         )
         # Find the most recent OHLCV timestamp across all timeframes
         last_data_ts = None
@@ -1604,10 +1607,10 @@ class SignalProcessor:
             # Ensure we still evaluate at least once per strategy interval
             # even if no significant changes are detected
             if now - last_time >= effective_interval:
-                logger.info(f"Forcing LLM eval for {symbol}: interval elapsed ({now - last_time:.0f}s >= {effective_interval:.0f}s)")
+                logger.info(f"Forcing LLM eval for {symbol}: interval elapsed ({now - last_time:.0f}s >= {effective_interval:.0f}s)", extra={"event": "force_llm_interval", "symbol": symbol})
                 return False
             # Otherwise, no strong signal → skip
-            logger.info(f"Skipping LLM eval for {symbol}: no significant market changes detected (rsi={rsi})")
+            logger.info(f"Skipping LLM eval for {symbol}: no significant market changes detected (rsi={rsi})", extra={"event": "skip_llm_no_changes", "symbol": symbol, "rsi": rsi})
             return True
 
         # Have an open position – skip if price far from stop/tp and indicators calm

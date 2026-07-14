@@ -74,7 +74,20 @@ class PostDecisionManager:
         """Log the decision, record it in recent_signals, and send notification."""
         engine = self.engine
 
-        logger.info(f"Decision for {data.symbol}: {validated.action} (confidence: {validated.confidence:.2f})")
+        logger.info(
+            f"Decision for {data.symbol}: {validated.action} (confidence: {validated.confidence:.2f})",
+            extra={
+                "event": "trading_decision",
+                "symbol": data.symbol,
+                "action": validated.action,
+                "confidence": validated.confidence,
+                "reasoning": validated.reasoning,
+                "strategy_type": data.signal.strategy_type,
+                "model_type": getattr(validated, 'model_type', None),
+                "llm_provider": data.llm_provider,
+                "llm_model": data.llm_model,
+            }
+        )
 
         # Store the last decision for the next prompt cycle
         params = data.signal.strategy_params
@@ -232,7 +245,7 @@ class PostDecisionManager:
         if max_hold_expired and signal.action == "HOLD":
             new_max_hold = params.get("max_hold_time_seconds") if params else None
             if new_max_hold is not None and new_max_hold > 0:
-                logger.info(f"LLM extended max hold time for {symbol} to {new_max_hold}s")
+                logger.info(f"LLM extended max hold time for {symbol} to {new_max_hold}s", extra={"event": "max_hold_extended", "symbol": symbol, "new_max_hold_seconds": new_max_hold})
                 if symbol in self.shared_state.positions:
                     async with self.shared_state._positions_lock:
                         self.shared_state.positions[symbol]["max_hold_time_seconds"] = new_max_hold
@@ -265,7 +278,8 @@ class PostDecisionManager:
             else:
                 logger.warning(
                     f"LLM returned HOLD without new max_hold_time_seconds for {symbol} "
-                    f"after max hold expiry – forcing SELL."
+                    f"after max hold expiry – forcing SELL.",
+                    extra={"event": "max_hold_expired_force_sell", "symbol": symbol}
                 )
                 if engine.notifier:
                     await engine.notifier.send_notification(
@@ -299,7 +313,8 @@ class PostDecisionManager:
             if new_stop_pct is not None and new_stop_pct > 0:
                 logger.info(
                     f"LLM decided to hold {symbol} after stop-loss trigger, "
-                    f"new stop_loss_pct={new_stop_pct:.4%}"
+                    f"new stop_loss_pct={new_stop_pct:.4%}",
+                    extra={"event": "stop_loss_adjusted_hold", "symbol": symbol, "new_stop_loss_pct": new_stop_pct}
                 )
                 if symbol in self.shared_state.positions:
                     async with self.shared_state._positions_lock:
@@ -326,7 +341,8 @@ class PostDecisionManager:
             else:
                 logger.warning(
                     f"LLM returned HOLD for {symbol} after stop-loss trigger but did not provide "
-                    f"a new stop-loss. Forcing SELL."
+                    f"a new stop-loss. Forcing SELL.",
+                    extra={"event": "stop_loss_force_sell", "symbol": symbol}
                 )
                 if engine.notifier:
                     await engine.notifier.send_notification(
@@ -359,7 +375,8 @@ class PostDecisionManager:
             if new_tp_pct is not None and new_tp_pct > 0:
                 logger.info(
                     f"LLM decided to hold {symbol} after take-profit trigger, "
-                    f"new take_profit_pct={new_tp_pct:.4%}"
+                    f"new take_profit_pct={new_tp_pct:.4%}",
+                    extra={"event": "take_profit_adjusted_hold", "symbol": symbol, "new_take_profit_pct": new_tp_pct}
                 )
                 if symbol in self.shared_state.positions:
                     async with self.shared_state._positions_lock:
@@ -385,7 +402,8 @@ class PostDecisionManager:
             else:
                 logger.warning(
                     f"LLM returned HOLD for {symbol} after take-profit trigger but did not provide "
-                    f"a new take-profit. Forcing SELL."
+                    f"a new take-profit. Forcing SELL.",
+                    extra={"event": "take_profit_force_sell", "symbol": symbol}
                 )
                 if engine.notifier:
                     await engine.notifier.send_notification(
@@ -424,7 +442,7 @@ class PostDecisionManager:
                     self.shared_state.positions[symbol].pop("_partial_tp_triggered_levels", None)
                     self.shared_state.positions[symbol]["partial_tp_levels_triggered"] = []
                     self.shared_state.positions[symbol]["partial_tp_depth_wait_start"] = {}
-                logger.info(f"LLM updated partial TP levels for {symbol}")
+                logger.info(f"LLM updated partial TP levels for {symbol}", extra={"event": "partial_tp_updated", "symbol": symbol})
                 await self.event_bus.publish(
                     "update_position_params",
                     symbol, params, signal.indicator_config, assigned_tf, current_price, atr,
@@ -437,7 +455,7 @@ class PostDecisionManager:
                     )
                 return True
             else:
-                logger.info(f"LLM did not update partial TP levels for {symbol}, executing triggered level(s)")
+                logger.info(f"LLM did not update partial TP levels for {symbol}, executing triggered level(s)", extra={"event": "partial_tp_executed", "symbol": symbol})
                 if self.shared_state.positions[symbol].get("_partial_tp_triggered_single"):
                     await self.event_bus.publish("execute_partial_tp_single", symbol, current_price, None, ticker)
                     async with self.shared_state._positions_lock:
@@ -468,7 +486,7 @@ class PostDecisionManager:
                 if self.shared_state.positions[symbol].get("_dust_keep_since") is None:
                     self.shared_state.positions[symbol]["_dust_keep_since"] = time.time()
             self.shared_state._state_dirty = True
-            logger.info(f"LLM decided to hold dust for {symbol}")
+            logger.info(f"LLM decided to hold dust for {symbol}", extra={"event": "dust_hold", "symbol": symbol})
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"🧹 {display_symbol}: LLM decided to keep dust – holding.",
@@ -479,7 +497,7 @@ class PostDecisionManager:
             async with self.shared_state._positions_lock:
                 self.shared_state.positions[symbol].pop("_dust_sweep_triggered", None)
                 self.shared_state.positions[symbol].pop("_dust_sweep_review_count", None)
-            logger.info(f"LLM decided to sell dust for {symbol}")
+            logger.info(f"LLM decided to sell dust for {symbol}", extra={"event": "dust_sell", "symbol": symbol})
             await self.event_bus.publish("sweep_dust", symbol)
             return True
 
