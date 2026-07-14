@@ -959,6 +959,41 @@ def compute_market_hash(data: dict) -> str:
     return hashlib.sha256(serialized.encode()).hexdigest()
 
 
+def _is_italian_holiday(dt) -> bool:
+    """Check if a given date is an Italian public holiday."""
+    # Fixed-date holidays
+    fixed_holidays = {
+        (1, 1), (1, 6), (4, 25), (5, 1), (6, 2),
+        (8, 15), (11, 1), (12, 8), (12, 25), (12, 26)
+    }
+    if (dt.month, dt.day) in fixed_holidays:
+        return True
+
+    # Easter Monday (depends on Easter Sunday)
+    # Simple Computus algorithm (Meeus/Jones/Butcher)
+    y = dt.year
+    a = y % 19
+    b = y // 100
+    c = y % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    
+    # Easter Monday is the day after Easter Sunday
+    if dt.month == month and dt.day == day + 1:
+        return True
+
+    return False
+
+
 def _should_use_primary_model() -> bool:
     """Check if primary models should be used based on market status.
 
@@ -971,6 +1006,9 @@ def _should_use_primary_model() -> bool:
         now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
         weekday = now_rome.weekday()
         if weekday >= 5:  # Saturday or Sunday
+            return False
+
+        if _is_italian_holiday(now_rome):
             return False
 
         rome_minutes = now_rome.hour * 60 + now_rome.minute
