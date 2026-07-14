@@ -359,6 +359,27 @@ class PauseResumeManager:
                         # Do NOT force-resume; let the LLM continue deciding
                         return
 
+                    # --- Market open check: do not force-resume if market is closed ---
+                    is_open = await engine._is_market_open()
+                    if not is_open:
+                        logger.info(
+                            f"Force-resume skipped: market is currently closed. "
+                            f"Keeping trading paused (keep count: {new_keep_count}/{max_keep})."
+                        )
+                        if engine.notifier:
+                            await engine.notifier.send_notification(
+                                f"⏸️ Force-resume skipped: market is closed. "
+                                f"Keeping trading paused ({new_keep_count}/{max_keep} consecutive keeps).",
+                                summary={
+                                    "action": "PAUSE",
+                                    "reason": "Force-resume skipped because market is closed",
+                                    "model_type": "actuator",
+                                    "llm_provider": llm_provider,
+                                    "llm_model": llm_model,
+                                }
+                            )
+                        return
+
                     logger.warning(
                         f"LLM kept trading paused {new_keep_count} times consecutively – "
                         f"forcing resume with risk multiplier {force_resume_mult}."
