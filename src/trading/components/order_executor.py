@@ -327,8 +327,8 @@ class OrderExecutor:
                         if q.get("order_id") != order_id
                     ]
 
-            pos = self.shared_state.positions.get(queued["symbol"])
-            if pos:
+            if queued["symbol"] in self.shared_state.positions:
+                pos = self.shared_state.positions[queued["symbol"]]
                 pos.pop("stop_loss_order_id", None)
                 pos.pop("take_profit_order_id", None)
                 # Place replacement exit orders for the remaining position to avoid
@@ -355,10 +355,15 @@ class OrderExecutor:
                         "stop_loss_price": pos.get("stop_loss"),
                         "take_profit_price": pos.get("take_profit"),
                     }
-                    await self.event_bus.request(
-                        "place_replacement_exit_orders_with_retry",
-                        queued["symbol"], _dummy_signal, _exit_prices, pos.get("timeframe")
-                    )
+                    # Re-verify the position still exists and has amount to avoid
+                    # orphaned orders if a concurrent risk check removed it.
+                    if queued["symbol"] not in self.shared_state.positions or self.shared_state.positions[queued["symbol"]].get("amount", 0) <= 0:
+                        logger.info(f"Position for {queued['symbol']} removed concurrently, skipping replacement exit orders.")
+                    else:
+                        await self.event_bus.request(
+                            "place_replacement_exit_orders_with_retry",
+                            queued["symbol"], _dummy_signal, _exit_prices, pos.get("timeframe")
+                        )
             # Notify user
             if engine.notifier:
                 stock_name = await self.engine._market_data_manager.get_stock_name(queued["symbol"])
