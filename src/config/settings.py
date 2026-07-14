@@ -811,36 +811,36 @@ class Settings(BaseSettings):
     LLM_WEAK_FALLBACK_PROVIDER: str = ""
 
     # OpenAI fallback settings (empty or None = use global OPENAI_FALLBACK_*)
-    OPENAI_FALLBACK_MODEL: Optional[str] = None
+    OPENAI_FALLBACK_MODEL: list[str] = []
     OPENAI_FALLBACK_BASE_URL: Optional[str] = None
     OPENAI_FALLBACK_API_KEY: Optional[str] = None
 
-    OPENAI_MIND_FALLBACK_MODEL: Optional[str] = None
+    OPENAI_MIND_FALLBACK_MODEL: list[str] = []
     OPENAI_MIND_FALLBACK_BASE_URL: Optional[str] = None
     OPENAI_MIND_FALLBACK_API_KEY: Optional[str] = None
 
-    OPENAI_ACTUATOR_FALLBACK_MODEL: Optional[str] = None
+    OPENAI_ACTUATOR_FALLBACK_MODEL: list[str] = []
     OPENAI_ACTUATOR_FALLBACK_BASE_URL: Optional[str] = None
     OPENAI_ACTUATOR_FALLBACK_API_KEY: Optional[str] = None
 
-    OPENAI_WEAK_FALLBACK_MODEL: Optional[str] = None
+    OPENAI_WEAK_FALLBACK_MODEL: list[str] = []
     OPENAI_WEAK_FALLBACK_BASE_URL: Optional[str] = None
     OPENAI_WEAK_FALLBACK_API_KEY: Optional[str] = None
 
     # Ollama fallback settings (empty or None = use global OLLAMA_FALLBACK_*)
-    OLLAMA_FALLBACK_MODEL: Optional[str] = None
+    OLLAMA_FALLBACK_MODEL: list[str] = []
     OLLAMA_FALLBACK_BASE_URL: Optional[str] = None
     OLLAMA_FALLBACK_API_KEY: Optional[str] = None
 
-    OLLAMA_MIND_FALLBACK_MODEL: Optional[str] = None
+    OLLAMA_MIND_FALLBACK_MODEL: list[str] = []
     OLLAMA_MIND_FALLBACK_BASE_URL: Optional[str] = None
     OLLAMA_MIND_FALLBACK_API_KEY: Optional[str] = None
 
-    OLLAMA_ACTUATOR_FALLBACK_MODEL: Optional[str] = None
+    OLLAMA_ACTUATOR_FALLBACK_MODEL: list[str] = []
     OLLAMA_ACTUATOR_FALLBACK_BASE_URL: Optional[str] = None
     OLLAMA_ACTUATOR_FALLBACK_API_KEY: Optional[str] = None
 
-    OLLAMA_WEAK_FALLBACK_MODEL: Optional[str] = None
+    OLLAMA_WEAK_FALLBACK_MODEL: list[str] = []
     OLLAMA_WEAK_FALLBACK_BASE_URL: Optional[str] = None
     OLLAMA_WEAK_FALLBACK_API_KEY: Optional[str] = None
 

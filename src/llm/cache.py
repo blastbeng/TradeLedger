@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import math
+import random
 import time
 import concurrent.futures
 from datetime import datetime, timezone
@@ -549,17 +550,26 @@ def _execute_fallback_call(
 
     if fallback_provider == "openai":
         if model_type == "mind":
-            fallback_model = settings.OPENAI_MIND_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fallback_models = settings.OPENAI_MIND_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
             fallback_base_url = settings.OPENAI_MIND_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
             fallback_api_key = settings.OPENAI_MIND_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
         elif model_type == "weak":
-            fallback_model = settings.OPENAI_WEAK_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fallback_models = settings.OPENAI_WEAK_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
             fallback_base_url = settings.OPENAI_WEAK_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
             fallback_api_key = settings.OPENAI_WEAK_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
         else:
-            fallback_model = settings.OPENAI_ACTUATOR_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fallback_models = settings.OPENAI_ACTUATOR_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
             fallback_base_url = settings.OPENAI_ACTUATOR_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
             fallback_api_key = settings.OPENAI_ACTUATOR_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
+
+        if not fallback_models:
+            logger.warning(
+                "Fallback provider is openai but no fallback models configured. "
+                "Original error: %s", e
+            )
+            raise
+
+        fallback_model = random.choice(fallback_models)
 
         if fallback_api_key or fallback_base_url:
             logger.warning(
@@ -649,17 +659,26 @@ def _execute_fallback_call(
             raise
     elif fallback_provider == "ollama":
         if model_type == "mind":
-            fallback_model = settings.OLLAMA_MIND_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fallback_models = settings.OLLAMA_MIND_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
             fallback_base_url = settings.OLLAMA_MIND_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
             fallback_api_key = settings.OLLAMA_MIND_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
         elif model_type == "weak":
-            fallback_model = settings.OLLAMA_WEAK_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fallback_models = settings.OLLAMA_WEAK_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
             fallback_base_url = settings.OLLAMA_WEAK_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
             fallback_api_key = settings.OLLAMA_WEAK_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
         else:
-            fallback_model = settings.OLLAMA_ACTUATOR_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fallback_models = settings.OLLAMA_ACTUATOR_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
             fallback_base_url = settings.OLLAMA_ACTUATOR_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
             fallback_api_key = settings.OLLAMA_ACTUATOR_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
+
+        if not fallback_models:
+            logger.warning(
+                "Fallback provider is ollama but no fallback models configured. "
+                "Original error: %s", e
+            )
+            raise
+
+        fallback_model = random.choice(fallback_models)
 
         if fallback_base_url:
             logger.warning(
@@ -1108,31 +1127,35 @@ def _get_fallback_provider_config(model_type: str):
 
     if fallback_provider == "openai":
         if model_type == "mind":
-            fb_model = settings.OPENAI_MIND_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fb_models = settings.OPENAI_MIND_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
             fb_base_url = settings.OPENAI_MIND_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
             fb_api_key = settings.OPENAI_MIND_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
         elif model_type == "weak":
-            fb_model = settings.OPENAI_WEAK_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fb_models = settings.OPENAI_WEAK_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
             fb_base_url = settings.OPENAI_WEAK_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
             fb_api_key = settings.OPENAI_WEAK_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
         else:
-            fb_model = settings.OPENAI_ACTUATOR_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fb_models = settings.OPENAI_ACTUATOR_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
             fb_base_url = settings.OPENAI_ACTUATOR_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
             fb_api_key = settings.OPENAI_ACTUATOR_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
     else:  # ollama
         if model_type == "mind":
-            fb_model = settings.OLLAMA_MIND_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fb_models = settings.OLLAMA_MIND_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
             fb_base_url = settings.OLLAMA_MIND_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
             fb_api_key = settings.OLLAMA_MIND_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
         elif model_type == "weak":
-            fb_model = settings.OLLAMA_WEAK_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fb_models = settings.OLLAMA_WEAK_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
             fb_base_url = settings.OLLAMA_WEAK_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
             fb_api_key = settings.OLLAMA_WEAK_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
         else:
-            fb_model = settings.OLLAMA_ACTUATOR_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fb_models = settings.OLLAMA_ACTUATOR_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
             fb_base_url = settings.OLLAMA_ACTUATOR_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
             fb_api_key = settings.OLLAMA_ACTUATOR_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
 
+    if not fb_models:
+        return (None, None, None, None)
+
+    fb_model = random.choice(fb_models)
     return (fallback_provider, fb_model, fb_base_url, fb_api_key)
 
 
