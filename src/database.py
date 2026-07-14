@@ -1727,21 +1727,26 @@ def get_indicators_for_symbols(symbols: List[str], timeframes: List[str]) -> Dic
         return {}
     conn = get_connection()
     try:
-        # Build a flat list of parameters for the IN clause
-        pairs = []
-        for sym in symbols:
-            for tf in timeframes:
-                pairs.append(sym)
-                pairs.append(tf)
-        placeholders = ",".join(["(%s,%s)"] * (len(symbols) * len(timeframes)))
-        sql = _adapt_sql(
-            f"""
-            SELECT symbol, timeframe, indicators_json, timestamp
-            FROM indicators
-            WHERE (symbol, timeframe) IN ({placeholders})
-            """
-        )
-        rows = conn.execute(sql, pairs).fetchall()
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                """
+                SELECT symbol, timeframe, indicators_json, timestamp
+                FROM indicators
+                WHERE symbol = ANY(%s) AND timeframe = ANY(%s)
+                """
+            )
+            rows = conn.execute(sql, (symbols, timeframes)).fetchall()
+        else:
+            sym_placeholders = ",".join(["?" for _ in symbols])
+            tf_placeholders = ",".join(["?" for _ in timeframes])
+            sql = _adapt_sql(
+                f"""
+                SELECT symbol, timeframe, indicators_json, timestamp
+                FROM indicators
+                WHERE symbol IN ({sym_placeholders}) AND timeframe IN ({tf_placeholders})
+                """
+            )
+            rows = conn.execute(sql, symbols + timeframes).fetchall()
 
         result: Dict[str, Dict[str, Dict[str, Any]]] = {s: {} for s in symbols}
         for row in rows:
