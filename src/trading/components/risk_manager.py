@@ -264,6 +264,11 @@ class RiskManager:
 
         When daily realized P&L falls below -MAX_DAILY_LOSS_PCT * initial_balance,
         trading is paused until the next calendar day (auto-resume at midnight market timezone).
+
+        Note: This check only considers realized P&L from closed sell trades.
+        Unrealized losses from open positions are intentionally excluded.
+        For medium/long-term trading, intraday drawdowns on open positions
+        are expected and should not trigger a daily trading halt.
         """
         engine = self.engine
         if not is_redis_available():
