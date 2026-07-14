@@ -38,6 +38,36 @@ def _extract_first_json(text: str) -> dict:
     raise ValueError("No valid JSON object found in LLM response")
 
 
+def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tuple[str, str]:
+    """
+    Validates semantic quality of LLM parameters to prevent bad trades.
+    Returns potentially modified (action, reasoning).
+    """
+    issues = []
+    
+    stop_loss = params.get("stop_loss_pct")
+    take_profit = params.get("take_profit_pct")
+    
+    if action == "BUY":
+        if stop_loss is not None:
+            if stop_loss <= 0 or stop_loss > 0.5:
+                issues.append(f"unreasonable stop_loss_pct ({stop_loss})")
+        
+        if take_profit is not None:
+            if take_profit <= 0 or take_profit > 5.0:
+                issues.append(f"unreasonable take_profit_pct ({take_profit})")
+                
+        if stop_loss is not None and take_profit is not None:
+            if take_profit < stop_loss:
+                issues.append(f"take_profit_pct ({take_profit}) < stop_loss_pct ({stop_loss})")
+                
+    if issues:
+        new_reasoning = f"{reasoning} [Semantic validation failed: {'; '.join(issues)}. Downgraded to HOLD.]"
+        return "HOLD", new_reasoning
+        
+    return action, reasoning
+
+
 def parse_llm_response(response_text: str) -> Signal:
     """
     Parse the LLM's JSON response into a Signal.
@@ -263,6 +293,9 @@ def parse_llm_response(response_text: str) -> Signal:
             bec = backtest_variants[0].get("backtest_entry_config")
             if isinstance(bec, dict):
                 params["backtest_entry_config"] = bec
+
+        # --- Semantic quality validation ---
+        action, reasoning = _validate_semantic_quality(action, params, reasoning)
 
         return Signal(
             action=action,
