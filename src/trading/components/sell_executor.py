@@ -7,7 +7,7 @@ import asyncio
 import logging
 import time
 from dataclasses import asdict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
 from src.database import insert_trade
@@ -26,6 +26,134 @@ class SellExecutor:
         self._order_executor = order_executor
         self.event_bus.subscribe("handle_queued_sell_fill", self.handle_queued_sell_fill)
         self.event_bus.subscribe("execute_sell", self.execute_sell)
+
+    def _compute_pnl_and_proration(
+        self, pos: Optional[Dict[str, Any]], sold_amount: float, net_quote: float
+    ) -> Tuple[float, float, float, float]:
+        """Compute prorated cost basis and realized P&L for a sell.
+        Returns: (realized_pnl, prorated_cost_basis, cost_basis, net_base)
+        """
+        if not pos:
+            return 0.0, 0.0, 0.0, 0.0
+        cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
+        net_base = pos.get("net_base", pos["amount"])
+        prorated_cost_basis = cost_basis * (sold_amount / net_base) if net_base > 0 else 0.0
+        realized_pnl = net_quote - prorated_cost_basis
+        return realized_pnl, prorated_cost_basis, cost_basis, net_base
+
+    async def _update_or_remove_position(
+        self, symbol: str, pos: Dict[str, Any], sold_amount: float,
+        prorated_cost_basis: float, cost_basis: float, net_base: float,
+        cleanup_callback=None
+    ) -> bool:
+        """Update or remove position after a sell. Returns True if position was removed."""
+        remaining_amount = pos["amount"] - sold_amount
+        remaining_cost_basis = cost_basis - prorated_cost_basis
+        remaining_net_base = net_base - sold_amount
+
+        await self.event_bus.request("cancel_exit_orders", symbol)
+
+        if remaining_amount <= 0 or remaining_net_base <= 0:
+            async with self.shared_state._positions_lock:
+                self.shared_state.positions.pop(symbol, None)
+            self.shared_state._strategy_intervals.pop(symbol, None)
+            self.shared_state._last_strategy_eval.pop(symbol, None)
+            self.shared_state._last_decisions.pop(symbol, None)
+            self.shared_state._pending_entries.pop(symbol, None)
+            await self.event_bus.publish("remove_symbol_if_paused", symbol)
+            return True
+        else:
+            async with self.shared_state._positions_lock:
+                self.shared_state.positions[symbol]["amount"] = remaining_amount
+                self.shared_state.positions[symbol]["cost_basis"] = remaining_cost_basis
+                self.shared_state.positions[symbol]["net_base"] = remaining_net_base
+                self.shared_state.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
+                if cleanup_callback:
+                    cleanup_callback(symbol, self.shared_state.positions[symbol])
+
+            from src.strategies.base import Signal
+            dummy_params = {
+                "trailing_take_profit": self.shared_state.positions[symbol].get("trailing_take_profit", False),
+                "partial_take_profit_levels": self.shared_state.positions[symbol].get("partial_take_profit_levels"),
+                "partial_take_profit_pct": self.shared_state.positions[symbol].get("partial_take_profit_pct"),
+            }
+            dummy_signal = Signal(
+                action="BUY",
+                confidence=1.0,
+                reasoning="Replacing exit orders after partial sell",
+                stop_loss_order_type=self.shared_state.positions[symbol].get("stop_loss_order_type"),
+                stop_loss_stop_price=self.shared_state.positions[symbol].get("stop_loss"),
+                stop_loss_limit_price=None,
+                take_profit_order_type=self.shared_state.positions[symbol].get("take_profit_order_type"),
+                take_profit_limit_price=self.shared_state.positions[symbol].get("take_profit"),
+                strategy_params=dummy_params,
+            )
+            exit_prices = {
+                "stop_loss_price": self.shared_state.positions[symbol].get("stop_loss"),
+                "take_profit_price": self.shared_state.positions[symbol].get("take_profit"),
+            }
+            await self.event_bus.request(
+                "place_replacement_exit_orders_with_retry",
+                symbol, dummy_signal, exit_prices, self.shared_state.positions[symbol].get("timeframe")
+            )
+            return False
+
+    async def _send_sell_notification(
+        self, symbol: str, pos: Optional[Dict[str, Any]], order_dict: Dict[str, Any],
+        exit_reason: Optional[str], signal_dict: Dict[str, Any], is_partial: bool,
+        level_label: Optional[str] = None, extra_summary: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Format and send the SELL notification."""
+        engine = self.engine
+        reason_labels = {
+            "manual_sell": "🖐️ Manual",
+            "manual_sell_all": "🖐️ Manual (Sell All)",
+            "stop_loss": "⛔ Stop-Loss",
+            "take_profit": "✅ Take-Profit",
+            "max_hold_time": "⏰ Max Hold Time",
+            "news_sentiment_exit": "📰 News Sentiment",
+            "force_close": "🔻 Force Close",
+            "external_sell": "🔄 External Sell",
+            "delisted": "🗑️ Delisted",
+            "dust_sweep": "🧹 Dust Sweep",
+        }
+        reason_label = reason_labels.get(exit_reason, exit_reason) if exit_reason else None
+        reason_str = f" [{reason_label}]" if reason_label else ""
+
+        stock_name = await engine._market_data_manager.get_stock_name(symbol)
+        tf = order_dict.get("timeframe") or (pos.get("timeframe") if pos else None)
+        display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
+
+        partial_str = " (partial)" if is_partial else ""
+        label_prefix = level_label or "SELL"
+        sell_msg = f"🔴 {label_prefix}{reason_str}{partial_str} {display_symbol}: {order_dict['amount']:.6f} @ {order_dict['price']:.4f}"
+
+        if pos:
+            cb = order_dict.get("cost_basis", 0.0)
+            pnl_pct = (order_dict["realized_pnl"] / cb * 100) if cb > 0 else 0.0
+            sell_msg += f" | P&L: {order_dict['realized_pnl']:+.4f} ({pnl_pct:+.2f}%)"
+
+        sell_summary = {
+            "symbol": symbol,
+            "action": "SELL",
+            "price": order_dict["price"],
+            "amount": order_dict["amount"],
+            "confidence": signal_dict.get('confidence', 0.0),
+            "reason": (signal_dict.get('reasoning', '') or '')[:200],
+            "exit_reason": exit_reason,
+            "realized_pnl": order_dict["realized_pnl"],
+            "strategy_type": signal_dict.get('strategy_type'),
+        }
+        if signal_dict.get('model_type'):
+            sell_summary["model_type"] = signal_dict.get('model_type')
+        if signal_dict.get('llm_provider'):
+            sell_summary["llm_provider"] = signal_dict.get('llm_provider')
+        if signal_dict.get('llm_model'):
+            sell_summary["llm_model"] = signal_dict.get('llm_model')
+        if extra_summary:
+            sell_summary.update(extra_summary)
+
+        await engine.notifier.send_notification(sell_msg, summary=sell_summary)
 
     async def execute_sell(
         self,
@@ -320,24 +448,15 @@ class SellExecutor:
             fee = order.get('fee', {})
             fee_cost = float(fee.get('cost', 0.0) or 0.0)
             fee_currency = fee.get('currency', '')
-
             net_quote = order['cost'] - (fee_cost if fee_currency == quote else 0.0)
             is_partial_sell = order.get("remaining_order_id") is not None
-            if pos:
-                cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
-                net_base = pos.get("net_base", pos["amount"])
-                if is_partial_sell and net_base > 0:
-                    # Prorate cost basis for the sold portion
-                    prorated_cost_basis = cost_basis * (order['amount'] / net_base)
-                    realized_pnl = net_quote - prorated_cost_basis
-                    order["cost_basis"] = prorated_cost_basis
-                else:
-                    realized_pnl = net_quote - cost_basis
-                    order["cost_basis"] = cost_basis
-            else:
-                realized_pnl = 0.0
-                order["cost_basis"] = 0.0
+
+            realized_pnl, prorated_cost_basis, cost_basis, net_base = self._compute_pnl_and_proration(
+                pos, order['amount'], net_quote
+            )
             order["realized_pnl"] = realized_pnl
+            order["cost_basis"] = prorated_cost_basis if is_partial_sell else cost_basis
+
             # Track loss timestamps for cooldown
             if realized_pnl < 0:
                 self.shared_state.last_loss_time[symbol] = time.time()
@@ -352,8 +471,7 @@ class SellExecutor:
             order["exit_reason"] = exit_reason
             order["exit_price"] = order["price"]
             if pos and "timestamp" in pos:
-                hold_time = (order["timestamp"] - pos["timestamp"]) / 1000.0
-                order["hold_time_seconds"] = hold_time
+                order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
             else:
                 order["hold_time_seconds"] = None
             # Clear any stop-loss review flags
@@ -362,50 +480,9 @@ class SellExecutor:
                 pos.pop("_stop_loss_review_count", None)
 
             if is_partial_sell and pos:
-                # Partial sell: reduce position instead of removing it
-                remaining_amount = pos["amount"] - order['amount']
-                remaining_cost_basis = cost_basis - order["cost_basis"]
-                remaining_net_base = net_base - order['amount']
-                if remaining_amount <= 0 or remaining_net_base <= 0:
-                    async with self.shared_state._positions_lock:
-                        self.shared_state.positions.pop(symbol, None)
-                    self.shared_state._strategy_intervals.pop(symbol, None)
-                    self.shared_state._last_strategy_eval.pop(symbol, None)
-                    self.shared_state._last_decisions.pop(symbol, None)
-                    self.shared_state._pending_entries.pop(symbol, None)
-                    await self.event_bus.publish("remove_symbol_if_paused", symbol)
-                else:
-                    async with self.shared_state._positions_lock:
-                        self.shared_state.positions[symbol]["amount"] = remaining_amount
-                        self.shared_state.positions[symbol]["cost_basis"] = remaining_cost_basis
-                        self.shared_state.positions[symbol]["net_base"] = remaining_net_base
-                        self.shared_state.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
-                    # Place replacement exit orders for the remaining position
-                    from src.strategies.base import Signal as _Signal
-                    _dummy_params = {
-                        "trailing_take_profit": self.shared_state.positions[symbol].get("trailing_take_profit", False),
-                        "partial_take_profit_levels": self.shared_state.positions[symbol].get("partial_take_profit_levels"),
-                        "partial_take_profit_pct": self.shared_state.positions[symbol].get("partial_take_profit_pct"),
-                    }
-                    _dummy_signal = _Signal(
-                        action="BUY",
-                        confidence=1.0,
-                        reasoning="Replacing exit orders after partial sell",
-                        stop_loss_order_type=self.shared_state.positions[symbol].get("stop_loss_order_type"),
-                        stop_loss_stop_price=self.shared_state.positions[symbol].get("stop_loss"),
-                        stop_loss_limit_price=None,
-                        take_profit_order_type=self.shared_state.positions[symbol].get("take_profit_order_type"),
-                        take_profit_limit_price=self.shared_state.positions[symbol].get("take_profit"),
-                        strategy_params=_dummy_params,
-                    )
-                    _exit_prices = {
-                        "stop_loss_price": self.shared_state.positions[symbol].get("stop_loss"),
-                        "take_profit_price": self.shared_state.positions[symbol].get("take_profit"),
-                    }
-                    await self.event_bus.request(
-                        "place_replacement_exit_orders_with_retry",
-                        symbol, _dummy_signal, _exit_prices, self.shared_state.positions[symbol].get("timeframe")
-                    )
+                await self._update_or_remove_position(
+                    symbol, pos, order['amount'], prorated_cost_basis, cost_basis, net_base
+                )
             else:
                 # Full sell: remove position
                 async with self.shared_state._positions_lock:
@@ -415,57 +492,16 @@ class SellExecutor:
                 self.shared_state._last_decisions.pop(symbol, None)
                 self.shared_state._pending_entries.pop(symbol, None)
                 await self.event_bus.publish("remove_symbol_if_paused", symbol)
+
             self.shared_state.append_trade(order, settings.MAX_TRADES_IN_MEMORY)
             self.shared_state._balance_cache = None
             await asyncio.to_thread(insert_trade, order)
             await self.event_bus.publish("save_state", force=True)
             self.shared_state._portfolio_exposure_cache = None
+
             if engine.notifier:
-                # Human-readable labels for common exit reasons
-                reason_labels = {
-                    "manual_sell": "🖐️ Manual",
-                    "manual_sell_all": "🖐️ Manual (Sell All)",
-                    "stop_loss": "⛔ Stop-Loss",
-                    "take_profit": "✅ Take-Profit",
-                    "max_hold_time": "⏰ Max Hold Time",
-                    "news_sentiment_exit": "📰 News Sentiment",
-                    "force_close": "🔻 Force Close",
-                    "external_sell": "🔄 External Sell",
-                    "delisted": "🗑️ Delisted",
-                }
-                reason_label = reason_labels.get(exit_reason, exit_reason) if exit_reason else None
-                reason_str = f" [{reason_label}]" if reason_label else ""
-                # --- Format symbol for notification ---
-                stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                # Use the timeframe from the position or the passed parameter
-                tf = timeframe or (pos.get("timeframe") if pos else None)
-                display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
-                partial_str = " (partial)" if is_partial_sell else ""
-                sell_msg = f"🔴 SELL{reason_str}{partial_str} {display_symbol}: {order['amount']:.6f} @ {order['price']:.4f}"
-                # Add profit/loss info
-                if pos:
-                    pnl_pct = (realized_pnl / order["cost_basis"] * 100) if order["cost_basis"] > 0 else 0.0
-                    sell_msg += f" | P&L: {realized_pnl:+.4f} ({pnl_pct:+.2f}%)"
-                sell_summary = {
-                    "symbol": symbol,
-                    "action": "SELL",
-                    "price": order["price"],
-                    "amount": order["amount"],
-                    "confidence": signal.confidence,
-                    "reason": signal.reasoning[:200],
-                    "exit_reason": exit_reason,
-                    "realized_pnl": realized_pnl,
-                    "strategy_type": signal.strategy_type,
-                }
-                if signal.model_type:
-                    sell_summary["model_type"] = signal.model_type
-                if signal.llm_provider:
-                    sell_summary["llm_provider"] = signal.llm_provider
-                if signal.llm_model:
-                    sell_summary["llm_model"] = signal.llm_model
-                await engine.notifier.send_notification(
-                    sell_msg,
-                    summary=sell_summary,
+                await self._send_sell_notification(
+                    symbol, pos, order, exit_reason, asdict(signal), is_partial_sell
                 )
         except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
             logger.error(f"Sell order failed for {symbol}: {type(e).__name__}: {e}")
@@ -510,81 +546,30 @@ class SellExecutor:
             trade_dict['hold_time_seconds'] = None
 
         if partial and pos:
-            # Prorated cost basis for the sold portion
-            cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
-            net_base = pos.get("net_base", pos["amount"])
-            prorated_cost_basis = cost_basis * (trade_dict['amount'] / net_base) if net_base > 0 else 0.0
-            realized_pnl = net_quote - prorated_cost_basis
+            net_quote = trade_dict['cost'] - (fee_cost if fee_currency == quote else 0.0)
+            realized_pnl, prorated_cost_basis, cost_basis, net_base = self._compute_pnl_and_proration(
+                pos, trade_dict['amount'], net_quote
+            )
             trade_dict['realized_pnl'] = realized_pnl
             trade_dict['cost_basis'] = prorated_cost_basis
 
-            # Update position
-            remaining_amount = pos["amount"] - trade_dict['amount']
-            remaining_cost_basis = cost_basis - prorated_cost_basis
-            remaining_net_base = net_base - trade_dict['amount']
-
-            # Cancel old exit orders because quantity changed
-            await self.event_bus.request("cancel_exit_orders", symbol)
-
-            if remaining_amount <= 0 or remaining_net_base <= 0:
-                # Position fully closed via partial fills
+            removed = await self._update_or_remove_position(
+                symbol, pos, trade_dict['amount'], prorated_cost_basis, cost_basis, net_base
+            )
+            if removed:
                 if realized_pnl < 0:
                     self.shared_state.last_loss_time[symbol] = time.time()
                     self.shared_state.cooldown_durations[symbol] = pos.get("cooldown_after_loss_seconds", 0)
                 pos.pop("_stop_loss_triggered", None)
                 pos.pop("_stop_loss_review_count", None)
-                async with self.shared_state._positions_lock:
-                    self.shared_state.positions.pop(symbol, None)
-                self.shared_state._strategy_intervals.pop(symbol, None)
-                self.shared_state._last_strategy_eval.pop(symbol, None)
-                self.shared_state._last_decisions.pop(symbol, None)
-                self.shared_state._pending_entries.pop(symbol, None)
-                await self.event_bus.publish("remove_symbol_if_paused", symbol)
-            else:
-                async with self.shared_state._positions_lock:
-                    self.shared_state.positions[symbol]["amount"] = remaining_amount
-                    self.shared_state.positions[symbol]["cost_basis"] = remaining_cost_basis
-                    self.shared_state.positions[symbol]["net_base"] = remaining_net_base
-                    self.shared_state.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
-
-                # Replace exit orders for the remaining amount
-                from src.strategies.base import Signal
-                async with self.shared_state._positions_lock:
-                    dummy_params = {
-                        "trailing_take_profit": self.shared_state.positions[symbol].get("trailing_take_profit", False),
-                        "partial_take_profit_levels": self.shared_state.positions[symbol].get("partial_take_profit_levels"),
-                        "partial_take_profit_pct": self.shared_state.positions[symbol].get("partial_take_profit_pct"),
-                    }
-                    dummy_signal = Signal(
-                        action="BUY",
-                        confidence=1.0,
-                        reasoning="Replacing exit orders after partial sell fill",
-                        stop_loss_order_type=self.shared_state.positions[symbol].get("stop_loss_order_type"),
-                        stop_loss_stop_price=self.shared_state.positions[symbol].get("stop_loss"),
-                        stop_loss_limit_price=None,
-                        take_profit_order_type=self.shared_state.positions[symbol].get("take_profit_order_type"),
-                        take_profit_limit_price=self.shared_state.positions[symbol].get("take_profit"),
-                        strategy_params=dummy_params,
-                    )
-                    exit_prices = {
-                        "stop_loss_price": self.shared_state.positions[symbol].get("stop_loss"),
-                        "take_profit_price": self.shared_state.positions[symbol].get("take_profit"),
-                    }
-                await self.event_bus.request(
-                    "place_replacement_exit_orders_with_retry",
-                    symbol, dummy_signal, exit_prices, self.shared_state.positions[symbol].get("timeframe")
-                )
         else:
-            # Full fill (non-partial) – original logic
-            # Cancel any remaining exit orders before removing the position
             await self.event_bus.request("cancel_exit_orders", symbol)
-            if pos:
-                cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
-                realized_pnl = net_quote - cost_basis
-            else:
-                realized_pnl = 0.0
+            net_quote = trade_dict['cost'] - (fee_cost if fee_currency == quote else 0.0)
+            realized_pnl, prorated_cost_basis, cost_basis, net_base = self._compute_pnl_and_proration(
+                pos, trade_dict['amount'], net_quote
+            )
             trade_dict['realized_pnl'] = realized_pnl
-            trade_dict['cost_basis'] = pos.get("cost_basis", 0.0) if pos else 0.0
+            trade_dict['cost_basis'] = cost_basis if pos else 0.0
             if realized_pnl < 0:
                 self.shared_state.last_loss_time[symbol] = time.time()
                 self.shared_state.cooldown_durations[symbol] = pos.get("cooldown_after_loss_seconds", 0) if pos else 0
@@ -605,46 +590,9 @@ class SellExecutor:
         await self.event_bus.publish("save_state", force=True)
         self.shared_state._portfolio_exposure_cache = None
         if engine.notifier:
-            reason_labels = {
-                "manual_sell": "🖐️ Manual",
-                "manual_sell_all": "🖐️ Manual (Sell All)",
-                "stop_loss": "⛔ Stop-Loss",
-                "take_profit": "✅ Take-Profit",
-                "max_hold_time": "⏰ Max Hold Time",
-                "news_sentiment_exit": "📰 News Sentiment",
-                "force_close": "🔻 Force Close",
-                "external_sell": "🔄 External Sell",
-                "delisted": "🗑️ Delisted",
-            }
-            reason_label = reason_labels.get(exit_reason, exit_reason) if exit_reason else None
-            reason_str = f" [{reason_label}]" if reason_label else ""
-            stock_name = await engine._market_data_manager.get_stock_name(symbol)
-            tf = queued.get('timeframe') or (pos.get("timeframe") if pos else None)
-            display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
-            partial_str = " (partial)" if partial else ""
-            sell_msg = f"🔴 SELL{reason_str}{partial_str} {display_symbol}: {trade_dict['amount']:.6f} @ {trade_dict['price']:.4f}"
-            if pos:
-                cb = trade_dict.get('cost_basis', 0.0) or (pos.get("cost_basis", pos["amount"] * pos["price"]) if pos else 0.0)
-                pnl_pct = (realized_pnl / cb * 100) if cb > 0 else 0.0
-                sell_msg += f" | P&L: {realized_pnl:+.4f} ({pnl_pct:+.2f}%)"
-            sell_summary = {
-                "symbol": symbol,
-                "action": "SELL",
-                "price": trade_dict["price"],
-                "amount": trade_dict["amount"],
-                "confidence": signal_dict.get('confidence', 0.0),
-                "reason": (signal_dict.get('reasoning', '') or '')[:200],
-                "exit_reason": exit_reason,
-                "realized_pnl": realized_pnl,
-                "strategy_type": signal_dict.get('strategy_type'),
-            }
-            if signal_dict.get('model_type'):
-                sell_summary["model_type"] = signal_dict.get('model_type')
-            if signal_dict.get('llm_provider'):
-                sell_summary["llm_provider"] = signal_dict.get('llm_provider')
-            if signal_dict.get('llm_model'):
-                sell_summary["llm_model"] = signal_dict.get('llm_model')
-            await engine.notifier.send_notification(sell_msg, summary=sell_summary)
+            await self._send_sell_notification(
+                symbol, pos, trade_dict, exit_reason, signal_dict, partial
+            )
 
     async def sweep_dust(self, symbol: str):
         """Sell any remaining dust balance of a symbol after a partial sell."""
@@ -826,12 +774,11 @@ class SellExecutor:
             fee = order.get("fee", {})
             fee_cost = float(fee.get("cost", 0.0) or 0.0)
             fee_currency = fee.get("currency", "")
-            cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
-            net_base = pos.get("net_base", pos["amount"])
-            prorated_cost_basis = cost_basis * (filled_amount / net_base) if net_base > 0 else 0.0
             net_quote = order["cost"] - (fee_cost if fee_currency == quote else 0.0)
-            realized_pnl = net_quote - prorated_cost_basis
 
+            realized_pnl, prorated_cost_basis, cost_basis, net_base = self._compute_pnl_and_proration(
+                pos, filled_amount, net_quote
+            )
             order["realized_pnl"] = realized_pnl
             order["cost_basis"] = prorated_cost_basis
             order["exit_reason"] = exit_reason
@@ -840,58 +787,15 @@ class SellExecutor:
             if "timestamp" in pos:
                 order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
 
-            remaining_amount = pos["amount"] - filled_amount
-            remaining_cost_basis = cost_basis - prorated_cost_basis
-            remaining_net_base = net_base - filled_amount
+            removed = await self._update_or_remove_position(
+                symbol, pos, filled_amount, prorated_cost_basis, cost_basis, net_base, cleanup_callback
+            )
 
-            await self.event_bus.request("cancel_exit_orders", symbol)
-
-            if remaining_amount <= 0 or remaining_net_base <= 0:
-                async with self.shared_state._positions_lock:
-                    self.shared_state.positions.pop(symbol, None)
-                self.shared_state._strategy_intervals.pop(symbol, None)
-                self.shared_state._last_strategy_eval.pop(symbol, None)
-                self.shared_state._pending_entries.pop(symbol, None)
-                await self.event_bus.publish("remove_symbol_if_paused", symbol)
-            else:
-                async with self.shared_state._positions_lock:
-                    self.shared_state.positions[symbol]["amount"] = remaining_amount
-                    self.shared_state.positions[symbol]["cost_basis"] = remaining_cost_basis
-                    self.shared_state.positions[symbol]["net_base"] = remaining_net_base
-                    self.shared_state.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
-                    if cleanup_callback:
-                        cleanup_callback(symbol, self.shared_state.positions[symbol])
-
-                is_dust = min_amount is not None and remaining_amount < float(min_amount)
+            if not removed:
+                is_dust = min_amount is not None and (pos["amount"] - filled_amount) < float(min_amount)
                 if is_dust:
-                    logger.info(f"Remaining {remaining_amount:.6f} {base} is dust after {level_label} for {symbol}, sweeping.")
+                    logger.info(f"Remaining {pos['amount'] - filled_amount:.6f} {base} is dust after {level_label} for {symbol}, sweeping.")
                     await self.sweep_dust(symbol)
-                else:
-                    from src.strategies.base import Signal
-                    dummy_params = {
-                        "trailing_take_profit": self.shared_state.positions[symbol].get("trailing_take_profit", False),
-                        "partial_take_profit_levels": self.shared_state.positions[symbol].get("partial_take_profit_levels"),
-                        "partial_take_profit_pct": self.shared_state.positions[symbol].get("partial_take_profit_pct"),
-                    }
-                    dummy_signal = Signal(
-                        action="BUY",
-                        confidence=1.0,
-                        reasoning=f"Replacing exit orders after {level_label}",
-                        stop_loss_order_type=self.shared_state.positions[symbol].get("stop_loss_order_type"),
-                        stop_loss_stop_price=self.shared_state.positions[symbol].get("stop_loss"),
-                        stop_loss_limit_price=None,
-                        take_profit_order_type=self.shared_state.positions[symbol].get("take_profit_order_type"),
-                        take_profit_limit_price=self.shared_state.positions[symbol].get("take_profit"),
-                        strategy_params=dummy_params,
-                    )
-                    exit_prices = {
-                        "stop_loss_price": self.shared_state.positions[symbol].get("stop_loss"),
-                        "take_profit_price": self.shared_state.positions[symbol].get("take_profit"),
-                    }
-                    await self.event_bus.request(
-                        "place_replacement_exit_orders_with_retry",
-                        symbol, dummy_signal, exit_prices, self.shared_state.positions[symbol].get("timeframe")
-                    )
 
             self.shared_state.append_trade(order, settings.MAX_TRADES_IN_MEMORY)
             await asyncio.to_thread(insert_trade, order)
@@ -899,22 +803,8 @@ class SellExecutor:
             self.shared_state._portfolio_exposure_cache = None
 
             if engine.notifier:
-                pnl_pct = (realized_pnl / prorated_cost_basis * 100) if prorated_cost_basis > 0 else 0.0
-                summary = {
-                    "symbol": symbol,
-                    "action": "SELL",
-                    "reason": level_label,
-                    "amount": filled_amount,
-                    "price": fill_price,
-                    "realized_pnl": realized_pnl,
-                    "exit_reason": exit_reason,
-                }
-                if extra_summary:
-                    summary.update(extra_summary)
-                await engine.notifier.send_notification(
-                    f"🔸 {level_label} SELL {display_symbol}: {filled_amount:.6f} @ {fill_price:.4f} "
-                    f"| P&L: {realized_pnl:+.4f} ({pnl_pct:+.2f}%)",
-                    summary=summary,
+                await self._send_sell_notification(
+                    symbol, pos, order, exit_reason, {}, False, level_label, extra_summary
                 )
             return True
         except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
