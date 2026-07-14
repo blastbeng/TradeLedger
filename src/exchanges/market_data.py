@@ -167,6 +167,59 @@ def _enrich_quotes_with_btp_details(result: Dict[str, Dict[str, Any]], symbols: 
         logger.debug(f"Failed to enrich BTP details in quotes: {type(e).__name__}: {e}")
 
 
+def _finalize_and_persist_quotes(
+    result: Dict[str, Dict[str, Any]],
+    symbols: List[str],
+    redis_client
+) -> None:
+    """Finalize quote data (change_24h, bid/ask fallback), persist to Redis/DB, and enrich BTP details."""
+    # --- Final pass: compute change_24h and percentage from DB daily candles ---
+    symbols_with_price = [
+        sym for sym in result
+        if result[sym].get("last") is not None and result[sym]["last"] > 0
+    ]
+    if symbols_with_price:
+        try:
+            db_change_data = get_latest_close_prices(symbols_with_price)
+            for sym in symbols_with_price:
+                if sym in db_change_data:
+                    prev_close = db_change_data[sym].get("prev_close")
+                    if prev_close and prev_close > 0:
+                        last = result[sym]["last"]
+                        if result[sym].get("change_24h") is None:
+                            result[sym]["change_24h"] = last - prev_close
+                        if result[sym].get("percentage") is None:
+                            result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
+        except (RuntimeError, ValueError, KeyError, OSError) as e:
+            logger.warning(f"Failed to recompute change_24h/percentage from DB candles: {type(e).__name__}: {e}")
+
+    # Ensure bid/ask are never NULL when last is available — use last as fallback
+    for sym in result:
+        if result[sym].get("last") is not None and result[sym]["last"] > 0:
+            if result[sym].get("bid") is None:
+                result[sym]["bid"] = result[sym]["last"]
+            if result[sym].get("ask") is None:
+                result[sym]["ask"] = result[sym]["last"]
+
+    # Persist to Redis and database
+    quotes_to_save = {}
+    for sym, q in result.items():
+        if q.get("last") is not None:
+            try:
+                redis_client.set(f"quote:{sym}", json.dumps(q), ex=300)
+            except (TypeError, ValueError, RuntimeError):
+                pass
+            quotes_to_save[sym] = q
+    if quotes_to_save:
+        try:
+            save_quotes_batch(quotes_to_save)
+        except (RuntimeError, ValueError, OSError) as e:
+            logger.warning(f"Failed to save quotes to database: {type(e).__name__}: {e}")
+
+    # Enrich BTP quotes with maturity, coupon, and name from discovered_symbols
+    _enrich_quotes_with_btp_details(result, symbols)
+
+
 def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     """Fetch latest quotes for a list of symbols using yfinance batch download.
 
@@ -436,54 +489,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 result[sym]["source"] = "borsa_italiana"
                 logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
 
-    # --- Final pass: compute change_24h and percentage from DB daily candles ---
-    # For ALL symbols with a valid last price, recompute change_24h and percentage
-    # from the latest 2 daily candles in the database. This ensures consistency
-    # and eliminates NULL values when daily candle data is available.
-    # DB candles are the primary source; yfinance is only a fallback for the last price.
-    symbols_with_price = [
-        sym for sym in result
-        if result[sym].get("last") is not None and result[sym]["last"] > 0
-    ]
-    if symbols_with_price:
-        try:
-            db_change_data = get_latest_close_prices(symbols_with_price)
-            for sym in symbols_with_price:
-                if sym in db_change_data:
-                    prev_close = db_change_data[sym].get("prev_close")
-                    if prev_close and prev_close > 0:
-                        last = result[sym]["last"]
-                        if result[sym].get("change_24h") is None:
-                            result[sym]["change_24h"] = last - prev_close
-                        if result[sym].get("percentage") is None:
-                            result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
-        except (RuntimeError, ValueError, KeyError, OSError) as e:
-            logger.warning(f"Failed to recompute change_24h/percentage from DB candles: {type(e).__name__}: {e}")
-
-    # Ensure bid/ask are never NULL when last is available — use last as fallback
-    for sym in result:
-        if result[sym].get("last") is not None and result[sym]["last"] > 0:
-            if result[sym].get("bid") is None:
-                result[sym]["bid"] = result[sym]["last"]
-            if result[sym].get("ask") is None:
-                result[sym]["ask"] = result[sym]["last"]
-
-    # Cache the result per-symbol in Redis (5 minutes) and save to database
-    quotes_to_save = {}
-    for sym in result:
-        if result[sym].get("last") is not None:
-            try:
-                redis_client.set(f"quote:{sym}", json.dumps(result[sym]), ex=300)
-            except (TypeError, ValueError, RuntimeError):
-                pass
-            quotes_to_save[sym] = result[sym]
-
-    # Save to database for persistence (survives Redis flushes and yfinance outages)
-    if quotes_to_save:
-        try:
-            save_quotes_batch(quotes_to_save)
-        except (RuntimeError, ValueError, OSError) as e:
-            logger.warning(f"Failed to save quotes to database: {e}")
+    # Finalize, persist, and enrich quotes
+    _finalize_and_persist_quotes(result, symbols, redis_client)
 
     # Summary log
     valid_count = sum(1 for sym in missing_symbols if result[sym].get("last") is not None)
@@ -500,9 +507,6 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
             )
     else:
         logger.debug(f"get_quotes: {valid_count}/{len(missing_symbols)} symbols got valid prices")
-
-    # Enrich BTP quotes with maturity, coupon, and name from discovered_symbols
-    _enrich_quotes_with_btp_details(result, symbols)
 
     return result
 
@@ -597,59 +601,8 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         result[sym] = {"last": None, "bid": None, "ask": None, "volume": None,
                        "change_24h": None, "percentage": None, "quoteVolume": None}
 
-    # --- Final pass: compute change_24h and percentage from DB daily candles ---
-    # For ALL symbols with a valid last price, recompute change_24h and percentage
-    # from the latest 2 daily candles in the database. This ensures consistency
-    # and eliminates NULL values when daily candle data is available.
-    # DB candles are the primary source; yfinance is only a fallback for the last price.
-    symbols_with_price = [
-        sym for sym in result
-        if result[sym].get("last") is not None and result[sym]["last"] > 0
-    ]
-    if symbols_with_price:
-        try:
-            db_change_data = get_latest_close_prices(symbols_with_price)
-            for sym in symbols_with_price:
-                if sym in db_change_data:
-                    prev_close = db_change_data[sym].get("prev_close")
-                    if prev_close and prev_close > 0:
-                        last = result[sym]["last"]
-                        if result[sym].get("change_24h") is None:
-                            result[sym]["change_24h"] = last - prev_close
-                        if result[sym].get("percentage") is None:
-                            result[sym]["percentage"] = round((last - prev_close) / prev_close * 100, 4)
-        except (RuntimeError, ValueError, KeyError, OSError) as e:
-            logger.warning(f"get_quotes_cached: Failed to recompute change_24h/percentage from DB candles: {type(e).__name__}: {e}")
-
-    # Ensure bid/ask are never NULL when last is available — use last as fallback
-    for sym in result:
-        if result[sym].get("last") is not None and result[sym]["last"] > 0:
-            if result[sym].get("bid") is None:
-                result[sym]["bid"] = result[sym]["last"]
-            if result[sym].get("ask") is None:
-                result[sym]["ask"] = result[sym]["last"]
-
-    # Persist DB close prices to Redis and the quotes table so that other
-    # consumers (web dashboard, re-evaluation, etc.) can access them even
-    # when yfinance is unavailable.  This is a fast batch DB write, not a
-    # network call, so it respects the "no network calls" contract of this
-    # function.
-    quotes_to_save = {}
-    for sym, q in result.items():
-        if q.get("last") is not None:
-            try:
-                redis_client.set(f"quote:{sym}", json.dumps(q), ex=300)
-            except (TypeError, ValueError, RuntimeError):
-                pass
-            quotes_to_save[sym] = q
-    if quotes_to_save:
-        try:
-            save_quotes_batch(quotes_to_save)
-        except (RuntimeError, ValueError, OSError) as e:
-            logger.warning(f"get_quotes_cached: Failed to save DB close prices to quotes table: {type(e).__name__}: {e}")
-
-    # Enrich BTP quotes with maturity, coupon, and name from discovered_symbols
-    _enrich_quotes_with_btp_details(result, symbols)
+    # Finalize, persist, and enrich quotes
+    _finalize_and_persist_quotes(result, symbols, redis_client)
 
     return result
 
