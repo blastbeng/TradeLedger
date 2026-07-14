@@ -287,28 +287,28 @@ class ReevalDataFetcher:
         - ohlcv_data: {symbol: {timeframe: [[ts, o, h, l, c, v], ...]}}
         - available_timeframes_by_symbol: {symbol: [tf1, tf2, ...]}
         """
-        # Limit OHLCV fetch to top 50 symbols to avoid excessive DB queries
-        MAX_OHLCV_SYMBOLS = 50
-        fetch_symbols = sorted_by_vol[:MAX_OHLCV_SYMBOLS]
-
         ohlcv_data: Dict[str, Dict[str, List[List]]] = {}
         if settings.OHLCV_TIMEFRAMES:
+            # Use a semaphore to limit concurrent DB queries and avoid exhausting the connection pool
+            sem = asyncio.Semaphore(10)
+
             async def _fetch_ohlcv(sym: str):
-                data = {}
-                for tf in settings.OHLCV_TIMEFRAMES:
-                    try:
-                        db_candles = await asyncio.to_thread(
-                            get_ohlcv, sym, tf, limit=50
-                        )
-                        if db_candles:
-                            data[tf] = [
-                                [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                                for c in db_candles
-                            ]
-                    except Exception as e:
-                        logger.debug(f"DB OHLCV fetch failed for {sym} {tf}: {type(e).__name__}: {e}")
-                return sym, data
-            tasks = [_fetch_ohlcv(sym) for sym in fetch_symbols]
+                async with sem:
+                    data = {}
+                    for tf in settings.OHLCV_TIMEFRAMES:
+                        try:
+                            db_candles = await asyncio.to_thread(
+                                get_ohlcv, sym, tf, limit=50
+                            )
+                            if db_candles:
+                                data[tf] = [
+                                    [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
+                                    for c in db_candles
+                                ]
+                        except Exception as e:
+                            logger.debug(f"DB OHLCV fetch failed for {sym} {tf}: {type(e).__name__}: {e}")
+                    return sym, data
+            tasks = [_fetch_ohlcv(sym) for sym in sorted_by_vol]
             results = await asyncio.gather(*tasks)
             ohlcv_data = dict(results)
 
