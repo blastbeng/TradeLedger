@@ -193,6 +193,24 @@ def _finalize_and_persist_quotes(
         except (RuntimeError, ValueError, KeyError, OSError) as e:
             logger.warning(f"Failed to recompute change_24h/percentage from DB candles: {type(e).__name__}: {e}")
 
+    # Validate quotes against existing DB data to prevent bad data overwriting good data
+    if symbols_with_price:
+        try:
+            existing_quotes = get_quotes_from_db(symbols_with_price, max_age_seconds=86400)
+            for sym in symbols_with_price:
+                new_last = result[sym].get("last")
+                existing_last = existing_quotes.get(sym, {}).get("last")
+                if existing_last and existing_last > 0 and new_last and new_last > 0:
+                    deviation = abs(new_last - existing_last) / existing_last
+                    if deviation > 0.5:
+                        logger.warning(
+                            f"Quote validation failed for {sym}: new price {new_last} deviates "
+                            f"by {deviation*100:.2f}% from existing price {existing_last}. Reverting to existing."
+                        )
+                        result[sym] = existing_quotes[sym]
+        except (RuntimeError, ValueError, OSError) as e:
+            logger.warning(f"Failed to validate quotes against DB: {type(e).__name__}: {e}")
+
     # Ensure bid/ask are never NULL when last is available — use last as fallback
     for sym in result:
         if result[sym].get("last") is not None and result[sym]["last"] > 0:
