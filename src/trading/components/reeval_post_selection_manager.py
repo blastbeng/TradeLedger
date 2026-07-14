@@ -17,6 +17,15 @@ class ReevalPostSelectionManager:
         self.shared_state = engine.shared_state
         self.event_bus = event_bus
 
+    def _create_background_task(self, coro, task_name: str):
+        """Wraps a coroutine in a task with error logging."""
+        async def _safe_run():
+            try:
+                await coro
+            except Exception as e:
+                logger.exception(f"Error in background task {task_name}: {e}")
+        return asyncio.create_task(_safe_run())
+
     async def post_selection_cleanup_and_backfill(
         self,
         old_symbols: List[Dict[str, str]],
@@ -57,14 +66,20 @@ class ReevalPostSelectionManager:
                 sym = entry["symbol"]
                 tf = entry["timeframe"]
                 logger.info(f"Triggering immediate backfill for newly selected symbol {sym} ({tf})")
-                asyncio.create_task(self.event_bus.publish("backfill_new_symbol", sym, tf))
+                self._create_background_task(
+                    self.event_bus.publish("backfill_new_symbol", sym, tf),
+                    f"backfill_new_symbol:{sym}"
+                )
 
         # Also trigger immediate news fetch for newly selected symbols
         if settings.NEWS_ENABLED:
             for entry in deduped:
                 sym = entry["symbol"]
                 logger.info(f"Triggering immediate news fetch for newly selected symbol {sym}")
-                asyncio.create_task(engine._fetch_and_store_news_for_symbol(sym))
+                self._create_background_task(
+                    engine._fetch_and_store_news_for_symbol(sym),
+                    f"fetch_news:{sym}"
+                )
 
     async def cleanup_stale_state_entries(self):
         """Remove stale entries from engine state dicts and base-symbol caches.
