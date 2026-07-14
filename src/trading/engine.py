@@ -72,6 +72,7 @@ from src.trading.components.backtest_manager import BacktestManager
 from src.trading.components.market_data_manager import MarketDataManager, ClockInfo
 from src.trading.components.symbol_reevaluator import SymbolReevaluator
 from src.trading.components.shared_state import SharedState
+from src.trading.components.engine_orchestrator import EngineOrchestrator
 from src.config.config_service import UnifiedConfigService
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,7 @@ class TradingEngine:
         self._position_manager = PositionManager(self, self.event_bus)
         self._backtest_manager = BacktestManager(self, self.event_bus)
         self._market_data_manager = MarketDataManager(self, self.event_bus)
+        self._orchestrator = EngineOrchestrator(self)
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
@@ -2059,41 +2061,7 @@ class TradingEngine:
         await self._initialize_clients()
         logger.info("Trading engine started.")
         # Start background tasks
-        self._background_tasks.clear()
-        self._supervisors.clear()
-        background_factories = [
-            self._refresh_news_cache,
-            self._refresh_current_symbols_news_fast,
-            self._download_market_data_loop,
-            self._download_all_assets_data_loop,
-            self._download_all_news_loop,
-            self._risk_management_loop,
-            self._periodic_reconcile,
-            self._periodic_reevaluate,
-            self._periodic_pause_check,
-            self._periodic_pause_resume_check,
-            self._periodic_full_market_breadth,
-            self._periodic_market_condition_check,
-            self._periodic_portfolio_rebalance,
-            self._check_pending_entries,
-            self._cleanup_orphaned_orders,
-            self._process_queued_orders,
-            self._monitor_entry_signals_loop,
-            self._market_clock_monitor,
-            self._refresh_all_quotes_loop,
-            self._refresh_ticker_discovery_loop,
-            self._fetch_dividends_loop,
-            self._redis_health_check_loop,
-            self._health_check_loop,
-            self._evaluate_llm_decisions_loop,
-        ]
-        for factory in background_factories:
-            sup = TaskSupervisor(factory, name=factory.__qualname__)
-            sup.set_notifier(self.notifier)
-            task = asyncio.create_task(sup.run(), name=f"supervisor:{factory.__qualname__}")
-            task.add_done_callback(self._log_task_exception)
-            self._background_tasks.append(task)
-            self._supervisors.append(sup)
+        await self._orchestrator.start_background_tasks()
 
         while self._running:
             try:
