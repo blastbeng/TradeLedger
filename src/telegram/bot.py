@@ -205,7 +205,15 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         # Refuse to resume if the market is currently closed
-        if not await self.engine._is_market_open():
+        try:
+            is_open = await asyncio.wait_for(
+                self.engine._is_market_open(),
+                timeout=10.0
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ Market status check timed out.", reply_markup=self.keyboard)
+            return
+        if not is_open:
             await update.message.reply_text(
                 "⏸️ Cannot resume: market is currently closed.",
                 reply_markup=self.keyboard
@@ -292,7 +300,14 @@ class TelegramBot:
         msg += f"<b>🧠 LLM Weak:</b> {weak_provider} / {weak_model}\n\n"
         msg += "<b>📈 Tracked Tickers:</b>\n"
         if symbols:
-            names = await asyncio.gather(*[self.engine._market_data_manager.get_stock_name(entry["symbol"]) for entry in symbols])
+            try:
+                names = await asyncio.wait_for(
+                    asyncio.gather(*[self.engine._market_data_manager.get_stock_name(entry["symbol"]) for entry in symbols]),
+                    timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("get_stock_name timed out for tracked tickers")
+                names = [entry["symbol"] for entry in symbols]
             for i, entry in enumerate(symbols):
                 symbol = entry["symbol"]
                 tf = entry["timeframe"]
@@ -304,7 +319,14 @@ class TelegramBot:
 
         if positions:
             msg += "<b>📈 Open Positions:</b>\n"
-            pos_names = await asyncio.gather(*[self.engine._market_data_manager.get_stock_name(sym) for sym in positions.keys()])
+            try:
+                pos_names = await asyncio.wait_for(
+                    asyncio.gather(*[self.engine._market_data_manager.get_stock_name(sym) for sym in positions.keys()]),
+                    timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("get_stock_name timed out for open positions")
+                pos_names = list(positions.keys())
             for i, (sym, pos) in enumerate(positions.items()):
                 pos_tf = pos.get("timeframe")
                 pos_name = pos_names[i]
@@ -424,7 +446,14 @@ class TelegramBot:
             return
 
         msg = "<b>📈 Open Trades</b>\n\n" if open_trades else ""
-        trade_names = await asyncio.gather(*[self.engine._market_data_manager.get_stock_name(t['symbol']) for t in open_trades]) if open_trades else []
+        try:
+            trade_names = await asyncio.wait_for(
+                asyncio.gather(*[self.engine._market_data_manager.get_stock_name(t['symbol']) for t in open_trades]),
+                timeout=15.0
+            ) if open_trades else []
+        except asyncio.TimeoutError:
+            logger.warning("get_stock_name timed out for open trades")
+            trade_names = [t['symbol'] for t in open_trades]
         for idx, t in enumerate(open_trades, start=1):
             sym = t['symbol']
             trade_tf = t.get('timeframe')
@@ -526,7 +555,14 @@ class TelegramBot:
         # --- Queued Orders ---
         if queued_orders:
             msg += "\n<b>⏳ Queued Orders</b>\n\n"
-            q_names = await asyncio.gather(*[self.engine._market_data_manager.get_stock_name(q['symbol']) for q in queued_orders])
+            try:
+                q_names = await asyncio.wait_for(
+                    asyncio.gather(*[self.engine._market_data_manager.get_stock_name(q['symbol']) for q in queued_orders]),
+                    timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("get_stock_name timed out for queued orders")
+                q_names = [q['symbol'] for q in queued_orders]
             for idx, q in enumerate(queued_orders, start=1):
                 sym = q['symbol']
                 side = q['side']
@@ -607,7 +643,20 @@ class TelegramBot:
             return
 
         try:
-            perf = await self.engine.get_performance_summary()
+            perf = await asyncio.wait_for(
+                self.engine.get_performance_summary(),
+                timeout=15.0
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ Fetching performance summary timed out.", reply_markup=self.keyboard)
+            return
+        except Exception as e:
+            logger.error(f"Failed to get performance summary: {e}", exc_info=True)
+            msg = "⚠️ Could not retrieve performance summary. Please try again later."
+            await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
+            return
+
+        try:
             rows = perf.get("rows", [])
             total = perf.get("total", {})
 
@@ -618,7 +667,14 @@ class TelegramBot:
                 return
 
             msg = "<b>🚀 Performance by Symbol</b>\n\n"
-            perf_names = await asyncio.gather(*[self.engine._market_data_manager.get_stock_name(r["symbol"]) for r in rows])
+            try:
+                perf_names = await asyncio.wait_for(
+                    asyncio.gather(*[self.engine._market_data_manager.get_stock_name(r["symbol"]) for r in rows]),
+                    timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("get_stock_name timed out for performance rows")
+                perf_names = [r["symbol"] for r in rows]
             for i, r in enumerate(rows):
                 symbol = r["symbol"]
                 tf = r.get("timeframe") or "—"
@@ -832,7 +888,13 @@ class TelegramBot:
             async def _process_news_entry(entry):
                 symbol = entry["symbol"]
                 news_tf = entry.get("timeframe")
-                news_name = await self.engine._market_data_manager.get_stock_name(symbol)
+                try:
+                    news_name = await asyncio.wait_for(
+                        self.engine._market_data_manager.get_stock_name(symbol),
+                        timeout=10.0
+                    )
+                except asyncio.TimeoutError:
+                    news_name = symbol
                 news_display = self.engine._format_symbol_display(symbol, news_name, news_tf)
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                 articles = await asyncio.wait_for(
@@ -885,7 +947,13 @@ class TelegramBot:
             async def _get_news_count(entry):
                 symbol = entry["symbol"]
                 ns_tf = entry.get("timeframe")
-                ns_name = await self.engine._market_data_manager.get_stock_name(symbol)
+                try:
+                    ns_name = await asyncio.wait_for(
+                        self.engine._market_data_manager.get_stock_name(symbol),
+                        timeout=10.0
+                    )
+                except asyncio.TimeoutError:
+                    ns_name = symbol
                 ns_display = self.engine._format_symbol_display(symbol, ns_name, ns_tf)
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                 articles = await asyncio.wait_for(
@@ -905,7 +973,15 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         """Sell all open positions, or a specific one by trade ID (e.g., /sell 2)."""
-        if not await self.engine._is_market_open():
+        try:
+            is_open = await asyncio.wait_for(
+                self.engine._is_market_open(),
+                timeout=10.0
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ Market status check timed out.", reply_markup=self.keyboard)
+            return
+        if not is_open:
             await update.message.reply_text(
                 "⏸️ Cannot sell: market is currently closed.",
                 reply_markup=self.keyboard
@@ -943,7 +1019,13 @@ class TelegramBot:
 
             symbol = open_trades[trade_id - 1]['symbol']
             sell_tf = open_trades[trade_id - 1].get('timeframe')
-            sell_name = await self.engine._market_data_manager.get_stock_name(symbol)
+            try:
+                sell_name = await asyncio.wait_for(
+                    self.engine._market_data_manager.get_stock_name(symbol),
+                    timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                sell_name = symbol
             sell_display = self.engine._format_symbol_display(symbol, sell_name, sell_tf)
             await update.message.reply_text(f"🔄 Selling {sell_display}...", reply_markup=self.keyboard)
             try:
