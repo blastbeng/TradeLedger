@@ -466,7 +466,7 @@ class OrderExecutor:
         base_timeout = settings.QUEUED_ORDER_TIMEOUT_SECONDS
         if queued_tf:
             tf_secs = engine._timeframe_to_seconds(queued_tf)
-            scaled_timeout = min(max(base_timeout, int(tf_secs * 0.5)), 604_800)
+            scaled_timeout = max(base_timeout, int(tf_secs * 0.5))
         else:
             scaled_timeout = base_timeout
 
