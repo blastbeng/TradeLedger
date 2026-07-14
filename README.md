@@ -227,7 +227,6 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `WS /ws` | Real-time dashboard data |
 | `POST /api/force-backfill` | Force backfill of all discovered symbols |
 | `POST /api/reload` | Reload settings from `.env` |
-| `POST /api/restart` | Restart the application |
 | `GET /api/discovered-symbols` | Return all discovered symbols for autocomplete |
 | `GET /api/ticker/{symbol}` | Return quote for a single symbol |
 | `GET /api/tickers` | Return quotes for a comma-separated list of symbols |
