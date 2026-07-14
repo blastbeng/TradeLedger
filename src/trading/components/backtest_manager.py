@@ -297,13 +297,10 @@ class BacktestManager:
         """Run a single backtest variant with database persistence and concurrency limiting."""
         engine = self.engine
         # Build params hash for dedup lookup
-        source_candles = historical_ohlcv or raw_candles or []
-        last_ts = source_candles[-1][0] if source_candles else 0
-        candle_count = len(source_candles)
+        # Note: We intentionally exclude last_ts and candle_count from the hash
+        # to allow cache reuse across re-evaluations. The 6-hour TTL handles staleness.
         hash_payload = {
             "params": variant_params,
-            "last_ts": last_ts,
-            "candle_count": candle_count,
         }
         params_hash = hashlib.md5(
             json.dumps(hash_payload, sort_keys=True, default=str).encode()
