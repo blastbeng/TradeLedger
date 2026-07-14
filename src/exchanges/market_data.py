@@ -357,20 +357,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
 
     if not missing_symbols:
-        # All symbols got prices from cache/DB — cache and return
-        quotes_to_save = {}
-        for sym, q in result.items():
-            if q.get("last") is not None:
-                try:
-                    redis_client.set(f"quote:{sym}", json.dumps(q), ex=300)
-                except (TypeError, ValueError, RuntimeError):
-                    pass
-                quotes_to_save[sym] = q
-        if quotes_to_save:
-            try:
-                save_quotes_batch(quotes_to_save)
-            except (RuntimeError, ValueError, OSError) as e:
-                logger.warning(f"Failed to save quotes to database: {type(e).__name__}: {e}")
+        # All symbols got prices from cache/DB — finalize, persist, and return
+        _finalize_and_persist_quotes(result, symbols, redis_client)
         return result
 
     # Initialize result with None for all still-missing symbols that don't have a DB quote yet
