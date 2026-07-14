@@ -447,103 +447,108 @@ class ExitOrderManager:
         qty = pos["amount"]
         sl_ot = pos.get("stop_loss_order_type", "stop")
         new_order_id = None
-        try:
-            if sl_ot == "stop":
-                order = await asyncio.to_thread(
-                    engine.trader.create_stop_sell_order,
-                    symbol, qty, new_stop_price,
-                    time_in_force="gtc", timeout=60.0
-                )
-            else:  # stop_limit
-                # For stop_limit, use the original limit price from the old
-                # queued entry, or fall back to the new stop price.
-                limit_price = old_limit_price if old_limit_price is not None else new_stop_price
-                order = await asyncio.to_thread(
-                    engine.trader.create_stop_limit_sell_order,
-                    symbol, qty, new_stop_price, limit_price,
-                    time_in_force="gtc", timeout=60.0
-                )
-            new_order_id = order["id"]
-            _replace_queued = {
-                "symbol": symbol,
-                "side": "sell",
-                "amount": qty,
-                "original_amount": qty,
-                "limit_price": order.get("limit_price"),
-                "stop_price": order.get("stop_price"),
-                "trail_offset": order.get("trail_offset"),
-                "order_type": sl_ot,
-                "time_in_force": "gtc",
-                "signal": {},  # no original signal for replacement
-                "timeframe": pos.get("timeframe"),
-                "atr": None,
-                "exit_reason": "stop_loss",
-                "order_id": new_order_id,
-                "queued_at": time.time(),
-                "filled_qty": 0,
-                "filled_cost": 0.0,
-                "is_exit_order": True,
-                "oco_pair": pos.get("take_profit_order_id"),  # maintain OCO link
-            }
-            async with self.shared_state._queued_orders_lock:
-                self.shared_state.queued_orders.append(_replace_queued)
-                # Update OCO link on the take-profit order if it exists
-                tp_order_id = pos.get("take_profit_order_id")
-                if tp_order_id:
-                    for q in self.shared_state.queued_orders:
-                        if q.get("order_id") == tp_order_id:
-                            q["oco_pair"] = new_order_id
-                            break
-            # Update position
-            pos["stop_loss_order_id"] = new_order_id
-            logger.info(f"Placed new stop order {new_order_id} for {symbol} at {new_stop_price:.4f}")
-
-            # New order placed successfully — now safe to cancel the old one
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
             try:
-                await asyncio.to_thread(engine.trader.cancel_order, old_order_id)
-                logger.info(f"Cancelled old stop order {old_order_id} for {symbol} (replaced by {new_order_id})")
-            except (RuntimeError, ValueError, ConnectionError) as e:
-                logger.warning(f"Failed to cancel old stop order {old_order_id} (new order {new_order_id} already placed): {type(e).__name__}: {e}")
-
-            # Remove the old queued entry now that the new one is active
-            async with self.shared_state._queued_orders_lock:
-                self.shared_state.queued_orders = [
-                    q for q in self.shared_state.queued_orders
-                    if q.get("order_id") != old_order_id
-                ]
-
-            # Notify user
-            if engine.notifier:
-                stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
-                msg = f"🔄 Stop order updated for {display_symbol}: {old_stop_price:.4f} → {new_stop_price:.4f}"
-                await engine.notifier.send_notification(
-                    msg,
-                    summary={
-                        "symbol": symbol,
-                        "action": "INFO",
-                        "reason": "Stop order replaced",
-                        "old_stop_price": old_stop_price,
-                        "new_stop_price": new_stop_price,
-                    }
+                if sl_ot == "stop":
+                    order = await asyncio.to_thread(
+                        engine.trader.create_stop_sell_order,
+                        symbol, qty, new_stop_price,
+                        time_in_force="gtc", timeout=60.0
+                    )
+                else:  # stop_limit
+                    # For stop_limit, use the original limit price from the old
+                    # queued entry, or fall back to the new stop price.
+                    limit_price = old_limit_price if old_limit_price is not None else new_stop_price
+                    order = await asyncio.to_thread(
+                        engine.trader.create_stop_limit_sell_order,
+                        symbol, qty, new_stop_price, limit_price,
+                        time_in_force="gtc", timeout=60.0
+                    )
+                new_order_id = order["id"]
+                break
+            except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
+                logger.error(
+                    f"Failed to place replacement stop order for {symbol} (attempt {attempt}/{max_retries}): {type(e).__name__}: {e}."
                 )
-        except (RuntimeError, ValueError, ConnectionError, KeyError) as e:
-            logger.error(
-                f"Failed to place replacement stop order for {symbol}: {type(e).__name__}: {e}. "
-                f"Old stop order {old_order_id} remains active at the previous price."
+                if attempt == max_retries:
+                    if engine.notifier:
+                        stock_name = await engine._market_data_manager.get_stock_name(symbol)
+                        display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+                        await engine.notifier.send_notification(
+                            f"🚨 CRITICAL: Stop order replacement failed for {display_symbol} after {max_retries} attempts. Old stop order kept active at {old_stop_price:.4f}.",
+                            summary={
+                                "symbol": symbol,
+                                "action": "ERROR",
+                                "reason": f"Stop order replacement failed after retries, old order kept: {str(e)[:200]}",
+                            }
+                        )
+                    return
+                await asyncio.sleep(1.0 * attempt)
+
+        _replace_queued = {
+            "symbol": symbol,
+            "side": "sell",
+            "amount": qty,
+            "original_amount": qty,
+            "limit_price": order.get("limit_price"),
+            "stop_price": order.get("stop_price"),
+            "trail_offset": order.get("trail_offset"),
+            "order_type": sl_ot,
+            "time_in_force": "gtc",
+            "signal": {},  # no original signal for replacement
+            "timeframe": pos.get("timeframe"),
+            "atr": None,
+            "exit_reason": "stop_loss",
+            "order_id": new_order_id,
+            "queued_at": time.time(),
+            "filled_qty": 0,
+            "filled_cost": 0.0,
+            "is_exit_order": True,
+            "oco_pair": pos.get("take_profit_order_id"),  # maintain OCO link
+        }
+        async with self.shared_state._queued_orders_lock:
+            self.shared_state.queued_orders.append(_replace_queued)
+            # Update OCO link on the take-profit order if it exists
+            tp_order_id = pos.get("take_profit_order_id")
+            if tp_order_id:
+                for q in self.shared_state.queued_orders:
+                    if q.get("order_id") == tp_order_id:
+                        q["oco_pair"] = new_order_id
+                        break
+        # Update position
+        pos["stop_loss_order_id"] = new_order_id
+        logger.info(f"Placed new stop order {new_order_id} for {symbol} at {new_stop_price:.4f}")
+
+        # New order placed successfully — now safe to cancel the old one
+        try:
+            await asyncio.to_thread(engine.trader.cancel_order, old_order_id)
+            logger.info(f"Cancelled old stop order {old_order_id} for {symbol} (replaced by {new_order_id})")
+        except (RuntimeError, ValueError, ConnectionError) as e:
+            logger.warning(f"Failed to cancel old stop order {old_order_id} (new order {new_order_id} already placed): {type(e).__name__}: {e}")
+
+        # Remove the old queued entry now that the new one is active
+        async with self.shared_state._queued_orders_lock:
+            self.shared_state.queued_orders = [
+                q for q in self.shared_state.queued_orders
+                if q.get("order_id") != old_order_id
+            ]
+
+        # Notify user
+        if engine.notifier:
+            stock_name = await engine._market_data_manager.get_stock_name(symbol)
+            display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+            msg = f"🔄 Stop order updated for {display_symbol}: {old_stop_price:.4f} → {new_stop_price:.4f}"
+            await engine.notifier.send_notification(
+                msg,
+                summary={
+                    "symbol": symbol,
+                    "action": "INFO",
+                    "reason": "Stop order replaced",
+                    "old_stop_price": old_stop_price,
+                    "new_stop_price": new_stop_price,
+                }
             )
-            if engine.notifier:
-                stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
-                await engine.notifier.send_notification(
-                    f"⚠️ Stop order replacement failed for {display_symbol}: old stop order kept active.",
-                    summary={
-                        "symbol": symbol,
-                        "action": "ERROR",
-                        "reason": f"Stop order replacement failed, old order kept: {str(e)[:200]}",
-                    }
-                )
-            return
 
     async def process_native_exit_fill(
         self,
