@@ -289,6 +289,11 @@ def _is_relevant(symbol: str, title: str, summary: str, name: Optional[str] = No
     score = 0
     if sym_lower in title.lower():
         score += 2
+    elif name:
+        # If symbol not in title but name is, give equivalent credit
+        name_lower = name.lower()
+        if name_lower in title.lower() or (" " in name_lower and name_lower.split()[0] in title.lower()):
+            score += 2
     for kw in stock_keywords:
         if kw in text:
             score += 1
@@ -360,14 +365,12 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
     combined_query = base_symbol
     if name and name != base_symbol:
         combined_query = f'"{base_symbol}" OR "{name}"'
-    db_name = None
-    try:
-        from src.database import get_symbol_name_from_db
-        db_name = get_symbol_name_from_db(base_symbol)
-    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
-        pass
     if db_name and db_name != base_symbol and db_name != name:
         combined_query = f'{combined_query} OR "{db_name}"'
+
+    # Use db_name as name fallback for relevance checking if name was not provided
+    if not name and db_name:
+        name = db_name
 
     for source in enabled:
         if source == "newsapi":
