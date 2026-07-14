@@ -1007,7 +1007,7 @@ class TradingEngine:
                 if symbols_to_check:
                     await self.event_bus.request("check_risk_management", symbols_to_check)
                     await self._state_persistence.save_state()
-                    self._state_dirty = True
+                    self.shared_state._state_dirty = True
 
                 # Dynamically compute sleep interval based on the shortest timeframe
                 # among current positions. This ensures the interval is updated immediately
