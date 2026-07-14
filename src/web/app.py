@@ -86,7 +86,14 @@ async def verify_csrf(request: Request):
 
     redis = get_redis_client()
     stored_csrf = await asyncio.to_thread(redis.get, f"csrf:{session_token}")
-    if not stored_csrf or not secrets.compare_digest(stored_csrf, cookie_token):
+    if not stored_csrf:
+        raise HTTPException(status_code=403, detail="CSRF token invalid")
+    
+    # Decode bytes to string if necessary for safe comparison
+    if isinstance(stored_csrf, bytes):
+        stored_csrf = stored_csrf.decode('utf-8')
+
+    if not secrets.compare_digest(stored_csrf, cookie_token):
         raise HTTPException(status_code=403, detail="CSRF token invalid")
 
     return True
