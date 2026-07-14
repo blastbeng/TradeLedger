@@ -573,6 +573,15 @@ class ReevalDataFetcher:
                                 sym_tf_returns[sym][tf] = returns
 
             corr_symbols = list(sym_tf_returns.keys())
+            if not corr_symbols:
+                return corr_matrix
+
+            try:
+                import numpy as np
+                use_numpy = True
+            except ImportError:
+                use_numpy = False
+
             for sym_a in corr_symbols:
                 corr_matrix[sym_a] = {}
                 for sym_b in corr_symbols:
@@ -594,15 +603,25 @@ class ReevalDataFetcher:
                             min_len = min(len(ret_a), len(ret_b))
                             if min_len < 2:
                                 continue
-                            a = ret_a[-min_len:]
-                            b = ret_b[-min_len:]
-                            mean_a = sum(a) / min_len
-                            mean_b = sum(b) / min_len
-                            cov = sum((a[k] - mean_a) * (b[k] - mean_b) for k in range(min_len)) / min_len
-                            std_a = (sum((x - mean_a) ** 2 for x in a) / min_len) ** 0.5
-                            std_b = (sum((x - mean_b) ** 2 for x in b) / min_len) ** 0.5
-                            if std_a > 0 and std_b > 0:
-                                corr_matrix[sym_a][sym_b] = round(cov / (std_a * std_b), 3)
+                            
+                            if use_numpy:
+                                a = np.array(ret_a[-min_len:])
+                                b = np.array(ret_b[-min_len:])
+                                std_a = np.std(a)
+                                std_b = np.std(b)
+                                if std_a > 0 and std_b > 0:
+                                    cov = np.mean((a - np.mean(a)) * (b - np.mean(b)))
+                                    corr_matrix[sym_a][sym_b] = round(float(cov / (std_a * std_b)), 3)
+                            else:
+                                a = ret_a[-min_len:]
+                                b = ret_b[-min_len:]
+                                mean_a = sum(a) / min_len
+                                mean_b = sum(b) / min_len
+                                cov = sum((a[k] - mean_a) * (b[k] - mean_b) for k in range(min_len)) / min_len
+                                std_a = (sum((x - mean_a) ** 2 for x in a) / min_len) ** 0.5
+                                std_b = (sum((x - mean_b) ** 2 for x in b) / min_len) ** 0.5
+                                if std_a > 0 and std_b > 0:
+                                    corr_matrix[sym_a][sym_b] = round(cov / (std_a * std_b), 3)
         return corr_matrix
 
     async def get_or_compute_correlation_matrix(
@@ -610,7 +629,7 @@ class ReevalDataFetcher:
         ohlcv_data: Dict[str, Dict[str, List[List]]],
         sorted_by_vol: List[str],
     ) -> Dict[str, Dict[str, float]]:
-        """Fetch the correlation matrix from Redis cache, or compute and cache it.
+        """Fetch the correlation matrix from Redis cache, or schedule background computation.
 
         Uses a dynamic TTL: shorter (10 min) during extreme market breadth,
         longer (30 min) otherwise.
@@ -626,6 +645,22 @@ class ReevalDataFetcher:
             pass
 
         if correlation_matrix is None:
+            # Schedule background computation to avoid blocking the re-evaluation pipeline
+            asyncio.create_task(self._compute_and_cache_correlation_matrix(ohlcv_data, sorted_by_vol))
+            # Return empty matrix for this cycle; it will be available in the next cycle
+            correlation_matrix = {}
+
+        return correlation_matrix
+
+    async def _compute_and_cache_correlation_matrix(
+        self,
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+        sorted_by_vol: List[str],
+    ) -> None:
+        """Compute the correlation matrix in a background thread and cache it in Redis."""
+        engine = self.engine
+        corr_cache_key = "reeval:correlation_matrix"
+        try:
             correlation_matrix = await asyncio.to_thread(
                 self.compute_correlation_matrix, ohlcv_data, sorted_by_vol
             )
@@ -653,8 +688,8 @@ class ReevalDataFetcher:
                 )
             except Exception:
                 pass
-
-        return correlation_matrix
+        except Exception as e:
+            logger.warning(f"Background correlation matrix computation failed: {type(e).__name__}: {e}")
 
     async def compute_market_limits(
         self,
