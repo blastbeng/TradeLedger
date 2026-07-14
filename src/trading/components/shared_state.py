@@ -7,7 +7,7 @@ bidirectional coupling.
 """
 import asyncio
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -117,6 +117,15 @@ class SharedState:
                 elif trade.get("side") == "buy":
                     fee = trade.get("fee", {})
                     self._daily_buy_fees[trade_date] = self._daily_buy_fees.get(trade_date, 0.0) + float(fee.get("cost", 0.0) or 0.0)
+
+                # Prune entries older than 7 days to prevent unbounded memory growth
+                cutoff_date = (datetime.now(tz) - timedelta(days=7)).date().isoformat()
+                for d in list(self._daily_realized_pnl.keys()):
+                    if d < cutoff_date:
+                        del self._daily_realized_pnl[d]
+                for d in list(self._daily_buy_fees.keys()):
+                    if d < cutoff_date:
+                        del self._daily_buy_fees[d]
 
             if len(self.trade_history) > max_trades:
                 pruned = self.trade_history[:-max_trades]
