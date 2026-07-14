@@ -171,6 +171,7 @@ class ReevalLLMRunner:
                     min_viable_trade_amount=min_viable_amount,
                     btp_ytm=btp_ytm,
                     news_section=chunk_news_section,
+                    macro_economic_context=None,  # TODO: Fetch macro economic data
                 )
                 if chunk_sentiment_section:
                     chunk_messages[-1]["content"] += "\n" + chunk_sentiment_section
@@ -343,6 +344,7 @@ class ReevalLLMRunner:
                 available_timeframes=settings.OHLCV_TIMEFRAMES,
                 market_limits=market_limits,
                 available_timeframes_by_symbol=available_timeframes_by_symbol,
+                macro_economic_context=None,  # TODO: Fetch macro economic data
             )
             # Append per-symbol sentiment summary for symbols mentioned in chunk results
             if news_sentiment:

@@ -342,6 +342,7 @@ class SignalProcessor:
             dividend_yield=_ctx.get("dividend_yield"),
             next_ex_dividend=_ctx.get("next_ex_dividend"),
             news_section=news_section,
+            macro_economic_context=None,  # TODO: Fetch macro economic data (interest rates, inflation, GDP)
         )
         analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(prompt_data)
 
