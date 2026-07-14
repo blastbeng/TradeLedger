@@ -257,6 +257,7 @@ class BacktestManager:
                 position_size_fraction=bt_position_fraction,
                 gap_tolerance_mult=1.5,
                 on_gaps="warn",
+                timeframe_seconds=tf_secs,
             )
             backtest_stats = await asyncio.to_thread(
                 backtest_strategy,
