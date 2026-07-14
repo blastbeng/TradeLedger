@@ -186,27 +186,6 @@ class EntrySignalManager:
                 if cloud_top is not None and prev_close <= cloud_top and current_close > cloud_top:
                     return True
 
-            # 5. MACD zero-line crossover (long-term momentum shift)
-            # Require a minimum magnitude to avoid firing on tiny swings
-            # that are common on long timeframes (1M, 3M, 6M, 1Y).
-            # Use a lower threshold (0.05× ATR) so low-volatility assets
-            # like BTPs are not filtered out.
-            prev_macd_val = prev.get("macd_val")
-            _atr = ind.get("atr")
-            if (prev_macd_val is not None and macd_val is not None
-                    and prev_macd_val <= 0 and macd_val > 0
-                    and _atr is not None and _atr > 0
-                    and abs(macd_val) > settings.ENTRY_SIGNAL_MACD_ATR_MULT * _atr):
-                return True
-
-            # 6. EMA golden cross (valid for long timeframes — major trend shift)
-            prev_ema_9 = prev.get("ema_9")
-            prev_ema_21 = prev.get("ema_21")
-            if (prev_ema_9 is not None and prev_ema_21 is not None
-                    and ema_9 is not None and ema_21 is not None
-                    and prev_ema_9 <= prev_ema_21 and ema_9 > ema_21):
-                return True
-
             # No long-term entry signal detected
             return False
 
