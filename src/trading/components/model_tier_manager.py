@@ -378,7 +378,8 @@ class ModelTierManager:
         fundamentals: Optional[Dict[str, Any]],
         consecutive_losses: int,
         current_price: float,
-        num_candidates: int,
+        timeframe: Optional[str] = None,
+        num_candidates: int = 0,
     ) -> Tuple[str, float]:
         """Compute the strategy model type and effective temperature."""
         _conflicting = False
@@ -428,6 +429,10 @@ class ModelTierManager:
             strategy_model_type = "mind"
         else:
             strategy_model_type = "mind" if strategy_complexity >= settings.LLM_MIND_MODEL_THRESHOLD else "actuator"
+
+        # Long-term positions benefit from the "mind" model regardless of market conditions
+        if timeframe and timeframe in ("1M", "3M", "6M", "1Y", "3Y", "5Y", "10Y"):
+            strategy_model_type = "mind"
 
         effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity, is_critical)
 
