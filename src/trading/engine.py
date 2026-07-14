@@ -120,13 +120,6 @@ class TradingEngine:
         from src.utils.pause_utils import clear_trading_pause_keys
         clear_trading_pause_keys(self.redis)
 
-        # Track quote currency spent in the current cycle to avoid over-allocating
-        self._cycle_spent_lock = self.shared_state._cycle_spent_lock
-        self._positions_lock = self.shared_state._positions_lock
-        self._pending_entries_lock = self.shared_state._pending_entries_lock
-        self._queued_orders_lock = self.shared_state._queued_orders_lock
-        self._state_lock = self.shared_state._state_lock
-        self._trade_history_lock = self.shared_state._trade_history_lock
         # --- Extracted components ---
         self.event_bus.subscribe("remove_symbol_if_paused", self._remove_symbol_if_paused)
         self._state_persistence = StatePersistence(self, self.event_bus)
@@ -202,9 +195,6 @@ class TradingEngine:
         self._asset_cache_time: Dict[str, float] = {}
 
         # Balance cache – avoids redundant API calls within an evaluation cycle
-        # Lock to protect _force_eval, _force_eval_time, _last_strategy_eval, and _strategy_intervals
-        self._eval_state_lock = self.shared_state._eval_state_lock
-
         # Log the complete event subscription registry after all components are initialized
         self.event_bus.log_subscription_summary()
 
@@ -219,192 +209,6 @@ class TradingEngine:
                 self.redis.delete(key)
         except (ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to clear time-sensitive Redis keys: {e}")
-
-    # --- Scalar state properties (proxy to SharedState) ---
-
-    @property
-    def _last_strategy_eval(self) -> Dict[str, float]:
-        return self.shared_state._last_strategy_eval
-
-    @_last_strategy_eval.setter
-    def _last_strategy_eval(self, value: Dict[str, float]) -> None:
-        self.shared_state._last_strategy_eval = value
-
-    @property
-    def _strategy_intervals(self) -> Dict[str, float]:
-        return self.shared_state._strategy_intervals
-
-    @_strategy_intervals.setter
-    def _strategy_intervals(self, value: Dict[str, float]) -> None:
-        self.shared_state._strategy_intervals = value
-
-    @property
-    def _symbol_first_seen(self) -> Dict[str, float]:
-        return self.shared_state._symbol_first_seen
-
-    @_symbol_first_seen.setter
-    def _symbol_first_seen(self, value: Dict[str, float]) -> None:
-        self.shared_state._symbol_first_seen = value
-
-    @property
-    def queued_orders(self) -> List[Dict[str, Any]]:
-        return self.shared_state.queued_orders
-
-    @queued_orders.setter
-    def queued_orders(self, value: List[Dict[str, Any]]) -> None:
-        self.shared_state.queued_orders = value
-
-    @property
-    def _force_eval(self) -> Dict[str, bool]:
-        return self.shared_state._force_eval
-
-    @_force_eval.setter
-    def _force_eval(self, value: Dict[str, bool]) -> None:
-        self.shared_state._force_eval = value
-
-    @property
-    def _force_eval_time(self) -> Dict[str, float]:
-        return self.shared_state._force_eval_time
-
-    @_force_eval_time.setter
-    def _force_eval_time(self, value: Dict[str, float]) -> None:
-        self.shared_state._force_eval_time = value
-
-    @property
-    def _entry_signal_state(self) -> Dict[str, Dict[str, Any]]:
-        return self.shared_state._entry_signal_state
-
-    @_entry_signal_state.setter
-    def _entry_signal_state(self, value: Dict[str, Dict[str, Any]]) -> None:
-        self.shared_state._entry_signal_state = value
-
-    @property
-    def _last_decisions(self) -> Dict[str, Dict[str, Any]]:
-        return self.shared_state._last_decisions
-
-    @_last_decisions.setter
-    def _last_decisions(self, value: Dict[str, Dict[str, Any]]) -> None:
-        self.shared_state._last_decisions = value
-
-    @property
-    def _last_eval_snapshot(self) -> Dict[str, Dict[str, float]]:
-        return self.shared_state._last_eval_snapshot
-
-    @_last_eval_snapshot.setter
-    def _last_eval_snapshot(self, value: Dict[str, Dict[str, float]]) -> None:
-        self.shared_state._last_eval_snapshot = value
-
-    @property
-    def _pending_entries(self) -> Dict[str, Dict[str, Any]]:
-        return self.shared_state._pending_entries
-
-    @_pending_entries.setter
-    def _pending_entries(self, value: Dict[str, Dict[str, Any]]) -> None:
-        self.shared_state._pending_entries = value
-
-    @property
-    def _sentiment_cache(self) -> Dict[str, tuple]:
-        return self.shared_state._sentiment_cache
-
-    @_sentiment_cache.setter
-    def _sentiment_cache(self, value: Dict[str, tuple]) -> None:
-        self.shared_state._sentiment_cache = value
-
-    @property
-    def _cycle_spent(self) -> float:
-        return self.shared_state._cycle_spent
-
-    @_cycle_spent.setter
-    def _cycle_spent(self, value: float) -> None:
-        self.shared_state._cycle_spent = value
-
-    @property
-    def _state_save_pending(self) -> bool:
-        return self.shared_state._state_save_pending
-
-    @_state_save_pending.setter
-    def _state_save_pending(self, value: bool) -> None:
-        self.shared_state._state_save_pending = value
-
-    @property
-    def _state_dirty(self) -> bool:
-        return self.shared_state._state_dirty
-
-    @_state_dirty.setter
-    def _state_dirty(self, value: bool) -> None:
-        self.shared_state._state_dirty = value
-
-    @property
-    def _global_risk_multiplier(self) -> Optional[float]:
-        return self.shared_state._global_risk_multiplier
-
-    @_global_risk_multiplier.setter
-    def _global_risk_multiplier(self, value: Optional[float]) -> None:
-        self.shared_state._global_risk_multiplier = value
-
-    @property
-    def _balance_cache(self) -> Optional[Dict[str, float]]:
-        return self.shared_state._balance_cache
-
-    @_balance_cache.setter
-    def _balance_cache(self, value: Optional[Dict[str, float]]) -> None:
-        self.shared_state._balance_cache = value
-
-    @property
-    def _balance_cache_time(self) -> float:
-        return self.shared_state._balance_cache_time
-
-    @_balance_cache_time.setter
-    def _balance_cache_time(self, value: float) -> None:
-        self.shared_state._balance_cache_time = value
-
-    @property
-    def _position_tickers_cache(self) -> Optional[Dict[str, Dict[str, Any]]]:
-        return self.shared_state._position_tickers_cache
-
-    @_position_tickers_cache.setter
-    def _position_tickers_cache(self, value: Optional[Dict[str, Dict[str, Any]]]) -> None:
-        self.shared_state._position_tickers_cache = value
-
-    @property
-    def _position_tickers_cache_time(self) -> float:
-        return self.shared_state._position_tickers_cache_time
-
-    @_position_tickers_cache_time.setter
-    def _position_tickers_cache_time(self, value: float) -> None:
-        self.shared_state._position_tickers_cache_time = value
-
-    @property
-    def _market_breadth(self) -> Optional[Dict[str, Any]]:
-        return self.shared_state._market_breadth
-
-    @_market_breadth.setter
-    def _market_breadth(self, value: Optional[Dict[str, Any]]) -> None:
-        self.shared_state._market_breadth = value
-
-    @property
-    def _trade_history_version(self) -> int:
-        return self.shared_state._trade_history_version
-
-    @_trade_history_version.setter
-    def _trade_history_version(self, value: int) -> None:
-        self.shared_state._trade_history_version = value
-
-    @property
-    def _realized_pnl_offset(self) -> float:
-        return self.shared_state._realized_pnl_offset
-
-    @_realized_pnl_offset.setter
-    def _realized_pnl_offset(self, value: float) -> None:
-        self.shared_state._realized_pnl_offset = value
-
-    @property
-    def _portfolio_exposure_cache(self) -> Optional[Dict[str, float]]:
-        return self.shared_state._portfolio_exposure_cache
-
-    @_portfolio_exposure_cache.setter
-    def _portfolio_exposure_cache(self, value: Optional[Dict[str, float]]) -> None:
-        self.shared_state._portfolio_exposure_cache = value
 
     async def _initialize_clients(self):
         """Initialize clients and load persisted state (non‑blocking)."""
@@ -444,13 +248,13 @@ class TradingEngine:
             # re-evaluation cycle runs (which would otherwise leave _cycle_spent at 0.0
             # and allow over-allocation of capital already reserved by stale orders).
             queued_buy_total = sum(
-                q.get('amount', 0.0) for q in self.queued_orders
+                q.get('amount', 0.0) for q in self.shared_state.queued_orders
                 if q.get('side') == 'buy'
             )
-            async with self._cycle_spent_lock:
-                self._cycle_spent = queued_buy_total
+            async with self.shared_state._cycle_spent_lock:
+                self.shared_state._cycle_spent = queued_buy_total
             if queued_buy_total > 0:
-                logger.info(f"Initialized _cycle_spent={queued_buy_total:.2f} from {sum(1 for q in self.queued_orders if q.get('side') == 'buy')} queued buy orders.")
+                logger.info(f"Initialized _cycle_spent={queued_buy_total:.2f} from {sum(1 for q in self.shared_state.queued_orders if q.get('side') == 'buy')} queued buy orders.")
 
         # Persist the current PAPER_INITIAL_BALANCE so we can detect changes on next startup
         await asyncio.to_thread(save_trading_state, "paper_initial_balance", settings.PAPER_INITIAL_BALANCE)
@@ -461,38 +265,38 @@ class TradingEngine:
 
         # Clear in-memory state
         self.shared_state.positions.clear()
-        self.queued_orders.clear()
+        self.shared_state.queued_orders.clear()
         self.shared_state.current_symbols.clear()
-        self._pending_entries.clear()
-        async with self._eval_state_lock:
-            self._last_strategy_eval.clear()
-            self._strategy_intervals.clear()
-            self._force_eval.clear()
-            self._force_eval_time.clear()
-        self._entry_signal_state.clear()
-        self._last_decisions.clear()
-        self._last_eval_snapshot.clear()
-        async with self._cycle_spent_lock:
-            self._cycle_spent = 0.0
-        self._balance_cache = None
-        self._balance_cache_time = 0.0
-        self._position_tickers_cache = None
-        self._position_tickers_cache_time = 0.0
+        self.shared_state._pending_entries.clear()
+        async with self.shared_state._eval_state_lock:
+            self.shared_state._last_strategy_eval.clear()
+            self.shared_state._strategy_intervals.clear()
+            self.shared_state._force_eval.clear()
+            self.shared_state._force_eval_time.clear()
+        self.shared_state._entry_signal_state.clear()
+        self.shared_state._last_decisions.clear()
+        self.shared_state._last_eval_snapshot.clear()
+        async with self.shared_state._cycle_spent_lock:
+            self.shared_state._cycle_spent = 0.0
+        self.shared_state._balance_cache = None
+        self.shared_state._balance_cache_time = 0.0
+        self.shared_state._position_tickers_cache = None
+        self.shared_state._position_tickers_cache_time = 0.0
         self._perf_cache = None
         self._perf_cache_time = 0.0
         self._perf_cache_trade_count = -1
         self._trade_pattern_cache = None
         self._trade_pattern_cache_trade_count = -1
-        self._trade_history_version = 0
-        self._realized_pnl_offset = 0.0
+        self.shared_state._trade_history_version = 0
+        self.shared_state._realized_pnl_offset = 0.0
         self.shared_state.trade_history.clear()
         self.shared_state.recent_signals.clear()
         self.shared_state.last_loss_time.clear()
         self.shared_state.cooldown_durations.clear()
-        self._global_risk_multiplier = None
-        self._symbol_first_seen.clear()
-        self._sentiment_cache.clear()
-        self._market_breadth = None
+        self.shared_state._global_risk_multiplier = None
+        self.shared_state._symbol_first_seen.clear()
+        self.shared_state._sentiment_cache.clear()
+        self.shared_state._market_breadth = None
         self.initial_balance = settings.PAPER_INITIAL_BALANCE
 
         # Clear the persisted peak total equity so drawdown starts fresh
@@ -505,7 +309,7 @@ class TradingEngine:
         self.trader = PaperTrader()
 
         # Save the fresh state
-        self._state_dirty = True
+        self.shared_state._state_dirty = True
         await self._state_persistence.save_state(force=True)
 
         # Persist the new PAPER_INITIAL_BALANCE so we don't reset again on next restart
@@ -644,38 +448,38 @@ class TradingEngine:
     async def _get_cached_balance(self, ttl: float = 30.0) -> Dict[str, float]:
         """Return cached balance, refreshing if older than ttl seconds."""
         now = time.time()
-        if self._balance_cache is not None and (now - self._balance_cache_time) < ttl:
-            return self._balance_cache
+        if self.shared_state._balance_cache is not None and (now - self.shared_state._balance_cache_time) < ttl:
+            return self.shared_state._balance_cache
         balance = await asyncio.to_thread(self.trader.fetch_balance)
-        self._balance_cache = balance
-        self._balance_cache_time = now
+        self.shared_state._balance_cache = balance
+        self.shared_state._balance_cache_time = now
         return balance
 
     async def _get_cached_position_tickers(self, ttl: float = 30.0) -> Dict[str, Dict[str, Any]]:
         """Return cached position tickers, refreshing if older than ttl seconds."""
         now = time.time()
         if (
-            self._position_tickers_cache is not None
-            and (now - self._position_tickers_cache_time) < ttl
+            self.shared_state._position_tickers_cache is not None
+            and (now - self.shared_state._position_tickers_cache_time) < ttl
         ):
-            return self._position_tickers_cache
+            return self.shared_state._position_tickers_cache
         tickers = await self._market_data_manager._get_all_position_tickers()
-        self._position_tickers_cache = tickers
-        self._position_tickers_cache_time = now
+        self.shared_state._position_tickers_cache = tickers
+        self.shared_state._position_tickers_cache_time = now
         return tickers
 
     async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Return aggregate news sentiment, cached for 60 seconds to reduce DB load."""
         base = symbol.split("/")[0] if "/" in symbol else symbol
         now = time.time()
-        cached = self._sentiment_cache.get(base)
+        cached = self.shared_state._sentiment_cache.get(base)
         if cached and (now - cached[0]) < 60:
             return cached[1]
         try:
             agg = await asyncio.to_thread(
                 get_aggregate_sentiment_from_db, base, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS
             )
-            self._sentiment_cache[base] = (now, agg)
+            self.shared_state._sentiment_cache[base] = (now, agg)
             return agg
         except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to fetch sentiment for {base}: {type(e).__name__}: {e}")
@@ -1780,7 +1584,7 @@ class TradingEngine:
                             filled_price = order["price"]
                             
                             # Update position
-                            async with self._positions_lock:
+                            async with self.shared_state._positions_lock:
                                 if symbol in self.shared_state.positions:
                                     pos = self.shared_state.positions[symbol]
                                     old_amount = pos.get("amount", 0.0)
@@ -1789,7 +1593,7 @@ class TradingEngine:
                                     new_cost = old_cost + (filled_qty * filled_price)
                                     pos["amount"] = new_amount
                                     pos["cost_basis"] = new_cost
-                                    self._state_dirty = True
+                                    self.shared_state._state_dirty = True
 
                             # Mark dividend as reinvested
                             await asyncio.to_thread(mark_dividend_reinvested, div["id"])
@@ -1822,7 +1626,7 @@ class TradingEngine:
         tz = ZoneInfo(settings.MARKET_TIMEZONE)
         today = datetime.now(tz).date()
         total = 0.0
-        with self._trade_history_lock:
+        with self.shared_state._trade_history_lock:
             trades_snapshot = list(self.shared_state.trade_history)
         for trade in trades_snapshot:
             if trade.get("side") != "sell":
@@ -1844,7 +1648,7 @@ class TradingEngine:
         tz = ZoneInfo(settings.MARKET_TIMEZONE)
         today = datetime.now(tz).date()
         total = 0.0
-        with self._trade_history_lock:
+        with self.shared_state._trade_history_lock:
             trades_snapshot = list(self.shared_state.trade_history)
         for trade in trades_snapshot:
             if trade.get("side") != "buy":
@@ -2193,18 +1997,18 @@ class TradingEngine:
                     # the normal strategy interval.
                     # Use a short, dedicated cooldown so the bot reacts quickly to new signals
                     cooldown = settings.ENTRY_SIGNAL_COOLDOWN_SECONDS
-                    async with self._eval_state_lock:
-                        last_forced = self._force_eval_time.get(symbol, 0)
+                    async with self.shared_state._eval_state_lock:
+                        last_forced = self.shared_state._force_eval_time.get(symbol, 0)
                     if time.time() - last_forced < cooldown:
                         continue
 
                     if await self.event_bus.request("detect_entry_signal", symbol, tf):
                         logger.info(f"Entry signal detected for {symbol}, forcing LLM evaluation.")
-                        async with self._eval_state_lock:
-                            self._force_eval[symbol] = True
-                            self._force_eval_time[symbol] = time.time()
+                        async with self.shared_state._eval_state_lock:
+                            self.shared_state._force_eval[symbol] = True
+                            self.shared_state._force_eval_time[symbol] = time.time()
                             # Clear last evaluation timestamp so the main loop picks it up immediately
-                            self._last_strategy_eval.pop(symbol, None)
+                            self.shared_state._last_strategy_eval.pop(symbol, None)
             except asyncio.CancelledError:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
@@ -2223,7 +2027,7 @@ class TradingEngine:
         while self._running:
             try:
                 now = time.time()
-                for symbol in list(self._pending_entries.keys()):
+                for symbol in list(self.shared_state._pending_entries.keys()):
                     await self.event_bus.request("process_pending_entry", symbol, now)
             except asyncio.CancelledError:
                 raise
@@ -2282,23 +2086,23 @@ class TradingEngine:
             try:
                 val = float(raw)
                 if 0.0 <= val <= 1.0:
-                    self._global_risk_multiplier = val
+                    self.shared_state._global_risk_multiplier = val
                     return val
             except (ValueError, TypeError):
                 pass
         # Redis key expired or invalid — fall back to last known persisted value
-        if self._global_risk_multiplier is not None:
+        if self.shared_state._global_risk_multiplier is not None:
             logger.warning(
                 "Global risk multiplier Redis key expired — using persisted fallback "
-                f"value {self._global_risk_multiplier}. The LLM should set a new value."
+                f"value {self.shared_state._global_risk_multiplier}. The LLM should set a new value."
             )
-            return self._global_risk_multiplier
+            return self.shared_state._global_risk_multiplier
         return None
 
     async def _set_global_risk_multiplier(self, value: float):
         """Set the global risk multiplier in Redis (with TTL) and persist it to the database."""
         await asyncio.to_thread(self.redis.setex, "trading:global_risk_multiplier", 3600, str(value))
-        self._global_risk_multiplier = value
+        self.shared_state._global_risk_multiplier = value
         await asyncio.to_thread(save_trading_state, "global_risk_multiplier", value)
 
     async def _process_queued_orders(self):
@@ -2318,7 +2122,7 @@ class TradingEngine:
             return
         while self._running:
             try:
-                for queued in list(self.queued_orders):
+                for queued in list(self.shared_state.queued_orders):
                     await self.event_bus.request("process_single_queued_order", queued)
             except asyncio.CancelledError:
                 raise
@@ -2422,8 +2226,8 @@ class TradingEngine:
         """Clear pending entries for a symbol. Symbols are kept in current_symbols even when paused
         so the bot continues to generate and notify signals."""
         # Always clear any pending entry for this symbol
-        self._pending_entries.pop(symbol, None)
-        self._state_dirty = True
+        self.shared_state._pending_entries.pop(symbol, None)
+        self.shared_state._state_dirty = True
 
     async def simulate_backtest(self, symbol: str) -> Dict[str, Any]:
         """Simulate Step 1a (analysis), Step 1b (variants), and run backtest without executing trades."""

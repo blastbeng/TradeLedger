@@ -119,10 +119,10 @@ class EngineOrchestrator:
                         await asyncio.gather(*[_process_symbol_task(entry) for entry in symbols_to_process])
 
                 # Save state periodically (every 5 minutes) when dirty
-                if now - engine._last_state_save > 300 and engine._state_dirty:
+                if now - engine._last_state_save > 300 and engine.shared_state._state_dirty:
                     await engine._state_persistence.save_state()
                     engine._last_state_save = now
-                    engine._state_dirty = False
+                    engine.shared_state._state_dirty = False
 
             except asyncio.CancelledError:
                 raise
