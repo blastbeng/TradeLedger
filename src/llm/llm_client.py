@@ -59,6 +59,16 @@ def _execute_llm_request(
                 raise RuntimeError(f"{provider.capitalize()} request failed with HTTP {e.response.status_code}: {e.response.text[:500]}") from e
             if attempt < max_retries - 1:
                 wait_time = 2 ** attempt
+                if e.response.status_code == 429:
+                    retry_after = e.response.headers.get("Retry-After")
+                    if retry_after:
+                        try:
+                            # Retry-After can be seconds or an HTTP date. 
+                            # We only handle the seconds case for simplicity, capping at 60s.
+                            wait_time = min(int(retry_after), 60)
+                        except ValueError:
+                            # It's an HTTP date or invalid format; fall back to exponential backoff
+                            pass
                 logger.warning(f"{provider.capitalize()} request failed with HTTP {e.response.status_code}. Response: {e.response.text[:500]}. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
                 continue
