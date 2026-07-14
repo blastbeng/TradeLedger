@@ -109,14 +109,7 @@ class TradingEngine:
         # asyncio thread pool used by the web server and Telegram bot.
         self._quote_executor = ThreadPoolExecutor(max_workers=12, thread_name_prefix="quotes")
 
-        self.positions = self.shared_state.positions
-        self.trade_history = self.shared_state.trade_history
-        self.recent_signals = self.shared_state.recent_signals
         self.initial_balance: float = 0.0
-        self.last_loss_time = self.shared_state.last_loss_time
-        self.cooldown_durations = self.shared_state.cooldown_durations
-        self._last_strategy_eval = self.shared_state._last_strategy_eval
-        self._strategy_intervals = self.shared_state._strategy_intervals
         self.notifier = None
 
         # _load_state() and _ensure_cost_basis() are now called in _initialize_clients()
@@ -135,7 +128,6 @@ class TradingEngine:
             self.redis.delete(key)
 
         # Track quote currency spent in the current cycle to avoid over-allocating
-        self._symbol_first_seen = self.shared_state._symbol_first_seen
         self._cycle_spent_lock = self.shared_state._cycle_spent_lock
         self._positions_lock = self.shared_state._positions_lock
         self._pending_entries_lock = self.shared_state._pending_entries_lock
@@ -173,9 +165,6 @@ class TradingEngine:
             self._on_settings_reload()
         settings.register_reload_callback(_reload_callback)
         self._last_state_save = 0
-        self._last_eval_snapshot = self.shared_state._last_eval_snapshot
-        self._last_decisions = self.shared_state._last_decisions
-        self._pending_entries = self.shared_state._pending_entries
 
         # Re-entrancy guards for periodic tasks
         self._reconcile_running = False
@@ -220,14 +209,6 @@ class TradingEngine:
         self._asset_cache_time: Dict[str, float] = {}
 
         # Balance cache – avoids redundant API calls within an evaluation cycle
-        self._sentiment_cache = self.shared_state._sentiment_cache
-        self.queued_orders = self.shared_state.queued_orders
-        # Force immediate LLM evaluation when an entry signal is detected
-        self._force_eval = self.shared_state._force_eval
-        # Track when we last forced an LLM evaluation per symbol (for entry signal cooldown)
-        self._force_eval_time = self.shared_state._force_eval_time
-        # Per‑symbol state for crossover detection (stores last known indicator values)
-        self._entry_signal_state = self.shared_state._entry_signal_state
         # Lock to protect _force_eval, _force_eval_time, _last_strategy_eval, and _strategy_intervals
         self._eval_state_lock = self.shared_state._eval_state_lock
 
@@ -251,6 +232,134 @@ class TradingEngine:
     @current_symbols.setter
     def current_symbols(self, value: List[Dict[str, str]]) -> None:
         self.shared_state.current_symbols = value
+
+    @property
+    def positions(self) -> Dict[str, Dict[str, Any]]:
+        return self.shared_state.positions
+
+    @positions.setter
+    def positions(self, value: Dict[str, Dict[str, Any]]) -> None:
+        self.shared_state.positions = value
+
+    @property
+    def trade_history(self) -> List[Dict[str, Any]]:
+        return self.shared_state.trade_history
+
+    @trade_history.setter
+    def trade_history(self, value: List[Dict[str, Any]]) -> None:
+        self.shared_state.trade_history = value
+
+    @property
+    def recent_signals(self) -> List[Dict[str, Any]]:
+        return self.shared_state.recent_signals
+
+    @recent_signals.setter
+    def recent_signals(self, value: List[Dict[str, Any]]) -> None:
+        self.shared_state.recent_signals = value
+
+    @property
+    def last_loss_time(self) -> Dict[str, float]:
+        return self.shared_state.last_loss_time
+
+    @last_loss_time.setter
+    def last_loss_time(self, value: Dict[str, float]) -> None:
+        self.shared_state.last_loss_time = value
+
+    @property
+    def cooldown_durations(self) -> Dict[str, float]:
+        return self.shared_state.cooldown_durations
+
+    @cooldown_durations.setter
+    def cooldown_durations(self, value: Dict[str, float]) -> None:
+        self.shared_state.cooldown_durations = value
+
+    @property
+    def _last_strategy_eval(self) -> Dict[str, float]:
+        return self.shared_state._last_strategy_eval
+
+    @_last_strategy_eval.setter
+    def _last_strategy_eval(self, value: Dict[str, float]) -> None:
+        self.shared_state._last_strategy_eval = value
+
+    @property
+    def _strategy_intervals(self) -> Dict[str, float]:
+        return self.shared_state._strategy_intervals
+
+    @_strategy_intervals.setter
+    def _strategy_intervals(self, value: Dict[str, float]) -> None:
+        self.shared_state._strategy_intervals = value
+
+    @property
+    def _symbol_first_seen(self) -> Dict[str, float]:
+        return self.shared_state._symbol_first_seen
+
+    @_symbol_first_seen.setter
+    def _symbol_first_seen(self, value: Dict[str, float]) -> None:
+        self.shared_state._symbol_first_seen = value
+
+    @property
+    def queued_orders(self) -> List[Dict[str, Any]]:
+        return self.shared_state.queued_orders
+
+    @queued_orders.setter
+    def queued_orders(self, value: List[Dict[str, Any]]) -> None:
+        self.shared_state.queued_orders = value
+
+    @property
+    def _force_eval(self) -> Dict[str, bool]:
+        return self.shared_state._force_eval
+
+    @_force_eval.setter
+    def _force_eval(self, value: Dict[str, bool]) -> None:
+        self.shared_state._force_eval = value
+
+    @property
+    def _force_eval_time(self) -> Dict[str, float]:
+        return self.shared_state._force_eval_time
+
+    @_force_eval_time.setter
+    def _force_eval_time(self, value: Dict[str, float]) -> None:
+        self.shared_state._force_eval_time = value
+
+    @property
+    def _entry_signal_state(self) -> Dict[str, Dict[str, Any]]:
+        return self.shared_state._entry_signal_state
+
+    @_entry_signal_state.setter
+    def _entry_signal_state(self, value: Dict[str, Dict[str, Any]]) -> None:
+        self.shared_state._entry_signal_state = value
+
+    @property
+    def _last_decisions(self) -> Dict[str, Dict[str, Any]]:
+        return self.shared_state._last_decisions
+
+    @_last_decisions.setter
+    def _last_decisions(self, value: Dict[str, Dict[str, Any]]) -> None:
+        self.shared_state._last_decisions = value
+
+    @property
+    def _last_eval_snapshot(self) -> Dict[str, Dict[str, float]]:
+        return self.shared_state._last_eval_snapshot
+
+    @_last_eval_snapshot.setter
+    def _last_eval_snapshot(self, value: Dict[str, Dict[str, float]]) -> None:
+        self.shared_state._last_eval_snapshot = value
+
+    @property
+    def _pending_entries(self) -> Dict[str, Dict[str, Any]]:
+        return self.shared_state._pending_entries
+
+    @_pending_entries.setter
+    def _pending_entries(self, value: Dict[str, Dict[str, Any]]) -> None:
+        self.shared_state._pending_entries = value
+
+    @property
+    def _sentiment_cache(self) -> Dict[str, tuple]:
+        return self.shared_state._sentiment_cache
+
+    @_sentiment_cache.setter
+    def _sentiment_cache(self, value: Dict[str, tuple]) -> None:
+        self.shared_state._sentiment_cache = value
 
     @property
     def _cycle_spent(self) -> float:
