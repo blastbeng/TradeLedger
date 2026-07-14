@@ -16,7 +16,7 @@ An advanced, AI-powered trading bot focused on **medium to long-term investment 
   - `notify`: Signal-only mode that sends audible Telegram alerts for BUY/SELL signals and allows manual trade logging via the web dashboard.
 - **Market hours**: Uses `pandas_market_calendars` to determine when Euronext Milan (XMIL) is open, with configurable pre-market and post-market active periods.
 - **Telegram bot**: Receive trade notifications (audible for signals, silent for routine updates) and control the bot with commands.
-- **Web dashboard**: Real-time view of positions, balances, trades, and profit. Includes manual trade entry form in notify mode, OHLCV charting, LLM metrics dashboard, and simulation lab for backtesting and decision testing.
+- **Web dashboard**: Real-time view of positions, balances, trades, and profit. Includes manual trade entry form in notify mode, OHLCV charting, LLM metrics dashboard, and simulation lab for backtesting and decision testing. The dashboard is a Progressive Web App (PWA) with offline support, installable on mobile devices, and includes CSRF protection, session-based authentication, and rate limiting.
 - **Database-backed indicators**: Technical indicators are pre-computed in background jobs after each candle download and stored in a dedicated database table. This decouples indicator computation from symbol re-evaluation, making the re-evaluation loop faster and non-blocking.
 - **Redis caching**: LLM responses and market data are cached to reduce API calls. Logs are also pushed to Redis for the web dashboard.
 - **Dockerized**: Ready to run with Docker Compose (includes Redis).
@@ -146,9 +146,6 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `OHLCV_RETENTION_DAYS` | Days of historical OHLCV data to keep | `3650` |
 | `MARKET_DATA_REFRESH_SECONDS` | Interval for tracked symbol OHLCV download | `900` |
 | `FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS` | Interval for all-asset OHLCV download | `21600` |
-| `NEWS_ENABLED` | Enable news fetching and sentiment | `false` |
-| `BTP_FEE_PERC` | Fee percentage for BTP trades | `0.0024` |
-| `BTP_MIN_FEE` | Minimum fee for BTP trades | `3.50` |
 | `DB_HOST` | PostgreSQL host (empty = use SQLite) | |
 | `DB_PORT` | PostgreSQL port | `5432` |
 | `DB_NAME` | PostgreSQL database name | `trade_ledger` |
