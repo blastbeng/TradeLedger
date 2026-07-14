@@ -29,6 +29,22 @@ class DummyRedis:
         self._warn("get")
         return None
 
+    def hgetall(self, *args, **kwargs):
+        self._warn("hgetall")
+        return {}
+
+    def ttl(self, *args, **kwargs):
+        self._warn("ttl")
+        return -1
+
+    def mget(self, *args, **kwargs):
+        self._warn("mget")
+        return [None] * len(args[0]) if args else []
+
+    def smembers(self, *args, **kwargs):
+        self._warn("smembers")
+        return set()
+
     def exists(self, *args, **kwargs):
         self._warn("exists")
         return 0
