@@ -144,7 +144,7 @@ class BuyExecutor:
         )
         if _sizing_result is None:
             return
-        amount, desired_amount = _sizing_result
+        amount, desired_amount, available = _sizing_result
 
         # --- Minimum profit check and exchange minimum order size adjustment ---
         amount = await self.check_min_profit_and_order_size(
@@ -346,7 +346,7 @@ class BuyExecutor:
         desired_amount: float,
         params: Dict[str, Any],
         sl_pct: float,
-    ) -> Optional[Tuple[float, float]]:
+    ) -> Optional[Tuple[float, float, float]]:
         """Compute the final position size applying all risk caps.
 
         Applies global risk multiplier, per-symbol multiplier, and a single
@@ -482,7 +482,7 @@ class BuyExecutor:
                     }
                 )
 
-        return amount, desired_amount
+        return amount, desired_amount, available
 
     async def compute_sl_tp_params(
         self,
