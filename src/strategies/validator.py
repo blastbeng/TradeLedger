@@ -278,6 +278,208 @@ def _validate_trailing_stop(
     return None
 
 
+def _validate_optional_params(
+    params: Dict[str, Any],
+    symbol: Optional[str],
+    sl: Optional[float],
+    tp: Optional[float],
+    stop_method: str,
+    tp_atr_valid: bool,
+    atr_mult: Optional[float],
+    tp_atr: Optional[float],
+    trailing: bool,
+    global_min_risk_reward_ratio: Optional[float],
+) -> Optional[Signal]:
+    """Validates optional strategy parameters. Returns a HOLD Signal on failure, None on success."""
+    if "cooldown_after_loss_seconds" not in params:
+        params["cooldown_after_loss_seconds"] = 0
+        logger.info(f"Validator: defaulting cooldown_after_loss_seconds to 0 for {symbol}")
+    cd = params["cooldown_after_loss_seconds"]
+    if not isinstance(cd, (int, float)) or cd < 0:
+        return Signal(action="HOLD", confidence=0.0, reasoning="Invalid cooldown_after_loss_seconds")
+
+    # Optional new parameters
+    if "trailing_stop_activation_pct" in params:
+        tsa = params["trailing_stop_activation_pct"]
+        if not isinstance(tsa, (int, float)) or not (0 <= tsa <= 1.0):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid trailing_stop_activation_pct")
+    if "max_risk_per_trade_pct" in params:
+        mrp = params["max_risk_per_trade_pct"]
+        if not isinstance(mrp, (int, float)) or not (0 <= mrp <= 1.0):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_risk_per_trade_pct")
+    if "min_profit_per_trade" in params:
+        mpp = params["min_profit_per_trade"]
+        if not isinstance(mpp, (int, float)) or mpp < 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid min_profit_per_trade")
+    mrr = params.get("min_risk_reward_ratio")
+    if mrr is None and global_min_risk_reward_ratio is not None:
+        mrr = global_min_risk_reward_ratio
+    if mrr is not None:
+        if not isinstance(mrr, (int, float)) or mrr < 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid min_risk_reward_ratio")
+        # Enforce the ratio if both sl and tp are available
+        if sl is not None and tp is not None:
+            # If ATR-based stops/TPs are provided, use the ATR multipliers for the ratio
+            if tp_atr is not None and stop_method == "atr_multiple":
+                actual_ratio = tp_atr / atr_mult
+            else:
+                actual_ratio = tp / sl
+            
+            if mrr > 0 and actual_ratio < mrr:
+                return Signal(
+                    action="HOLD",
+                    confidence=0.0,
+                    reasoning=f"Risk/reward ratio {actual_ratio:.2f} is below minimum {mrr:.2f}"
+                )
+    if "min_confidence" in params:
+        mc = params["min_confidence"]
+        if not isinstance(mc, (int, float)) or not (0.0 <= mc <= 1.0):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid min_confidence")
+    if "news_sentiment_exit_threshold" in params:
+        nst = params["news_sentiment_exit_threshold"]
+        if not isinstance(nst, (int, float)) or not (-1.0 <= nst <= 0.0):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid news_sentiment_exit_threshold (must be between -1.0 and 0.0)")
+    if "strategy_interval_seconds" in params:
+        si = params["strategy_interval_seconds"]
+        if not isinstance(si, (int, float)) or si <= 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid strategy_interval_seconds")
+    if "backtest_period_days" in params:
+        bpd = params["backtest_period_days"]
+        if not isinstance(bpd, (int, float)) or bpd < 30:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_period_days (must be >= 30)")
+
+    if "partial_take_profit_levels" in params:
+        ptpl = params["partial_take_profit_levels"]
+        if not isinstance(ptpl, list):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels (must be a list)")
+        for level in ptpl:
+            if not isinstance(level, dict):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels (items must be dicts)")
+            lvl_pct = level.get("take_profit_pct")
+            lvl_frac = level.get("fraction")
+            if not isinstance(lvl_pct, (int, float)) or lvl_pct <= 0:
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels: take_profit_pct must be > 0")
+            if not isinstance(lvl_frac, (int, float)) or not (0 < lvl_frac < 1.0):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels: fraction must be between 0 and 1")
+
+    if "breakeven_activation_pct" in params:
+        bea = params["breakeven_activation_pct"]
+        if not isinstance(bea, (int, float)) or not (0 < bea <= 1.0):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid breakeven_activation_pct")
+
+    if "trailing_take_profit" in params:
+        ttp = params["trailing_take_profit"]
+        if not isinstance(ttp, bool):
+            return Signal(action="HOLD", confidence=0.0, reasoning="trailing_take_profit must be boolean")
+        if ttp:
+            ttpd = params.get("trailing_take_profit_distance_pct")
+            if not isinstance(ttpd, (int, float)) or not (0 < ttpd < 1.0):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid or missing trailing_take_profit_distance_pct")
+
+    if "max_unrealized_loss_pct" in params:
+        mul = params["max_unrealized_loss_pct"]
+        if not isinstance(mul, (int, float)) or mul < 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_unrealized_loss_pct")
+
+    if "max_portfolio_risk_pct" in params:
+        mpr = params["max_portfolio_risk_pct"]
+        if not isinstance(mpr, (int, float)) or not (0 <= mpr <= 1.0):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_risk_pct")
+
+    if "max_portfolio_exposure_pct" in params:
+        mpe = params["max_portfolio_exposure_pct"]
+        if not isinstance(mpe, (int, float)) or not (0 <= mpe <= 1.0):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_exposure_pct")
+
+    if "max_portfolio_stop_risk_pct" in params:
+        mps = params["max_portfolio_stop_risk_pct"]
+        if not isinstance(mps, (int, float)) or not (0 <= mps <= 1.0):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_stop_risk_pct")
+
+    if "direction" in params:
+        d = params["direction"]
+        if d not in ("long", "short", "both"):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid direction (must be 'long', 'short', or 'both')")
+
+    if "fee_model" in params:
+        fm = params["fee_model"]
+        if fm not in ("flat", "intesa"):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid fee_model (must be 'flat' or 'intesa')")
+
+    if "slippage_model" in params:
+        sm = params["slippage_model"]
+        if sm not in ("fixed", "dynamic"):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_model (must be 'fixed' or 'dynamic')")
+
+    if "slippage_pct" in params:
+        sp = params["slippage_pct"]
+        if not isinstance(sp, (int, float)) or sp < 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_pct")
+
+    if "slippage_base_pct" in params:
+        sbp = params["slippage_base_pct"]
+        if not isinstance(sbp, (int, float)) or sbp <= 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_base_pct")
+
+    if "slippage_max_pct" in params:
+        smp = params["slippage_max_pct"]
+        if not isinstance(smp, (int, float)) or smp <= 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_max_pct")
+
+    if "simulate_position_sizing" in params:
+        sps = params["simulate_position_sizing"]
+        if not isinstance(sps, bool):
+            return Signal(action="HOLD", confidence=0.0, reasoning="simulate_position_sizing must be boolean")
+
+    if "global_risk_multiplier" in params:
+        grm = params["global_risk_multiplier"]
+        if not isinstance(grm, (int, float)) or grm < 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid global_risk_multiplier")
+
+    if "position_size_multiplier" in params:
+        psm = params["position_size_multiplier"]
+        if not isinstance(psm, (int, float)) or psm < 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid position_size_multiplier")
+
+    if "confidence_sizing_weight" in params:
+        csw = params["confidence_sizing_weight"]
+        if not isinstance(csw, (int, float)) or csw < 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid confidence_sizing_weight")
+
+    if "gap_tolerance_mult" in params:
+        gtm = params["gap_tolerance_mult"]
+        if not isinstance(gtm, (int, float)) or gtm <= 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid gap_tolerance_mult")
+
+    if "on_gaps" in params:
+        og = params["on_gaps"]
+        if og not in ("warn", "skip"):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid on_gaps (must be 'warn' or 'skip')")
+
+    if "fee_rate" in params:
+        fr = params["fee_rate"]
+        if not isinstance(fr, (int, float)) or fr < 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid fee_rate")
+
+    if "max_trades" in params:
+        mt = params["max_trades"]
+        if not isinstance(mt, (int, float)) or mt <= 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_trades")
+        params["max_trades"] = int(mt)
+
+    if "initial_balance" in params:
+        ib = params["initial_balance"]
+        if not isinstance(ib, (int, float)) or ib <= 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid initial_balance")
+
+    if "trade_value" in params:
+        tv = params["trade_value"]
+        if not isinstance(tv, (int, float)) or tv <= 0:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid trade_value")
+
+    return None
+
+
 def _validate_signal_impl(
     signal: Signal,
     market_data: Optional[Dict[str, Any]] = None,
@@ -390,191 +592,11 @@ def _validate_signal_impl(
                     )
                 )
 
-        if "cooldown_after_loss_seconds" not in params:
-            params["cooldown_after_loss_seconds"] = 0
-            logger.info(f"Validator: defaulting cooldown_after_loss_seconds to 0 for {symbol}")
-        cd = params["cooldown_after_loss_seconds"]
-        if not isinstance(cd, (int, float)) or cd < 0:
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid cooldown_after_loss_seconds")
-
-        # Optional new parameters
-        if "trailing_stop_activation_pct" in params:
-            tsa = params["trailing_stop_activation_pct"]
-            if not isinstance(tsa, (int, float)) or not (0 <= tsa <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid trailing_stop_activation_pct")
-        if "max_risk_per_trade_pct" in params:
-            mrp = params["max_risk_per_trade_pct"]
-            if not isinstance(mrp, (int, float)) or not (0 <= mrp <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_risk_per_trade_pct")
-        if "min_profit_per_trade" in params:
-            mpp = params["min_profit_per_trade"]
-            if not isinstance(mpp, (int, float)) or mpp < 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid min_profit_per_trade")
-        mrr = params.get("min_risk_reward_ratio")
-        if mrr is None and global_min_risk_reward_ratio is not None:
-            mrr = global_min_risk_reward_ratio
-        if mrr is not None:
-            if not isinstance(mrr, (int, float)) or mrr < 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid min_risk_reward_ratio")
-            # Enforce the ratio if both sl and tp are available
-            if sl is not None and tp is not None:
-                # If ATR-based stops/TPs are provided, use the ATR multipliers for the ratio
-                if tp_atr is not None and stop_method == "atr_multiple":
-                    actual_ratio = tp_atr / atr_mult
-                else:
-                    actual_ratio = tp / sl
-                
-                if mrr > 0 and actual_ratio < mrr:
-                    return Signal(
-                        action="HOLD",
-                        confidence=0.0,
-                        reasoning=f"Risk/reward ratio {actual_ratio:.2f} is below minimum {mrr:.2f}"
-                    )
-        if "min_confidence" in params:
-            mc = params["min_confidence"]
-            if not isinstance(mc, (int, float)) or not (0.0 <= mc <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid min_confidence")
-        if "news_sentiment_exit_threshold" in params:
-            nst = params["news_sentiment_exit_threshold"]
-            if not isinstance(nst, (int, float)) or not (-1.0 <= nst <= 0.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid news_sentiment_exit_threshold (must be between -1.0 and 0.0)")
-        if "strategy_interval_seconds" in params:
-            si = params["strategy_interval_seconds"]
-            if not isinstance(si, (int, float)) or si <= 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid strategy_interval_seconds")
-        if "backtest_period_days" in params:
-            bpd = params["backtest_period_days"]
-            if not isinstance(bpd, (int, float)) or bpd < 30:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid backtest_period_days (must be >= 30)")
-
-        if "partial_take_profit_levels" in params:
-            ptpl = params["partial_take_profit_levels"]
-            if not isinstance(ptpl, list):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels (must be a list)")
-            for level in ptpl:
-                if not isinstance(level, dict):
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels (items must be dicts)")
-                lvl_pct = level.get("take_profit_pct")
-                lvl_frac = level.get("fraction")
-                if not isinstance(lvl_pct, (int, float)) or lvl_pct <= 0:
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels: take_profit_pct must be > 0")
-                if not isinstance(lvl_frac, (int, float)) or not (0 < lvl_frac < 1.0):
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid partial_take_profit_levels: fraction must be between 0 and 1")
-
-        if "breakeven_activation_pct" in params:
-            bea = params["breakeven_activation_pct"]
-            if not isinstance(bea, (int, float)) or not (0 < bea <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid breakeven_activation_pct")
-
-        if "trailing_take_profit" in params:
-            ttp = params["trailing_take_profit"]
-            if not isinstance(ttp, bool):
-                return Signal(action="HOLD", confidence=0.0, reasoning="trailing_take_profit must be boolean")
-            if ttp:
-                ttpd = params.get("trailing_take_profit_distance_pct")
-                if not isinstance(ttpd, (int, float)) or not (0 < ttpd < 1.0):
-                    return Signal(action="HOLD", confidence=0.0, reasoning="Invalid or missing trailing_take_profit_distance_pct")
-
-        if "max_unrealized_loss_pct" in params:
-            mul = params["max_unrealized_loss_pct"]
-            if not isinstance(mul, (int, float)) or mul < 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_unrealized_loss_pct")
-
-        if "max_portfolio_risk_pct" in params:
-            mpr = params["max_portfolio_risk_pct"]
-            if not isinstance(mpr, (int, float)) or not (0 <= mpr <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_risk_pct")
-
-        if "max_portfolio_exposure_pct" in params:
-            mpe = params["max_portfolio_exposure_pct"]
-            if not isinstance(mpe, (int, float)) or not (0 <= mpe <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_exposure_pct")
-
-        if "max_portfolio_stop_risk_pct" in params:
-            mps = params["max_portfolio_stop_risk_pct"]
-            if not isinstance(mps, (int, float)) or not (0 <= mps <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_portfolio_stop_risk_pct")
-
-        if "direction" in params:
-            d = params["direction"]
-            if d not in ("long", "short", "both"):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid direction (must be 'long', 'short', or 'both')")
-
-        if "fee_model" in params:
-            fm = params["fee_model"]
-            if fm not in ("flat", "intesa"):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid fee_model (must be 'flat' or 'intesa')")
-
-        if "slippage_model" in params:
-            sm = params["slippage_model"]
-            if sm not in ("fixed", "dynamic"):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_model (must be 'fixed' or 'dynamic')")
-
-        if "slippage_pct" in params:
-            sp = params["slippage_pct"]
-            if not isinstance(sp, (int, float)) or sp < 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_pct")
-
-        if "slippage_base_pct" in params:
-            sbp = params["slippage_base_pct"]
-            if not isinstance(sbp, (int, float)) or sbp <= 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_base_pct")
-
-        if "slippage_max_pct" in params:
-            smp = params["slippage_max_pct"]
-            if not isinstance(smp, (int, float)) or smp <= 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid slippage_max_pct")
-
-        if "simulate_position_sizing" in params:
-            sps = params["simulate_position_sizing"]
-            if not isinstance(sps, bool):
-                return Signal(action="HOLD", confidence=0.0, reasoning="simulate_position_sizing must be boolean")
-
-        if "global_risk_multiplier" in params:
-            grm = params["global_risk_multiplier"]
-            if not isinstance(grm, (int, float)) or grm < 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid global_risk_multiplier")
-
-        if "position_size_multiplier" in params:
-            psm = params["position_size_multiplier"]
-            if not isinstance(psm, (int, float)) or psm < 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid position_size_multiplier")
-
-        if "confidence_sizing_weight" in params:
-            csw = params["confidence_sizing_weight"]
-            if not isinstance(csw, (int, float)) or csw < 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid confidence_sizing_weight")
-
-        if "gap_tolerance_mult" in params:
-            gtm = params["gap_tolerance_mult"]
-            if not isinstance(gtm, (int, float)) or gtm <= 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid gap_tolerance_mult")
-
-        if "on_gaps" in params:
-            og = params["on_gaps"]
-            if og not in ("warn", "skip"):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid on_gaps (must be 'warn' or 'skip')")
-
-        if "fee_rate" in params:
-            fr = params["fee_rate"]
-            if not isinstance(fr, (int, float)) or fr < 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid fee_rate")
-
-        if "max_trades" in params:
-            mt = params["max_trades"]
-            if not isinstance(mt, (int, float)) or mt <= 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_trades")
-            params["max_trades"] = int(mt)
-
-        if "initial_balance" in params:
-            ib = params["initial_balance"]
-            if not isinstance(ib, (int, float)) or ib <= 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid initial_balance")
-
-        if "trade_value" in params:
-            tv = params["trade_value"]
-            if not isinstance(tv, (int, float)) or tv <= 0:
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid trade_value")
+        opt_error = _validate_optional_params(
+            params, symbol, sl, tp, stop_method, tp_atr_valid, atr_mult, tp_atr, trailing, global_min_risk_reward_ratio
+        )
+        if opt_error:
+            return opt_error
 
         # Logical consistency checks (no hardcoded values)
         # Skip the fixed percentage comparison if both stop and take-profit are ATR-based
