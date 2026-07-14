@@ -1001,7 +1001,7 @@ def _normalize_for_hash(obj, depth=0):
     """
     _VOLATILE_KEY_FRAGMENTS = ("timestamp", "time", "fetched_at", "created_at",
                                 "published_at", "last_eval", "last_auto_resume",
-                                "_last_state_save", "ohlcv_data", "raw_candles", "candles")
+                                "_last_state_save")
     if depth > 10:
         return None
     if isinstance(obj, dict):
@@ -1029,6 +1029,46 @@ def _normalize_for_hash(obj, depth=0):
     return obj
 
 
+def _strip_ohlcv_timestamps(obj):
+    """Recursively remove timestamp values from OHLCV data for stable hashing.
+
+    OHLCV candle lists are often a list of [timestamp, open, high, low, close, volume]
+    or a list of dicts with a 'timestamp' key.  This function strips the timestamp
+    from each candle so the hash changes only when price/volume data changes,
+    not when the same candle is fetched at a different time.
+    """
+    _OHLCV_KEY_FRAGMENTS = ("ohlcv_data", "raw_candles", "candles")
+
+    if isinstance(obj, dict):
+        result = {}
+        for k, v in obj.items():
+            key_str = str(k).lower()
+            if any(frag in key_str for frag in _OHLCV_KEY_FRAGMENTS):
+                result[k] = _strip_timestamps_from_candle_list(v)
+            else:
+                result[k] = _strip_ohlcv_timestamps(v)
+        return result
+    if isinstance(obj, list):
+        return [_strip_ohlcv_timestamps(item) for item in obj]
+    return obj
+
+
+def _strip_timestamps_from_candle_list(candles):
+    """Remove timestamps from a list of candles."""
+    if not isinstance(candles, list):
+        return candles
+    result = []
+    for candle in candles:
+        if isinstance(candle, (list, tuple)):
+            # Assume first element is timestamp; keep the rest
+            result.append(list(candle[1:]))
+        elif isinstance(candle, dict):
+            result.append({k: v for k, v in candle.items() if "time" not in str(k).lower()})
+        else:
+            result.append(candle)
+    return result
+
+
 def compute_market_hash(data: dict) -> str:
     """Return a SHA-256 hex digest of the JSON-serialised market data.
     
@@ -1036,6 +1076,7 @@ def compute_market_hash(data: dict) -> str:
     so that essentially-identical market states produce the same hash,
     enabling LLM response caching.
     """
+    data = _strip_ohlcv_timestamps(data)
     normalized = _normalize_for_hash(data)
     safe_data = _stringify_keys(normalized)
     serialized = json.dumps(safe_data, sort_keys=True, default=str)
