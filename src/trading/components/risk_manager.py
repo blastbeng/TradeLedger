@@ -1136,7 +1136,7 @@ class RiskManager:
         try:
             asset = await engine._market_data_manager.get_asset_info(symbol)
             min_amount = float(asset.min_order_size) if asset.min_order_size else None
-        except Exception:
+        except (ValueError, TypeError, AttributeError, ConnectionError, TimeoutError, OSError):
             min_amount = None
 
         is_dust = min_amount is not None and amount < min_amount
@@ -1432,7 +1432,7 @@ class RiskManager:
                 sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
                 if sl_order_obj is not None and sl_order_obj.status == "filled":
                     sl_filled = True
-            except Exception:
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, ConnectionError, TimeoutError, OSError):
                 pass
 
             # 2. Acquire lock
@@ -1560,7 +1560,7 @@ class RiskManager:
                 tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
                 if tp_order_obj is not None and tp_order_obj.status == "filled":
                     tp_filled = True
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.debug(f"check_native_exit_triggers: failed to check TP fill for {symbol}: {type(e).__name__}: {e}")
 
             # 5. Acquire lock to check/pop TP

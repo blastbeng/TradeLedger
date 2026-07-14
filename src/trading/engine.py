@@ -1266,6 +1266,10 @@ class TradingEngine:
             except (ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Risk management loop network/IO error: {type(e).__name__}: {e}")
                 await self._interruptible_sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Risk management loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("risk_management_loop", e)
+                await self._interruptible_sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
             except Exception as e:
                 logger.error(f"Risk management loop error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("risk_management_loop", e)
