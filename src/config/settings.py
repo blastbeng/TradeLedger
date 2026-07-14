@@ -1,7 +1,8 @@
+import json
 import uuid
 from pydantic import field_validator, model_validator, PrivateAttr
-from pydantic_settings import BaseSettings
-from typing import Optional
+from pydantic_settings import BaseSettings, NoDecode
+from typing import Annotated, Optional
 
 class Settings(BaseSettings):
     # Private attribute to hold reload callbacks
@@ -165,11 +166,11 @@ class Settings(BaseSettings):
 
     # ETFs that are always included in the candidate pool (if tradable),
     # regardless of volume or composite score.
-    ALWAYS_INCLUDE_ETFS: list[str] = []
+    ALWAYS_INCLUDE_ETFS: Annotated[list[str], NoDecode] = []
 
     # Additional base tickers (without suffix) that are always added to the discovery pool.
     # Useful for stocks that are not in the FTSE MIB or news feeds.
-    ADDITIONAL_TICKERS: list[str] = []
+    ADDITIONAL_TICKERS: Annotated[list[str], NoDecode] = []
 
     # Enable FinanceDatabase ticker discovery
     FINANCEDATABASE_TICKER_DISCOVERY_ENABLED: bool = True
@@ -189,7 +190,7 @@ class Settings(BaseSettings):
     COMPOSITE_SENTIMENT_WEIGHT: float = 0.4
 
     FALLBACK_MIN_24H_VOLUME: float = 0.0
-    EXCLUDED_SYMBOLS: list[str] = []
+    EXCLUDED_SYMBOLS: Annotated[list[str], NoDecode] = []
 
     # Maximum number of consecutive "keep paused" LLM decisions before the engine
     # force‑resumes trading with a reduced risk multiplier.
@@ -519,7 +520,7 @@ class Settings(BaseSettings):
 
     # OHLCV timeframes for multi-timeframe analysis
     # Default order is longest to shortest to ensure larger timeframes are fetched first
-    OHLCV_TIMEFRAMES: list[str] = ["5Y", "3Y", "1Y", "6M", "3M", "1M", "1w", "1d", "1h"]
+    OHLCV_TIMEFRAMES: Annotated[list[str], NoDecode] = ["5Y", "3Y", "1Y", "6M", "3M", "1M", "1w", "1d", "1h"]
 
     # Market data download interval (seconds)
     MARKET_DATA_REFRESH_SECONDS: int = 900
@@ -638,7 +639,7 @@ class Settings(BaseSettings):
     YF_RATE_LIMIT_MAX_REQUESTS: int = 30
     YF_RATE_LIMIT_WINDOW_SECONDS: int = 60
     HTTP_PROXY_ENABLED: bool = False
-    HTTP_PROXIES: list[str] = []
+    HTTP_PROXIES: Annotated[list[str], NoDecode] = []
 
     # Alpha Vantage
     ALPHAVANTAGE_ENABLED: bool = False
@@ -657,6 +658,27 @@ class Settings(BaseSettings):
     def validate_llm_provider(cls, v: str) -> str:
         if v not in ("ollama", "openai"):
             raise ValueError("LLM_PROVIDER must be 'ollama' or 'openai'")
+        return v
+
+    @field_validator(
+        "ALWAYS_INCLUDE_ETFS", "ADDITIONAL_TICKERS", "EXCLUDED_SYMBOLS",
+        "HTTP_PROXIES", "RSS_FEEDS", "LLM_PROMPT_CACHING_PROVIDERS",
+        "LLM_PROMPT_CACHING_CONTROL_PROVIDERS", "OHLCV_TIMEFRAMES",
+        "OPENAI_FALLBACK_MODEL", "OPENAI_MIND_FALLBACK_MODEL",
+        "OPENAI_ACTUATOR_FALLBACK_MODEL", "OPENAI_WEAK_FALLBACK_MODEL",
+        "OLLAMA_FALLBACK_MODEL", "OLLAMA_MIND_FALLBACK_MODEL",
+        "OLLAMA_ACTUATOR_FALLBACK_MODEL", "OLLAMA_WEAK_FALLBACK_MODEL",
+        mode="before"
+    )
+    @classmethod
+    def _parse_json_list(cls, v):
+        if isinstance(v, str):
+            if not v.strip():
+                return []
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return []
         return v
 
     @model_validator(mode="after")
@@ -708,10 +730,10 @@ class Settings(BaseSettings):
     LLM_FALLBACK_ENABLED: bool = True
     # Prompt caching for DeepSeek (and other providers that support it)
     LLM_PROMPT_CACHING_ENABLED: bool = True
-    LLM_PROMPT_CACHING_PROVIDERS: list[str] = ["deepseek", "ollama", "openai"]
+    LLM_PROMPT_CACHING_PROVIDERS: Annotated[list[str], NoDecode] = ["deepseek", "ollama", "openai"]
     # Providers that support the cache_control field (e.g., DeepSeek).
     # Only these providers will receive the cache_control header.
-    LLM_PROMPT_CACHING_CONTROL_PROVIDERS: list[str] = []
+    LLM_PROMPT_CACHING_CONTROL_PROVIDERS: Annotated[list[str], NoDecode] = []
 
     # Cache version key to invalidate LLM cache on settings reload.
     # Automatically generated on instantiation; changes when settings.reload() is called.
@@ -811,36 +833,36 @@ class Settings(BaseSettings):
     LLM_WEAK_FALLBACK_PROVIDER: str = ""
 
     # OpenAI fallback settings (empty or None = use global OPENAI_FALLBACK_*)
-    OPENAI_FALLBACK_MODEL: list[str] = []
+    OPENAI_FALLBACK_MODEL: Annotated[list[str], NoDecode] = []
     OPENAI_FALLBACK_BASE_URL: Optional[str] = None
     OPENAI_FALLBACK_API_KEY: Optional[str] = None
 
-    OPENAI_MIND_FALLBACK_MODEL: list[str] = []
+    OPENAI_MIND_FALLBACK_MODEL: Annotated[list[str], NoDecode] = []
     OPENAI_MIND_FALLBACK_BASE_URL: Optional[str] = None
     OPENAI_MIND_FALLBACK_API_KEY: Optional[str] = None
 
-    OPENAI_ACTUATOR_FALLBACK_MODEL: list[str] = []
+    OPENAI_ACTUATOR_FALLBACK_MODEL: Annotated[list[str], NoDecode] = []
     OPENAI_ACTUATOR_FALLBACK_BASE_URL: Optional[str] = None
     OPENAI_ACTUATOR_FALLBACK_API_KEY: Optional[str] = None
 
-    OPENAI_WEAK_FALLBACK_MODEL: list[str] = []
+    OPENAI_WEAK_FALLBACK_MODEL: Annotated[list[str], NoDecode] = []
     OPENAI_WEAK_FALLBACK_BASE_URL: Optional[str] = None
     OPENAI_WEAK_FALLBACK_API_KEY: Optional[str] = None
 
     # Ollama fallback settings (empty or None = use global OLLAMA_FALLBACK_*)
-    OLLAMA_FALLBACK_MODEL: list[str] = []
+    OLLAMA_FALLBACK_MODEL: Annotated[list[str], NoDecode] = []
     OLLAMA_FALLBACK_BASE_URL: Optional[str] = None
     OLLAMA_FALLBACK_API_KEY: Optional[str] = None
 
-    OLLAMA_MIND_FALLBACK_MODEL: list[str] = []
+    OLLAMA_MIND_FALLBACK_MODEL: Annotated[list[str], NoDecode] = []
     OLLAMA_MIND_FALLBACK_BASE_URL: Optional[str] = None
     OLLAMA_MIND_FALLBACK_API_KEY: Optional[str] = None
 
-    OLLAMA_ACTUATOR_FALLBACK_MODEL: list[str] = []
+    OLLAMA_ACTUATOR_FALLBACK_MODEL: Annotated[list[str], NoDecode] = []
     OLLAMA_ACTUATOR_FALLBACK_BASE_URL: Optional[str] = None
     OLLAMA_ACTUATOR_FALLBACK_API_KEY: Optional[str] = None
 
-    OLLAMA_WEAK_FALLBACK_MODEL: list[str] = []
+    OLLAMA_WEAK_FALLBACK_MODEL: Annotated[list[str], NoDecode] = []
     OLLAMA_WEAK_FALLBACK_BASE_URL: Optional[str] = None
     OLLAMA_WEAK_FALLBACK_API_KEY: Optional[str] = None
 
@@ -1092,7 +1114,7 @@ class Settings(BaseSettings):
     FACEBOOK_POST_LIMIT: int = 5
 
     # RSS Feeds
-    RSS_FEEDS: list[str] = [
+    RSS_FEEDS: Annotated[list[str], NoDecode] = [
         "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC&region=US&lang=en-US",
         "https://www.investing.com/rss/news.rss",
         "https://www.cnbc.com/id/100003114/device/rss/rss.html",
