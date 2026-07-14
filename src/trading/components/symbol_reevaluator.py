@@ -124,6 +124,9 @@ class SymbolReevaluator:
         base_balance: float,
         old_symbols: List[Dict[str, str]],
         trading_paused_bool: bool,
+        etf_pairs: List[str],
+        btp_pairs: List[str],
+        is_rebalance: bool,
     ) -> Tuple[Dict[str, Any], Optional[bool], str, Optional[Any], List[Dict[str, str]], Optional[str], Optional[str]]:
         """Process the LLM response, parse symbols, and handle pause/resume logic.
 
@@ -214,6 +217,14 @@ class SymbolReevaluator:
                     base_balance=base_balance,
                     ohlcv_data=ohlcv_data,
                 )
+
+                if is_rebalance:
+                    self.shortlist_builder.enforce_asset_class_allocation(
+                        deduped=deduped,
+                        etf_pairs=etf_pairs,
+                        btp_pairs=btp_pairs,
+                        ohlcv_data=ohlcv_data,
+                    )
 
                 # --- Store LLM-decided parameters to Redis ---
                 await self.config_manager.store_llm_decided_parameters(parsed)
@@ -460,6 +471,9 @@ class SymbolReevaluator:
             base_balance=base_balance,
             old_symbols=old_symbols,
             trading_paused_bool=trading_paused_bool,
+            etf_pairs=etf_pairs,
+            btp_pairs=btp_pairs,
+            is_rebalance=is_rebalance,
         )
 
         await self.finalize_reevaluation(

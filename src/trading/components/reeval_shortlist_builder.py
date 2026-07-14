@@ -118,6 +118,60 @@ class ReevalShortlistBuilder:
 
         return composite_scores, shortlist
 
+    def enforce_asset_class_allocation(
+        self,
+        deduped: List[Dict[str, str]],
+        etf_pairs: List[str],
+        btp_pairs: List[str],
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+    ) -> None:
+        """Enforce minimum asset class allocation by appending missing ETFs/BTPs.
+        
+        Appends ETFs and BTPs to the deduped list if they are underrepresented,
+        ensuring a balanced allocation across asset classes (20% ETFs, 20% BTPs).
+        Modifies deduped in-place.
+        """
+        if not deduped:
+            return
+            
+        target_etf_pct = 0.20
+        target_btp_pct = 0.20
+        
+        min_etfs = max(1, int(len(deduped) * target_etf_pct))
+        min_btps = max(1, int(len(deduped) * target_btp_pct))
+        
+        current_etfs = [d for d in deduped if d['symbol'] in etf_pairs]
+        current_btps = [d for d in deduped if d['symbol'] in btp_pairs]
+        
+        existing_syms = {d['symbol'] for d in deduped}
+        default_tf = settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h"
+        
+        # Add ETFs if underrepresented
+        if len(current_etfs) < min_etfs:
+            for etf in etf_pairs:
+                if etf not in existing_syms:
+                    sym_data = ohlcv_data.get(etf, {})
+                    available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
+                    if available_tfs:
+                        tf = default_tf if default_tf in available_tfs else available_tfs[0]
+                        deduped.append({"symbol": etf, "timeframe": tf})
+                        existing_syms.add(etf)
+                        if len([d for d in deduped if d['symbol'] in etf_pairs]) >= min_etfs:
+                            break
+                            
+        # Add BTPs if underrepresented
+        if len(current_btps) < min_btps:
+            for btp in btp_pairs:
+                if btp not in existing_syms:
+                    sym_data = ohlcv_data.get(btp, {})
+                    available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
+                    if available_tfs:
+                        tf = default_tf if default_tf in available_tfs else available_tfs[0]
+                        deduped.append({"symbol": btp, "timeframe": tf})
+                        existing_syms.add(btp)
+                        if len([d for d in deduped if d['symbol'] in btp_pairs]) >= min_btps:
+                            break
+
     def enforce_min_symbols(
         self,
         deduped: List[Dict[str, str]],
