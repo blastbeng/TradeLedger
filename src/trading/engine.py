@@ -109,7 +109,6 @@ class TradingEngine:
         # asyncio thread pool used by the web server and Telegram bot.
         self._quote_executor = ThreadPoolExecutor(max_workers=12, thread_name_prefix="quotes")
 
-        self.current_symbols = self.shared_state.current_symbols
         self.positions = self.shared_state.positions
         self.trade_history = self.shared_state.trade_history
         self.recent_signals = self.shared_state.recent_signals
@@ -245,6 +244,14 @@ class TradingEngine:
             logger.warning(f"Failed to clear time-sensitive Redis keys: {e}")
 
     # --- Scalar state properties (proxy to SharedState) ---
+    @property
+    def current_symbols(self) -> List[Dict[str, str]]:
+        return self.shared_state.current_symbols
+
+    @current_symbols.setter
+    def current_symbols(self, value: List[Dict[str, str]]) -> None:
+        self.shared_state.current_symbols = value
+
     @property
     def _cycle_spent(self) -> float:
         return self.shared_state._cycle_spent
