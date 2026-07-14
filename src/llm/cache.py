@@ -279,7 +279,7 @@ def _normalize_text_for_cache(text: str) -> str:
             return f"{round(val, decimals)}"
         except (ValueError, OverflowError):
             return match.group(0)
-    return re.sub(r'-?\d+\.\d+', _round_num, text)
+    return re.sub(r'-?\d+(?:\.\d+)?[eE][+-]?\d+|-?\d+\.\d+', _round_num, text)
 
 def _compute_fee_fingerprint() -> str:
     """Compute a short fingerprint of fee-related settings for cache key inclusion.
