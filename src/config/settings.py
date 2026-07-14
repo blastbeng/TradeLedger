@@ -1138,6 +1138,18 @@ class Settings(BaseSettings):
     # Walk-forward backtest candle threshold
     WALK_FORWARD_CANDLE_THRESHOLD: int = 100
 
+    # Minimum number of candles required for a statistically significant backtest
+    MIN_STATISTICALLY_SIGNIFICANT_CANDLES: int = 50
+
+    # Maximum number of symbols to include in correlation matrix computation
+    MAX_CORR_SYMBOLS: int = 50
+
+    # Sentiment shift threshold to trigger immediate re-evaluation
+    SENTIMENT_SHIFT_THRESHOLD: float = 0.3
+
+    # Maximum concurrent LLM chunk evaluations during symbol re-evaluation
+    LLM_CHUNK_CONCURRENCY_LIMIT: int = 5
+
     # Partial fill volume cap (fraction of last minute's volume)
     PARTIAL_FILL_VOLUME_CAP_PCT: float = 0.1
 

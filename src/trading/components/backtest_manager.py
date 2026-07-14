@@ -137,7 +137,7 @@ class BacktestManager:
         # falling back to a much shorter timeframe whose results would be misleading.
         tf_seconds_bt = engine._timeframe_to_seconds(assigned_tf)
         max_possible_candles = (settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds_bt
-        MIN_STATISTICALLY_SIGNIFICANT_CANDLES = 50
+        MIN_STATISTICALLY_SIGNIFICANT_CANDLES = settings.MIN_STATISTICALLY_SIGNIFICANT_CANDLES
         MIN_BACKTEST_CANDLES = 50
         if max_possible_candles < MIN_STATISTICALLY_SIGNIFICANT_CANDLES:
             return None, (

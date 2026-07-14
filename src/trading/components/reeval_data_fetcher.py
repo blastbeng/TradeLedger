@@ -553,7 +553,7 @@ class ReevalDataFetcher:
             MIN_RETURNS = 19
 
             # Limit to top N symbols by volume to avoid O(n^2) bottleneck
-            MAX_CORR_SYMBOLS = 50
+            MAX_CORR_SYMBOLS = settings.MAX_CORR_SYMBOLS
             top_vol_symbols = sorted_by_vol[:MAX_CORR_SYMBOLS]
 
             # Pre-compute valid returns for each symbol on each timeframe

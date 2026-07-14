@@ -56,7 +56,7 @@ class ReevalMarketConditionMonitor:
                         current_compound = agg.get("avg_compound", 0)
                         if prev_raw:
                             prev_compound = float(prev_raw)
-                            if abs(current_compound - prev_compound) > 0.3:
+                            if abs(current_compound - prev_compound) > settings.SENTIMENT_SHIFT_THRESHOLD:
                                 logger.info(f"Significant sentiment shift for {symbol}, triggering re-evaluation")
                                 should_trigger = True
                                 # Update the baseline only when a trigger fires
