@@ -2695,7 +2695,7 @@ def get_next_ex_dividend_date(symbol: str, days_ahead: int = 60) -> Optional[Tup
             days_until = (ex_dt - datetime.now()).days
             return (ex_date_str, days_until)
         return None
-    except (ValueError, TypeError, KeyError, sqlite3.Error):
+    except (ValueError, TypeError, KeyError, sqlite3.Error, psycopg.Error):
         return None
     finally:
         conn.close()
