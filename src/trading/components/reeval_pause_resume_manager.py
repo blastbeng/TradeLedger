@@ -118,15 +118,6 @@ class ReevalPauseResumeManager:
             else:
                 logger.warning(f"Invalid pause_trading value: {pause_trading}")
 
-        # Store LLM-provided pause duration in Redis (if not already stored by pause logic)
-        if pause_duration is not None and isinstance(pause_duration, (int, float)) and pause_duration > 0:
-            await asyncio.to_thread(
-                engine.redis.setex, "trading:pause_duration", 7 * 24 * 3600, str(int(pause_duration))
-            )
-            logger.info(f"LLM set pause duration: {pause_duration}s")
-        elif pause_duration is not None:
-            logger.warning(f"Invalid pause_duration_seconds: {pause_duration}")
-
         # Optional: LLM can set a global risk multiplier to scale all position sizes
         global_risk_mult = parsed.get("global_risk_multiplier")
         if global_risk_mult is not None:
