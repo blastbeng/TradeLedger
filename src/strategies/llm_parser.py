@@ -54,6 +54,9 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
         trailing_stop = params.get("trailing_stop", False)
         trailing_stop_distance = params.get("trailing_stop_distance_pct")
         trailing_stop_atr = params.get("trailing_stop_atr_multiple")
+        trailing_stop_activation = params.get("trailing_stop_activation_pct")
+        breakeven_activation = params.get("breakeven_activation_pct")
+        max_unrealized_loss = params.get("max_unrealized_loss_pct")
         max_hold_time = params.get("max_hold_time_seconds")
         cooldown = params.get("cooldown_after_loss_seconds")
         
@@ -88,6 +91,18 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
                 issues.append(f"unreasonable trailing_stop_distance_pct ({trailing_stop_distance})")
             if trailing_stop_atr is not None and (trailing_stop_atr <= 0 or trailing_stop_atr > 10.0):
                 issues.append(f"unreasonable trailing_stop_atr_multiple ({trailing_stop_atr})")
+                
+        if trailing_stop_activation is not None:
+            if trailing_stop_activation <= 0 or trailing_stop_activation > 5.0:
+                issues.append(f"unreasonable trailing_stop_activation_pct ({trailing_stop_activation})")
+                
+        if breakeven_activation is not None:
+            if breakeven_activation <= 0 or breakeven_activation > 5.0:
+                issues.append(f"unreasonable breakeven_activation_pct ({breakeven_activation})")
+                
+        if max_unrealized_loss is not None:
+            if max_unrealized_loss <= 0 or max_unrealized_loss > 0.5:
+                issues.append(f"unreasonable max_unrealized_loss_pct ({max_unrealized_loss})")
                 
         if max_hold_time is not None:
             if max_hold_time <= 0 or max_hold_time > 30 * 24 * 3600:
