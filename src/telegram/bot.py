@@ -180,13 +180,18 @@ class TelegramBot:
     async def cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
             return
-        await asyncio.to_thread(self.redis.set, "trading:paused", "1")
-        await asyncio.to_thread(self.redis.set, "trading:pause_source", "manual")
-        # Remove any leftover LLM pause keys to avoid confusion
-        await asyncio.to_thread(self.redis.delete, "trading:pause_start")
-        await asyncio.to_thread(self.redis.delete, "trading:pause_duration")
-        await asyncio.to_thread(self.redis.delete, "trading:pause_reason")
-        await asyncio.to_thread(self.redis.delete, "trading:llm_pause_time")
+        try:
+            await asyncio.wait_for(asyncio.to_thread(self.redis.set, "trading:paused", "1"), timeout=5.0)
+            await asyncio.wait_for(asyncio.to_thread(self.redis.set, "trading:pause_source", "manual"), timeout=5.0)
+            # Remove any leftover LLM pause keys to avoid confusion
+            await asyncio.wait_for(
+                asyncio.to_thread(self.redis.delete, "trading:pause_start", "trading:pause_duration", "trading:pause_reason", "trading:llm_pause_time"),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Redis operation timed out during pause")
+            await update.message.reply_text("⚠️ Failed to pause: Redis timed out.", reply_markup=self.keyboard)
+            return
         await self.send_notification(
             "⏸️ Trading paused manually.",
             summary={"action": "PAUSE", "reason": "Manual pause"}
@@ -212,8 +217,12 @@ class TelegramBot:
             "trading:pause_reason",
             "trading:llm_pause_time",
         ]
-        for key in keys:
-            await asyncio.to_thread(self.redis.delete, key)
+        try:
+            await asyncio.wait_for(asyncio.to_thread(self.redis.delete, *keys), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Redis operation timed out during resume")
+            await update.message.reply_text("⚠️ Failed to resume: Redis timed out.", reply_markup=self.keyboard)
+            return
         self.engine.trigger_symbol_reevaluation()
         await self.send_notification(
             "▶️ Trading resumed manually.",
@@ -320,7 +329,11 @@ class TelegramBot:
             msg += "  No balances\n"
 
         # Trading paused status
-        paused = await asyncio.to_thread(self.redis.get, "trading:paused")
+        try:
+            paused = await asyncio.wait_for(asyncio.to_thread(self.redis.get, "trading:paused"), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Redis get timed out for trading:paused")
+            paused = None
         status_text = "⏸️ Paused" if paused else "▶️ Active"
         msg += f"\n<b>⚙️ Trading:</b> {status_text}\n"
 
@@ -345,7 +358,7 @@ class TelegramBot:
 
         # Market status
         try:
-            raw = await asyncio.to_thread(self.redis.get, "market:status")
+            raw = await asyncio.wait_for(asyncio.to_thread(self.redis.get, "market:status"), timeout=5.0)
             if raw:
                 data = json.loads(raw)
                 msg += "\n<b>🌐 Market Status</b>\n"
@@ -637,7 +650,14 @@ class TelegramBot:
         if "/" in symbol:
             symbol = symbol.split("/")[0]
 
-        articles = await asyncio.to_thread(get_news_for_symbol, symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
+        try:
+            articles = await asyncio.wait_for(
+                asyncio.to_thread(get_news_for_symbol, symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS),
+                timeout=15.0
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ News fetch timed out.", reply_markup=self.keyboard)
+            return
         if not articles:
             await update.message.reply_text(f"No recent news for {symbol}.", reply_markup=self.keyboard)
             return
@@ -743,11 +763,15 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         try:
-            raw = await asyncio.to_thread(self.redis.get, "market:status")
+            raw = await asyncio.wait_for(asyncio.to_thread(self.redis.get, "market:status"), timeout=5.0)
             if not raw:
                 await update.message.reply_text("Market data not available yet.", reply_markup=self.keyboard)
                 return
             data = json.loads(raw)
+        except asyncio.TimeoutError:
+            logger.warning("Redis get timed out for market:status")
+            await update.message.reply_text("⚠️ Market status fetch timed out.", reply_markup=self.keyboard)
+            return
         except Exception as e:
             logger.error(f"Failed to get market status: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve market status.", reply_markup=self.keyboard)
@@ -1101,8 +1125,8 @@ class TelegramBot:
                         "timestamp": time.time(),
                         "message": message
                     })
-                    await asyncio.to_thread(self.redis.lpush, "web:messages", msg_data)
-                    await asyncio.to_thread(self.redis.ltrim, "web:messages", 0, 99)
+                    await asyncio.wait_for(asyncio.to_thread(self.redis.lpush, "web:messages", msg_data), timeout=5.0)
+                    await asyncio.wait_for(asyncio.to_thread(self.redis.ltrim, "web:messages", 0, 99), timeout=5.0)
                 except Exception as e:
                     logger.warning(f"Failed to store message for web interface: {type(e).__name__}: {e}")
 
