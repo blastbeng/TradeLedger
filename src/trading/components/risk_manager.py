@@ -177,9 +177,14 @@ class RiskManager:
                         f"Portfolio drawdown circuit breaker triggered: "
                         f"{drawdown_pct * 100:.2f}% >= {settings.PAUSE_FORCE_RESUME_MAX_DRAWDOWN_PCT:.2f}%. Pausing trading."
                     )
-                    await asyncio.to_thread(engine.redis.set, "trading:paused", "1")
-                    await asyncio.to_thread(engine.redis.set, "trading:pause_source", "portfolio_drawdown")
-                    await asyncio.to_thread(engine.redis.set, "trading:pause_reason", f"Portfolio drawdown {drawdown_pct * 100:.2f}% exceeded circuit breaker threshold")
+                    from src.utils.pause_utils import set_trading_pause
+                    await asyncio.to_thread(
+                        set_trading_pause,
+                        engine.redis,
+                        "portfolio_drawdown",
+                        reason=f"Portfolio drawdown {drawdown_pct * 100:.2f}% exceeded circuit breaker threshold",
+                        set_pause_start=False,
+                    )
                     if engine.notifier:
                         await engine.notifier.send_notification(
                             f"🛑 Portfolio drawdown circuit breaker triggered ({drawdown_pct * 100:.2f}%). Trading paused.",
@@ -187,16 +192,8 @@ class RiskManager:
                         )
             elif source == "portfolio_drawdown" and paused:
                 logger.info(f"Portfolio drawdown recovered to {drawdown_pct * 100:.2f}%. Resuming trading.")
-                pause_keys = [
-                    "trading:paused",
-                    "trading:pause_source",
-                    "trading:pause_start",
-                    "trading:pause_duration",
-                    "trading:pause_reason",
-                    "trading:llm_pause_time",
-                ]
-                for key in pause_keys:
-                    await asyncio.to_thread(engine.redis.delete, key)
+                from src.utils.pause_utils import clear_trading_pause_keys
+                await asyncio.to_thread(clear_trading_pause_keys, engine.redis)
                 if engine.notifier:
                     await engine.notifier.send_notification(
                         "▶️ Portfolio drawdown recovered, trading resumed.",
@@ -239,9 +236,15 @@ class RiskManager:
                 f"Portfolio loss cooldown triggered: {consec_losses} consecutive losses. "
                 f"Pausing trading for {cooldown_seconds} seconds."
             )
-            await asyncio.to_thread(engine.redis.set, "trading:paused", "1", ex=cooldown_seconds)
-            await asyncio.to_thread(engine.redis.set, "trading:pause_source", "portfolio_cooldown", ex=cooldown_seconds)
-            await asyncio.to_thread(engine.redis.set, "trading:pause_reason", f"Portfolio cooldown after {consec_losses} consecutive losses", ex=cooldown_seconds)
+            from src.utils.pause_utils import set_trading_pause
+            await asyncio.to_thread(
+                set_trading_pause,
+                engine.redis,
+                "portfolio_cooldown",
+                reason=f"Portfolio cooldown after {consec_losses} consecutive losses",
+                set_pause_start=False,
+                ttl=cooldown_seconds,
+            )
             
             if engine.notifier:
                 await engine.notifier.send_notification(
@@ -275,16 +278,8 @@ class RiskManager:
                     today = datetime.now(tz).date()
                     if today > pause_date:
                         logger.info("Auto-resuming from daily loss limit: new day started.")
-                        pause_keys = [
-                            "trading:paused",
-                            "trading:pause_source",
-                            "trading:pause_start",
-                            "trading:pause_duration",
-                            "trading:pause_reason",
-                            "trading:llm_pause_time",
-                        ]
-                        for key in pause_keys:
-                            await asyncio.to_thread(engine.redis.delete, key)
+                        from src.utils.pause_utils import clear_trading_pause_keys
+                        await asyncio.to_thread(clear_trading_pause_keys, engine.redis)
                         if engine.notifier:
                             await engine.notifier.send_notification(
                                 "▶️ Auto-resumed from daily loss limit (new day started).",
@@ -315,10 +310,13 @@ class RiskManager:
                 f" - {daily_buy_fees:.2f} buy fees). "
                 f"Pausing trading until tomorrow."
             )
-            await asyncio.to_thread(engine.redis.set, "trading:paused", "1")
-            await asyncio.to_thread(engine.redis.set, "trading:pause_source", "daily_loss_limit")
-            await asyncio.to_thread(engine.redis.set, "trading:pause_start", str(time.time()))
-            await asyncio.to_thread(engine.redis.set, "trading:pause_reason", f"Daily loss limit reached ({daily_pnl:.2f})")
+            from src.utils.pause_utils import set_trading_pause
+            await asyncio.to_thread(
+                set_trading_pause,
+                engine.redis,
+                "daily_loss_limit",
+                reason=f"Daily loss limit reached ({daily_pnl:.2f})",
+            )
 
             if engine.notifier:
                 await engine.notifier.send_notification(

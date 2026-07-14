@@ -477,12 +477,8 @@ async def history(limit: int = 50):
 async def pause():
     engine = get_engine()
     redis = engine.redis
-    await asyncio.to_thread(redis.set, "trading:paused", "1")
-    await asyncio.to_thread(redis.set, "trading:pause_source", "manual")
-    await asyncio.to_thread(redis.delete, "trading:pause_start")
-    await asyncio.to_thread(redis.delete, "trading:pause_duration")
-    await asyncio.to_thread(redis.delete, "trading:pause_reason")
-    await asyncio.to_thread(redis.delete, "trading:llm_pause_time")
+    from src.utils.pause_utils import set_trading_pause
+    await asyncio.to_thread(set_trading_pause, redis, "manual", set_pause_start=False)
     return {"status": "paused"}
 
 @http_router.post("/api/resume", dependencies=[Depends(verify_csrf)])
@@ -491,16 +487,8 @@ async def resume():
     if not await engine._is_market_open():
         raise HTTPException(status_code=400, detail="Cannot resume: market is currently closed")
     redis = engine.redis
-    keys = [
-        "trading:paused",
-        "trading:pause_source",
-        "trading:pause_start",
-        "trading:pause_duration",
-        "trading:pause_reason",
-        "trading:llm_pause_time",
-    ]
-    for key in keys:
-        await asyncio.to_thread(redis.delete, key)
+    from src.utils.pause_utils import clear_trading_pause_keys
+    await asyncio.to_thread(clear_trading_pause_keys, redis)
     return {"status": "resumed"}
 
 @http_router.post("/api/sell", dependencies=[Depends(verify_csrf)])

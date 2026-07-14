@@ -49,11 +49,7 @@ class ReevalPauseResumeManager:
                     if current_source and current_source == "manual":
                         logger.info("LLM pause request ignored because trading is manually paused.")
                     else:
-                        await asyncio.to_thread(engine.redis.set, "trading:paused", "1")
-                        await asyncio.to_thread(engine.redis.set, "trading:pause_source", "llm")
-                        await asyncio.to_thread(engine.redis.set, "trading:pause_start", str(time.time()))
-                        await asyncio.to_thread(engine.redis.set, "trading:llm_pause_time", str(time.time()))
-                        # Fallback if LLM did not provide pause_duration_seconds
+                        from src.utils.pause_utils import set_trading_pause
                         if pause_duration is None:
                             _min_pause = settings.MIN_LLM_PAUSE_DURATION
                             try:
@@ -63,11 +59,14 @@ class ReevalPauseResumeManager:
                             except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                                 pass
                             pause_duration = _min_pause
-                            await asyncio.to_thread(
-                                engine.redis.setex, "trading:pause_duration", 7 * 24 * 3600, str(int(pause_duration))
-                            )
-                        if pause_reason:
-                            await asyncio.to_thread(engine.redis.set, "trading:pause_reason", pause_reason)
+                        await asyncio.to_thread(
+                            set_trading_pause,
+                            engine.redis,
+                            "llm",
+                            reason=pause_reason if pause_reason else None,
+                            pause_duration=pause_duration,
+                            set_llm_pause_time=True,
+                        )
                         logger.info("LLM requested to pause trading.")
                 else:
                     # LLM requests resume – only allowed if the pause was LLM-initiated
@@ -109,17 +108,8 @@ class ReevalPauseResumeManager:
                                 except (ValueError, TypeError):
                                     pass
                             if not skip_resume:
-                                # Delete all pause keys
-                                pause_keys = [
-                                    "trading:paused",
-                                    "trading:pause_source",
-                                    "trading:pause_start",
-                                    "trading:pause_duration",
-                                    "trading:pause_reason",
-                                    "trading:llm_pause_time",
-                                ]
-                                for key in pause_keys:
-                                    await asyncio.to_thread(engine.redis.delete, key)
+                                from src.utils.pause_utils import clear_trading_pause_keys
+                                await asyncio.to_thread(clear_trading_pause_keys, engine.redis)
                                 logger.info("LLM requested to resume trading.")
                                 engine._reeval_trigger.set()
                         else:

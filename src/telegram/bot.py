@@ -184,13 +184,8 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         try:
-            await asyncio.wait_for(asyncio.to_thread(self.redis.set, "trading:paused", "1"), timeout=5.0)
-            await asyncio.wait_for(asyncio.to_thread(self.redis.set, "trading:pause_source", "manual"), timeout=5.0)
-            # Remove any leftover LLM pause keys to avoid confusion
-            await asyncio.wait_for(
-                asyncio.to_thread(self.redis.delete, "trading:pause_start", "trading:pause_duration", "trading:pause_reason", "trading:llm_pause_time"),
-                timeout=5.0
-            )
+            from src.utils.pause_utils import set_trading_pause
+            await asyncio.wait_for(asyncio.to_thread(set_trading_pause, self.redis, "manual", set_pause_start=False), timeout=5.0)
         except asyncio.TimeoutError:
             logger.warning("Redis operation timed out during pause")
             await update.message.reply_text("⚠️ Failed to pause: Redis timed out.", reply_markup=self.keyboard)
@@ -220,16 +215,9 @@ class TelegramBot:
             )
             return
         # Delete all pause-related keys
-        keys = [
-            "trading:paused",
-            "trading:pause_source",
-            "trading:pause_start",
-            "trading:pause_duration",
-            "trading:pause_reason",
-            "trading:llm_pause_time",
-        ]
         try:
-            await asyncio.wait_for(asyncio.to_thread(self.redis.delete, *keys), timeout=5.0)
+            from src.utils.pause_utils import clear_trading_pause_keys
+            await asyncio.wait_for(asyncio.to_thread(clear_trading_pause_keys, self.redis), timeout=5.0)
         except asyncio.TimeoutError:
             logger.warning("Redis operation timed out during resume")
             await update.message.reply_text("⚠️ Failed to resume: Redis timed out.", reply_markup=self.keyboard)

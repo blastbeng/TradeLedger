@@ -272,21 +272,14 @@ class EngineOrchestrator:
                     source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
 
                     if source != "llm":
-                        # Only overwrite pause keys if not already paused by LLM
-                        pause_keys = [
-                            "trading:paused",
-                            "trading:pause_source",
-                            "trading:pause_start",
-                            "trading:pause_duration",
-                            "trading:pause_reason",
-                            "trading:llm_pause_time",
-                        ]
-                        for key in pause_keys:
-                            await asyncio.to_thread(engine.redis.delete, key)
-                        # Set new pause keys
-                        await asyncio.to_thread(engine.redis.set, "trading:paused", "1")
-                        await asyncio.to_thread(engine.redis.set, "trading:pause_source", "market_closed")
-                        await asyncio.to_thread(engine.redis.set, "trading:pause_reason", reason)
+                        from src.utils.pause_utils import set_trading_pause
+                        await asyncio.to_thread(
+                            set_trading_pause,
+                            engine.redis,
+                            "market_closed",
+                            reason=reason,
+                            set_pause_start=False,
+                        )
                         logger.debug(f"Market closed, pausing trading. Reason: {reason}")
                         if engine.notifier and not already_market_closed:
                             await engine.notifier.send_notification(
@@ -385,17 +378,8 @@ class EngineOrchestrator:
                         source_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
                         source = source_raw.decode() if isinstance(source_raw, bytes) else (source_raw or "")
                         if source == "market_closed":
-                            # Only clear market-closed pauses; respect LLM and manual pauses
-                            pause_keys = [
-                                "trading:paused",
-                                "trading:pause_source",
-                                "trading:pause_start",
-                                "trading:pause_duration",
-                                "trading:pause_reason",
-                                "trading:llm_pause_time",
-                            ]
-                            for key in pause_keys:
-                                await asyncio.to_thread(engine.redis.delete, key)
+                            from src.utils.pause_utils import clear_trading_pause_keys
+                            await asyncio.to_thread(clear_trading_pause_keys, engine.redis)
                             logger.info("Market opened, clearing market-closed pause (trading resumed).")
                             if engine.notifier:
                                 await engine.notifier.send_notification(

@@ -117,16 +117,8 @@ class TradingEngine:
         # after the trading client is available.
 
         # Clear stale pause keys immediately (Redis is already available)
-        pause_keys = [
-            "trading:paused",
-            "trading:pause_source",
-            "trading:pause_start",
-            "trading:pause_duration",
-            "trading:pause_reason",
-            "trading:llm_pause_time",
-        ]
-        for key in pause_keys:
-            self.redis.delete(key)
+        from src.utils.pause_utils import clear_trading_pause_keys
+        clear_trading_pause_keys(self.redis)
 
         # Track quote currency spent in the current cycle to avoid over-allocating
         self._cycle_spent_lock = self.shared_state._cycle_spent_lock
@@ -893,16 +885,8 @@ class TradingEngine:
 
     async def _clear_pause_and_resume(self, reason: str, notification_msg: str, notification_summary: dict) -> None:
         """Helper to clear pause keys, set resume cooldown, and notify."""
-        pause_keys = [
-            "trading:paused",
-            "trading:pause_source",
-            "trading:pause_start",
-            "trading:pause_duration",
-            "trading:pause_reason",
-            "trading:llm_pause_time",
-        ]
-        for key in pause_keys:
-            await asyncio.to_thread(self.redis.delete, key)
+        from src.utils.pause_utils import clear_trading_pause_keys
+        await asyncio.to_thread(clear_trading_pause_keys, self.redis)
         self._reeval_trigger.set()
         await asyncio.to_thread(self.redis.set, "trading:last_auto_resume", str(time.time()))
         await asyncio.to_thread(self.redis.setex, "trading:auto_resume_cooldown", 600, "1")

@@ -226,16 +226,8 @@ class PauseResumeManager:
                     if fail_source and (fail_source.decode() if isinstance(fail_source, bytes) else fail_source) != "llm":
                         logger.warning("Force-resume on LLM failure skipped: pause source is not LLM.")
                         return
-                    pause_keys = [
-                        "trading:paused",
-                        "trading:pause_source",
-                        "trading:pause_start",
-                        "trading:pause_duration",
-                        "trading:pause_reason",
-                        "trading:llm_pause_time",
-                    ]
-                    for key in pause_keys:
-                        await asyncio.to_thread(engine.redis.delete, key)
+                    from src.utils.pause_utils import clear_trading_pause_keys
+                    await asyncio.to_thread(clear_trading_pause_keys, engine.redis)
                     await asyncio.to_thread(engine.redis.delete, fail_key)
                     # --- Also reset keep counter and set force‑resume risk multiplier ---
                     await asyncio.to_thread(engine.redis.delete, keep_key)
@@ -296,16 +288,8 @@ class PauseResumeManager:
                         logger.warning(f"Invalid global_risk_multiplier value: {global_mult_raw}")
 
                 # Resume trading
-                pause_keys = [
-                    "trading:paused",
-                    "trading:pause_source",
-                    "trading:pause_start",
-                    "trading:pause_duration",
-                    "trading:pause_reason",
-                    "trading:llm_pause_time",
-                ]
-                for key in pause_keys:
-                    await asyncio.to_thread(engine.redis.delete, key)
+                from src.utils.pause_utils import clear_trading_pause_keys
+                await asyncio.to_thread(clear_trading_pause_keys, engine.redis)
                 # Reset the keep counter
                 await asyncio.to_thread(engine.redis.delete, keep_key)
                 logger.info("LLM decided to resume trading.")
@@ -385,16 +369,8 @@ class PauseResumeManager:
                         f"forcing resume with risk multiplier {force_resume_mult}."
                     )
                     # Force resume
-                    pause_keys = [
-                        "trading:paused",
-                        "trading:pause_source",
-                        "trading:pause_start",
-                        "trading:pause_duration",
-                        "trading:pause_reason",
-                        "trading:llm_pause_time",
-                    ]
-                    for key in pause_keys:
-                        await asyncio.to_thread(engine.redis.delete, key)
+                    from src.utils.pause_utils import clear_trading_pause_keys
+                    await asyncio.to_thread(clear_trading_pause_keys, engine.redis)
                     await asyncio.to_thread(engine.redis.delete, keep_key)
                     await engine._set_global_risk_multiplier(force_resume_mult)
                     engine._reeval_trigger.set()
