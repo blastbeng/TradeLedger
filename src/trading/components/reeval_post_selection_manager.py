@@ -17,13 +17,17 @@ class ReevalPostSelectionManager:
         self.shared_state = engine.shared_state
         self.event_bus = event_bus
 
-    def _create_background_task(self, coro, task_name: str):
-        """Wraps a coroutine in a task with error logging."""
+    def _create_background_task(self, coro_factory, task_name: str, max_retries: int = 3):
+        """Wraps a coroutine factory in a task with error logging and retry."""
         async def _safe_run():
-            try:
-                await coro
-            except Exception as e:
-                logger.exception(f"Error in background task {task_name}: {e}")
+            for attempt in range(1, max_retries + 1):
+                try:
+                    await coro_factory()
+                    return
+                except Exception as e:
+                    logger.exception(f"Error in background task {task_name} (attempt {attempt}/{max_retries}): {e}")
+                    if attempt < max_retries:
+                        await asyncio.sleep(2 ** (attempt - 1))
         return asyncio.create_task(_safe_run())
 
     async def post_selection_cleanup_and_backfill(
@@ -67,7 +71,7 @@ class ReevalPostSelectionManager:
                 tf = entry["timeframe"]
                 logger.info(f"Triggering immediate backfill for newly selected symbol {sym} ({tf})")
                 self._create_background_task(
-                    self.event_bus.publish("backfill_new_symbol", sym, tf),
+                    lambda: self.event_bus.publish("backfill_new_symbol", sym, tf),
                     f"backfill_new_symbol:{sym}"
                 )
 
@@ -77,7 +81,7 @@ class ReevalPostSelectionManager:
                 sym = entry["symbol"]
                 logger.info(f"Triggering immediate news fetch for newly selected symbol {sym}")
                 self._create_background_task(
-                    engine._fetch_and_store_news_for_symbol(sym),
+                    lambda: engine._fetch_and_store_news_for_symbol(sym),
                     f"fetch_news:{sym}"
                 )
 
