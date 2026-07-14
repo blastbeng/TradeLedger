@@ -925,7 +925,7 @@ class TradingEngine:
         try:
             elapsed = time.time() - float(pause_start_raw)
             if elapsed >= default_max_pause:
-                logger.warning("Pause has no duration; forcing auto‑resume after default fallback (2 hours).")
+                logger.warning(f"Pause has no duration; forcing auto-resume after default fallback ({default_max_pause // 60} minutes).")
                 await self._clear_pause_and_resume(
                     "Fallback pause timeout",
                     "⏰ Trading auto‑resumed after maximum pause duration (no LLM‑set duration).",
