@@ -83,6 +83,26 @@ def get_yahoo_quote(symbol: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _validate_and_clean_fundamentals(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Validates and cleans fundamental data. Returns None if data is entirely empty."""
+    if not data or all(v is None for v in data.values()):
+        return None
+
+    # yfinance sometimes returns negative values for missing data
+    numeric_fields = ["pe_ratio", "forward_pe", "price_to_book"]
+    for field in numeric_fields:
+        if data.get(field) is not None and data[field] < 0:
+            data[field] = None
+
+    if data.get("market_cap") is not None and data["market_cap"] <= 0:
+        data["market_cap"] = None
+
+    if data.get("dividend_yield") is not None and (data["dividend_yield"] < 0 or data["dividend_yield"] > 1.0):
+        data["dividend_yield"] = None
+
+    return data
+
+
 def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
     """Fetch key fundamentals (P/E, Market Cap, Sector, etc.) from Yahoo Finance."""
     if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
@@ -122,12 +142,19 @@ def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
             "profit_margins": _safe_float(info.get("profitMargins")),
             "return_on_equity": _safe_float(info.get("returnOnEquity")),
         }
+
+        # Validate and clean data before caching
+        cleaned_result = _validate_and_clean_fundamentals(result)
+        if cleaned_result is None:
+            logger.warning(f"Yahoo Finance fundamentals for {base} returned empty/invalid data, skipping cache.")
+            return None
+
         # Cache for 24 hours
         try:
-            redis_client.set(cache_key, json.dumps(result), ex=86400)
+            redis_client.set(cache_key, json.dumps(cleaned_result), ex=86400)
         except Exception:
             pass
-        return result
+        return cleaned_result
     except Exception as e:
         logger.warning(f"Yahoo Finance fundamentals failed for {base}: {type(e).__name__}: {e}")
         return None
