@@ -463,7 +463,7 @@ class Settings(BaseSettings):
     STRATEGY_INTERVAL_MULTIPLIER: int = 1
 
     # Evaluation intervals per timeframe (seconds)
-    EVAL_INTERVAL_1H: int = 900       # 15 minutes
+    EVAL_INTERVAL_1H: int = 3600      # 1 hour
     EVAL_INTERVAL_1D: int = 1800      # 30 minutes
     EVAL_INTERVAL_1W: int = 3600      # 1 hour
     EVAL_INTERVAL_1M: int = 86400     # 1 day
