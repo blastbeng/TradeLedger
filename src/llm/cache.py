@@ -1053,20 +1053,27 @@ def _strip_ohlcv_timestamps(obj):
     return obj
 
 
-def _strip_timestamps_from_candle_list(candles):
-    """Remove timestamps from a list of candles."""
-    if not isinstance(candles, list):
-        return candles
-    result = []
-    for candle in candles:
-        if isinstance(candle, (list, tuple)):
-            # Assume first element is timestamp; keep the rest
-            result.append(list(candle[1:]))
-        elif isinstance(candle, dict):
-            result.append({k: v for k, v in candle.items() if "time" not in str(k).lower()})
-        else:
-            result.append(candle)
-    return result
+def _strip_timestamps_from_candle_list(data):
+    """Remove timestamps from OHLCV data, handling dicts of timeframes."""
+    if isinstance(data, dict):
+        # Handle dict of timeframes, e.g., {"1d": [[ts, o, h, l, c, v], ...]}
+        return {k: _strip_timestamps_from_candle_list(v) for k, v in data.items()}
+    if not isinstance(data, list):
+        return data
+    
+    # Check if it's a list of candles (list of lists) or a list of dicts
+    if data and isinstance(data[0], (list, tuple, dict)):
+        result = []
+        for candle in data:
+            if isinstance(candle, (list, tuple)):
+                # Assume first element is timestamp; keep the rest
+                result.append(list(candle[1:]))
+            elif isinstance(candle, dict):
+                result.append({k: v for k, v in candle.items() if "time" not in str(k).lower()})
+            else:
+                result.append(candle)
+        return result
+    return data
 
 
 def compute_market_hash(data: dict) -> str:
