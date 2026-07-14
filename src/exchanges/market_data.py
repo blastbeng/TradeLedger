@@ -199,15 +199,32 @@ def _finalize_and_persist_quotes(
             existing_quotes = get_quotes_from_db(symbols_with_price, max_age_seconds=86400)
             for sym in symbols_with_price:
                 new_last = result[sym].get("last")
+                new_update = result[sym].get("last_update")
                 existing_last = existing_quotes.get(sym, {}).get("last")
+                existing_update = existing_quotes.get(sym, {}).get("last_update")
+                
+                # If existing quote is newer, don't overwrite with stale data
+                if existing_update and new_update and existing_update > new_update:
+                    logger.debug(f"Quote validation: existing quote for {sym} is newer than new quote. Keeping existing.")
+                    result[sym] = existing_quotes[sym]
+                    continue
+
                 if existing_last and existing_last > 0 and new_last and new_last > 0:
                     deviation = abs(new_last - existing_last) / existing_last
                     if deviation > 0.5:
-                        logger.warning(
-                            f"Quote validation failed for {sym}: new price {new_last} deviates "
-                            f"by {deviation*100:.2f}% from existing price {existing_last}. Reverting to existing."
-                        )
-                        result[sym] = existing_quotes[sym]
+                        # Only revert if the existing quote is recent (within 1 hour)
+                        # to avoid blocking valid large price moves over longer periods
+                        if existing_update and (int(time.time() * 1000) - existing_update < 3600 * 1000):
+                            logger.warning(
+                                f"Quote validation failed for {sym}: new price {new_last} deviates "
+                                f"by {deviation*100:.2f}% from recent existing price {existing_last}. Reverting to existing."
+                            )
+                            result[sym] = existing_quotes[sym]
+                        else:
+                            logger.info(
+                                f"Quote validation: large deviation for {sym} ({deviation*100:.2f}%) "
+                                f"but existing quote is old. Accepting new price."
+                            )
         except (RuntimeError, ValueError, OSError) as e:
             logger.warning(f"Failed to validate quotes against DB: {type(e).__name__}: {e}")
 
