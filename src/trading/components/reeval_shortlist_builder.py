@@ -172,6 +172,11 @@ class ReevalShortlistBuilder:
                         if len([d for d in deduped if d['symbol'] in btp_pairs]) >= min_btps:
                             break
 
+        # Update effective_max_symbols to accommodate newly appended symbols
+        engine = self.engine
+        if len(deduped) > engine.effective_max_symbols:
+            engine.effective_max_symbols = len(deduped)
+
     def enforce_min_symbols(
         self,
         deduped: List[Dict[str, str]],
