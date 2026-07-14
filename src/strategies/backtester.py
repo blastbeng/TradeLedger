@@ -35,13 +35,20 @@ def _compute_dynamic_slippage(
     atr_values: Optional[List[Optional[float]]],
     base_pct: float,
     max_pct: float,
+    timeframe_seconds: Optional[int] = None,
 ) -> float:
     """Compute dynamic slippage based on relative volume and volatility at a given candle.
 
     - Low relative volume (current < average) → wider spread → higher slippage (up to 3× base).
     - High ATR% → more price movement between signal and fill → higher slippage.
+    - Timeframe scaling: base slippage is scaled by the square root of time relative to 1-minute.
     """
     slippage = base_pct
+
+    # Scale base slippage by timeframe (sqrt of time rule) to adapt for higher timeframes
+    if timeframe_seconds and timeframe_seconds > 60:
+        time_scale = (timeframe_seconds / 60.0) ** 0.5
+        slippage *= time_scale
 
     # Volume adjustment
     current_vol = candles[candle_index][5] if candle_index < len(candles) else 0.0
@@ -129,6 +136,7 @@ class BacktestConfig:
     slippage_model: str = "fixed"
     slippage_base_pct: float = 0.001
     slippage_max_pct: float = 0.01
+    timeframe_seconds: Optional[int] = None
     rsi_values: Optional[List[Optional[float]]] = None
     max_rsi: float = 100.0
     macd_hist_values: Optional[List[Optional[float]]] = None
@@ -338,6 +346,7 @@ def backtest_strategy(
             entry_slippage = _compute_dynamic_slippage(
                 i, candles, avg_volume_series, config.atr_values,
                 config.slippage_base_pct, config.slippage_max_pct,
+                config.timeframe_seconds,
             )
         else:
             entry_slippage = config.slippage_pct
@@ -434,6 +443,7 @@ def backtest_strategy(
                 effective_slippage = _compute_dynamic_slippage(
                     j, candles, avg_volume_series, config.atr_values,
                     config.slippage_base_pct, config.slippage_max_pct,
+                    config.timeframe_seconds,
                 )
             else:
                 effective_slippage = config.slippage_pct
