@@ -403,14 +403,28 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
         elif isinstance(res, list):
             articles.extend(res)
 
-    # Deduplicate by URL
-    seen = set()
+    # Deduplicate by URL and normalized title
+    seen_urls = set()
+    seen_titles = set()
     unique = []
     for a in articles:
         url = a.get("url", "")
-        if url and url not in seen:
-            seen.add(url)
-            unique.append(a)
+        title = (a.get("title", "") or "").strip().lower()
+        
+        if not url and not title:
+            continue
+            
+        if url and url in seen_urls:
+            continue
+        if title and title in seen_titles:
+            continue
+            
+        if url:
+            seen_urls.add(url)
+        if title:
+            seen_titles.add(title)
+            
+        unique.append(a)
 
     # Limit per symbol
     unique = unique[:settings.NEWS_MAX_ARTICLES_PER_SYMBOL]
