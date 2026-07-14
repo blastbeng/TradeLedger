@@ -595,6 +595,18 @@ class Settings(BaseSettings):
             raise ValueError("MAX_CONCURRENT_BACKTESTS must be between 1 and 32")
         return v
 
+    # Thread pool sizes for dedicated executors
+    DB_EXECUTOR_WORKERS: int = 10
+    DOWNLOAD_EXECUTOR_WORKERS: int = 10
+    QUOTE_EXECUTOR_WORKERS: int = 20  # increased from 12 to handle yfinance hangs
+
+    @field_validator("DB_EXECUTOR_WORKERS", "DOWNLOAD_EXECUTOR_WORKERS", "QUOTE_EXECUTOR_WORKERS")
+    @classmethod
+    def validate_executor_workers(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Executor worker count must be at least 1")
+        return v
+
     @field_validator("OHLCV_TIMEFRAMES")
     @classmethod
     def validate_ohlcv_timeframes(cls, v: list[str]) -> list[str]:

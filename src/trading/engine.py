@@ -100,15 +100,15 @@ class TradingEngine:
         # Dedicated thread pool for database writes – prevents write contention
         # from starving the default asyncio thread pool used by the web server,
         # Telegram bot, and all other to_thread calls.
-        self._db_executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="dbwriter")
+        self._db_executor = ThreadPoolExecutor(max_workers=settings.DB_EXECUTOR_WORKERS, thread_name_prefix="dbwriter")
         # Dedicated thread pool for download/indicator operations – prevents
         # download tasks from exhausting the default asyncio thread pool used
         # by the web server, Telegram bot, and engine loop.
-        self._download_executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="downloader")
+        self._download_executor = ThreadPoolExecutor(max_workers=settings.DOWNLOAD_EXECUTOR_WORKERS, thread_name_prefix="downloader")
         # Dedicated thread pool for quote fetching – prevents zombie get_quotes
         # threads (from asyncio.wait_for timeouts) from exhausting the default
         # asyncio thread pool used by the web server and Telegram bot.
-        self._quote_executor = ThreadPoolExecutor(max_workers=12, thread_name_prefix="quotes")
+        self._quote_executor = ThreadPoolExecutor(max_workers=settings.QUOTE_EXECUTOR_WORKERS, thread_name_prefix="quotes")
 
         self.initial_balance: float = 0.0
         self.notifier = None
