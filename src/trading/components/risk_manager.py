@@ -437,7 +437,7 @@ class RiskManager:
                 return
 
             # --- Maximum position age safeguard ---
-            if await self.check_max_position_age(symbol, pos, display_symbol):
+            if await self.check_max_position_age(symbol, pos, display_symbol, current_price):
                 return
 
             # --- Trailing stop update ---
@@ -1320,6 +1320,7 @@ class RiskManager:
         symbol: str,
         pos: Dict[str, Any],
         display_symbol: str,
+        current_price: float,
     ) -> bool:
         """Check if a position has exceeded its maximum age safeguard.
 
@@ -1344,6 +1345,16 @@ class RiskManager:
         max_age = multiplier * original_max_hold
 
         if position_age > max_age:
+            # Skip force-close if the position is currently profitable
+            entry_price = pos.get("price", 0.0)
+            if current_price > entry_price:
+                logger.info(
+                    f"Max position age reached for {symbol} but position is profitable "
+                    f"(current: {current_price:.4f}, entry: {entry_price:.4f}). "
+                    f"Skipping force-close to allow LLM to manage the trade."
+                )
+                return False
+
             logger.warning(
                 f"Maximum position age reached for {symbol}: "
                 f"age {position_age / 86400:.1f} days > limit {max_age / 86400:.1f} days "
