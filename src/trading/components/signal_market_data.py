@@ -105,6 +105,10 @@ class SignalMarketDataFetcher:
                 if ind:
                     multi_tf_indicators[tf] = ind
 
+                # If we fetched 1d candles for pivot points, add them to raw candles
+                if tf == "1d" and tf in ohlcv_data and ohlcv_data[tf]:
+                    multi_tf_raw_candles[tf] = ohlcv_data[tf]
+
         # Compute daily pivot points from the 1d timeframe (if available)
         if "1d" in multi_tf_raw_candles and len(multi_tf_raw_candles["1d"]) >= 2:
             daily_candles = multi_tf_raw_candles["1d"]

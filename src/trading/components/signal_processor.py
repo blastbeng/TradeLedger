@@ -763,6 +763,15 @@ class SignalProcessor:
             except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.debug(f"DB OHLCV fetch failed for {symbol} {assigned_tf}: {type(e).__name__}: {e}")
 
+            # Fetch last 2 daily candles for pivot points if assigned_tf is not '1d'
+            if assigned_tf != "1d" and "1d" in settings.OHLCV_TIMEFRAMES:
+                try:
+                    daily_candles = await asyncio.to_thread(get_ohlcv, symbol, "1d", limit=2)
+                    if daily_candles:
+                        ohlcv_data["1d"] = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in daily_candles]
+                except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+                    logger.debug(f"DB OHLCV fetch failed for {symbol} 1d: {type(e).__name__}: {e}")
+
         # --- Compute multi-TF indicators ---
         _inds = await self.market_data_fetcher.compute_multi_tf_indicators(symbol, ohlcv_data, assigned_tf)
 
