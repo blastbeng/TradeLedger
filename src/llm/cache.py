@@ -514,7 +514,7 @@ def get_cached_llm_response(
                     api_key=api_key,
                     temperature=temperature,
                     timeout=effective_timeout,
-                    max_input_tokens=effective_limit,
+                    max_input_tokens=effective_limit - estimate_tokens(system_prompt),
                 )
                 messages[-1]["content"] = merged_content
     else:
@@ -530,7 +530,7 @@ def get_cached_llm_response(
                 api_key=api_key,
                 temperature=temperature,
                 timeout=effective_timeout,
-                max_input_tokens=effective_limit,
+                max_input_tokens=effective_limit - estimate_tokens(system_prompt),
             )
 
     if messages is not None:
@@ -660,7 +660,7 @@ def get_cached_llm_response(
                                 api_key=fallback_api_key,
                                 temperature=temperature,
                                 timeout=effective_timeout,
-                                max_input_tokens=fb_effective_limit,
+                                max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
                             )
                             api_messages = []
                             if system_prompt:
@@ -679,7 +679,7 @@ def get_cached_llm_response(
                             api_key=fallback_api_key,
                             temperature=temperature,
                             timeout=effective_timeout,
-                            max_input_tokens=fb_effective_limit,
+                            max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
                         )
                 fallback_start = time.time()
                 try:
@@ -766,7 +766,7 @@ def get_cached_llm_response(
                                 api_key=fallback_api_key,
                                 temperature=temperature,
                                 timeout=effective_timeout,
-                                max_input_tokens=fb_effective_limit,
+                                max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
                             )
                             api_messages = []
                             if system_prompt:
@@ -785,7 +785,7 @@ def get_cached_llm_response(
                             api_key=fallback_api_key,
                             temperature=temperature,
                             timeout=effective_timeout,
-                            max_input_tokens=fb_effective_limit,
+                            max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
                         )
                 fallback_start = time.time()
                 try:
