@@ -169,7 +169,6 @@ _engine = None
 _ws_payload_cache: Optional[dict] = None
 _ws_payload_cache_time: float = 0.0
 _ws_payload_ttl: float = 5.0  # seconds — can be changed via API
-_ws_payload_cache_lock = asyncio.Lock()
 
 def invalidate_ws_payload_cache():
     """Clear the WebSocket payload cache so clients get fresh data immediately."""
@@ -801,84 +800,83 @@ async def websocket_endpoint(websocket: WebSocket):
                 global _ws_payload_cache, _ws_payload_cache_time
                 market_open = await engine._is_market_open()
                 effective_ttl = _ws_payload_ttl if market_open else max(_ws_payload_ttl, 60.0)
-                async with _ws_payload_cache_lock:
-                    if _ws_payload_cache is not None and (now - _ws_payload_cache_time) < effective_ttl:
-                        payload = _ws_payload_cache
-                    else:
-                        # Build current_symbols with display (parallelized to avoid blocking)
-                        async def _build_symbol_entry(entry):
-                            entry_copy = dict(entry)
-                            entry_copy["display"] = await _get_display_symbol(engine, entry["symbol"], entry.get("timeframe"))
-                            return entry_copy
+                if _ws_payload_cache is not None and (now - _ws_payload_cache_time) < effective_ttl:
+                    payload = _ws_payload_cache
+                else:
+                    # Build current_symbols with display (parallelized to avoid blocking)
+                    async def _build_symbol_entry(entry):
+                        entry_copy = dict(entry)
+                        entry_copy["display"] = await _get_display_symbol(engine, entry["symbol"], entry.get("timeframe"))
+                        return entry_copy
 
-                        current_symbols = await asyncio.gather(
-                            *[_build_symbol_entry(entry) for entry in engine.current_symbols]
-                        ) if engine.current_symbols else []
+                    current_symbols = await asyncio.gather(
+                        *[_build_symbol_entry(entry) for entry in engine.current_symbols]
+                    ) if engine.current_symbols else []
 
-                        # --- Fetch batch quotes for position symbols ---
-                        pos_symbols = {sym.split("/")[0] for sym in engine.positions.keys()}
-                        pos_quotes = {}
-                        if pos_symbols:
-                            try:
-                                pos_quotes = await engine._market_data_manager._get_quotes_async(
-                                    list(pos_symbols), timeout=15.0
-                                )
-                            except Exception as e:
-                                logger.warning(f"WebSocket batch quote fetch failed for positions: {type(e).__name__}: {e}")
-
-                        # Build positions with display_symbol and P&L (parallelized)
-                        async def _build_position_entry(sym, pos):
-                            pos_copy = dict(pos)
-                            pos_copy["display_symbol"] = await _get_display_symbol(engine, sym, pos.get("timeframe"))
-                            base_sym = sym.split("/")[0]
-                            ticker = pos_quotes.get(base_sym)
-                            current_price = ticker.get("last") if ticker else None
-                            pos_copy["current_price"] = current_price
-                            if current_price is not None and pos.get("price") and pos.get("amount"):
-                                pnl = (current_price - pos["price"]) * pos["amount"]
-                                pnl_pct = ((current_price - pos["price"]) / pos["price"]) * 100
-                                pos_copy["unrealized_pnl"] = pnl
-                                pos_copy["unrealized_pnl_pct"] = pnl_pct
-                                pos_copy["position_value"] = pos["amount"] * current_price
-                            else:
-                                pos_copy["unrealized_pnl"] = None
-                                pos_copy["unrealized_pnl_pct"] = None
-                                pos_copy["position_value"] = None
-                            return sym, pos_copy
-
-                        position_results = await asyncio.gather(
-                            *[_build_position_entry(sym, pos) for sym, pos in engine.positions.items()]
-                        ) if engine.positions else []
-                        positions = dict(position_results)
-
-                        balances = await run_in_threadpool(engine.trader.fetch_balance)
-                        pause_info = await engine.get_pause_status()
-
-                        # Strip large/unserializable fields from queued orders before sending
-                        queued_orders_payload = [
-                            {k: v for k, v in q.items() if k != "signal"}
-                            for q in engine.queued_orders
-                        ]
-
+                    # --- Fetch batch quotes for position symbols ---
+                    pos_symbols = {sym.split("/")[0] for sym in engine.positions.keys()}
+                    pos_quotes = {}
+                    if pos_symbols:
                         try:
-                            paused_val = await asyncio.to_thread(redis.get, "trading:paused")
-                            is_paused = paused_val == "1"
+                            pos_quotes = await engine._market_data_manager._get_quotes_async(
+                                list(pos_symbols), timeout=15.0
+                            )
                         except Exception as e:
-                            logger.warning(f"WebSocket: failed to read trading:paused from Redis: {type(e).__name__}: {e}")
-                            is_paused = False
+                            logger.warning(f"WebSocket batch quote fetch failed for positions: {type(e).__name__}: {e}")
 
-                        payload = {
-                            "current_symbols": current_symbols,
-                            "positions": positions,
-                            "balances": balances,
-                            "paused": is_paused,
-                            "pause_info": pause_info,
-                            "queued_orders": queued_orders_payload,
-                            "market_open": market_open,
-                            "redis_available": is_redis_available(),
-                        }
-                        _ws_payload_cache = payload
-                        _ws_payload_cache_time = now
+                    # Build positions with display_symbol and P&L (parallelized)
+                    async def _build_position_entry(sym, pos):
+                        pos_copy = dict(pos)
+                        pos_copy["display_symbol"] = await _get_display_symbol(engine, sym, pos.get("timeframe"))
+                        base_sym = sym.split("/")[0]
+                        ticker = pos_quotes.get(base_sym)
+                        current_price = ticker.get("last") if ticker else None
+                        pos_copy["current_price"] = current_price
+                        if current_price is not None and pos.get("price") and pos.get("amount"):
+                            pnl = (current_price - pos["price"]) * pos["amount"]
+                            pnl_pct = ((current_price - pos["price"]) / pos["price"]) * 100
+                            pos_copy["unrealized_pnl"] = pnl
+                            pos_copy["unrealized_pnl_pct"] = pnl_pct
+                            pos_copy["position_value"] = pos["amount"] * current_price
+                        else:
+                            pos_copy["unrealized_pnl"] = None
+                            pos_copy["unrealized_pnl_pct"] = None
+                            pos_copy["position_value"] = None
+                        return sym, pos_copy
+
+                    position_results = await asyncio.gather(
+                        *[_build_position_entry(sym, pos) for sym, pos in engine.positions.items()]
+                    ) if engine.positions else []
+                    positions = dict(position_results)
+
+                    balances = await run_in_threadpool(engine.trader.fetch_balance)
+                    pause_info = await engine.get_pause_status()
+
+                    # Strip large/unserializable fields from queued orders before sending
+                    queued_orders_payload = [
+                        {k: v for k, v in q.items() if k != "signal"}
+                        for q in engine.queued_orders
+                    ]
+
+                    try:
+                        paused_val = await asyncio.to_thread(redis.get, "trading:paused")
+                        is_paused = paused_val == "1"
+                    except Exception as e:
+                        logger.warning(f"WebSocket: failed to read trading:paused from Redis: {type(e).__name__}: {e}")
+                        is_paused = False
+
+                    payload = {
+                        "current_symbols": current_symbols,
+                        "positions": positions,
+                        "balances": balances,
+                        "paused": is_paused,
+                        "pause_info": pause_info,
+                        "queued_orders": queued_orders_payload,
+                        "market_open": market_open,
+                        "redis_available": is_redis_available(),
+                    }
+                    _ws_payload_cache = payload
+                    _ws_payload_cache_time = now
 
                 payload_str = json.dumps(payload)
                 if payload_str != last_sent_str:

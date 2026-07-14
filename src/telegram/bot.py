@@ -269,11 +269,11 @@ class TelegramBot:
         msg += f"<b>🧠 LLM Weak:</b> {weak_provider} / {weak_model}\n\n"
         msg += "<b>📈 Tracked Tickers:</b>\n"
         if symbols:
-            for entry in symbols:
+            names = await asyncio.gather(*[self.engine._market_data_manager.get_stock_name(entry["symbol"]) for entry in symbols])
+            for i, entry in enumerate(symbols):
                 symbol = entry["symbol"]
                 tf = entry["timeframe"]
-                name = await self.engine._market_data_manager.get_stock_name(symbol)
-                display = self.engine._format_symbol_display(symbol, name, tf)
+                display = self.engine._format_symbol_display(symbol, names[i], tf)
                 msg += f"  • <code>{display}</code>\n"
         else:
             msg += "  None\n"
@@ -281,9 +281,10 @@ class TelegramBot:
 
         if positions:
             msg += "<b>📈 Open Positions:</b>\n"
-            for sym, pos in positions.items():
+            pos_names = await asyncio.gather(*[self.engine._market_data_manager.get_stock_name(sym) for sym in positions.keys()])
+            for i, (sym, pos) in enumerate(positions.items()):
                 pos_tf = pos.get("timeframe")
-                pos_name = await self.engine._market_data_manager.get_stock_name(sym)
+                pos_name = pos_names[i]
                 pos_display = self.engine._format_symbol_display(sym, pos_name, pos_tf)
                 msg += (
                     f"  • <code>{pos_display}</code>\n"
@@ -384,10 +385,11 @@ class TelegramBot:
             return
 
         msg = "<b>📈 Open Trades</b>\n\n" if open_trades else ""
+        trade_names = await asyncio.gather(*[self.engine._market_data_manager.get_stock_name(t['symbol']) for t in open_trades]) if open_trades else []
         for idx, t in enumerate(open_trades, start=1):
             sym = t['symbol']
             trade_tf = t.get('timeframe')
-            trade_name = await self.engine._market_data_manager.get_stock_name(sym)
+            trade_name = trade_names[idx-1]
             trade_display = self.engine._format_symbol_display(sym, trade_name, trade_tf)
             amt = t['amount']
             price = t['price']
@@ -485,13 +487,14 @@ class TelegramBot:
         # --- Queued Orders ---
         if queued_orders:
             msg += "\n<b>⏳ Queued Orders</b>\n\n"
+            q_names = await asyncio.gather(*[self.engine._market_data_manager.get_stock_name(q['symbol']) for q in queued_orders])
             for idx, q in enumerate(queued_orders, start=1):
                 sym = q['symbol']
                 side = q['side']
                 side_emoji = "🟢" if side == "buy" else "🔴"
                 side_label = "BUY" if side == "buy" else "SELL"
                 q_tf = q.get('timeframe')
-                q_name = await self.engine._market_data_manager.get_stock_name(sym)
+                q_name = q_names[idx-1]
                 q_display = self.engine._format_symbol_display(sym, q_name, q_tf)
                 original_amount = q.get('original_amount', q['amount'])
                 filled_qty = q.get('filled_qty', 0.0)
@@ -576,10 +579,11 @@ class TelegramBot:
                 return
 
             msg = "<b>🚀 Performance by Symbol</b>\n\n"
-            for r in rows:
+            perf_names = await asyncio.gather(*[self.engine._market_data_manager.get_stock_name(r["symbol"]) for r in rows])
+            for i, r in enumerate(rows):
                 symbol = r["symbol"]
                 tf = r.get("timeframe") or "—"
-                perf_name = await self.engine._market_data_manager.get_stock_name(symbol)
+                perf_name = perf_names[i]
                 perf_display = self.engine._format_symbol_display(symbol, perf_name, tf)
                 trades = r["trade_count"]
                 profit = r["profit"]
@@ -757,8 +761,7 @@ class TelegramBot:
                 return
 
             await update.message.reply_text("Generating news summaries...", reply_markup=self.keyboard)
-            messages = []
-            for entry in symbols:
+            async def _process_news_entry(entry):
                 symbol = entry["symbol"]
                 news_tf = entry.get("timeframe")
                 news_name = await self.engine._market_data_manager.get_stock_name(symbol)
@@ -766,7 +769,7 @@ class TelegramBot:
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                 articles = await asyncio.to_thread(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
                 if not articles:
-                    continue
+                    return None
                 try:
                     news_data = await asyncio.to_thread(get_cached_news_summary, symbol)
                     summary_text = html.escape(news_data["summary"])
@@ -776,15 +779,15 @@ class TelegramBot:
                     summary_text = ""
                     provider = ""
                     model = ""
-
-                # Omit tickers with no news
                 if not summary_text or summary_text == "Could not generate summary.":
-                    continue
-
+                    return None
                 msg_line = f"<b>{news_display}</b>\n{summary_text}"
                 if provider and model:
                     msg_line += f"\n⚡ Generated by {model} ({provider})"
-                messages.append(msg_line)
+                return msg_line
+
+            results = await asyncio.gather(*[_process_news_entry(entry) for entry in symbols])
+            messages = [msg for msg in results if msg]
 
             if not messages:
                 await update.message.reply_text("No news available for tracked symbols.", reply_markup=self.keyboard)
@@ -808,14 +811,17 @@ class TelegramBot:
                 return
 
             msg = "<b>📰 News Article Counts</b>\n\n"
-            for entry in symbols:
+            async def _get_news_count(entry):
                 symbol = entry["symbol"]
                 ns_tf = entry.get("timeframe")
                 ns_name = await self.engine._market_data_manager.get_stock_name(symbol)
                 ns_display = self.engine._format_symbol_display(symbol, ns_name, ns_tf)
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                 articles = await asyncio.to_thread(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS)
-                msg += f"<b>{ns_display}</b>: {len(articles)} articles\n"
+                return f"<b>{ns_display}</b>: {len(articles)} articles\n"
+
+            msg_lines = await asyncio.gather(*[_get_news_count(entry) for entry in symbols])
+            msg += "".join(msg_lines)
             await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
         except Exception as e:
             logger.error(f"Failed to get news status: {e}", exc_info=True)
