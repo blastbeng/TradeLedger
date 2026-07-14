@@ -969,10 +969,14 @@ class SignalProcessor:
         )
 
         # Process results with original error handling
+        if isinstance(historical_backtest_results, Exception):
+            historical_backtest_results = []
         dividend_yield, next_ex_dividend = dividend_data if not isinstance(dividend_data, Exception) else (None, None)
         if isinstance(aggregate_sentiment, Exception):
             logger.warning(f"Could not fetch aggregate sentiment for {symbol}: {type(aggregate_sentiment).__name__}: {aggregate_sentiment}")
             aggregate_sentiment = None
+        if isinstance(global_risk_mult, Exception):
+            global_risk_mult = None
 
         full_market_breadth = None
         if not isinstance(full_breadth_raw, Exception) and full_breadth_raw:
