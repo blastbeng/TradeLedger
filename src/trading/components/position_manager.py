@@ -7,6 +7,7 @@ Extracted from TradingEngine to reduce class size and improve maintainability.
 import asyncio
 import logging
 import math
+import re
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -977,22 +978,26 @@ class PositionManager:
             if maturity_dt is None:
                 # Normalize Italian month names/abbreviations to English
                 # so strptime with %b/%B works regardless of system locale.
+                # Use regex with word boundaries to avoid partial matches
+                # (e.g., "mar" matching inside "marzo").
                 _italian_months = {
-                    # Abbreviations (case-insensitive matching)
-                    "gen": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr",
-                    "mag": "May", "giu": "Jun", "lug": "Jul", "ago": "Aug",
-                    "set": "Sep", "ott": "Oct", "nov": "Nov", "dic": "Dec",
-                    # Full names
+                    # Full names (listed first so longer matches take priority)
                     "gennaio": "January", "febbraio": "February", "marzo": "March",
                     "aprile": "April", "maggio": "May", "giugno": "June",
                     "luglio": "July", "agosto": "August", "settembre": "September",
                     "ottobre": "October", "novembre": "November", "dicembre": "December",
+                    # Abbreviations
+                    "gen": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr",
+                    "mag": "May", "giu": "Jun", "lug": "Jul", "ago": "Aug",
+                    "set": "Sep", "ott": "Oct", "nov": "Nov", "dic": "Dec",
                 }
-                _normalized = maturity_str_clean
-                for it_month, en_month in _italian_months.items():
-                    _normalized = _normalized.replace(it_month, en_month)
-                    _normalized = _normalized.replace(it_month.capitalize(), en_month)
-                maturity_str_clean = _normalized
+                _month_pattern = re.compile(
+                    r'\b(' + '|'.join(re.escape(k) for k in _italian_months) + r')\b',
+                    re.IGNORECASE,
+                )
+                maturity_str_clean = _month_pattern.sub(
+                    lambda m: _italian_months[m.group(0).lower()], maturity_str_clean
+                )
 
                 _date_formats = [
                     "%d/%m/%Y",       # 01/10/2025
