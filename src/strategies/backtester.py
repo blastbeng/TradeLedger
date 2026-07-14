@@ -280,7 +280,7 @@ def backtest_strategy(
     # Pre-compute rolling average volume for dynamic slippage
     avg_volume_series: List[Optional[float]] = []
     if config.slippage_model == "dynamic":
-        vol_period = 20
+        vol_period = settings.BACKTEST_SLIPPAGE_VOL_PERIOD
         volumes = [c[5] for c in candles]
         for idx in range(len(candles)):
             start_idx = max(0, idx - vol_period + 1)
