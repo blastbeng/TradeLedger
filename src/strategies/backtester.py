@@ -7,6 +7,7 @@ max-hold-time, and trailing-stop parameters. The resulting statistics are fed
 back to the LLM or used as a hard validation gate.
 """
 
+import datetime
 import logging
 from dataclasses import dataclass, replace
 from typing import Dict, Any, Optional, List
@@ -97,11 +98,29 @@ def _detect_gaps(candles: List[List], tolerance_mult: float = settings.BACKTEST_
     for i in range(1, len(candles)):
         actual_gap = candles[i][0] - candles[i - 1][0]
         if actual_gap > expected_interval * tolerance_mult:
+            ratio = actual_gap / expected_interval
+            nearest_int = round(ratio)
+
+            # If the gap is an integer multiple of the expected interval,
+            # it likely represents a market closure (weekend or holiday).
+            # We skip these to avoid false positives.
+            if nearest_int > 1 and abs(ratio - nearest_int) / nearest_int < 0.1:
+                continue
+
+            # Additionally, check if the gap spans a weekend for daily/lower frequency data
+            prev_dt = datetime.datetime.fromtimestamp(candles[i-1][0] / 1000, tz=datetime.timezone.utc)
+            curr_dt = datetime.datetime.fromtimestamp(candles[i][0] / 1000, tz=datetime.timezone.utc)
+            days_diff = (curr_dt.date() - prev_dt.date()).days
+            if days_diff > 1:
+                spans_weekend = any((prev_dt.date() + datetime.timedelta(days=d)).weekday() >= 5 for d in range(1, days_diff))
+                if spans_weekend:
+                    continue
+
             gaps.append({
                 "index": i,
                 "expected_interval_ms": expected_interval,
                 "actual_gap_ms": actual_gap,
-                "gap_ratio": round(actual_gap / expected_interval, 2),
+                "gap_ratio": round(ratio, 2),
             })
 
     return gaps if gaps else None
