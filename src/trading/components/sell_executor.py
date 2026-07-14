@@ -663,31 +663,27 @@ class SellExecutor:
             fee_cost = float(fee.get('cost', 0.0) or 0.0)
             fee_currency = fee.get('currency', '')
             pos = self.shared_state.positions.get(symbol)
+            net_quote = order['cost'] - (fee_cost if fee_currency == symbol.split('/')[1] else 0.0)
+
+            realized_pnl, prorated_cost_basis, cost_basis, net_base = self._compute_pnl_and_proration(
+                pos, order['amount'], net_quote
+            )
+            order["realized_pnl"] = realized_pnl
+            order["cost_basis"] = cost_basis
+            order["exit_reason"] = "dust_sweep"
+            order["strategy_type"] = pos.get("strategy_type", "unknown") if pos else "unknown"
+            order["timeframe"] = pos.get("timeframe") if pos else None
+            if pos and "timestamp" in pos:
+                order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
+
             if pos:
-                cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
-                net_quote = order['cost'] - (fee_cost if fee_currency == symbol.split('/')[1] else 0.0)
-                realized_pnl = net_quote - cost_basis
-                order["realized_pnl"] = realized_pnl
-                order["cost_basis"] = cost_basis
-                order["exit_reason"] = "dust_sweep"
-                order["strategy_type"] = pos.get("strategy_type", "unknown")
-                order["timeframe"] = pos.get("timeframe")
-                if "timestamp" in pos:
-                    order["hold_time_seconds"] = (order["timestamp"] - pos["timestamp"]) / 1000.0
+                await self._update_or_remove_position(
+                    symbol, pos, order['amount'], prorated_cost_basis, cost_basis, net_base
+                )
                 self.shared_state.append_trade(order, settings.MAX_TRADES_IN_MEMORY)
                 await asyncio.to_thread(insert_trade, order)
                 await self.event_bus.publish("save_state", force=True)
                 self.shared_state._portfolio_exposure_cache = None
-
-            # Cancel any remaining exit orders before removing the position
-            await self.event_bus.request("cancel_exit_orders", symbol)
-
-            # Remove the now-empty position
-            async with self.shared_state._positions_lock:
-                self.shared_state.positions.pop(symbol, None)
-            self.shared_state._strategy_intervals.pop(symbol, None)
-            self.shared_state._last_strategy_eval.pop(symbol, None)
-            await self.event_bus.publish("remove_symbol_if_paused", symbol)
 
             if engine.notifier:
                 await engine.notifier.send_notification(
