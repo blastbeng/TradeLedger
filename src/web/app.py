@@ -765,6 +765,27 @@ async def llm_decision_quality(period_days: int = 7):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # --- WebSocket Rate Limiting ---
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    now = time.time()
+    redis = get_redis_client()
+    ws_rate_limit_key = f"ws_rate_limit:{client_ip}"
+    rate_limit_requests = settings.WEB_RATE_LIMIT_REQUESTS
+    rate_limit_window = settings.WEB_RATE_LIMIT_WINDOW
+
+    try:
+        await asyncio.to_thread(redis.zremrangebyscore, ws_rate_limit_key, 0, now - rate_limit_window)
+        count = await asyncio.to_thread(redis.zcard, ws_rate_limit_key)
+        if count >= rate_limit_requests:
+            await websocket.close(code=1008)  # Policy Violation
+            return
+        request_id = uuid.uuid4().hex
+        await asyncio.to_thread(redis.zadd, ws_rate_limit_key, {request_id: now})
+        await asyncio.to_thread(redis.expire, ws_rate_limit_key, rate_limit_window)
+    except Exception as e:
+        # Fail-open if Redis is unavailable
+        logger.warning(f"WebSocket rate limiter failed, allowing connection: {e}")
+
     # Verify session for WebSocket
     if settings.WEB_USERNAME and settings.WEB_PASSWORD:
         token = websocket.cookies.get("session_token")
