@@ -550,6 +550,9 @@ class TradingEngine:
         self._market_breadth = None
         self.initial_balance = settings.PAPER_INITIAL_BALANCE
 
+        # Clear the persisted peak total equity so drawdown starts fresh
+        await asyncio.to_thread(self.redis.delete, "trading:peak_total_equity")
+
         # Reset DB data (unconditionally clear all trade data for both modes)
         await asyncio.to_thread(reset_paper_trading_data, keep_trade_history=False)
 
