@@ -15,6 +15,9 @@ class EventBus:
         if event_name not in self._subscribers:
             self._subscribers[event_name] = []
         self._subscribers[event_name].append(callback)
+        logger.debug(
+            f"EventBus subscription: '{event_name}' -> {getattr(callback, '__qualname__', repr(callback))}"
+        )
 
     async def publish(self, event_name: str, *args, **kwargs):
         if event_name not in self._subscribers:
@@ -40,3 +43,25 @@ class EventBus:
         except Exception as e:
             logger.error(f"Event handler error for '{event_name}': {type(e).__name__}: {e}", exc_info=True)
             return None
+
+    def log_subscription_summary(self) -> None:
+        """Log a complete registry of all event subscriptions.
+
+        Call this after all components have been initialized to produce
+        a central, readable map of every event and its handler(s).
+        """
+        if not self._subscribers:
+            logger.info("EventBus registry: no subscriptions registered.")
+            return
+
+        lines = ["EventBus subscription registry:"]
+        for event_name in sorted(self._subscribers.keys()):
+            callbacks = self._subscribers[event_name]
+            for idx, cb in enumerate(callbacks):
+                qualname = getattr(cb, '__qualname__', repr(cb))
+                is_async = asyncio.iscoroutinefunction(cb)
+                lines.append(
+                    f"  {event_name} -> {qualname} "
+                    f"({'async' if is_async else 'sync'}, handler {idx + 1}/{len(callbacks)})"
+                )
+        logger.info("\n".join(lines))
