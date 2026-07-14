@@ -198,6 +198,26 @@ class TradingEngine:
         # Log the complete event subscription registry after all components are initialized
         self.event_bus.log_subscription_summary()
 
+    @property
+    def current_symbols(self):
+        """Expose shared_state.current_symbols for backward compatibility."""
+        return self.shared_state.current_symbols
+
+    @property
+    def positions(self):
+        """Expose shared_state.positions for backward compatibility."""
+        return self.shared_state.positions
+
+    @property
+    def queued_orders(self):
+        """Expose shared_state.queued_orders for backward compatibility."""
+        return self.shared_state.queued_orders
+
+    @property
+    def trade_history(self):
+        """Expose shared_state.trade_history for backward compatibility."""
+        return self.shared_state.trade_history
+
     def _clear_time_sensitive_redis_keys(self):
         """Clear time-sensitive Redis keys on startup to prevent stale data."""
         keys_to_clear = [
