@@ -5,6 +5,7 @@ and position creation after fills.
 Extracted from OrderExecutor to reduce class size and improve maintainability.
 """
 import asyncio
+import json
 import logging
 import time
 from dataclasses import asdict
@@ -412,7 +413,25 @@ class BuyExecutor:
         max_port_exp_raw = await engine.config_service.get_config("max_portfolio_exposure_pct")
         max_port_exp = float(max_port_exp_raw) if max_port_exp_raw else None
         if max_port_exp is not None and max_port_exp > 0 and total_value > 0:
-            available_exposure = max(0.0, (max_port_exp * total_value) - total_open_exposure)
+            # Adjust available exposure for highly correlated positions to prevent concentrated risk
+            correlated_exposure = 0.0
+            try:
+                cached_corr = await asyncio.to_thread(engine.redis.get, "reeval:correlation_matrix")
+                if cached_corr:
+                    corr_matrix = json.loads(cached_corr)
+                    if symbol in corr_matrix:
+                        for sym, pos in self.shared_state.positions.items():
+                            if sym == symbol:
+                                continue
+                            corr = corr_matrix.get(symbol, {}).get(sym, 0.0)
+                            if corr > 0.7:  # High correlation threshold
+                                t = pos_tickers.get(sym)
+                                price = t['last'] if t and t.get('last') else 0.0
+                                correlated_exposure += pos['amount'] * price * corr
+            except Exception as e:
+                logger.debug(f"compute_position_size: failed to fetch/parse correlation matrix: {type(e).__name__}: {e}")
+
+            available_exposure = max(0.0, (max_port_exp * total_value) - total_open_exposure - correlated_exposure)
             caps.append((available_exposure, f"max_exposure={max_port_exp:.2%}"))
 
         # Cap 4: max_portfolio_stop_risk_pct (global LLM setting from stock selection)
