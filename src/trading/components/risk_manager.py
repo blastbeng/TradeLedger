@@ -599,8 +599,21 @@ class RiskManager:
         entry_price = pos["price"]
         if entry_price <= 0:
             return False
+        
+        _is_btp = BTPPolicy.is_btp(symbol)
+        if _is_btp:
+            # Use duration/convexity based risk model for BTPs
+            est_price_drop_pct = BTPPolicy.compute_btp_price_change(
+                symbol, entry_price, BTPPolicy.BTP_MAX_YIELD_SHIFT_BPS
+            )
+            if est_price_drop_pct is not None:
+                _hard_max_loss = abs(est_price_drop_pct)
+            else:
+                _hard_max_loss = self._get_hard_max_loss_pct(symbol, pos)
+        else:
+            _hard_max_loss = self._get_hard_max_loss_pct(symbol, pos)
+            
         unrealized_loss_pct = (entry_price - current_price) / entry_price
-        _hard_max_loss = self._get_hard_max_loss_pct(symbol, pos)
         if unrealized_loss_pct >= _hard_max_loss:
             logger.warning(
                 f"Hard max loss threshold reached for {symbol}: "

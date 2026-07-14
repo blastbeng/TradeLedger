@@ -2536,7 +2536,7 @@ def get_llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = 
 
 
 def compute_btp_ytm(coupon: Optional[float], maturity: Optional[str], price: Optional[float]) -> Optional[float]:
-    """Compute approximate Yield to Maturity for a BTP bond."""
+    """Compute Yield to Maturity for a BTP bond using Newton-Raphson."""
     if not coupon or not maturity or not price or price <= 0:
         return None
     try:
@@ -2545,8 +2545,34 @@ def compute_btp_ytm(coupon: Optional[float], maturity: Optional[str], price: Opt
         years_to_maturity = (maturity_date - datetime.now()).days / 365.25
         if years_to_maturity <= 0:
             return None
-        # YTM approximation: (Annual Coupon + (100 - Price) / Years) / ((100 + Price) / 2)
-        ytm = (coupon + (100 - price) / years_to_maturity) / ((100 + price) / 2)
+        
+        periods = int(years_to_maturity * 2)
+        if periods == 0:
+            return None
+        
+        coupon_payment = (coupon / 100) * 100 / 2  # BTPs pay semi-annually
+        par_value = 100.0
+        
+        ytm = 0.05  # Initial guess
+        for _ in range(100):
+            price_calc = 0.0
+            for i in range(1, periods + 1):
+                price_calc += coupon_payment / ((1 + ytm / 2) ** i)
+            price_calc += par_value / ((1 + ytm / 2) ** periods)
+            
+            derivative = 0.0
+            for i in range(1, periods + 1):
+                derivative -= (i / 2) * coupon_payment / ((1 + ytm / 2) ** (i + 1))
+            derivative -= (periods / 2) * par_value / ((1 + ytm / 2) ** (periods + 1))
+            
+            if derivative == 0:
+                break
+            new_ytm = ytm - (price_calc - price) / derivative
+            if abs(new_ytm - ytm) < 1e-6:
+                ytm = new_ytm
+                break
+            ytm = new_ytm
+            
         return round(ytm * 100, 2)
     except (ValueError, TypeError):
         return None
