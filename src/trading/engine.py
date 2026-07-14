@@ -1768,6 +1768,29 @@ class TradingEngine:
                     total += trade.get("realized_pnl", 0.0)
         return total
 
+    def _daily_buy_fees(self) -> float:
+        """Return the sum of buy-side fees for trades opened today (market timezone).
+
+        These fees are not yet reflected in realized_pnl (which only includes
+        fees from closed positions), so they must be accounted for separately
+        in the daily loss limit check.
+        """
+        tz = ZoneInfo(settings.MARKET_TIMEZONE)
+        today = datetime.now(tz).date()
+        total = 0.0
+        with self._trade_history_lock:
+            trades_snapshot = list(self.trade_history)
+        for trade in trades_snapshot:
+            if trade.get("side") != "buy":
+                continue
+            ts = trade.get("timestamp", 0)
+            if ts:
+                trade_date = datetime.fromtimestamp(ts / 1000.0, tz=tz).date()
+                if trade_date == today:
+                    fee = trade.get("fee", {})
+                    total += float(fee.get("cost", 0.0) or 0.0)
+        return total
+
     def _log_task_exception(self, task: asyncio.Task) -> None:
         """Log exceptions from background tasks to prevent silent failures."""
         try:

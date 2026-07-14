@@ -300,12 +300,19 @@ class RiskManager:
             return
 
         daily_pnl = engine._daily_realized_pnl()
+        daily_buy_fees = engine._daily_buy_fees()
         max_daily_loss = settings.MAX_DAILY_LOSS_PCT * engine.initial_balance
 
-        if daily_pnl < -max_daily_loss:
+        # Reduce the threshold by buy-side fees from today's trades that are
+        # not yet reflected in realized_pnl (positions still open). This ensures
+        # the total daily loss (including fees) doesn't exceed the threshold.
+        adjusted_max_daily_loss = max(0.0, max_daily_loss - daily_buy_fees)
+
+        if daily_pnl < -adjusted_max_daily_loss:
             logger.warning(
                 f"Daily loss limit reached: daily P&L={daily_pnl:.2f}, "
-                f"max loss={max_daily_loss:.2f} ({settings.MAX_DAILY_LOSS_PCT:.2%} of initial balance). "
+                f"max loss={adjusted_max_daily_loss:.2f} ({settings.MAX_DAILY_LOSS_PCT:.2%} of initial balance"
+                f" - {daily_buy_fees:.2f} buy fees). "
                 f"Pausing trading until tomorrow."
             )
             await asyncio.to_thread(engine.redis.set, "trading:paused", "1")
@@ -316,7 +323,7 @@ class RiskManager:
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"🛑 Daily loss limit reached: {daily_pnl:.2f} {engine.base_currency} "
-                    f"(max: -{max_daily_loss:.2f}). Trading paused until tomorrow.",
+                    f"(max: -{adjusted_max_daily_loss:.2f}, incl. {daily_buy_fees:.2f} fees). Trading paused until tomorrow.",
                     summary={"action": "PAUSE", "reason": "Daily loss limit reached"}
                 )
 
