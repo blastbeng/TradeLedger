@@ -971,19 +971,7 @@ class TelegramBot:
                 self.engine.event_bus.request("get_profit_summary"),
                 timeout=15.0
             )
-        except asyncio.TimeoutError:
-            await update.message.reply_text("⚠️ Fetching profit summary timed out.", reply_markup=self.keyboard)
-            return
-        except asyncio.TimeoutError:
-            await update.message.reply_text("⚠️ Fetching profit summary timed out.", reply_markup=self.keyboard)
-            return
-        except Exception as e:
-            logger.error(f"Failed to get profit summary: {e}", exc_info=True)
-            msg = "⚠️ Could not retrieve profit summary. Please try again later."
-
-        await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
-
-    def _write_notification_log(self, log_path: Path, summary: dict):
+            base_currency = summary.get('base_currency', '')
             pnl = summary['total_pnl']
             pnl_pct = summary['pnl_percent']
             pnl_emoji = "📈" if pnl >= 0 else "📉"
@@ -1028,6 +1016,9 @@ class TelegramBot:
             win_rate = summary.get('win_rate', 0.0)
             msg += f"\n🏆 Wins: {wins}  💔 Losses: {losses}\n"
             msg += f"📊 Win Rate: {win_rate*100:.1f}%\n"
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ Fetching profit summary timed out.", reply_markup=self.keyboard)
+            return
         except Exception as e:
             logger.error(f"Failed to get profit summary: {e}", exc_info=True)
             msg = "⚠️ Could not retrieve profit summary. Please try again later."
