@@ -183,6 +183,62 @@ def _validate_stop_loss(
     return None
 
 
+def _validate_take_profit(
+    params: Dict[str, Any],
+    symbol: Optional[str],
+    atr: Optional[float],
+    price: Optional[float],
+    timeframe_seconds: Optional[int],
+    sl: Optional[float],
+) -> Optional[Signal]:
+    """Validates take-profit parameters. Returns a HOLD Signal on failure, None on success."""
+    tp = params.get("take_profit_pct")
+    tp_atr = params.get("take_profit_atr_multiple")
+    tp_valid = tp is not None and isinstance(tp, (int, float)) and (0 < tp < 10.0)
+    tp_atr_valid = tp_atr is not None and isinstance(tp_atr, (int, float)) and tp_atr > 0
+    if not tp_valid and not tp_atr_valid:
+        # Calculate from ATR when available, ensuring tp > sl with a 1.5:1 reward:risk floor
+        if atr is not None and price is not None and price > 0 and atr > 0:
+            atr_pct = atr / price
+            if timeframe_seconds is not None and timeframe_seconds > 86400:
+                atr_pct = atr_pct * (86400 / timeframe_seconds) ** 0.5
+            tp = max(3.0 * atr_pct, sl * 1.5)  # 3x ATR or 1.5x stop-loss, whichever is greater
+            tp = min(tp, 5.0)  # cap at 500%
+        else:
+            # Scale by timeframe when ATR unavailable
+            if timeframe_seconds is not None and timeframe_seconds >= 31_536_000:
+                tp = 0.30  # 30% for very long timeframes
+            elif timeframe_seconds is not None and timeframe_seconds >= 2_592_000:
+                tp = 0.20  # 20% for long timeframes
+            else:
+                tp = 0.10  # 10% for medium-term
+            # Ensure tp > sl
+            if sl is not None and tp <= sl:
+                tp = sl * 1.5
+        # Ensure default tp > sl to avoid logical consistency rejection
+        if sl is not None and tp <= sl:
+            tp = sl * 1.5  # 1.5x the stop-loss as a minimum viable take-profit
+            logger.info(f"Validator: adjusted default take_profit_pct to {tp:.4f} (must be > stop_loss_pct={sl:.4f}) for {symbol}")
+        params["take_profit_pct"] = tp
+        tp_valid = True
+        logger.info(f"Validator: using default take_profit_pct={tp} for {symbol}")
+    # When using ATR-based take-profit, take_profit_pct is used as a fallback.
+    # If the LLM omitted it, compute a default from the ATR multiplier or use a sensible default.
+    if tp_atr_valid and not tp_valid:
+        if atr is not None and price is not None and price > 0 and atr > 0:
+            tp = (tp_atr * atr) / price
+        else:
+            tp = 0.10  # 10% default for long timeframes
+        # Ensure default tp > sl to avoid logical consistency rejection
+        if sl is not None and tp <= sl:
+            tp = sl * 1.5
+            logger.info(f"Validator: adjusted default take_profit_pct to {tp:.4f} (must be > stop_loss_pct={sl:.4f}) for {symbol}")
+        params["take_profit_pct"] = tp
+        tp_valid = True
+        logger.info(f"Validator: using default take_profit_pct={tp} for {symbol} (ATR fallback for atr_multiple take-profit)")
+    return None
+
+
 def _validate_signal_impl(
     signal: Signal,
     market_data: Optional[Dict[str, Any]] = None,
@@ -260,48 +316,15 @@ def _validate_signal_impl(
                     else:
                         params["max_hold_time_seconds"] = 2_592_000  # 30 days
                     logger.info(f"Validator: defaulting max_hold_time_seconds to {params['max_hold_time_seconds']} for {symbol}")
+        tp_error = _validate_take_profit(params, symbol, atr, price, timeframe_seconds, sl)
+        if tp_error:
+            return tp_error
+        
+        # Re-read values that may have been updated by _validate_take_profit
+        tp = params.get("take_profit_pct")
+        tp_atr = params.get("take_profit_atr_multiple")
         tp_valid = tp is not None and isinstance(tp, (int, float)) and (0 < tp < 10.0)
         tp_atr_valid = tp_atr is not None and isinstance(tp_atr, (int, float)) and tp_atr > 0
-        if not tp_valid and not tp_atr_valid:
-            # Calculate from ATR when available, ensuring tp > sl with a 1.5:1 reward:risk floor
-            if atr is not None and price is not None and price > 0 and atr > 0:
-                atr_pct = atr / price
-                if timeframe_seconds is not None and timeframe_seconds > 86400:
-                    atr_pct = atr_pct * (86400 / timeframe_seconds) ** 0.5
-                tp = max(3.0 * atr_pct, sl * 1.5)  # 3x ATR or 1.5x stop-loss, whichever is greater
-                tp = min(tp, 5.0)  # cap at 500%
-            else:
-                # Scale by timeframe when ATR unavailable
-                if timeframe_seconds is not None and timeframe_seconds >= 31_536_000:
-                    tp = 0.30  # 30% for very long timeframes
-                elif timeframe_seconds is not None and timeframe_seconds >= 2_592_000:
-                    tp = 0.20  # 20% for long timeframes
-                else:
-                    tp = 0.10  # 10% for medium-term
-                # Ensure tp > sl
-                if sl is not None and tp <= sl:
-                    tp = sl * 1.5
-            # Ensure default tp > sl to avoid logical consistency rejection
-            if sl is not None and tp <= sl:
-                tp = sl * 1.5  # 1.5x the stop-loss as a minimum viable take-profit
-                logger.info(f"Validator: adjusted default take_profit_pct to {tp:.4f} (must be > stop_loss_pct={sl:.4f}) for {symbol}")
-            params["take_profit_pct"] = tp
-            tp_valid = True
-            logger.info(f"Validator: using default take_profit_pct={tp} for {symbol}")
-        # When using ATR-based take-profit, take_profit_pct is used as a fallback.
-        # If the LLM omitted it, compute a default from the ATR multiplier or use a sensible default.
-        if tp_atr_valid and not tp_valid:
-            if atr is not None and price is not None and price > 0 and atr > 0:
-                tp = (tp_atr * atr) / price
-            else:
-                tp = 0.10  # 10% default for long timeframes
-            # Ensure default tp > sl to avoid logical consistency rejection
-            if sl is not None and tp <= sl:
-                tp = sl * 1.5
-                logger.info(f"Validator: adjusted default take_profit_pct to {tp:.4f} (must be > stop_loss_pct={sl:.4f}) for {symbol}")
-            params["take_profit_pct"] = tp
-            tp_valid = True
-            logger.info(f"Validator: using default take_profit_pct={tp} for {symbol} (ATR fallback for atr_multiple take-profit)")
         trailing = params["trailing_stop"]
         if not isinstance(trailing, bool):
             return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop must be boolean")
