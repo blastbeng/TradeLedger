@@ -221,37 +221,6 @@ class TradingEngine:
             logger.warning(f"Failed to clear time-sensitive Redis keys: {e}")
 
     # --- Scalar state properties (proxy to SharedState) ---
-    @property
-    def trade_history(self) -> List[Dict[str, Any]]:
-        return self.shared_state.trade_history
-
-    @trade_history.setter
-    def trade_history(self, value: List[Dict[str, Any]]) -> None:
-        self.shared_state.trade_history = value
-
-    @property
-    def recent_signals(self) -> List[Dict[str, Any]]:
-        return self.shared_state.recent_signals
-
-    @recent_signals.setter
-    def recent_signals(self, value: List[Dict[str, Any]]) -> None:
-        self.shared_state.recent_signals = value
-
-    @property
-    def last_loss_time(self) -> Dict[str, float]:
-        return self.shared_state.last_loss_time
-
-    @last_loss_time.setter
-    def last_loss_time(self, value: Dict[str, float]) -> None:
-        self.shared_state.last_loss_time = value
-
-    @property
-    def cooldown_durations(self) -> Dict[str, float]:
-        return self.shared_state.cooldown_durations
-
-    @cooldown_durations.setter
-    def cooldown_durations(self, value: Dict[str, float]) -> None:
-        self.shared_state.cooldown_durations = value
 
     @property
     def _last_strategy_eval(self) -> Dict[str, float]:
@@ -516,10 +485,10 @@ class TradingEngine:
         self._trade_pattern_cache_trade_count = -1
         self._trade_history_version = 0
         self._realized_pnl_offset = 0.0
-        self.trade_history.clear()
-        self.recent_signals.clear()
-        self.last_loss_time.clear()
-        self.cooldown_durations.clear()
+        self.shared_state.trade_history.clear()
+        self.shared_state.recent_signals.clear()
+        self.shared_state.last_loss_time.clear()
+        self.shared_state.cooldown_durations.clear()
         self._global_risk_multiplier = None
         self._symbol_first_seen.clear()
         self._sentiment_cache.clear()
@@ -1854,7 +1823,7 @@ class TradingEngine:
         today = datetime.now(tz).date()
         total = 0.0
         with self._trade_history_lock:
-            trades_snapshot = list(self.trade_history)
+            trades_snapshot = list(self.shared_state.trade_history)
         for trade in trades_snapshot:
             if trade.get("side") != "sell":
                 continue
@@ -1876,7 +1845,7 @@ class TradingEngine:
         today = datetime.now(tz).date()
         total = 0.0
         with self._trade_history_lock:
-            trades_snapshot = list(self.trade_history)
+            trades_snapshot = list(self.shared_state.trade_history)
         for trade in trades_snapshot:
             if trade.get("side") != "buy":
                 continue
