@@ -1522,10 +1522,10 @@ class SignalProcessor:
         # For medium/long-term, be more patient before forcing an evaluation
         effective_interval = timeframe_seconds * settings.STRATEGY_INTERVAL_MULTIPLIER
         # Cap the safety net at a value proportional to the timeframe,
-        # but never less than the configured MAX_SKIP_INTERVAL_SECONDS.
-        # This prevents excessively frequent forced evaluations for long
-        # timeframes (e.g., 1Y candles should not be forced every 7 days).
-        max_skip = max(settings.MAX_SKIP_INTERVAL_SECONDS, effective_interval)
+        # but never greater than the configured MAX_SKIP_INTERVAL_SECONDS.
+        # This prevents excessively long skip durations for long timeframes
+        # (e.g., 5Y candles should not skip evaluation for 5 years).
+        max_skip = min(settings.MAX_SKIP_INTERVAL_SECONDS, effective_interval)
         if now - last_time > min(3 * effective_interval, max_skip):
             return False
 
