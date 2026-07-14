@@ -131,7 +131,7 @@ class RiskManager:
                 trades_snapshot = list(self.shared_state.trade_history)
             # Compute drawdown based on realized equity (initial balance + realized P&L)
             # plus current unrealized P&L to catch deep drawdowns from open positions.
-            initial_balance = settings.PAPER_INITIAL_BALANCE
+            initial_balance = engine.initial_balance
             cumulative_pnl = 0.0
             peak_equity = initial_balance
             max_dd_pct = 0.0
