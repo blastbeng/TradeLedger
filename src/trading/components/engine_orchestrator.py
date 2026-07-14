@@ -44,6 +44,7 @@ class EngineOrchestrator:
             self.engine._refresh_all_quotes_loop,
             self.engine._refresh_ticker_discovery_loop,
             self.engine._fetch_dividends_loop,
+            self.engine._reinvest_dividends_loop,
             self.engine._redis_health_check_loop,
             self.engine._health_check_loop,
             self.engine._evaluate_llm_decisions_loop,

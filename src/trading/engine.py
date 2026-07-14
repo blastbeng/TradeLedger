@@ -59,7 +59,7 @@ from src.utils.redis_client import get_redis_client, check_redis_connection, is_
 from src.utils.symbol_utils import is_btp_isin
 from src.utils.task_supervisor import TaskSupervisor
 from src.utils.event_bus import EventBus
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, get_latest_ohlcv_timestamps_batch, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data, insert_dividend, cleanup_old_dividends, get_pending_llm_decisions, update_llm_decision_outcome, get_llm_decision_quality_metrics, cleanup_old_llm_decisions
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, get_latest_ohlcv_timestamps_batch, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data, insert_dividend, cleanup_old_dividends, get_pending_llm_decisions, update_llm_decision_outcome, get_llm_decision_quality_metrics, cleanup_old_llm_decisions, get_pending_dividends_for_symbol, mark_dividend_reinvested
 from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.buy_executor import BuyExecutor
 from src.trading.components.exit_order_manager import ExitOrderManager
@@ -1784,6 +1784,89 @@ class TradingEngine:
                 logger.error(f"Dividend fetch loop error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("dividend_fetch_loop", e)
             await self._interruptible_sleep(86400)  # daily
+
+    async def _reinvest_dividends_loop(self):
+        """Periodically check for pending dividends and reinvest them if enabled."""
+        if not settings.REINVEST_DIVIDENDS:
+            logger.info("Dividend reinvestment is disabled (REINVEST_DIVIDENDS=False). Task sleeping.")
+            while self._running:
+                await self._interruptible_sleep(86400)
+            return
+
+        await self._interruptible_sleep(3600)  # initial delay 1 hour
+        while self._running:
+            try:
+                for symbol, pos in list(self.positions.items()):
+                    if is_btp_isin(symbol.split("/")[0]):
+                        continue  # BTPs use coupons, not dividends
+
+                    pending_divs = await asyncio.to_thread(get_pending_dividends_for_symbol, symbol)
+                    if not pending_divs:
+                        continue
+
+                    # Get current price
+                    base = symbol.split("/")[0]
+                    quotes = await asyncio.to_thread(get_quotes_cached, [base])
+                    price = quotes.get(base, {}).get("last")
+                    if not price or price <= 0:
+                        logger.warning(f"Cannot reinvest dividends for {symbol}: no valid price.")
+                        continue
+
+                    for div in pending_divs:
+                        div_per_share = div["amount"]
+                        current_shares = pos.get("amount", 0.0)
+                        total_div_value = div_per_share * current_shares
+                        
+                        if total_div_value <= 0:
+                            # Mark as reinvested to skip it in the future if we no longer hold shares
+                            await asyncio.to_thread(mark_dividend_reinvested, div["id"])
+                            continue
+
+                        # Execute buy order for the reinvested amount (amount is in quote currency)
+                        order = await asyncio.to_thread(
+                            self.trader.create_market_buy_order, symbol, total_div_value
+                        )
+
+                        if order.get("status") == "filled":
+                            filled_qty = order["amount"]
+                            filled_price = order["price"]
+                            
+                            # Update position
+                            async with self._positions_lock:
+                                if symbol in self.positions:
+                                    pos = self.positions[symbol]
+                                    old_amount = pos.get("amount", 0.0)
+                                    old_cost = pos.get("cost_basis", 0.0)
+                                    new_amount = old_amount + filled_qty
+                                    new_cost = old_cost + (filled_qty * filled_price)
+                                    pos["amount"] = new_amount
+                                    pos["cost_basis"] = new_cost
+                                    self._state_dirty = True
+
+                            # Mark dividend as reinvested
+                            await asyncio.to_thread(mark_dividend_reinvested, div["id"])
+
+                            if self.notifier:
+                                await self.notifier.send_notification(
+                                    f"💰 Dividend Reinvested: {total_div_value:.2f} {self.base_currency} for {symbol} "
+                                    f"bought {filled_qty:.6f} shares @ {filled_price:.2f}",
+                                    summary={"action": "DIVIDEND_REINVEST", "symbol": symbol, "amount": total_div_value}
+                                )
+                            logger.info(f"Reinvested dividend of {total_div_value:.2f} for {symbol}: bought {filled_qty:.6f} shares @ {filled_price:.2f}")
+
+                await self._state_persistence.save_state()
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Dividend reinvestment loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Dividend reinvestment loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("reinvest_dividends_loop", e)
+            except Exception as e:
+                logger.error(f"Dividend reinvestment loop error: {type(e).__name__}: {e}", exc_info=True)
+                await self._record_unexpected_exception("reinvest_dividends_loop", e)
+
+            await self._interruptible_sleep(3600)  # check every hour
 
     def _daily_realized_pnl(self) -> float:
         """Return the sum of realized P&L for trades closed today (market timezone)."""

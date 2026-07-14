@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     PAPER_INITIAL_BALANCE: float = 10000.0
     PAPER_BALANCE_CHANGED: bool = False
 
+    # Dividend reinvestment
+    REINVEST_DIVIDENDS: bool = False
+
     # Risk management check interval (seconds) – stop-loss/take-profit checks
     RISK_CHECK_INTERVAL_SECONDS: int = 120
 

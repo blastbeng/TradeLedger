@@ -263,6 +263,7 @@ def _migrate_db():
         ("discovered_symbols", "country", "ALTER TABLE discovered_symbols ADD COLUMN country TEXT"),
         ("llm_metrics", "request_type", "ALTER TABLE llm_metrics ADD COLUMN request_type TEXT"),
         ("llm_metrics", "is_fallback", "ALTER TABLE llm_metrics ADD COLUMN is_fallback INTEGER NOT NULL DEFAULT 0"),
+        ("dividends", "reinvested", "ALTER TABLE dividends ADD COLUMN reinvested INTEGER NOT NULL DEFAULT 0"),
     ]
 
     max_retries = 3
@@ -2633,6 +2634,32 @@ def get_next_ex_dividend_date(symbol: str, days_ahead: int = 60) -> Optional[Tup
         return None
     except (ValueError, TypeError, KeyError, sqlite3.Error):
         return None
+    finally:
+        conn.close()
+
+
+def get_pending_dividends_for_symbol(symbol: str) -> List[Dict[str, Any]]:
+    """Retrieve non-reinvested dividends for a symbol."""
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            "SELECT id, symbol, ex_date, amount FROM dividends WHERE symbol = %s AND reinvested = 0"
+        )
+        rows = conn.execute(sql, (base,)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def mark_dividend_reinvested(dividend_id: int):
+    """Mark a dividend as reinvested."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql("UPDATE dividends SET reinvested = 1 WHERE id = %s")
+        conn.execute(sql, (dividend_id,))
+        conn.commit()
     finally:
         conn.close()
 
