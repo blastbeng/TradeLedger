@@ -18,7 +18,7 @@ from typing import Any, Dict
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.database import save_trading_state, load_trading_state, get_all_trades
+from src.database import save_trading_state, load_trading_state, get_all_trades, get_latest_close_prices
 from src.strategies.base import Signal
 
 logger = logging.getLogger(__name__)
@@ -202,12 +202,22 @@ class StatePersistence:
             raise ValueError(f"Corrupted positions detected and removed: {corrupted_positions}")
 
         # Initialize trailing stop tracking fields for positions with trailing stops.
-        # This ensures _highest_price is not set to a pre-entry price on the first
-        # check after a restart (which would make the trailing stop too tight).
+        # Fetch the latest close prices to ensure _highest_price is at least the current
+        # market price, preventing a too-loose trailing stop immediately after restart.
+        trailing_symbols = [sym for sym, pos in self.shared_state.positions.items() if pos.get("trailing_stop")]
+        latest_prices = {}
+        if trailing_symbols:
+            try:
+                latest_prices = get_latest_close_prices(trailing_symbols)
+            except Exception as e:
+                logger.warning(f"Failed to fetch latest close prices for trailing stops: {e}")
+
         for symbol, pos in self.shared_state.positions.items():
             if pos.get("trailing_stop"):
                 if "_highest_price" not in pos:
-                    pos["_highest_price"] = pos.get("price", 0.0)
+                    entry_price = pos.get("price", 0.0)
+                    latest_close = latest_prices.get(symbol, {}).get("close", 0.0)
+                    pos["_highest_price"] = max(entry_price, latest_close)
                 if "_last_trailing_check_ts" not in pos:
                     pos["_last_trailing_check_ts"] = time.time()
 
