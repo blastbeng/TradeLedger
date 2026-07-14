@@ -640,11 +640,23 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
 
                     coupon_str = cols[3].get_text(strip=True).replace(",", ".") if len(cols) > 3 else ""
                     try:
-                        coupon = float(coupon_str) if coupon_str else None
+                        coupon_val = float(coupon_str) if coupon_str else None
+                        if coupon_val is not None and not (0.0 <= coupon_val <= 15.0):
+                            logger.warning(f"Coupon rate out of expected range for {isin}: {coupon_val}")
+                            coupon_val = None
+                        coupon = coupon_val
                     except ValueError:
+                        logger.warning(f"Invalid coupon rate format for {isin}: {coupon_str}")
                         coupon = None
 
-                    maturity = cols[4].get_text(strip=True) if len(cols) > 4 else None
+                    maturity_str = cols[4].get_text(strip=True) if len(cols) > 4 else None
+                    maturity = None
+                    if maturity_str:
+                        try:
+                            datetime.strptime(maturity_str, "%d/%m/%Y")
+                            maturity = maturity_str
+                        except ValueError:
+                            logger.warning(f"Invalid maturity date format for {isin}: {maturity_str}")
                     change_pct = 0.0
 
                     if last_price is not None:
