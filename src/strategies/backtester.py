@@ -68,7 +68,7 @@ def _compute_dynamic_slippage(
     return min(slippage, max_pct)
 
 
-def _detect_gaps(candles: List[List], tolerance_mult: float = 1.5) -> Optional[List[Dict[str, Any]]]:
+def _detect_gaps(candles: List[List], tolerance_mult: float = settings.BACKTEST_GAP_TOLERANCE_MULT) -> Optional[List[Dict[str, Any]]]:
     """Detect gaps in OHLCV data by comparing consecutive timestamps.
 
     Returns a list of gap info dicts, or None if no significant gaps are found.
@@ -134,8 +134,8 @@ class BacktestConfig:
     cooldown_after_loss_seconds: Optional[int] = None
     slippage_pct: float = 0.0
     slippage_model: str = "fixed"
-    slippage_base_pct: float = 0.001
-    slippage_max_pct: float = 0.01
+    slippage_base_pct: float = settings.BACKTEST_SLIPPAGE_BASE_PCT
+    slippage_max_pct: float = settings.BACKTEST_SLIPPAGE_MAX_PCT
     timeframe_seconds: Optional[int] = None
     rsi_values: Optional[List[Optional[float]]] = None
     max_rsi: float = 100.0
@@ -153,7 +153,7 @@ class BacktestConfig:
     max_portfolio_stop_risk_pct: Optional[float] = None
     position_size_fraction: float = settings.BACKTEST_DEFAULT_POSITION_SIZE_FRACTION
     direction: str = "long"
-    gap_tolerance_mult: float = 1.5
+    gap_tolerance_mult: float = settings.BACKTEST_GAP_TOLERANCE_MULT
     on_gaps: str = "warn"
     _return_trades: bool = False
 
