@@ -118,6 +118,43 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
     return action, reasoning
 
 
+def _score_reasoning_quality(reasoning: str) -> float:
+    """Scores the quality of LLM reasoning from 0.0 to 1.0 based on heuristics."""
+    if not reasoning:
+        return 0.0
+    
+    score = 0.0
+    
+    # Length check
+    if len(reasoning) < 50:
+        score += 0.1
+    elif len(reasoning) < 200:
+        score += 0.3
+    else:
+        score += 0.5
+        
+    # Keyword check
+    keywords = [
+        "rsi", "macd", "support", "resistance", "earnings", "trend", 
+        "volume", "atr", "volatility", "risk", "reward", "dividend", 
+        "yield", "spread", "momentum", "reversion", "breakout", "moving average",
+        "bollinger", "stochastic", "fibonacci", "candlestick", "price action",
+        "market cap", "p/e", "sentiment", "news", "macro", "fed", "interest rate"
+    ]
+    keyword_count = sum(1 for kw in keywords if kw in reasoning.lower())
+    score += min(keyword_count * 0.1, 0.5)
+    
+    # Vague phrase penalty
+    vague_phrases = [
+        "goes up", "will go down", "because it's good", "because it's bad", 
+        "just a feeling", "gut feeling", "will be higher", "will be lower"
+    ]
+    if any(phrase in reasoning.lower() for phrase in vague_phrases):
+        score -= 0.3
+        
+    return max(0.0, min(1.0, score))
+
+
 def parse_llm_response(response_text: str) -> Signal:
     """
     Parse the LLM's JSON response into a Signal.
@@ -269,6 +306,10 @@ def parse_llm_response(response_text: str) -> Signal:
                 portfolio_risk_adjustment_factor = None
 
         reason = data.get("reason", "")
+
+        # --- reasoning quality scoring ---
+        reasoning_quality_score = _score_reasoning_quality(reasoning)
+        params["reasoning_quality_score"] = reasoning_quality_score
 
         # --- entry condition ---
         entry_condition_raw = data.get("entry_condition")

@@ -477,6 +477,13 @@ def _validate_optional_params(
         if not isinstance(tv, (int, float)) or tv <= 0:
             return Signal(action="HOLD", confidence=0.0, reasoning="Invalid trade_value")
 
+    if "reasoning_quality_score" in params:
+        rqs = params["reasoning_quality_score"]
+        if not isinstance(rqs, (int, float)) or not (0.0 <= rqs <= 1.0):
+            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid reasoning_quality_score")
+        if rqs < 0.3:
+            return Signal(action="HOLD", confidence=0.0, reasoning="Reasoning quality score too low")
+
     return None
 
 
