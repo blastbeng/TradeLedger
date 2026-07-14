@@ -542,14 +542,24 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
                     key = cells[0].get_text(strip=True)
                     val = cells[1].get_text(strip=True)
                     if "Scadenza" in key:
-                        details["maturity"] = val
+                        # Validate maturity date format (expected dd/mm/yyyy)
+                        try:
+                            datetime.strptime(val, "%d/%m/%Y")
+                            details["maturity"] = val
+                        except ValueError:
+                            logger.warning(f"Invalid maturity date format for {isin}: {val}")
                     elif "Tasso Cedola su base Annua" in key:
                         if val:
                             val_cleaned = val.replace(",", ".")
                             try:
-                                details["coupon"] = float(val_cleaned)
+                                coupon_val = float(val_cleaned)
+                                # Validate coupon rate range (0% to 15%)
+                                if 0.0 <= coupon_val <= 15.0:
+                                    details["coupon"] = coupon_val
+                                else:
+                                    logger.warning(f"Coupon rate out of expected range for {isin}: {coupon_val}")
                             except ValueError:
-                                details["coupon"] = val
+                                logger.warning(f"Invalid coupon rate format for {isin}: {val}")
                         # If empty, leave coupon unset (zero-coupon bond)
                     elif "Denominazione" in key:
                         details["name"] = val
