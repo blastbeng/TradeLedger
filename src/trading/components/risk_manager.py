@@ -774,10 +774,10 @@ class RiskManager:
         tf_secs_atr = engine._timeframe_to_seconds(tf)
         # For very long timeframes (>= 1 month), ATR is computed from
         # too few candles (2-10) to be statistically reliable.
-        if tf_secs_atr >= 2_592_000:
+        if tf_secs_atr >= settings.LONG_TERM_TF_SECONDS:
             return None
 
-        if "_current_atr" not in pos or time.time() - pos.get("_atr_fetched_at", 0) > 300:
+        if "_current_atr" not in pos or time.time() - pos.get("_atr_fetched_at", 0) > settings.ATR_STALENESS_CHECK_SECONDS:
             try:
                 ind = await asyncio.to_thread(get_indicators, symbol, tf)
                 if ind and ind.get("atr") and ind["atr"] > 0:
@@ -880,17 +880,17 @@ class RiskManager:
                         # OHLCV is too sparse (2-10 candles).  Instead, fetch daily candles
                         # which have enough data points to capture intra-check price spikes
                         # that the ticker alone would miss (risk checks run every ~4h).
-                        ohlcv_tf = "1d" if tf_secs >= 2_592_000 else tf
+                        ohlcv_tf = "1d" if tf_secs >= settings.LONG_TERM_TF_SECONDS else tf
                         # Throttle OHLCV fetches: only fetch every ~10% of the
                         # timeframe interval, clamped between 5 min and 1 hour.
                         # For very long timeframes (>= 1 month), fetch daily
                         # candles frequently (e.g., every hour) to capture
                         # intraday highs that occur between risk checks,
                         # preventing a trailing stop that is too loose.
-                        if tf_secs >= 2_592_000:
-                            fetch_interval = 3600
+                        if tf_secs >= settings.LONG_TERM_TF_SECONDS:
+                            fetch_interval = settings.TRAILING_STOP_LONG_TF_FETCH_INTERVAL_SECONDS
                         else:
-                            fetch_interval = max(300, min(3600, int(tf_secs * 0.1)))
+                            fetch_interval = max(settings.TRAILING_STOP_FETCH_INTERVAL_MIN_SECONDS, min(settings.TRAILING_STOP_FETCH_INTERVAL_MAX_SECONDS, int(tf_secs * settings.TRAILING_STOP_FETCH_INTERVAL_FRACTION)))
                         # On first check (last_check_ts == 0), initialize
                         # timestamp but don't fetch (avoids using pre-entry
                         # candles, matching the original _load_state behavior).
@@ -941,7 +941,7 @@ class RiskManager:
                         if new_stop > pos["stop_loss"]:
                             # Only update trailing stop if the improvement is at least 0.1%
                             # to avoid over-tightening on micro-movements (medium/long-term)
-                            min_improvement = pos["stop_loss"] * 0.001
+                            min_improvement = pos["stop_loss"] * settings.TRAILING_STOP_MIN_IMPROVEMENT_PCT
                             if new_stop - pos["stop_loss"] >= min_improvement:
                                 pos["stop_loss"] = new_stop
                                 logger.info(f"Trailing stop updated for {symbol}: new stop {new_stop:.4f}")
@@ -969,8 +969,8 @@ class RiskManager:
                     pos["_native_stop_price"] = pos["stop_loss"]
             else:
                 # Check if stop_loss has moved by more than a tick
-                tick = 0.01 if pos["stop_loss"] >= 1.0 else 0.0001
-                if abs(pos["stop_loss"] - original_stop) > tick * 0.5:
+                tick = settings.TICK_SIZE_LARGE if pos["stop_loss"] >= 1.0 else settings.TICK_SIZE_SMALL
+                if abs(pos["stop_loss"] - original_stop) > tick * settings.NATIVE_STOP_TICK_THRESHOLD:
                     logger.info(
                         f"Stop price changed for {symbol}: {original_stop:.4f} -> {pos['stop_loss']:.4f}. "
                         f"Replacing native stop order."
@@ -1921,7 +1921,7 @@ class RiskManager:
                         breakeven_price = entry_price + exit_fee_per_share
                     else:
                         # Fallback if amount is missing or zero
-                        breakeven_price = entry_price * 1.005
+                        breakeven_price = entry_price * (1 + settings.BREAKEVEN_FALLBACK_BUFFER_PCT)
                 async with self.shared_state._positions_lock:
                     if breakeven_price > pos["stop_loss"]:
                         pos["stop_loss"] = breakeven_price

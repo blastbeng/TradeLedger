@@ -56,14 +56,14 @@ def _compute_dynamic_slippage(
     if avg_vol is not None and avg_vol > 0 and current_vol > 0:
         vol_ratio = avg_vol / current_vol
         if vol_ratio > 1.0:
-            slippage *= min(vol_ratio, 3.0)
+            slippage *= min(vol_ratio, settings.BACKTEST_SLIPPAGE_MAX_VOL_RATIO)
 
     # Volatility adjustment
     atr = atr_values[candle_index] if atr_values and candle_index < len(atr_values) else None
     close = candles[candle_index][4] if candle_index < len(candles) else 0.0
     if atr is not None and atr > 0 and close > 0:
         atr_pct = atr / close
-        slippage += atr_pct * 0.05
+        slippage += atr_pct * settings.BACKTEST_SLIPPAGE_ATR_WEIGHT
 
     return min(slippage, max_pct)
 
@@ -130,7 +130,7 @@ class BacktestConfig:
     trade_value: Optional[float] = None
     is_btp: bool = False
     dividends: Optional[List[Dict[str, float]]] = None
-    max_trades: int = 200
+    max_trades: int = settings.BACKTEST_MAX_TRADES
     cooldown_after_loss_seconds: Optional[int] = None
     slippage_pct: float = 0.0
     slippage_model: str = "fixed"
@@ -151,7 +151,7 @@ class BacktestConfig:
     max_portfolio_risk_pct: Optional[float] = None
     max_portfolio_exposure_pct: Optional[float] = None
     max_portfolio_stop_risk_pct: Optional[float] = None
-    position_size_fraction: float = 0.1
+    position_size_fraction: float = settings.BACKTEST_DEFAULT_POSITION_SIZE_FRACTION
     direction: str = "long"
     gap_tolerance_mult: float = 1.5
     on_gaps: str = "warn"
@@ -189,9 +189,9 @@ def backtest_strategy(
 
     overrides = {}
     if config.stop_loss_pct is None or config.stop_loss_pct <= 0:
-        overrides["stop_loss_pct"] = 0.02
+        overrides["stop_loss_pct"] = settings.BACKTEST_DEFAULT_STOP_LOSS_PCT
     if config.take_profit_pct is None or config.take_profit_pct <= 0:
-        overrides["take_profit_pct"] = 0.05
+        overrides["take_profit_pct"] = settings.BACKTEST_DEFAULT_TAKE_PROFIT_PCT
     if config.direction not in ("long", "short", "both"):
         overrides["direction"] = "long"
     if overrides:
@@ -390,7 +390,7 @@ def backtest_strategy(
                 i += 1
                 continue
         else:
-            trade_amount = config.trade_value or 10000.0
+            trade_amount = config.trade_value or settings.BACKTEST_DEFAULT_TRADE_VALUE
 
         # Dynamic ATR-based stop-loss
         if config.stop_loss_atr_multiple is not None and config.atr_values is not None and i < len(config.atr_values) and config.atr_values[i] is not None and config.atr_values[i] > 0:
@@ -580,7 +580,7 @@ def backtest_strategy(
                         else:
                             actual_tp_fill = candle[1] if candle[1] >= tp_target else tp_target * (1 - effective_slippage)
                             partial_gross = (actual_tp_fill - entry_price) / entry_price * lvl_frac
-                        _fee_base = trade_amount if _psim else (config.trade_value or 10000.0)
+                        _fee_base = trade_amount if _psim else (config.trade_value or settings.BACKTEST_DEFAULT_TRADE_VALUE)
                         if config.fee_model == "intesa" and _fee_base > 0:
                             entry_fee_pct = 0.0
                             if not entry_fee_charged:
@@ -682,7 +682,7 @@ def backtest_strategy(
 
         # Calculate final P&L (including fees), scaled by remaining_fraction
         if remaining_fraction > 0:
-            _fee_base = trade_amount if _psim else (config.trade_value or 10000.0)
+            _fee_base = trade_amount if _psim else (config.trade_value or settings.BACKTEST_DEFAULT_TRADE_VALUE)
             if config.fee_model == "intesa" and _fee_base > 0:
                 entry_fee_pct = 0.0
                 if not entry_fee_charged:
