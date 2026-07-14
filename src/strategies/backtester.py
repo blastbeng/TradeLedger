@@ -888,13 +888,16 @@ def walk_forward_backtest(
     if config is None or config.backtest_entry_config is None:
         return {"insufficient_data": True, "per_window": [], "combined_stats": _empty_result()}
 
-    window_size = len(candles) // num_windows
+    base_window_size = len(candles) // num_windows
+    remainder = len(candles) % num_windows
     per_window_stats = []
     all_trades = []
 
     for i in range(num_windows):
-        start = i * window_size
-        end = (i + 1) * window_size  # Use strictly equal-sized windows, discarding the remainder
+        # Distribute the remainder across the first `remainder` windows
+        # so each gets one extra candle, avoiding data loss.
+        start = i * base_window_size + min(i, remainder)
+        end = start + base_window_size + (1 if i < remainder else 0)
         window_candles = candles[start:end]
         if len(window_candles) < 5:
             continue

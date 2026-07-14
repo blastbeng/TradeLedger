@@ -262,6 +262,20 @@ def _normalize_text_for_cache(text: str) -> str:
             return match.group(0)
     return re.sub(r'-?\d+\.\d+', _round_num, text)
 
+def _compute_fee_fingerprint() -> str:
+    """Compute a short fingerprint of fee-related settings for cache key inclusion.
+
+    When fee parameters change via settings.reload(), this fingerprint changes,
+    invalidating cached LLM responses that contain fee break-even calculations.
+    """
+    raw = (
+        f"{settings.STOCK_FEE_PERC}:{settings.STOCK_FEE_MIN}:{settings.STOCK_FEE_FIXED}:"
+        f"{settings.TOBIN_TAX_RATE}:{settings.BTP_FEE_PERC}:{settings.BTP_MIN_FEE}:"
+        f"{settings.BTP_IS_PRIMARY_ISSUANCE}"
+    )
+    return hashlib.md5(raw.encode()).hexdigest()[:8]
+
+
 def get_cached_llm_response(
     prompt: str,
     system_prompt: str = "",
@@ -396,23 +410,28 @@ def get_cached_llm_response(
             {**msg, "content": _normalize_text_for_cache(msg.get("content", ""))}
             for msg in messages
         ]
+        fee_fp = _compute_fee_fingerprint()
         key_data = json.dumps(
             {"messages": normalized_messages, "system": _normalize_text_for_cache(system_prompt), "model_type": model_type,
              "provider": provider, "model": model,
              "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE,
-             "cache_version": settings.LLM_CACHE_VERSION},
+             "cache_version": settings.LLM_CACHE_VERSION,
+             "fee_fp": fee_fp},
             sort_keys=True
         )
         cache_key = f"llm:{hashlib.sha256(key_data.encode()).hexdigest()}"
     elif market_hash:
         sys_hash = hashlib.sha256(system_prompt.encode()).hexdigest()[:16] if system_prompt else "none"
-        cache_key = f"llm:{settings.LLM_CACHE_VERSION}:{provider}:{model}:{model_type}:market:{market_hash}:sys:{sys_hash}:t{cache_temp if cache_temp is not None else 'def'}"
+        fee_fp = _compute_fee_fingerprint()
+        cache_key = f"llm:{settings.LLM_CACHE_VERSION}:{fee_fp}:{provider}:{model}:{model_type}:market:{market_hash}:sys:{sys_hash}:t{cache_temp if cache_temp is not None else 'def'}"
     else:
+        fee_fp = _compute_fee_fingerprint()
         key_data = json.dumps(
             {"prompt": _normalize_text_for_cache(prompt), "system": _normalize_text_for_cache(system_prompt), "model_type": model_type,
              "provider": provider, "model": model,
              "temperature": cache_temp if cache_temp is not None else settings.LLM_TEMPERATURE,
-             "cache_version": settings.LLM_CACHE_VERSION},
+             "cache_version": settings.LLM_CACHE_VERSION,
+             "fee_fp": fee_fp},
             sort_keys=True
         )
         cache_key = f"llm:{hashlib.sha256(key_data.encode()).hexdigest()}"

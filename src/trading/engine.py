@@ -209,6 +209,9 @@ class TradingEngine:
         self._asset_cache: Dict[str, Any] = {}
         self._asset_cache_time: Dict[str, float] = {}
 
+        # Track position symbols at cache time to detect changes
+        self._position_tickers_cache_symbols: set = set()
+
         # Balance cache – avoids redundant API calls within an evaluation cycle
         # Lock to protect _force_eval, _force_eval_time, _last_strategy_eval, and _strategy_intervals
         self._eval_state_lock = self.shared_state._eval_state_lock
@@ -704,13 +707,24 @@ class TradingEngine:
         return balance
 
     async def _get_cached_position_tickers(self, ttl: float = 30.0) -> Dict[str, Dict[str, Any]]:
-        """Return cached position tickers, refreshing if older than ttl seconds."""
+        """Return cached position tickers, refreshing if older than ttl seconds.
+
+        Also invalidates the cache if the set of position symbols has changed
+        since the cache was created, preventing stale tickers for closed/new
+        positions from being served.
+        """
         now = time.time()
-        if self._position_tickers_cache is not None and (now - self._position_tickers_cache_time) < ttl:
+        current_position_symbols = set(self.positions.keys())
+        if (
+            self._position_tickers_cache is not None
+            and (now - self._position_tickers_cache_time) < ttl
+            and self._position_tickers_cache_symbols == current_position_symbols
+        ):
             return self._position_tickers_cache
         tickers = await self._market_data_manager._get_all_position_tickers()
         self._position_tickers_cache = tickers
         self._position_tickers_cache_time = now
+        self._position_tickers_cache_symbols = current_position_symbols
         return tickers
 
     async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
