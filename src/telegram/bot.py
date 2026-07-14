@@ -237,7 +237,11 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         await update.message.reply_text("♻️ Resetting trading state...", reply_markup=self.keyboard)
-        await self.engine.reset_paper_trading_state()
+        try:
+            await asyncio.wait_for(self.engine.reset_paper_trading_state(), timeout=30.0)
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ Reset timed out.", reply_markup=self.keyboard)
+            return
         await update.message.reply_text("✅ Trading state has been reset.", reply_markup=self.keyboard)
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -342,7 +346,13 @@ class TelegramBot:
 
         if paused:
             try:
-                pause_status = await self.engine.get_pause_status()
+                pause_status = await asyncio.wait_for(
+                    self.engine.get_pause_status(),
+                    timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("get_pause_status timed out")
+                pause_status = {}
             except Exception:
                 pause_status = {}
             pause_reason = pause_status.get("reason", "")
@@ -382,7 +392,13 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         try:
-            open_trades = await self.engine.event_bus.request("get_open_trades")
+            open_trades = await asyncio.wait_for(
+                self.engine.event_bus.request("get_open_trades"),
+                timeout=15.0
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ Fetching open trades timed out.", reply_markup=self.keyboard)
+            return
         except Exception as e:
             logger.error(f"Failed to get open trades: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve open trades.", reply_markup=self.keyboard)
@@ -679,7 +695,13 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         try:
-            metrics = await self.engine.event_bus.request("get_risk_metrics")
+            metrics = await asyncio.wait_for(
+                self.engine.event_bus.request("get_risk_metrics"),
+                timeout=15.0
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ Fetching risk metrics timed out.", reply_markup=self.keyboard)
+            return
         except Exception as e:
             logger.error(f"Failed to get risk metrics: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve risk metrics.", reply_markup=self.keyboard)
@@ -891,7 +913,13 @@ class TelegramBot:
             return
 
         try:
-            open_trades = await self.engine.event_bus.request("get_open_trades")
+            open_trades = await asyncio.wait_for(
+                self.engine.event_bus.request("get_open_trades"),
+                timeout=15.0
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ Fetching open trades timed out.", reply_markup=self.keyboard)
+            return
         except Exception as e:
             logger.error(f"Failed to get open trades: {e}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve open trades.", reply_markup=self.keyboard)
@@ -918,21 +946,44 @@ class TelegramBot:
             sell_name = await self.engine._market_data_manager.get_stock_name(symbol)
             sell_display = self.engine._format_symbol_display(symbol, sell_name, sell_tf)
             await update.message.reply_text(f"🔄 Selling {sell_display}...", reply_markup=self.keyboard)
-            await self.engine.sell_position(symbol)
+            try:
+                await asyncio.wait_for(self.engine.sell_position(symbol), timeout=30.0)
+            except asyncio.TimeoutError:
+                await update.message.reply_text("⚠️ Sell order timed out.", reply_markup=self.keyboard)
+                return
             await update.message.reply_text(f"✅ Sell order placed for {sell_display}.", reply_markup=self.keyboard)
         else:
             # Sell all open positions
             count = len(open_trades)
             await update.message.reply_text(f"🔄 Selling all {count} open positions...", reply_markup=self.keyboard)
-            await self.engine.sell_all_positions()
+            try:
+                await asyncio.wait_for(self.engine.sell_all_positions(), timeout=60.0)
+            except asyncio.TimeoutError:
+                await update.message.reply_text("⚠️ Sell all orders timed out.", reply_markup=self.keyboard)
+                return
             await update.message.reply_text(f"✅ Sell orders placed for all {count} positions.", reply_markup=self.keyboard)
 
     async def cmd_profit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
             return
         try:
-            summary = await self.engine.event_bus.request("get_profit_summary")
-            base_currency = summary.get('base_currency', '')
+            summary = await asyncio.wait_for(
+                self.engine.event_bus.request("get_profit_summary"),
+                timeout=15.0
+            )
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ Fetching profit summary timed out.", reply_markup=self.keyboard)
+            return
+        except asyncio.TimeoutError:
+            await update.message.reply_text("⚠️ Fetching profit summary timed out.", reply_markup=self.keyboard)
+            return
+        except Exception as e:
+            logger.error(f"Failed to get profit summary: {e}", exc_info=True)
+            msg = "⚠️ Could not retrieve profit summary. Please try again later."
+
+        await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
+
+    def _write_notification_log(self, log_path: Path, summary: dict):
             pnl = summary['total_pnl']
             pnl_pct = summary['pnl_percent']
             pnl_emoji = "📈" if pnl >= 0 else "📉"
