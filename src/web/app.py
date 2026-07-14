@@ -70,15 +70,24 @@ async def verify_auth(request: Request):
     return True
 
 async def verify_csrf(request: Request):
-    """Verify the CSRF token from the X-CSRF-Token header matches the csrf_token cookie."""
+    """Verify the CSRF token from the X-CSRF-Token header matches the csrf_token cookie and the session."""
     if not settings.WEB_USERNAME or not settings.WEB_PASSWORD:
         return True
 
+    session_token = request.cookies.get("session_token")
     cookie_token = request.cookies.get("csrf_token")
     header_token = request.headers.get("X-CSRF-Token")
 
-    if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
+    if not session_token or not cookie_token or not header_token:
         raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
+
+    if not secrets.compare_digest(cookie_token, header_token):
+        raise HTTPException(status_code=403, detail="CSRF token invalid")
+
+    redis = get_redis_client()
+    stored_csrf = await asyncio.to_thread(redis.get, f"csrf:{session_token}")
+    if not stored_csrf or not secrets.compare_digest(stored_csrf, cookie_token):
+        raise HTTPException(status_code=403, detail="CSRF token invalid")
 
     return True
 
@@ -142,8 +151,9 @@ async def login(request: Request, response: Response, credentials: dict = Body(.
     await asyncio.to_thread(redis.set, f"session:{token}", "1", ex=86400)  # 1 day expiry
     response.set_cookie(key="session_token", value=token, httponly=True, samesite="lax", max_age=86400)
 
-    # Generate and set CSRF token
+    # Generate and set CSRF token, tied to the session
     csrf_token = secrets.token_urlsafe(32)
+    await asyncio.to_thread(redis.set, f"csrf:{token}", csrf_token, ex=86400)
     response.set_cookie(key="csrf_token", value=csrf_token, httponly=False, samesite="lax", max_age=86400)
 
     return {"status": "ok", "csrf_token": csrf_token}
@@ -154,7 +164,7 @@ async def logout(request: Request, response: Response):
     token = request.cookies.get("session_token")
     if token:
         redis = get_redis_client()
-        await asyncio.to_thread(redis.delete, f"session:{token}")
+        await asyncio.to_thread(redis.delete, f"session:{token}", f"csrf:{token}")
     response.delete_cookie("session_token")
     return {"status": "ok"}
 
