@@ -232,12 +232,19 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
     if not symbols:
         return {}
 
-    # If a fetch is already in progress, immediately fall back to cache
-    # instead of blocking for up to 5 seconds. The background quote refresh
-    # loop keeps the cache warm, so serving from cache is acceptable and
-    # avoids serializing all callers behind a single slow batch fetch.
+    # If a fetch is already in progress, try to fall back to cache.
+    # If the cache is empty for any requested symbol, wait for the lock
+    # to avoid returning empty quotes during startup.
     if not _get_quotes_lock.acquire(blocking=False):
-        return get_quotes_cached(symbols)
+        cached = get_quotes_cached(symbols)
+        if any(cached.get(s, {}).get("last") is None for s in symbols):
+            with _get_quotes_lock:
+                # Re-check cache after acquiring lock, the previous fetch might have populated it
+                cached = get_quotes_cached(symbols)
+                if any(cached.get(s, {}).get("last") is None for s in symbols):
+                    return _get_quotes_impl(symbols)
+                return cached
+        return cached
 
     try:
         return _get_quotes_impl(symbols)
