@@ -480,6 +480,69 @@ def _validate_optional_params(
     return None
 
 
+def _apply_required_defaults(params: Dict[str, Any], symbol: Optional[str], timeframe_seconds: Optional[int]) -> None:
+    """Applies default values for required strategy parameters if missing."""
+    required = ["trailing_stop", "position_size_fraction", "max_hold_time_seconds"]
+    for key in required:
+        if key not in params:
+            if key == "trailing_stop":
+                params["trailing_stop"] = False
+                logger.info(f"Validator: defaulting trailing_stop to False for {symbol}")
+            elif key == "position_size_fraction":
+                # Calculate from risk budget if stop_loss_pct and max_risk_per_trade_pct are available
+                _sl_for_sizing = params.get("stop_loss_pct")
+                _max_risk = params.get("max_risk_per_trade_pct")
+                if _sl_for_sizing is not None and _max_risk is not None and _sl_for_sizing > 0:
+                    _calculated_psf = min(_max_risk / _sl_for_sizing, 1.0)
+                    params["position_size_fraction"] = max(0.01, _calculated_psf)
+                    logger.info(f"Validator: calculated position_size_fraction={_calculated_psf:.4f} from max_risk={_max_risk} / sl={_sl_for_sizing} for {symbol}")
+                else:
+                    # Fallback: scale by timeframe
+                    if timeframe_seconds is not None and timeframe_seconds >= 31_536_000:
+                        params["position_size_fraction"] = 0.25  # larger positions for long-term (wider stops, smaller risk)
+                    elif timeframe_seconds is not None and timeframe_seconds >= 2_592_000:
+                        params["position_size_fraction"] = 0.15
+                    else:
+                        params["position_size_fraction"] = 0.10
+                    logger.info(f"Validator: defaulting position_size_fraction to {params['position_size_fraction']} for {symbol}")
+            elif key == "max_hold_time_seconds":
+                # Default to a reasonable multiple of the timeframe
+                if timeframe_seconds is not None:
+                    params["max_hold_time_seconds"] = min(int(timeframe_seconds * 10), 157_680_000)
+                else:
+                    params["max_hold_time_seconds"] = 2_592_000  # 30 days
+                logger.info(f"Validator: defaulting max_hold_time_seconds to {params['max_hold_time_seconds']} for {symbol}")
+
+
+def _validate_required_params(
+    params: Dict[str, Any],
+    timeframe_seconds: Optional[int],
+    min_hold_time_mult: float,
+) -> Optional[Signal]:
+    """Validates required strategy parameters. Returns a HOLD Signal on failure, None on success."""
+    psf = params["position_size_fraction"]
+    if not isinstance(psf, (int, float)) or not (0 < psf <= 1.0):
+        return Signal(action="HOLD", confidence=0.0, reasoning="Invalid position_size_fraction")
+    mht = params["max_hold_time_seconds"]
+    if not isinstance(mht, (int, float)) or mht <= 0:
+        return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_hold_time_seconds")
+    # Enforce a minimum max hold time relative to the candle timeframe
+    if timeframe_seconds is not None:
+        # Cap the minimum hold time to avoid absurd values for very long timeframes (e.g., 5Y)
+        min_hold = min(min_hold_time_mult * timeframe_seconds, 157_680_000)  # cap at ~5 years
+        if mht < min_hold:
+            return Signal(
+                action="HOLD",
+                confidence=0.0,
+                reasoning=(
+                    f"max_hold_time_seconds ({mht}s) is too short for the "
+                    f"timeframe ({timeframe_seconds}s candles); "
+                    f"minimum is {min_hold}s"
+                )
+            )
+    return None
+
+
 def _validate_signal_impl(
     signal: Signal,
     market_data: Optional[Dict[str, Any]] = None,
@@ -527,36 +590,8 @@ def _validate_signal_impl(
         atr_mult = params.get("stop_loss_atr_multiple")
 
         # take_profit_pct is validated separately below (may use take_profit_atr_multiple instead)
-        required = ["trailing_stop", "position_size_fraction", "max_hold_time_seconds"]
-        for key in required:
-            if key not in params:
-                if key == "trailing_stop":
-                    params["trailing_stop"] = False
-                    logger.info(f"Validator: defaulting trailing_stop to False for {symbol}")
-                elif key == "position_size_fraction":
-                    # Calculate from risk budget if stop_loss_pct and max_risk_per_trade_pct are available
-                    _sl_for_sizing = params.get("stop_loss_pct")
-                    _max_risk = params.get("max_risk_per_trade_pct")
-                    if _sl_for_sizing is not None and _max_risk is not None and _sl_for_sizing > 0:
-                        _calculated_psf = min(_max_risk / _sl_for_sizing, 1.0)
-                        params["position_size_fraction"] = max(0.01, _calculated_psf)
-                        logger.info(f"Validator: calculated position_size_fraction={_calculated_psf:.4f} from max_risk={_max_risk} / sl={_sl_for_sizing} for {symbol}")
-                    else:
-                        # Fallback: scale by timeframe
-                        if timeframe_seconds is not None and timeframe_seconds >= 31_536_000:
-                            params["position_size_fraction"] = 0.25  # larger positions for long-term (wider stops, smaller risk)
-                        elif timeframe_seconds is not None and timeframe_seconds >= 2_592_000:
-                            params["position_size_fraction"] = 0.15
-                        else:
-                            params["position_size_fraction"] = 0.10
-                        logger.info(f"Validator: defaulting position_size_fraction to {params['position_size_fraction']} for {symbol}")
-                elif key == "max_hold_time_seconds":
-                    # Default to a reasonable multiple of the timeframe
-                    if timeframe_seconds is not None:
-                        params["max_hold_time_seconds"] = min(int(timeframe_seconds * 10), 157_680_000)
-                    else:
-                        params["max_hold_time_seconds"] = 2_592_000  # 30 days
-                    logger.info(f"Validator: defaulting max_hold_time_seconds to {params['max_hold_time_seconds']} for {symbol}")
+        _apply_required_defaults(params, symbol, timeframe_seconds)
+        
         tp_error = _validate_take_profit(params, symbol, atr, price, timeframe_seconds, sl)
         if tp_error:
             return tp_error
@@ -571,26 +606,10 @@ def _validate_signal_impl(
             return ts_error
         
         trailing = params["trailing_stop"]
-        psf = params["position_size_fraction"]
-        if not isinstance(psf, (int, float)) or not (0 < psf <= 1.0):
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid position_size_fraction")
-        mht = params["max_hold_time_seconds"]
-        if not isinstance(mht, (int, float)) or mht <= 0:
-            return Signal(action="HOLD", confidence=0.0, reasoning="Invalid max_hold_time_seconds")
-        # Enforce a minimum max hold time relative to the candle timeframe
-        if timeframe_seconds is not None:
-            # Cap the minimum hold time to avoid absurd values for very long timeframes (e.g., 5Y)
-            min_hold = min(min_hold_time_mult * timeframe_seconds, 157_680_000)  # cap at ~5 years
-            if mht < min_hold:
-                return Signal(
-                    action="HOLD",
-                    confidence=0.0,
-                    reasoning=(
-                        f"max_hold_time_seconds ({mht}s) is too short for the "
-                        f"timeframe ({timeframe_seconds}s candles); "
-                        f"minimum is {min_hold}s"
-                    )
-                )
+        
+        req_error = _validate_required_params(params, timeframe_seconds, min_hold_time_mult)
+        if req_error:
+            return req_error
 
         opt_error = _validate_optional_params(
             params, symbol, sl, tp, stop_method, tp_atr_valid, atr_mult, tp_atr, trailing, global_min_risk_reward_ratio
