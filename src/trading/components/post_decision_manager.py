@@ -59,6 +59,8 @@ class PostDecisionManager:
             if summary:
                 return f"{base} – {summary}"
             return base
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"_get_sentiment_str: failed to get sentiment for {symbol}: {type(e).__name__}: {e}")
         except Exception as e:
             logger.warning(f"_get_sentiment_str: failed to get sentiment for {symbol}: {type(e).__name__}: {e}")
         return ""
@@ -168,6 +170,8 @@ class PostDecisionManager:
                 data.current_price,
                 data.assigned_tf
             )
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Failed to insert LLM decision for quality tracking: {type(e).__name__}: {e}")
         except Exception as e:
             logger.warning(f"Failed to insert LLM decision for quality tracking: {type(e).__name__}: {e}")
 
