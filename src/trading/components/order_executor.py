@@ -577,6 +577,33 @@ class OrderExecutor:
                     summary={"symbol": queued["symbol"], "action": "CANCEL", "reason": f"OCO pair cancelled due to main order {status}"}
                 )
 
+    async def _send_buy_notification(
+        self, symbol: str, trade_dict: Dict[str, Any], signal_dict: Dict[str, Any],
+        timeframe: Optional[str], atr: Optional[float]
+    ) -> None:
+        """Format and send the BUY notification."""
+        engine = self.engine
+        stock_name = await engine._market_data_manager.get_stock_name(symbol)
+        display_symbol = engine._format_symbol_display(symbol, stock_name, timeframe)
+        buy_msg = f"🟢 BUY {display_symbol}: {trade_dict['amount']:.6f} @ {trade_dict['price']:.4f}"
+        buy_summary = {
+            "symbol": symbol,
+            "action": "BUY",
+            "price": trade_dict["price"],
+            "amount": trade_dict["amount"],
+            "confidence": signal_dict.get('confidence', 0.0),
+            "reason": (signal_dict.get('reasoning', '') or '')[:200],
+            "strategy_type": signal_dict.get('strategy_type'),
+            "indicators": {"atr": atr},
+        }
+        if signal_dict.get('model_type'):
+            buy_summary["model_type"] = signal_dict.get('model_type')
+        if signal_dict.get('llm_provider'):
+            buy_summary["llm_provider"] = signal_dict.get('llm_provider')
+        if signal_dict.get('llm_model'):
+            buy_summary["llm_model"] = signal_dict.get('llm_model')
+        await engine.notifier.send_notification(buy_msg, summary=buy_summary)
+
     async def handle_queued_buy_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any]):
         """Process a queued BUY limit order that has filled in the simulator."""
         engine = self.engine
@@ -664,26 +691,7 @@ class OrderExecutor:
         await self.event_bus.publish("save_state", force=True)
         self.shared_state._portfolio_exposure_cache = None
         if engine.notifier:
-            stock_name = await engine._market_data_manager.get_stock_name(symbol)
-            display_symbol = engine._format_symbol_display(symbol, stock_name, timeframe)
-            buy_msg = f"🟢 BUY {display_symbol}: {trade_dict['amount']:.6f} @ {trade_dict['price']:.4f}"
-            buy_summary = {
-                "symbol": symbol,
-                "action": "BUY",
-                "price": trade_dict["price"],
-                "amount": trade_dict["amount"],
-                "confidence": signal_dict.get('confidence', 0.0),
-                "reason": (signal_dict.get('reasoning', '') or '')[:200],
-                "strategy_type": signal_dict.get('strategy_type'),
-                "indicators": {"atr": atr},
-            }
-            if signal_dict.get('model_type'):
-                buy_summary["model_type"] = signal_dict.get('model_type')
-            if signal_dict.get('llm_provider'):
-                buy_summary["llm_provider"] = signal_dict.get('llm_provider')
-            if signal_dict.get('llm_model'):
-                buy_summary["llm_model"] = signal_dict.get('llm_model')
-            await engine.notifier.send_notification(buy_msg, summary=buy_summary)
+            await self._send_buy_notification(symbol, trade_dict, signal_dict, timeframe, atr)
 
         # Place native exit orders for the new/updated position
         signal_dict = queued.get('signal', {}) or {}
