@@ -167,7 +167,7 @@ class SignalProcessor:
         assigned_tf = symbol_entry["timeframe"]
         symbol_data = await self.fetch_symbol_market_data(symbol, assigned_tf)
         if symbol_data is None:
-            logger.warning(f"No ticker data for {symbol}, skipping.")
+            logger.warning(f"No ticker data for {symbol}, skipping.", extra={"event": "skip_no_ticker", "symbol": symbol})
             return None
 
         ticker = symbol_data["ticker"]
@@ -178,7 +178,7 @@ class SignalProcessor:
         if await self.check_skip_conditions(symbol, display_symbol, ticker, assigned_tf, has_position, base_balance):
             return None
         if base_balance <= 0:
-            logger.info(f"Evaluating {symbol} for position management only (base_balance={base_balance:.2f}, no new capital available).")
+            logger.info(f"Evaluating {symbol} for position management only (base_balance={base_balance:.2f}, no new capital available).", extra={"event": "eval_position_management_only", "symbol": symbol, "base_balance": base_balance})
         if await self.check_no_ohlcv(symbol, display_symbol, assigned_tf, ohlcv_data):
             return None
 
@@ -240,7 +240,7 @@ class SignalProcessor:
                 if news_summary and news_summary.get("summary") and news_summary["summary"] != "No recent news.":
                     news_section = f"Recent news summary for {symbol}: {news_summary['summary']}"
             except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError) as e:
-                logger.warning(f"Failed to pre-summarize news for {symbol}: {type(e).__name__}: {e}")
+                logger.warning(f"Failed to pre-summarize news for {symbol}: {type(e).__name__}: {e}", extra={"event": "news_presummary_failed", "symbol": symbol, "error_type": type(e).__name__})
 
         prompt_data = StrategyPromptData(
             symbol=symbol,
@@ -481,21 +481,21 @@ class SignalProcessor:
                 earnings_date = datetime.strptime(upcoming_earnings, '%Y-%m-%d').date()
                 days_to_earnings = (earnings_date - datetime.now(timezone.utc).date()).days
                 if 0 <= days_to_earnings <= 3:
-                    logger.info(f"Upcoming earnings for {symbol} in {days_to_earnings} days. Adjusting signal for earnings risk.")
+                    logger.info(f"Upcoming earnings for {symbol} in {days_to_earnings} days. Adjusting signal for earnings risk.", extra={"event": "upcoming_earnings_adjustment", "symbol": symbol, "days_to_earnings": days_to_earnings})
                     if signal.action == "BUY":
                         original_size = signal.position_size if signal.position_size is not None else 1.0
                         signal.position_size = original_size * 0.5
-                        logger.info(f"Reduced position size for {symbol} from {original_size:.2f} to {signal.position_size:.2f} due to upcoming earnings.")
+                        logger.info(f"Reduced position size for {symbol} from {original_size:.2f} to {signal.position_size:.2f} due to upcoming earnings.", extra={"event": "earnings_position_size_reduced", "symbol": symbol, "original_size": original_size, "new_size": signal.position_size})
                         if signal.stop_loss is not None:
                             original_sl = signal.stop_loss
                             signal.stop_loss = min(signal.stop_loss, 0.03)
                             if signal.stop_loss != original_sl:
-                                logger.info(f"Tightened stop_loss for {symbol} from {original_sl:.3f} to {signal.stop_loss:.3f} due to upcoming earnings.")
+                                logger.info(f"Tightened stop_loss for {symbol} from {original_sl:.3f} to {signal.stop_loss:.3f} due to upcoming earnings.", extra={"event": "earnings_stop_loss_tightened", "symbol": symbol, "original_stop_loss": original_sl, "new_stop_loss": signal.stop_loss})
                         if signal.stop_loss_atr_multiple is not None:
                             original_sl_atr = signal.stop_loss_atr_multiple
                             signal.stop_loss_atr_multiple = min(signal.stop_loss_atr_multiple, 1.0)
                             if signal.stop_loss_atr_multiple != original_sl_atr:
-                                logger.info(f"Tightened stop_loss_atr_multiple for {symbol} from {original_sl_atr:.2f} to {signal.stop_loss_atr_multiple:.2f} due to upcoming earnings.")
+                                logger.info(f"Tightened stop_loss_atr_multiple for {symbol} from {original_sl_atr:.2f} to {signal.stop_loss_atr_multiple:.2f} due to upcoming earnings.", extra={"event": "earnings_stop_loss_atr_tightened", "symbol": symbol, "original_atr_mult": original_sl_atr, "new_atr_mult": signal.stop_loss_atr_multiple})
             except (ValueError, TypeError):
                 pass
 
@@ -733,7 +733,7 @@ class SignalProcessor:
                 rank = sum(1 for v in sorted_atr if v <= atr)
                 return round(rank / len(sorted_atr) * 100, 1)
         except (json.JSONDecodeError, ValueError, TypeError, ConnectionError, TimeoutError, OSError) as e:
-            logger.warning(f"ATR percentile computation failed for {symbol}: {type(e).__name__}: {e}")
+            logger.warning(f"ATR percentile computation failed for {symbol}: {type(e).__name__}: {e}", extra={"event": "atr_percentile_failed", "symbol": symbol, "error_type": type(e).__name__})
 
         return None
 
@@ -797,7 +797,7 @@ class SignalProcessor:
                 if db_candles:
                     ohlcv_data[assigned_tf] = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
             except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
-                logger.debug(f"DB OHLCV fetch failed for {symbol} {assigned_tf}: {type(e).__name__}: {e}")
+                logger.debug(f"DB OHLCV fetch failed for {symbol} {assigned_tf}: {type(e).__name__}: {e}", extra={"event": "db_ohlcv_fetch_failed", "symbol": symbol, "timeframe": assigned_tf, "error_type": type(e).__name__})
 
             # Fetch last 2 daily candles for pivot points if assigned_tf is not '1d'
             if assigned_tf != "1d" and "1d" in settings.OHLCV_TIMEFRAMES:
@@ -806,7 +806,7 @@ class SignalProcessor:
                     if daily_candles:
                         ohlcv_data["1d"] = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in daily_candles]
                 except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
-                    logger.debug(f"DB OHLCV fetch failed for {symbol} 1d: {type(e).__name__}: {e}")
+                    logger.debug(f"DB OHLCV fetch failed for {symbol} 1d: {type(e).__name__}: {e}", extra={"event": "db_ohlcv_fetch_failed", "symbol": symbol, "timeframe": "1d", "error_type": type(e).__name__})
 
         # --- Compute multi-TF indicators ---
         _inds = await self.market_data_fetcher.compute_multi_tf_indicators(symbol, ohlcv_data, assigned_tf)
@@ -927,7 +927,8 @@ class SignalProcessor:
             if has_gap:
                 logger.warning(
                     f"Historical OHLCV for {symbol} {assigned_tf} contains gaps; "
-                    f"passing data to LLM anyway for backtesting."
+                    f"passing data to LLM anyway for backtesting.",
+                    extra={"event": "ohlcv_gaps_detected", "symbol": symbol, "timeframe": assigned_tf}
                 )
 
         # Unrealized P&L for current position
@@ -1001,7 +1002,7 @@ class SignalProcessor:
             historical_backtest_results = []
         dividend_yield, next_ex_dividend = dividend_data if not isinstance(dividend_data, Exception) else (None, None)
         if isinstance(aggregate_sentiment, Exception):
-            logger.warning(f"Could not fetch aggregate sentiment for {symbol}: {type(aggregate_sentiment).__name__}: {aggregate_sentiment}")
+            logger.warning(f"Could not fetch aggregate sentiment for {symbol}: {type(aggregate_sentiment).__name__}: {aggregate_sentiment}", extra={"event": "sentiment_fetch_failed", "symbol": symbol, "error_type": type(aggregate_sentiment).__name__})
             aggregate_sentiment = None
         if isinstance(global_risk_mult, Exception):
             global_risk_mult = None
@@ -1120,7 +1121,7 @@ class SignalProcessor:
                     )
             except (ValueError, TypeError):
                 pass
-        logger.info(f"LLM Step 1a analysis prompt for {data.symbol}: {len(analysis_prompt)} chars")
+        logger.info(f"LLM Step 1a analysis prompt for {data.symbol}: {len(analysis_prompt)} chars", extra={"event": "step1a_prompt_built", "symbol": data.symbol, "prompt_length": len(analysis_prompt)})
         # Build a market snapshot dict for caching (per-symbol)
         market_snapshot = {
             "symbol": data.symbol,
@@ -1232,7 +1233,8 @@ class SignalProcessor:
                     if elapsed < cooldown:
                         remaining = cooldown - elapsed
                         logger.info(
-                            f"Skipping {symbol}: cooldown active ({remaining:.0f}s remaining after loss)"
+                            f"Skipping {symbol}: cooldown active ({remaining:.0f}s remaining after loss)",
+                            extra={"event": "skip_cooldown", "symbol": symbol, "remaining_seconds": remaining}
                         )
                         async with self.shared_state._eval_state_lock:
                             self.shared_state._force_eval.pop(symbol, None)
@@ -1242,7 +1244,7 @@ class SignalProcessor:
         async with self.shared_state._queued_orders_lock:
             has_queued = any(q['symbol'] == symbol for q in self.shared_state.queued_orders)
         if has_queued:
-            logger.info(f"Skipping {symbol}: order already queued.")
+            logger.info(f"Skipping {symbol}: order already queued.", extra={"event": "skip_order_queued", "symbol": symbol})
             async with self.shared_state._eval_state_lock:
                 self.shared_state._force_eval.pop(symbol, None)
             return None
@@ -1673,5 +1675,5 @@ class SignalProcessor:
                     await asyncio.to_thread(engine.redis.setex, ratio_cache_key, cache_ttl, "1.0")
                 return 1.0
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError) as e:
-            logger.warning(f"Volume trend computation failed for {symbol}: {type(e).__name__}: {e}")
+            logger.warning(f"Volume trend computation failed for {symbol}: {type(e).__name__}: {e}", extra={"event": "volume_trend_failed", "symbol": symbol, "error_type": type(e).__name__})
             return None

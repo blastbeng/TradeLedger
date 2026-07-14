@@ -60,9 +60,9 @@ class PostDecisionManager:
                 return f"{base} – {summary}"
             return base
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-            logger.warning(f"_get_sentiment_str: failed to get sentiment for {symbol}: {type(e).__name__}: {e}")
+            logger.warning(f"_get_sentiment_str: failed to get sentiment for {symbol}: {type(e).__name__}: {e}", extra={"event": "sentiment_fetch_failed", "symbol": symbol, "error_type": type(e).__name__})
         except Exception as e:
-            logger.warning(f"_get_sentiment_str: failed to get sentiment for {symbol}: {type(e).__name__}: {e}")
+            logger.warning(f"_get_sentiment_str: failed to get sentiment for {symbol}: {type(e).__name__}: {e}", extra={"event": "sentiment_fetch_failed", "symbol": symbol, "error_type": type(e).__name__})
         return ""
 
     async def log_and_notify_decision(
@@ -184,9 +184,9 @@ class PostDecisionManager:
                 data.assigned_tf
             )
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-            logger.warning(f"Failed to insert LLM decision for quality tracking: {type(e).__name__}: {e}")
+            logger.warning(f"Failed to insert LLM decision for quality tracking: {type(e).__name__}: {e}", extra={"event": "insert_llm_decision_failed", "symbol": data.symbol, "error_type": type(e).__name__})
         except Exception as e:
-            logger.warning(f"Failed to insert LLM decision for quality tracking: {type(e).__name__}: {e}")
+            logger.warning(f"Failed to insert LLM decision for quality tracking: {type(e).__name__}: {e}", extra={"event": "insert_llm_decision_failed", "symbol": data.symbol, "error_type": type(e).__name__})
 
         if engine.notifier:
             emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "⏸️"}.get(validated.action, "❓")
@@ -552,7 +552,8 @@ class PostDecisionManager:
         if timeout < min_timeout:
             logger.info(
                 f"Entry condition timeout for {symbol} too short ({timeout}s), "
-                f"clamping to minimum {min_timeout}s (timeframe={assigned_tf})"
+                f"clamping to minimum {min_timeout}s (timeframe={assigned_tf})",
+                extra={"event": "entry_timeout_clamped", "symbol": symbol, "original_timeout": timeout, "min_timeout": min_timeout, "timeframe": assigned_tf}
             )
             timeout = min_timeout
         deadline = time.time() + timeout
@@ -566,7 +567,8 @@ class PostDecisionManager:
             }
         logger.info(
             f"Queued entry condition for {symbol} (type={etype}, deadline in {timeout}s). "
-            f"Will monitor in background."
+            f"Will monitor in background.",
+            extra={"event": "entry_condition_queued", "symbol": symbol, "condition_type": etype, "timeout_seconds": timeout}
         )
         if engine.notifier:
             await engine.notifier.send_notification(
@@ -746,7 +748,7 @@ class PostDecisionManager:
                 if _pos.get("stop_loss") is not None and _pos.get("take_profit") is not None:
                     _pos.pop("_needs_risk_params", None)
                     _pos.pop("_needs_risk_params_attempts", None)
-                    logger.info(f"Risk parameters obtained for {data.symbol}; cleared _needs_risk_params flag.")
+                    logger.info(f"Risk parameters obtained for {data.symbol}; cleared _needs_risk_params flag.", extra={"event": "risk_params_obtained", "symbol": data.symbol})
 
         await self.log_and_notify_decision(
             data=data,
