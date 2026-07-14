@@ -71,7 +71,7 @@ class ReevalPostSelectionManager:
                 tf = entry["timeframe"]
                 logger.info(f"Triggering immediate backfill for newly selected symbol {sym} ({tf})")
                 self._create_background_task(
-                    lambda: self.event_bus.publish("backfill_new_symbol", sym, tf),
+                    lambda sym=sym, tf=tf: self.event_bus.publish("backfill_new_symbol", sym, tf),
                     f"backfill_new_symbol:{sym}"
                 )
 
@@ -81,7 +81,7 @@ class ReevalPostSelectionManager:
                 sym = entry["symbol"]
                 logger.info(f"Triggering immediate news fetch for newly selected symbol {sym}")
                 self._create_background_task(
-                    lambda: engine._fetch_and_store_news_for_symbol(sym),
+                    lambda sym=sym: engine._fetch_and_store_news_for_symbol(sym),
                     f"fetch_news:{sym}"
                 )
 
