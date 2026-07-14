@@ -364,8 +364,8 @@ def _validate_signal_impl(
                 return Signal(action="HOLD", confidence=0.0, reasoning="Invalid min_confidence")
         if "news_sentiment_exit_threshold" in params:
             nst = params["news_sentiment_exit_threshold"]
-            if not isinstance(nst, (int, float)) or not (-1.0 <= nst <= 1.0):
-                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid news_sentiment_exit_threshold")
+            if not isinstance(nst, (int, float)) or not (-1.0 <= nst <= 0.0):
+                return Signal(action="HOLD", confidence=0.0, reasoning="Invalid news_sentiment_exit_threshold (must be between -1.0 and 0.0)")
         if "strategy_interval_seconds" in params:
             si = params["strategy_interval_seconds"]
             if not isinstance(si, (int, float)) or si <= 0:
