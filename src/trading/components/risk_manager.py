@@ -1552,46 +1552,46 @@ class RiskManager:
 
             # 6. Cancel TP outside lock if manual_sell
             if manual_sell:
-                    try:
-                        await asyncio.to_thread(engine.trader.cancel_order, tp_order_id)
-                    except Exception as e:
-                        logger.debug(f"check_native_exit_triggers: failed to cancel TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
+                try:
+                    await asyncio.to_thread(engine.trader.cancel_order, tp_order_id)
+                except Exception as e:
+                    logger.debug(f"check_native_exit_triggers: failed to cancel TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
 
-                async with self.shared_state._queued_orders_lock:
+            async with self.shared_state._queued_orders_lock:
+                self.shared_state.queued_orders = [
+                    q for q in self.shared_state.queued_orders
+                    if q.get("order_id") != sl_order_id
+                ]
+                for q in self.shared_state.queued_orders:
+                    if q.get("order_id") == tp_order_id:
+                        q["oco_pair"] = None
+                        break
+                if manual_sell:
                     self.shared_state.queued_orders = [
                         q for q in self.shared_state.queued_orders
-                        if q.get("order_id") != sl_order_id
+                        if q.get("order_id") != tp_order_id
                     ]
-                    for q in self.shared_state.queued_orders:
-                        if q.get("order_id") == tp_order_id:
-                            q["oco_pair"] = None
-                            break
-                    if manual_sell:
-                        self.shared_state.queued_orders = [
-                            q for q in self.shared_state.queued_orders
-                            if q.get("order_id") != tp_order_id
-                        ]
-                
-                if engine.notifier:
-                    await engine.notifier.send_notification(
-                        f"🎯 Take‑profit reached for {display_symbol} at {current_price:.4f}, "
-                        f"stop order cancelled.",
-                        summary={
-                            "symbol": symbol,
-                            "action": "CANCEL",
-                            "reason": "Take-profit reached, OCO pair cancelled (risk check)",
-                        },
-                        disable_notification=False
-                    )
-                if tp_filled:
-                    await self.event_bus.publish("process_native_exit_fill", symbol, tp_order_id, tp_order_obj, pos, "take_profit")
-                elif manual_sell:
-                    await self.event_bus.publish(
-                        "execute_signal",
-                        symbol,
-                        Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered (risk check)"),
-                        exit_reason="take_profit"
-                    )
+
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"🎯 Take‑profit reached for {display_symbol} at {current_price:.4f}, "
+                    f"stop order cancelled.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "CANCEL",
+                        "reason": "Take-profit reached, OCO pair cancelled (risk check)",
+                    },
+                    disable_notification=False
+                )
+            if tp_filled:
+                await self.event_bus.publish("process_native_exit_fill", symbol, tp_order_id, tp_order_obj, pos, "take_profit")
+            elif manual_sell:
+                await self.event_bus.publish(
+                    "execute_signal",
+                    symbol,
+                    Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered (risk check)"),
+                    exit_reason="take_profit"
+                )
             return True
 
         # Native exit orders are active but neither trigger price reached.
