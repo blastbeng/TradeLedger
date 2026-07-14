@@ -453,14 +453,6 @@ class TradingEngine:
     def _portfolio_exposure_cache(self, value: Optional[Dict[str, float]]) -> None:
         self.shared_state._portfolio_exposure_cache = value
 
-    @property
-    def _delayed_entry_tasks(self) -> set:
-        return self.shared_state._delayed_entry_tasks
-
-    @_delayed_entry_tasks.setter
-    def _delayed_entry_tasks(self, value: set) -> None:
-        self.shared_state._delayed_entry_tasks = value
-
     async def _initialize_clients(self):
         """Initialize clients and load persisted state (non‑blocking)."""
         # Check if PAPER_INITIAL_BALANCE changed since last run
@@ -740,9 +732,9 @@ class TradingEngine:
         """Gracefully stop the engine and all background tasks."""
         logger.info("Stopping trading engine...")
         self._running = False
-        for task in self._delayed_entry_tasks:
+        for task in self.shared_state._delayed_entry_tasks:
             task.cancel()
-        self._delayed_entry_tasks.clear()
+        self.shared_state._delayed_entry_tasks.clear()
         logger.info("Cancelled delayed entry tasks.")
 
         # Cancel supervised background tasks
