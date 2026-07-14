@@ -321,7 +321,15 @@ class ModelTierManager:
         total = tech_score + conflict_score + market_score + portfolio_score + critical_score + candidate_score + legacy_score
         return min(1.0, total)
 
-    def _get_effective_temperature(self, model_type: str, complexity: float, is_critical: bool = False) -> float:
+    def _get_effective_temperature(
+        self,
+        model_type: str,
+        complexity: float,
+        is_critical: bool = False,
+        portfolio_exposure_pct: Optional[float] = None,
+        portfolio_stop_risk_pct: Optional[float] = None,
+        drawdown_pct: Optional[float] = None,
+    ) -> float:
         """Return the temperature to use for a given model_type and complexity score (0-1).
         
         Higher complexity leads to lower temperature for more deterministic and focused decisions.
@@ -337,6 +345,20 @@ class ModelTierManager:
             return lo
         
         if is_critical:
+            return lo
+
+        # Position risk: large exposure, near stop-loss, or deep drawdown
+        # warrants the lowest temperature for deterministic decisions.
+        if (
+            portfolio_exposure_pct is not None
+            and portfolio_exposure_pct > settings.MODEL_TIER_PORTFOLIO_EXPOSURE_HIGH
+        ) or (
+            portfolio_stop_risk_pct is not None
+            and portfolio_stop_risk_pct > settings.MODEL_TIER_PORTFOLIO_STOP_RISK_HIGH
+        ) or (
+            drawdown_pct is not None
+            and drawdown_pct > settings.MODEL_TIER_DRAWDOWN_PCT
+        ):
             return lo
         
         # Invert the scale: higher complexity -> lower temperature (more deterministic)
@@ -434,6 +456,13 @@ class ModelTierManager:
         if timeframe and timeframe in ("1M", "3M", "6M", "1Y", "3Y", "5Y", "10Y"):
             strategy_model_type = "mind"
 
-        effective_temp = self._get_effective_temperature(strategy_model_type, strategy_complexity, is_critical)
+        effective_temp = self._get_effective_temperature(
+            strategy_model_type,
+            strategy_complexity,
+            is_critical,
+            portfolio_exposure_pct=portfolio_exposure_pct,
+            portfolio_stop_risk_pct=portfolio_stop_risk_pct,
+            drawdown_pct=drawdown_pct,
+        )
 
         return strategy_model_type, effective_temp
