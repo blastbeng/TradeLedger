@@ -243,8 +243,8 @@ class PaperTrader:
             if daily_candles:
                 volumes = [c["volume"] for c in daily_candles[:-1]]
                 avg_vol = sum(volumes) / len(volumes) if volumes else 0.0
-                # Estimate 1m volume as average daily volume / 390 (minutes in a day)
-                est_1m_vol = avg_vol / 390.0
+                # Estimate 1m volume as average daily volume / 510 (Borsa Italiana minutes: 9:00-17:30)
+                est_1m_vol = avg_vol / 510.0
                 return est_1m_vol * settings.PARTIAL_FILL_VOLUME_CAP_PCT
 
             logger.warning(f"No volume data available for {symbol}, skipping partial fill cap.")
