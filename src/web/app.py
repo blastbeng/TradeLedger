@@ -187,7 +187,7 @@ _engine = None
 # redundant API calls and SQLite queries when multiple tabs are open.
 _ws_payload_cache: Optional[dict] = None
 _ws_payload_cache_time: float = 0.0
-_ws_payload_ttl: float = 5.0  # seconds — can be changed via API
+_ws_payload_ttl: float = 5.0  # seconds — fixed cache TTL
 
 def invalidate_ws_payload_cache():
     """Clear the WebSocket payload cache so clients get fresh data immediately."""
@@ -571,14 +571,6 @@ async def reload():
     await run_in_threadpool(settings.reload)
     return {"status": "reloaded"}
 
-@http_router.post("/api/config/update-interval", dependencies=[Depends(verify_csrf)])
-async def update_interval(data: dict):
-    """Update the WebSocket payload cache TTL to match the frontend's chosen interval."""
-    global _ws_payload_ttl
-    ms = data.get("interval_ms", 5000)
-    _ws_payload_ttl = max(1.0, ms / 1000.0)  # convert ms to seconds, minimum 1s
-    return {"status": "ok", "ttl_seconds": _ws_payload_ttl}
-
 @http_router.post("/api/force-reeval", dependencies=[Depends(verify_csrf)])
 async def force_reeval():
     engine = get_engine()
@@ -826,7 +818,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 now = time.time()
                 global _ws_payload_cache, _ws_payload_cache_time
                 market_open = await engine._is_market_open()
-                effective_ttl = _ws_payload_ttl if market_open else max(_ws_payload_ttl, 60.0)
+                effective_ttl = 5.0 if market_open else 60.0
                 if _ws_payload_cache is not None and (now - _ws_payload_cache_time) < effective_ttl:
                     payload = _ws_payload_cache
                 else:
@@ -920,7 +912,7 @@ async def websocket_endpoint(websocket: WebSocket):
             except Exception as e:
                 logger.error(f"WebSocket error: {e}", exc_info=True)
                 break
-            await asyncio.sleep(_ws_payload_ttl)
+            await asyncio.sleep(1.0)
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
 
