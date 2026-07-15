@@ -704,7 +704,12 @@ def get_multi_timeframe_bars(
 
         # BTPs: only borsaitaliana, no yfinance
         if BTPPolicy.is_btp(symbol):
-            borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
+            try:
+                borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
+            except Exception as e:
+                logger.warning(f"Borsa Italiana candles failed for {symbol} {tf}: {type(e).__name__}: {e}")
+                borsa_candles = None
+
             result[tf] = borsa_candles or []
             if borsa_candles:
                 try:
@@ -716,7 +721,12 @@ def get_multi_timeframe_bars(
         # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
         borsa_candles = None
         if has_isin:
-            borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
+            try:
+                borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
+            except Exception as e:
+                logger.warning(f"Borsa Italiana candles failed for {symbol} {tf}: {type(e).__name__}: {e}")
+                borsa_candles = None
+
             if borsa_candles:
                 result[tf] = borsa_candles[-limit:] if limit else borsa_candles
                 try:
@@ -836,7 +846,12 @@ def get_bars_range(
 
     # BTPs: only borsaitaliana, no yfinance
     if BTPPolicy.is_btp(symbol):
-        borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
+        try:
+            borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
+        except Exception as e:
+            logger.warning(f"Borsa Italiana candles failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
+            borsa_candles = None
+
         if borsa_candles:
             try:
                 redis_client.set(cache_key, json.dumps(borsa_candles), ex=300)
@@ -852,7 +867,12 @@ def get_bars_range(
     # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
     borsa_candles = None
     if has_isin:
-        borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
+        try:
+            borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
+        except Exception as e:
+            logger.warning(f"Borsa Italiana candles failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
+            borsa_candles = None
+
         if borsa_candles:
             if limit and len(borsa_candles) > limit:
                 borsa_candles = borsa_candles[-limit:]
