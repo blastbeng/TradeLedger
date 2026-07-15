@@ -259,20 +259,36 @@ def _split_and_merge_prompt(
             return chunk[:chunk_limit * 4]
 
     # Summarize chunks in parallel using the shared module-level thread pool
-    summaries = []
     future_to_chunk = {
         _split_merge_executor.submit(_summarize_chunk, i, chunk): i
         for i, chunk in enumerate(chunks)
     }
-    # Collect results in order
+    
+    # Enforce a global timeout for the summarization phase to prevent
+    # the split/merge loop from hanging indefinitely if all weak model calls hang.
+    global_summary_timeout = 30.0
+    done, not_done = concurrent.futures.wait(
+        future_to_chunk, timeout=global_summary_timeout
+    )
+    
     results = [None] * len(chunks)
-    for future in concurrent.futures.as_completed(future_to_chunk):
+    for future in not_done:
+        future.cancel()
+        idx = future_to_chunk[future]
+        logger.warning(
+            "Chunk %d summarization timed out after %.1fs. Truncating instead.",
+            idx, global_summary_timeout
+        )
+        results[idx] = chunks[idx][:chunk_limit * 4]
+        
+    for future in done:
         idx = future_to_chunk[future]
         try:
             results[idx] = future.result()
         except Exception as e:
             logger.error("Chunk %d summarization failed unexpectedly: %s", idx, e)
             results[idx] = chunks[idx][:chunk_limit * 4]
+            
     summaries = [r for r in results if r is not None]
     
     # Combine summaries into a new prompt
