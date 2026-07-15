@@ -9,6 +9,7 @@ from src.llm.cache import get_cached_llm_response, get_cached_llm_response_async
 from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, build_analysis_messages, BacktestPromptData, StrategyPromptData
 from src.llm.backtest_prompts import build_backtest_variants_messages
 from src.strategies.llm_parser import create_strategy_from_llm
+from src.trading.components.backtest_manager import _backtest_executor
 
 try:
     from src.news.fetcher import detect_upcoming_events
@@ -90,7 +91,9 @@ class SimulationManager:
             has_position=data.get("has_position", False),
             historical_backtest_results=data.get("historical_backtest_results"),
         )
-        variants_messages = await asyncio.to_thread(
+        loop = asyncio.get_running_loop()
+        variants_messages = await loop.run_in_executor(
+            _backtest_executor,
             build_backtest_variants_messages,
             prompt_data
         )
@@ -291,7 +294,12 @@ class SimulationManager:
         symbol_event = None
         if settings.NEWS_ENABLED and detect_upcoming_events is not None:
             try:
-                symbol_event = await asyncio.to_thread(detect_upcoming_events, symbol)
+                loop = asyncio.get_running_loop()
+                symbol_event = await loop.run_in_executor(
+                    None,  # Use the default executor (now 100 workers)
+                    detect_upcoming_events,
+                    symbol
+                )
             except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, json.JSONDecodeError) as e:
                 logger.debug(f"prepare_simulation_data: failed to detect events for {symbol}: {type(e).__name__}: {e}")
 
