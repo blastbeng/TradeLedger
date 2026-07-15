@@ -1,5 +1,6 @@
 import logging
 import time
+import asyncio
 import random
 import re
 import threading
@@ -156,19 +157,18 @@ def _get_g4f_response(
     max_retries: int = 3,
 ) -> dict:
     """Send a prompt to the configured g4f model and return a dict with 'content' and 'usage'."""
-    from g4f.client import Client
-    from g4f.providers.any_provider import AnyProvider
+    from g4f.client import AsyncClient
 
-    # Use AnyProvider to automatically route to the correct working provider for the model
+    # Use the local g4f API server
     client_kwargs = {
-        "provider": AnyProvider
+        "base_url": settings.G4F_BASE_URL
     }
 
     # Pass timeout to g4f Client constructor if supported
     if timeout is not None:
         client_kwargs["timeout"] = timeout
 
-    client = Client(**client_kwargs)
+    client = AsyncClient(**client_kwargs)
 
     if messages is not None:
         api_messages = [dict(msg) for msg in messages]
@@ -189,7 +189,21 @@ def _get_g4f_response(
 
     for attempt in range(max_retries):
         try:
-            response = client.chat.completions.create(**payload)
+            async def _make_request():
+                return await client.chat.completions.create(**payload)
+
+            try:
+                # If there's no running loop, use asyncio.run
+                asyncio.get_running_loop()
+                # If we are in a running loop, this will raise RuntimeError, handled below.
+                # Fallback for running loop (though ideally this function should be async if called from one)
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, _make_request())
+                    response = future.result()
+            except RuntimeError:
+                response = asyncio.run(_make_request())
+
             content = response.choices[0].message.content
             
             # g4f doesn't always return usage, so we estimate it
