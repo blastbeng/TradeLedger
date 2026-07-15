@@ -370,11 +370,11 @@
                 min-width: 0 !important;
             }
 
-            /* Hide Name (3) and Auto ISIN (4) columns on mobile to save space */
-            #isin-table th:nth-child(3),
-            #isin-table td:nth-child(3),
+            /* Hide Name (4) and Auto ISIN (5) columns on mobile to save space */
             #isin-table th:nth-child(4),
-            #isin-table td:nth-child(4) {
+            #isin-table td:nth-child(4),
+            #isin-table th:nth-child(5),
+            #isin-table td:nth-child(5) {
                 display: none;
             }
         }
@@ -552,7 +552,7 @@
                 </div>
                 <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
                     <table id="isin-table">
-                        <thead><tr><th><input type="checkbox" id="select-all-isins"></th><th>Ticker</th><th>Name</th><th>Auto ISIN</th><th>Country</th><th>Manual ISIN</th><th>Actions</th></tr></thead>
+                        <thead><tr><th><input type="checkbox" id="select-all-isins"></th><th>Ticker</th><th>Type</th><th>Name</th><th>Auto ISIN</th><th>Country</th><th>Manual ISIN</th><th>Actions</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -2269,6 +2269,7 @@
                     const row = tbody.insertRow();
                     row.insertCell().innerHTML = `<input type="checkbox" class="isin-checkbox" data-symbol="${s.symbol}">`;
                     row.insertCell().textContent = s.symbol;
+                    row.insertCell().textContent = s.asset_type || '—';
                     row.insertCell().textContent = s.name || '';
                     row.insertCell().textContent = s.isin || '';
                     row.insertCell().textContent = s.country || (s.isin ? s.isin.substring(0, 2) : '') || '';
