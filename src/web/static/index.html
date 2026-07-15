@@ -360,7 +360,8 @@
             }
 
             /* Ensure text wrapping in LLM metrics tables on mobile */
-            #llm-metrics-card td {
+            #llm-metrics-card td,
+            #llm-failures-card td {
                 white-space: normal;
             }
         }
@@ -618,7 +619,10 @@
                         </div>
                     </div>
                 </div>
-                <h3 style="font-size:1rem; color:var(--accent); margin-top:20px; margin-bottom:8px; border-top:1px solid var(--border); padding-top:16px;">🚨 Model Failures &amp; Blacklist</h3>
+            </div>
+
+            <div class="card card-full" id="llm-failures-card">
+                <h2>🚨 Model Failures &amp; Blacklist</h2>
                 <div class="llm-metrics-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
                     <div>
                         <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">⚠️ Model Failure Stats</h3>
