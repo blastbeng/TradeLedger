@@ -550,6 +550,13 @@ def _execute_fallback_call(
         )
         raise
 
+    # Re-evaluate cache control for the fallback provider
+    fallback_add_cache_control = (
+        settings.LLM_PROMPT_CACHING_ENABLED
+        and fallback_provider in settings.LLM_PROMPT_CACHING_CONTROL_PROVIDERS
+        and messages is not None
+    )
+
     if fallback_provider == "openai":
         if model_type == "mind":
             fallback_models = settings.OPENAI_MIND_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
@@ -633,7 +640,7 @@ def _execute_fallback_call(
                         temperature=temperature,
                         timeout=settings.LLM_FALLBACK_TIMEOUT,
                         messages=api_messages,
-                        add_cache_control=add_cache_control,
+                        add_cache_control=fallback_add_cache_control,
                         thinking_enabled=thinking_enabled,
                         is_fallback=True,
                     )
@@ -750,7 +757,7 @@ def _execute_fallback_call(
                         temperature=temperature,
                         timeout=settings.LLM_FALLBACK_TIMEOUT,
                         messages=api_messages,
-                        add_cache_control=add_cache_control,
+                        add_cache_control=fallback_add_cache_control,
                         thinking_enabled=thinking_enabled,
                         is_fallback=True,
                     )
