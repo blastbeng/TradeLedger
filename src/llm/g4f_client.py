@@ -15,7 +15,18 @@ _G4F_CACHE_TTL = 3600  # 1 hour
 
 # Keyword heuristics for categorizing models into tiers.
 # Checked in order: mind first, then weak, then actuator (fallback).
-_MIND_KEYWORDS = ("o1", "o3", "gpt-4o", "gpt-4.1", "claude-3.5-sonnet", "claude-3-opus", "deepseek-r1", "deepseek-v3", "gemini-2", "gemini-pro", "qwen-max", "llama-3.3-70b", "llama-3.1-405b", "mistral-large", "grok-2")
+_MIND_KEYWORDS = (
+    "o1", "o3", "o1-pro", "o3-pro",
+    "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-5",
+    "claude-3.5-sonnet", "claude-3.7-sonnet", "claude-3-opus",
+    "deepseek-r1", "deepseek-v3", "deepseek-v4-pro", "deepseek-v3-pro", "deepseek-r1-pro", "deepseek-pro",
+    "gemini-2", "gemini-2.5-pro", "gemini-pro",
+    "qwen-max", "qwen-3",
+    "llama-3.3-70b", "llama-3.1-405b", "llama-4",
+    "mistral-large", "mixtral-8x22b",
+    "grok-2", "grok-3",
+    "command-r-plus", "dbrx",
+)
 _WEAK_KEYWORDS = ("mini", "haiku", "flash", "8b", "7b", "3.5-turbo", "small", "nano", "tiny", "gpt-3", "gemini-flash", "llama-3-8b", "mistral-7b", "qwen-turbo", "deepseek-chat")
 _ACTUATOR_KEYWORDS = ("gpt-4", "gpt-3.5", "claude-3", "gemini-1.5", "llama-3.1", "llama-3.2", "llama-3.3", "mistral", "qwen", "deepseek-v2", "grok", "command-r", "mixtral")
 
