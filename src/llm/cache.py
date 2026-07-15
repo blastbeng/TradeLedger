@@ -274,12 +274,12 @@ def _split_and_merge_prompt(
 
 
 def _normalize_text_for_cache(text: str) -> str:
-    """Round all decimal numbers in text to 5 significant figures for stable cache keys.
+    """Round all decimal numbers in text to 6 significant figures for stable cache keys.
 
     This normalizes the cache key so that tiny changes in floating-point values
     (e.g., 1.23456789 vs 1.23456788) don't cause cache misses. The actual prompt
     text sent to the LLM is not affected — only the cache key is normalized.
-    Rounding to 5 significant figures preserves enough precision for prices and
+    Rounding to 6 significant figures preserves enough precision for prices and
     indicators while still normalizing floating-point noise, consistent with
     _normalize_for_hash.
     """
@@ -290,8 +290,8 @@ def _normalize_text_for_cache(text: str) -> str:
             val = float(match.group(0))
             if val == 0 or math.isnan(val) or math.isinf(val):
                 return match.group(0)
-            # Percentage-based rounding: round to 5 significant figures
-            decimals = 4 - int(math.floor(math.log10(abs(val))))
+            # Percentage-based rounding: round to 6 significant figures
+            decimals = 5 - int(math.floor(math.log10(abs(val))))
             return f"{round(val, decimals)}"
         except (ValueError, OverflowError):
             return match.group(0)
@@ -1194,10 +1194,10 @@ def _normalize_for_hash(obj, depth=0):
             return 0.0
         if math.isnan(obj) or math.isinf(obj):
             return obj
-        # Percentage-based rounding: round to 5 significant figures
+        # Percentage-based rounding: round to 6 significant figures
         # to treat tiny floating-point noise as insignificant while
         # preserving meaningful price changes (e.g., 100.12 vs 100.14).
-        decimals = 4 - int(math.floor(math.log10(abs(obj))))
+        decimals = 5 - int(math.floor(math.log10(abs(obj))))
         return round(obj, decimals)
     if obj is None:
         return "null"
