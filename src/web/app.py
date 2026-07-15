@@ -16,7 +16,8 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
-from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics
+from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics, get_all_blacklisted_models
+from src.llm.cache import get_model_failure_stats
 from typing import Optional
 from pydantic import BaseModel
 
@@ -730,6 +731,9 @@ async def llm_metrics(model_filter: str = "main"):
         data["weak_provider"] = weak_provider
         data["weak_model"] = weak_model
         data["weak_provider_url"] = weak_url or ""
+
+        data["blacklisted_models"] = await run_in_threadpool(get_all_blacklisted_models)
+        data["failure_stats"] = await run_in_threadpool(get_model_failure_stats)
         
         return data
     except Exception as e:

@@ -575,6 +575,28 @@
                 </div>
             </div>
 
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top: 16px;">
+                <div>
+                    <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">⚠️ Model Failure Stats</h3>
+                    <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
+                        <table id="llm-failure-stats-table">
+                            <thead><tr><th>Model</th><th>Fails</th><th>Level</th><th>Blacklisted</th><th>TTL (s)</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div>
+                    <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">⛔ Blacklist History</h3>
+                    <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
+                        <table id="llm-blacklist-table">
+                            <thead><tr><th>Model</th><th>Provider</th><th>Reason</th><th>Expires At</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            </div>
+
             <div class="card card-full" id="llm-decision-quality-card">
                 <h2>🎯 LLM Decision Quality</h2>
                 <div id="llm-decision-quality" style="font-size:0.9rem;">Loading...</div>
@@ -2383,6 +2405,61 @@
                     cell.style.textAlign = 'center';
                     cell.style.color = 'var(--text-secondary)';
                 }
+
+        // Failure Stats
+        const failureBody = document.querySelector('#llm-failure-stats-table tbody');
+        failureBody.innerHTML = '';
+        if (data.failure_stats && data.failure_stats.length > 0) {
+            data.failure_stats.forEach(s => {
+                const row = failureBody.insertRow();
+                row.insertCell().textContent = s.model;
+                row.insertCell().textContent = s.fail_count;
+                row.insertCell().textContent = s.blacklist_level;
+                const blCell = row.insertCell();
+                blCell.textContent = s.blacklisted ? 'Yes' : 'No';
+                blCell.className = s.blacklisted ? 'red' : '';
+                row.insertCell().textContent = s.ttl_remaining > 0 ? s.ttl_remaining : '—';
+            });
+        } else {
+            const row = failureBody.insertRow();
+            const cell = row.insertCell();
+            cell.colSpan = 5;
+            cell.textContent = 'No active failures';
+            cell.style.textAlign = 'center';
+            cell.style.color = 'var(--text-secondary)';
+        }
+
+        // Blacklist History
+        const blacklistBody = document.querySelector('#llm-blacklist-table tbody');
+        blacklistBody.innerHTML = '';
+        if (data.blacklisted_models && data.blacklisted_models.length > 0) {
+            data.blacklisted_models.forEach(b => {
+                const row = blacklistBody.insertRow();
+                row.insertCell().textContent = b.model;
+                row.insertCell().textContent = b.provider;
+                row.insertCell().textContent = b.reason ? b.reason.substring(0, 50) : '';
+                const expCell = row.insertCell();
+                try {
+                    const expDate = new Date(b.expires_at).toLocaleString();
+                    expCell.textContent = expDate;
+                    // Check if expired
+                    if (new Date(b.expires_at) < new Date()) {
+                        expCell.style.color = 'var(--text-secondary)';
+                    } else {
+                        expCell.style.color = 'var(--red)';
+                    }
+                } catch {
+                    expCell.textContent = b.expires_at;
+                }
+            });
+        } else {
+            const row = blacklistBody.insertRow();
+            const cell = row.insertCell();
+            cell.colSpan = 4;
+            cell.textContent = 'No blacklisted models';
+            cell.style.textAlign = 'center';
+            cell.style.color = 'var(--text-secondary)';
+        }
 
                 // Fetch timeseries and render chart
                 await fetchLLMMetricsChart();

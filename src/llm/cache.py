@@ -368,6 +368,48 @@ def _record_model_failure(redis_client, model: str, provider: str, error: str):
         logger.warning(f"Failed to record model failure: {e}")
 
 
+def get_model_failure_stats() -> List[Dict[str, Any]]:
+    """Get current failure counts and blacklist levels from Redis."""
+    redis_client = get_redis_client()
+    stats = {}
+    try:
+        # Get all fail count keys
+        fail_keys = redis_client.keys("llm:fail_count:*")
+        for key in fail_keys:
+            if isinstance(key, bytes):
+                key = key.decode('utf-8')
+            model = key.split(":", 2)[2]
+            count = int(redis_client.get(key) or 0)
+            stats[model] = {"model": model, "fail_count": count, "blacklist_level": 0, "blacklisted": False, "ttl_remaining": 0}
+        
+        # Get all blacklist level keys
+        level_keys = redis_client.keys("llm:blacklist_level:*")
+        for key in level_keys:
+            if isinstance(key, bytes):
+                key = key.decode('utf-8')
+            model = key.split(":", 2)[2]
+            if model not in stats:
+                stats[model] = {"model": model, "fail_count": 0, "blacklist_level": 0, "blacklisted": False, "ttl_remaining": 0}
+            stats[model]["blacklist_level"] = int(redis_client.get(key) or 1)
+        
+        # Get all active blacklist keys
+        blacklist_keys = redis_client.keys("llm:blacklist:*")
+        for key in blacklist_keys:
+            if isinstance(key, bytes):
+                key = key.decode('utf-8')
+            model = key.split(":", 2)[2]
+            if model not in stats:
+                stats[model] = {"model": model, "fail_count": 0, "blacklist_level": 0, "blacklisted": False, "ttl_remaining": 0}
+            stats[model]["blacklisted"] = True
+            ttl = redis_client.ttl(key)
+            stats[model]["ttl_remaining"] = ttl if ttl > 0 else 0
+            
+    except Exception as e:
+        logger.warning(f"Failed to get model failure stats: {e}")
+    
+    return list(stats.values())
+
+
 def _build_cache_key(
     messages: Optional[List[Dict[str, str]]],
     system_prompt: str,

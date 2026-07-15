@@ -2956,3 +2956,15 @@ def remove_model_from_blacklist(model: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+def get_all_blacklisted_models() -> List[Dict[str, Any]]:
+    """Return all models from the blacklist table, ordered by most recent."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            "SELECT model, provider, reason, blacklisted_at, expires_at FROM llm_model_blacklist ORDER BY blacklisted_at DESC"
+        )
+        rows = conn.execute(sql).fetchall()
+        return [{"model": r["model"], "provider": r["provider"], "reason": r["reason"], "blacklisted_at": r["blacklisted_at"], "expires_at": r["expires_at"]} for r in rows]
+    finally:
+        conn.close()
