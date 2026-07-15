@@ -668,6 +668,8 @@ class Settings(BaseSettings):
         "OPENAI_ACTUATOR_FALLBACK_MODEL", "OPENAI_WEAK_FALLBACK_MODEL",
         "OLLAMA_FALLBACK_MODEL", "OLLAMA_MIND_FALLBACK_MODEL",
         "OLLAMA_ACTUATOR_FALLBACK_MODEL", "OLLAMA_WEAK_FALLBACK_MODEL",
+        "OPENAI_MODEL", "OPENAI_MIND_MODEL", "OPENAI_ACTUATOR_MODEL", "OPENAI_WEAK_MODEL",
+        "OLLAMA_MODEL", "OLLAMA_MIND_MODEL", "OLLAMA_ACTUATOR_MODEL", "OLLAMA_WEAK_MODEL",
         mode="before"
     )
     @classmethod
@@ -781,12 +783,12 @@ class Settings(BaseSettings):
     LLM_WEAK_PROVIDER: str = ""  # empty = use global LLM_PROVIDER
 
     # Per-role OpenAI settings for weak model (empty or None = use global OPENAI_*)
-    OPENAI_WEAK_MODEL: Optional[str] = None
+    OPENAI_WEAK_MODEL: Annotated[list[str], NoDecode] = []
     OPENAI_WEAK_API_KEY: Optional[str] = None
     OPENAI_WEAK_BASE_URL: Optional[str] = None
 
     # Per-role Ollama settings for weak model (empty or None = use global OLLAMA_*)
-    OLLAMA_WEAK_MODEL: Optional[str] = None
+    OLLAMA_WEAK_MODEL: Annotated[list[str], NoDecode] = []
     OLLAMA_WEAK_BASE_URL: Optional[str] = None
     OLLAMA_WEAK_API_KEY: Optional[str] = None
 

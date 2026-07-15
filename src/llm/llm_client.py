@@ -110,7 +110,7 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
         api_messages.append({"role": "user", "content": prompt})
 
     payload = {
-        "model": model or settings.OLLAMA_MODEL,
+        "model": model or (settings.OLLAMA_MODEL[0] if settings.OLLAMA_MODEL else None),
         "messages": api_messages,
         "stream": False,
         "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
@@ -190,7 +190,7 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
                 break
 
     payload = {
-        "model": model or settings.OPENAI_MODEL,
+        "model": model or (settings.OPENAI_MODEL[0] if settings.OPENAI_MODEL else None),
         "messages": api_messages,
         "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
     }
@@ -266,30 +266,32 @@ def check_llm_health() -> dict:
 
         if provider == "openai":
             if role == "mind":
-                model = settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL
+                models = settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL
                 base_url = settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL
                 api_key = settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY
             elif role == "weak":
-                model = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
+                models = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
                 base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
                 api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
             else:
-                model = settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL
+                models = settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL
                 base_url = settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL
                 api_key = settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY
         else:
             if role == "mind":
-                model = settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL
+                models = settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL
                 base_url = settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL
                 api_key = settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY
             elif role == "weak":
-                model = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
+                models = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
                 base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
                 api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
             else:
-                model = settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL
+                models = settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL
                 base_url = settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL
                 api_key = settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY
+
+        model = models[0] if models else "unknown"
 
         if not base_url:
             results[role] = {

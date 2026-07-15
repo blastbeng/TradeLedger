@@ -62,13 +62,14 @@ def _get_weak_model_config() -> tuple:
     """Return (provider, model, base_url, api_key) for the weak model."""
     provider = settings.LLM_WEAK_PROVIDER or settings.LLM_PROVIDER
     if provider == "openai":
-        model = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
+        models = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
         base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
         api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
     else:  # ollama
-        model = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
+        models = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
         base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
         api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
+    model = models[0] if models else None
     return (provider, model, base_url, api_key)
 
 def _split_and_merge_prompt(
@@ -446,7 +447,7 @@ def _manage_context_window(
 
 def _execute_primary_call(
     provider: str,
-    model: str,
+    models: List[str],
     base_url: str,
     api_key: str,
     temperature: Optional[float],
@@ -462,57 +463,63 @@ def _execute_primary_call(
     is_fallback: bool,
 ) -> Tuple[str, dict, str, str, bool]:
     """Execute the primary LLM call and return response, usage, and model info."""
-    start_time = time.time()
-    try:
-        if provider == "openai":
-            from src.llm.llm_client import _get_openai_response
-            result = _get_openai_response(
-                prompt=prompt if messages is None else "",
-                system_prompt=system_prompt if messages is None else "",
-                model=model, base_url=base_url, api_key=api_key,
-                temperature=temperature, timeout=effective_timeout,
-                messages=api_messages,
-                add_cache_control=add_cache_control,
-                thinking_enabled=thinking_enabled,
-                is_fallback=is_fallback,
-            )
-        else:
-            from src.llm.llm_client import _get_ollama_response
-            result = _get_ollama_response(
-                prompt=prompt if messages is None else "",
-                system_prompt=system_prompt if messages is None else "",
-                model=model, base_url=base_url, api_key=api_key,
-                temperature=temperature, timeout=effective_timeout,
-                messages=api_messages,
-                add_cache_control=add_cache_control,
-                thinking_enabled=thinking_enabled,
-                is_fallback=is_fallback,
-            )
+    shuffled_models = random.sample(models, len(models))
+    last_e = None
+    for model in shuffled_models:
+        start_time = time.time()
+        try:
+            if provider == "openai":
+                from src.llm.llm_client import _get_openai_response
+                result = _get_openai_response(
+                    prompt=prompt if messages is None else "",
+                    system_prompt=system_prompt if messages is None else "",
+                    model=model, base_url=base_url, api_key=api_key,
+                    temperature=temperature, timeout=effective_timeout,
+                    messages=api_messages,
+                    add_cache_control=add_cache_control,
+                    thinking_enabled=thinking_enabled,
+                    is_fallback=is_fallback,
+                )
+            else:
+                from src.llm.llm_client import _get_ollama_response
+                result = _get_ollama_response(
+                    prompt=prompt if messages is None else "",
+                    system_prompt=system_prompt if messages is None else "",
+                    model=model, base_url=base_url, api_key=api_key,
+                    temperature=temperature, timeout=effective_timeout,
+                    messages=api_messages,
+                    add_cache_control=add_cache_control,
+                    thinking_enabled=thinking_enabled,
+                    is_fallback=is_fallback,
+                )
 
-        response_text = result["content"]
-        usage = result.get("usage", {})
+            response_text = result["content"]
+            usage = result.get("usage", {})
 
-        if not response_text or not response_text.strip():
-            raise RuntimeError("LLM returned an empty response")
-        return response_text, usage, provider, model, is_fallback
-    except Exception as e:
-        latency_ms = (time.time() - start_time) * 1000
-        _save_metric({
-            "timestamp": time.time(),
-            "provider": provider,
-            "model": model,
-            "model_type": model_type,
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-            "cache_hit": 0,
-            "latency_ms": latency_ms,
-            "error": str(e)[:500],
-            "request_type": request_type,
-            "is_fallback": is_fallback,
-        })
-        logger.error("LLM primary call failed (provider=%s, model=%s, model_type=%s): %s", provider, model, model_type, e, exc_info=True)
-        raise
+            if not response_text or not response_text.strip():
+                raise RuntimeError("LLM returned an empty response")
+            return response_text, usage, provider, model, is_fallback
+        except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000
+            _save_metric({
+                "timestamp": time.time(),
+                "provider": provider,
+                "model": model,
+                "model_type": model_type,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cache_hit": 0,
+                "latency_ms": latency_ms,
+                "error": str(e)[:500],
+                "request_type": request_type,
+                "is_fallback": is_fallback,
+            })
+            logger.error("LLM primary call failed (provider=%s, model=%s, model_type=%s): %s", provider, model, model_type, e, exc_info=True)
+            last_e = e
+    if last_e:
+        raise last_e
+    raise RuntimeError("No primary models configured")
 
 
 def _execute_fallback_call(
@@ -841,30 +848,34 @@ def get_cached_llm_response(
 
     if provider == "openai":
         if model_type == "mind":
-            model = settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL
+            models = settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL
             base_url = settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL
             api_key = settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY
         elif model_type == "weak":
-            model = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
+            models = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
             base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
             api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
         else:
-            model = settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL
+            models = settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL
             base_url = settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL
             api_key = settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY
     else:  # ollama
         if model_type == "mind":
-            model = settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL
+            models = settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL
             base_url = settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL
             api_key = settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY
         elif model_type == "weak":
-            model = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
+            models = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
             base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
             api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
         else:
-            model = settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL
+            models = settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL
             base_url = settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL
             api_key = settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY
+
+    if not models:
+        logger.error("No LLM models configured for provider=%s, model_type=%s", provider, model_type)
+        raise RuntimeError(f"No LLM models configured for provider={provider}, model_type={model_type}")
 
     # Resolve effective temperature: use explicit temperature if provided,
     # otherwise fall back to per-role temperature, then global temperature.
@@ -914,15 +925,16 @@ def get_cached_llm_response(
             is_fallback = True
             logger.info("Market is closed - using fallback model only (provider=%s, model=%s, model_type=%s)", fb_provider, fb_model, model_type)
             provider = fb_provider
-            model = fb_model
+            models = [fb_model]
             base_url = fb_base_url
             api_key = fb_api_key
         else:
             logger.warning("Market is closed but no fallback model is configured for model_type=%s. Using primary model to avoid downtime.", model_type)
 
-    cache_key = _build_cache_key(messages, system_prompt, model_type, provider, model, cache_temp, market_hash, prompt)
+    cache_key_model = models[0] if models else "unknown"
+    cache_key = _build_cache_key(messages, system_prompt, model_type, provider, cache_key_model, cache_temp, market_hash, prompt)
 
-    cached_data = _get_cached_response(redis_client, cache_key, model_type, provider, model, request_type)
+    cached_data = _get_cached_response(redis_client, cache_key, model_type, provider, cache_key_model, request_type)
     if cached_data:
         return cached_data
 
@@ -932,7 +944,7 @@ def get_cached_llm_response(
     effective_limit = int(max_input_tokens * 0.8)
 
     messages, prompt = _manage_context_window(
-        messages, prompt, system_prompt, model_type, provider, model, base_url, api_key, temperature, effective_timeout, max_input_tokens, effective_limit
+        messages, prompt, system_prompt, model_type, provider, cache_key_model, base_url, api_key, temperature, effective_timeout, max_input_tokens, effective_limit
     )
 
     if messages is not None:
@@ -947,7 +959,7 @@ def get_cached_llm_response(
     start_time = time.time()
     try:
         response_text, usage, used_provider, used_model, is_fallback = _execute_primary_call(
-            provider, model, base_url, api_key, temperature, effective_timeout, messages, api_messages, prompt, system_prompt, add_cache_control, thinking_enabled, model_type, request_type, is_fallback
+            provider, models, base_url, api_key, temperature, effective_timeout, messages, api_messages, prompt, system_prompt, add_cache_control, thinking_enabled, model_type, request_type, is_fallback
         )
     except Exception as e:
         response_text, usage, used_provider, used_model, is_fallback = _execute_fallback_call(
