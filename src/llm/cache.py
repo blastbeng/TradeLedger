@@ -1096,6 +1096,77 @@ def _execute_fallback_call(
         raise
 
 
+def _try_weak_model(
+    model_type: str,
+    messages: Optional[List[Dict[str, str]]],
+    prompt: str,
+    system_prompt: str,
+    temperature: Optional[float],
+    effective_timeout: float,
+    add_cache_control: bool,
+    thinking_enabled: bool,
+) -> Optional[Tuple[str, dict, str, str]]:
+    """Try the main weak model. Returns (response_text, usage, provider, model) or None on failure."""
+    weak_provider, weak_model, weak_base_url, weak_api_key = _get_weak_model_config()
+    redis_client = get_redis_client()
+    if not weak_model or _is_model_blacklisted(redis_client, weak_model):
+        return None
+
+    logger.info("Trying main weak model %s (provider=%s).", weak_model, weak_provider)
+    try:
+        weak_api_messages = None
+        if messages is not None:
+            weak_api_messages = []
+            if system_prompt:
+                weak_api_messages.append({"role": "system", "content": system_prompt})
+            weak_api_messages.extend(messages)
+
+        if weak_provider == "openai":
+            from src.llm.llm_client import _get_openai_response
+            result = _get_openai_response(
+                prompt=prompt if messages is None else "",
+                system_prompt=system_prompt if messages is None else "",
+                model=weak_model, base_url=weak_base_url, api_key=weak_api_key,
+                temperature=temperature, timeout=effective_timeout,
+                messages=weak_api_messages,
+                add_cache_control=add_cache_control,
+                thinking_enabled=thinking_enabled,
+                max_retries=1,
+            )
+        elif weak_provider == "g4f":
+            from src.llm.g4f_client import _get_g4f_response
+            result = _get_g4f_response(
+                prompt=prompt if messages is None else "",
+                system_prompt=system_prompt if messages is None else "",
+                model=weak_model, base_url=weak_base_url, api_key=weak_api_key,
+                temperature=temperature, timeout=effective_timeout,
+                messages=weak_api_messages,
+                add_cache_control=add_cache_control,
+                thinking_enabled=thinking_enabled,
+                max_retries=1,
+            )
+        else:
+            from src.llm.llm_client import _get_ollama_response
+            result = _get_ollama_response(
+                prompt=prompt if messages is None else "",
+                system_prompt=system_prompt if messages is None else "",
+                model=weak_model, base_url=weak_base_url, api_key=weak_api_key,
+                temperature=temperature, timeout=effective_timeout,
+                messages=weak_api_messages,
+                add_cache_control=add_cache_control,
+                thinking_enabled=thinking_enabled,
+                max_retries=1,
+            )
+        response_text = result["content"]
+        usage = result.get("usage", {})
+        _record_model_success(redis_client, weak_model)
+        return response_text, usage, weak_provider, weak_model
+    except Exception as weak_e:
+        logger.warning("Weak model %s failed: %s", weak_model, weak_e)
+        _record_model_failure(redis_client, weak_model, weak_provider, str(weak_e))
+        return None
+
+
 def get_cached_llm_response(
     prompt: str,
     system_prompt: str = "",
@@ -1280,9 +1351,29 @@ def get_cached_llm_response(
             provider, models, base_url, api_key, temperature, effective_timeout, messages, api_messages, prompt, system_prompt, add_cache_control, thinking_enabled, model_type, request_type, is_fallback
         )
     except Exception as e:
-        response_text, usage, used_provider, used_model, is_fallback = _execute_fallback_call(
-            e, model_type, messages, prompt, system_prompt, temperature, effective_timeout, api_messages, add_cache_control, thinking_enabled, request_type, provider
-        )
+        # When market is closed and the fallback model (used as primary) fails,
+        # try the main weak model before attempting the normal fallback chain.
+        weak_result = None
+        if not _should_use_primary_model() and is_fallback:
+            logger.warning(
+                "Market is closed and fallback model failed (%s). Trying main weak model.",
+                e
+            )
+            weak_result = _try_weak_model(
+                model_type, messages, prompt, system_prompt,
+                temperature, effective_timeout, add_cache_control, thinking_enabled
+            )
+
+        if weak_result is not None:
+            response_text = weak_result[0]
+            usage = weak_result[1]
+            used_provider = weak_result[2]
+            used_model = weak_result[3]
+            is_fallback = True
+        else:
+            response_text, usage, used_provider, used_model, is_fallback = _execute_fallback_call(
+                e, model_type, messages, prompt, system_prompt, temperature, effective_timeout, api_messages, add_cache_control, thinking_enabled, request_type, provider
+            )
     if response_text is None:
         logger.warning("LLM returned None response; not caching.")
         _save_metric({
