@@ -125,9 +125,6 @@ class RiskManager:
     async def _check_portfolio_drawdown_circuit_breaker(self) -> None:
         """Check portfolio-level drawdown and pause/resume trading via a circuit breaker."""
         engine = self.engine
-        if not is_redis_available():
-            logger.warning("Redis unavailable, skipping portfolio drawdown circuit breaker check.")
-            return
         try:
             with self.shared_state._trade_history_lock:
                 trades_snapshot = list(self.shared_state.trade_history)
