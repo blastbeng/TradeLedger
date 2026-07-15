@@ -450,11 +450,11 @@ class ModelTierManager:
         if is_critical:
             strategy_model_type = "mind"
         else:
-            strategy_model_type = "mind" if strategy_complexity >= settings.LLM_MIND_MODEL_THRESHOLD else "actuator"
-
-        # Long-term positions benefit from the "mind" model regardless of market conditions
-        if timeframe and timeframe in ("1M", "3M", "6M", "1Y", "3Y", "5Y", "10Y"):
-            strategy_model_type = "mind"
+            threshold = settings.LLM_MIND_MODEL_THRESHOLD
+            # Long-term positions benefit from the "mind" model, so use a lower threshold
+            if timeframe and timeframe in ("1M", "3M", "6M", "1Y", "3Y", "5Y", "10Y"):
+                threshold = settings.LLM_MIND_MODEL_THRESHOLD * 0.8
+            strategy_model_type = "mind" if strategy_complexity >= threshold else "actuator"
 
         effective_temp = self._get_effective_temperature(
             strategy_model_type,
