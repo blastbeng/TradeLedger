@@ -141,7 +141,7 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
             isin = None
 
     # Fallback to Borsa Italiana search if yfinance failed or circuit is open
-    if not isin:
+    if not isin and not _check_bi_circuit():
         try:
             bi_isin, _, _ = _get_isin_and_info_from_borsa_italiana(db_symbol)
             if bi_isin:
@@ -410,7 +410,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     # Attempt Borsa Italiana for ALL symbols (it resolves ISIN on-demand, BTPs use ISIN directly)
     bi_symbols = list(missing_symbols)
 
-    if bi_symbols:
+    if bi_symbols and not _check_bi_circuit():
         for sym in bi_symbols:
             try:
                 bi_quote = get_borsa_italiana_quote(sym)
@@ -707,11 +707,13 @@ def get_multi_timeframe_bars(
 
         # BTPs: only borsaitaliana, no yfinance
         if BTPPolicy.is_btp(symbol):
-            try:
-                borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
-            except Exception as e:
-                logger.warning(f"Borsa Italiana candles failed for {symbol} {tf}: {type(e).__name__}: {e}")
-                borsa_candles = None
+            borsa_candles = None
+            if not _check_bi_circuit():
+                try:
+                    borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
+                except Exception as e:
+                    logger.warning(f"Borsa Italiana candles failed for {symbol} {tf}: {type(e).__name__}: {e}")
+                    borsa_candles = None
 
             result[tf] = borsa_candles or []
             if borsa_candles:
@@ -723,7 +725,7 @@ def get_multi_timeframe_bars(
 
         # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
         borsa_candles = None
-        if has_isin:
+        if has_isin and not _check_bi_circuit():
             try:
                 borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
             except Exception as e:
@@ -738,6 +740,9 @@ def get_multi_timeframe_bars(
                     pass
                 continue
             # Borsa Italiana failed — fall back to yfinance since we have a valid IT ISIN
+        elif has_isin and _check_bi_circuit():
+            # Circuit is open, fall back to yfinance
+            pass
         else:
             # No valid Italian ISIN — do not use yfinance to avoid wrong-country data
             result[tf] = []
@@ -849,11 +854,13 @@ def get_bars_range(
 
     # BTPs: only borsaitaliana, no yfinance
     if BTPPolicy.is_btp(symbol):
-        try:
-            borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
-        except Exception as e:
-            logger.warning(f"Borsa Italiana candles failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
-            borsa_candles = None
+        borsa_candles = None
+        if not _check_bi_circuit():
+            try:
+                borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
+            except Exception as e:
+                logger.warning(f"Borsa Italiana candles failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
+                borsa_candles = None
 
         if borsa_candles:
             try:
@@ -869,7 +876,7 @@ def get_bars_range(
 
     # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
     borsa_candles = None
-    if has_isin:
+    if has_isin and not _check_bi_circuit():
         try:
             borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
         except Exception as e:
@@ -885,6 +892,9 @@ def get_bars_range(
                 pass
             return borsa_candles
         # Borsa Italiana failed — fall back to yfinance since we have a valid IT ISIN
+    elif has_isin and _check_bi_circuit():
+        # Circuit is open, fall back to yfinance
+        pass
     else:
         # No valid Italian ISIN — do not use yfinance to avoid wrong-country data
         return []
