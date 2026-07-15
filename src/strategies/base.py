@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Dict, Any, Optional, List
 
 
@@ -49,6 +49,17 @@ class Signal:
     take_profit_limit_price: Optional[float] = None
     backtest_period_days: Optional[int] = None  # LLM-specified backtest lookback period in days
     backtest_variants: Optional[List[Dict[str, Any]]] = None  # LLM-provided array of backtest variant param sets
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Signal":
+        """Reconstruct a Signal from a dictionary, ignoring unknown keys."""
+        valid_keys = {f.name for f in fields(cls)}
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        # Ensure required fields have fallbacks
+        filtered.setdefault("action", "BUY")
+        filtered.setdefault("confidence", 0.0)
+        filtered.setdefault("reasoning", "")
+        return cls(**filtered)
 
 
 class Strategy:

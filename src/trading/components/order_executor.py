@@ -703,19 +703,8 @@ class OrderExecutor:
         signal_dict = queued.get('signal', {}) or {}
         if signal_dict:
             try:
-                # Reconstruct a Signal from the stored dict, filtering to only
-                # valid Signal fields and providing fallbacks for required fields.
-                import dataclasses as _dc
-                valid_keys = {f.name for f in _dc.fields(Signal)}
-                filtered = {k: v for k, v in signal_dict.items() if k in valid_keys}
-                # Ensure required fields have fallbacks
-                if "action" not in filtered:
-                    filtered["action"] = "BUY"
-                if "confidence" not in filtered:
-                    filtered["confidence"] = 0.0
-                if "reasoning" not in filtered:
-                    filtered["reasoning"] = ""
-                reconstructed_signal = Signal(**filtered)
+                # Reconstruct a Signal from the stored dict using the dedicated method
+                reconstructed_signal = Signal.from_dict(signal_dict)
                 exit_prices = self._exit_order_manager.compute_exit_order_prices(
                     entry_price=self.shared_state.positions[symbol]["price"],
                     signal=reconstructed_signal,
