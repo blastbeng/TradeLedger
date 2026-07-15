@@ -27,20 +27,32 @@ _MIND_KEYWORDS = (
     "grok-2", "grok-3",
     "command-r-plus", "dbrx",
 )
-_WEAK_KEYWORDS = ("mini", "haiku", "flash", "8b", "7b", "3.5-turbo", "small", "nano", "tiny", "gpt-3", "gemini-flash", "llama-3-8b", "mistral-7b", "qwen-turbo", "deepseek-chat")
-_ACTUATOR_KEYWORDS = ("gpt-4", "gpt-3.5", "claude-3", "gemini-1.5", "llama-3.1", "llama-3.2", "llama-3.3", "mistral", "qwen", "deepseek-v2", "grok", "command-r", "mixtral")
+_ACTUATOR_KEYWORDS = (
+    "mini", "haiku", "flash", "70b", "72b", "mixtral-8x7b", "gpt-4", "gpt-3.5", 
+    "claude-3", "gemini-1.5", "llama-3.1", "llama-3.2", "llama-3.3", 
+    "mistral", "qwen", "deepseek-v2", "grok", "command-r", "mixtral"
+)
+_WEAK_KEYWORDS = (
+    "7b", "8b", "3.5-turbo", "small", "nano", "tiny", "gpt-3", 
+    "mistral-7b", "qwen-turbo", "deepseek-chat", "gemma", "phi", "solar"
+)
 
 def _categorize_model(model_name: str) -> Optional[str]:
     """Categorize a model name into 'mind', 'actuator', or 'weak' using keyword heuristics."""
     name_lower = model_name.lower()
     
-    # Check weak first to avoid misclassifying models like "gpt-4o-mini" as mind
+    # 1. Check weak first for smaller models (e.g., 7b, 8b, gpt-3.5-turbo)
     if any(kw in name_lower for kw in _WEAK_KEYWORDS):
         return "weak"
-    if any(kw in name_lower for kw in _MIND_KEYWORDS):
-        return "mind"
+    
+    # 2. Check actuator second for big but flash models (e.g., mini, haiku, flash, 70b)
+    # This prevents "gpt-4o-mini" from being caught by the "gpt-4o" mind keyword.
     if any(kw in name_lower for kw in _ACTUATOR_KEYWORDS):
         return "actuator"
+    
+    # 3. Check mind third for huge reasoning models
+    if any(kw in name_lower for kw in _MIND_KEYWORDS):
+        return "mind"
     
     # Default to actuator for unknown models, but log it for visibility
     logger.debug(f"Model '{model_name}' did not match any specific keywords, defaulting to 'actuator'.")
