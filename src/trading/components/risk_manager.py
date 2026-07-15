@@ -1481,78 +1481,80 @@ class RiskManager:
                         disable_notification=False
                     )
 
-            # Process the stop-loss order: check if it has already filled
-            sl_filled = False
-            sl_order_obj = None
-            manual_sell = False
+                # Process the stop-loss order: check if it has already filled
+                sl_filled = False
+                sl_order_obj = None
+                manual_sell = False
             
-            # 1. Fetch SL status outside lock
-            try:
-                sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
-                if sl_order_obj is not None and sl_order_obj.status == "filled":
-                    sl_filled = True
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, ConnectionError, TimeoutError, OSError):
-                pass
+                # 1. Fetch SL status outside lock
+                try:
+                    sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
+                    if sl_order_obj is not None and sl_order_obj.status == "filled":
+                        sl_filled = True
+                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, ConnectionError, TimeoutError, OSError):
+                    pass
 
-            # 2. Acquire lock
-            async with self.shared_state._positions_lock:
-                if not pos.get("stop_loss_order_id"):
-                    return True
-                
                 if sl_filled:
-                    logger.info(f"Stop-loss order {sl_order_id} filled for {symbol}, processing native fill.")
-                    pos.pop("_native_stop_trigger_ts", None)
-                    pos.pop("stop_loss_order_id", None)  # Pop to prevent double processing
-                    pos.pop("stop_loss_order_type", None)
-                    pos.pop("_native_stop_price", None)
-                else:
-                    now_ts = time.time()
-                    trigger_ts = pos.get("_native_stop_trigger_ts")
-                    if trigger_ts is None:
-                        pos["_native_stop_trigger_ts"] = now_ts
-                        trigger_ts = now_ts
-                    elapsed = now_ts - trigger_ts
-                    if elapsed >= settings.NATIVE_STOP_FILL_TIMEOUT_SECONDS:
-                        logger.warning(
-                            f"Native stop-loss order {sl_order_id} for {symbol} "
-                            f"not filled after {elapsed:.0f}s, falling back to manual market sell."
-                        )
+                    # 2. Acquire lock and pop if filled
+                    async with self.shared_state._positions_lock:
+                        if not pos.get("stop_loss_order_id"):
+                            return True
                         pos.pop("stop_loss_order_id", None)
                         pos.pop("stop_loss_order_type", None)
                         pos.pop("_native_stop_price", None)
                         pos.pop("_native_stop_trigger_ts", None)
-                        manual_sell = True
-                    else:
-                        logger.debug(
-                            f"Stop price reached for {symbol}, waiting for native "
-                            f"stop-loss order {sl_order_id} to fill "
-                            f"({elapsed:.0f}s / {settings.NATIVE_STOP_FILL_TIMEOUT_SECONDS}s)."
-                        )
-                        return True  # Exit lock and function
+                    await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
+                    return True
+                else:
+                    # 3. Acquire lock to check timeout
+                    async with self.shared_state._positions_lock:
+                        if not pos.get("stop_loss_order_id"):
+                            return True
+                        now_ts = time.time()
+                        trigger_ts = pos.get("_native_stop_trigger_ts")
+                        if trigger_ts is None:
+                            pos["_native_stop_trigger_ts"] = now_ts
+                            trigger_ts = now_ts
+                        elapsed = now_ts - trigger_ts
+                        if elapsed >= settings.NATIVE_STOP_FILL_TIMEOUT_SECONDS:
+                            logger.warning(
+                                f"Native stop-loss order {sl_order_id} for {symbol} "
+                                f"not filled after {elapsed:.0f}s, falling back to manual market sell."
+                            )
+                            pos.pop("stop_loss_order_id", None)
+                            pos.pop("stop_loss_order_type", None)
+                            pos.pop("_native_stop_price", None)
+                            pos.pop("_native_stop_trigger_ts", None)
+                            manual_sell = True
+                        else:
+                            logger.debug(
+                                f"Stop price reached for {symbol}, waiting for native "
+                                f"stop-loss order {sl_order_id} to fill "
+                                f"({elapsed:.0f}s / {settings.NATIVE_STOP_FILL_TIMEOUT_SECONDS}s)."
+                            )
+                            return True  # Exit lock and function
 
-            # 3. Cancel outside lock if manual_sell
-            if sl_filled:
-                await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
-            elif manual_sell:
-                try:
-                    await asyncio.to_thread(engine.trader.cancel_order, sl_order_id)
-                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-                    logger.warning(f"Failed to cancel native stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
-                except Exception as e:
-                    logger.warning(f"Failed to cancel native stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
+                # 4. Cancel outside lock if manual_sell
+                if manual_sell:
+                    try:
+                        await asyncio.to_thread(engine.trader.cancel_order, sl_order_id)
+                    except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                        logger.warning(f"Failed to cancel native stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cancel native stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
                 
-                async with self.shared_state._queued_orders_lock:
-                    self.shared_state.queued_orders = [
-                        q for q in self.shared_state.queued_orders
-                        if q.get("order_id") != sl_order_id
-                    ]
-                await self.event_bus.publish(
-                    "execute_signal",
-                    symbol,
-                    Signal(action="SELL", confidence=1.0, reasoning="Stop-loss native fill timeout"),
-                    exit_reason="stop_loss"
-                )
-            return True
+                    async with self.shared_state._queued_orders_lock:
+                        self.shared_state.queued_orders = [
+                            q for q in self.shared_state.queued_orders
+                            if q.get("order_id") != sl_order_id
+                        ]
+                    await self.event_bus.publish(
+                        "execute_signal",
+                        symbol,
+                        Signal(action="SELL", confidence=1.0, reasoning="Stop-loss native fill timeout"),
+                        exit_reason="stop_loss"
+                    )
+                return True
 
         # Take-profit price reached → cancel stop OCO pair
         if (sl_order_id and tp_order_id
