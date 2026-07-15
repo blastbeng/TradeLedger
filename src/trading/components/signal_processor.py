@@ -1600,7 +1600,7 @@ class SignalProcessor:
         if now - last_time > min(3 * effective_interval, max_skip):
             return False
 
-        # Fetch LLM-driven skip thresholds from Redis (cached for 5 minutes).
+        # Fetch LLM-driven skip thresholds from Redis (cached for 1 minute).
         cfg = await self._get_skip_eval_config()
         skip_price_mult = cfg["skip_price_mult"]
         skip_rsi = cfg["skip_rsi"]
