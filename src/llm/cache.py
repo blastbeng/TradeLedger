@@ -1222,12 +1222,30 @@ def get_cached_llm_response(
     if not _should_use_primary_model() and settings.LLM_FALLBACK_ENABLED:
         fb_provider, fb_model, fb_base_url, fb_api_key = _get_fallback_provider_config(model_type, provider)
         if fb_provider and fb_model:
-            is_fallback = True
-            logger.info("Market is closed - using fallback model only (provider=%s, model=%s, model_type=%s)", fb_provider, fb_model, model_type)
-            provider = fb_provider
-            models = [fb_model]
-            base_url = fb_base_url
-            api_key = fb_api_key
+            redis_client = get_redis_client()
+            if _is_model_blacklisted(redis_client, fb_model):
+                # Fallback model is blacklisted; try main weak model
+                weak_provider, weak_model, weak_base_url, weak_api_key = _get_weak_model_config()
+                if weak_model and not _is_model_blacklisted(redis_client, weak_model):
+                    logger.warning("Market is closed and fallback model %s is blacklisted. Using main weak model %s.", fb_model, weak_model)
+                    provider = weak_provider
+                    models = [weak_model]
+                    base_url = weak_base_url
+                    api_key = weak_api_key
+                else:
+                    logger.warning("Market is closed, fallback model %s and weak model are both blacklisted. Proceeding with fallback model anyway.", fb_model)
+                    is_fallback = True
+                    provider = fb_provider
+                    models = [fb_model]
+                    base_url = fb_base_url
+                    api_key = fb_api_key
+            else:
+                is_fallback = True
+                logger.info("Market is closed - using fallback model only (provider=%s, model=%s, model_type=%s)", fb_provider, fb_model, model_type)
+                provider = fb_provider
+                models = [fb_model]
+                base_url = fb_base_url
+                api_key = fb_api_key
         else:
             logger.warning("Market is closed but no fallback model is configured for model_type=%s. Using primary model to avoid downtime.", model_type)
 
