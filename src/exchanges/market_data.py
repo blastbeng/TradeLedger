@@ -72,6 +72,35 @@ from src.exchanges.asset_discovery import (
 
 logger = logging.getLogger(__name__)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
+
+class CircuitBreaker:
+    """Generic circuit breaker for market data sources."""
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60):
+        self.failure_count = 0
+        self.last_failure_time = 0.0
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+
+    def record_failure(self):
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+
+    def record_success(self):
+        self.failure_count = 0
+
+    def is_open(self) -> bool:
+        if self.failure_count >= self.failure_threshold:
+            if time.time() - self.last_failure_time > self.recovery_timeout:
+                self.failure_count = 0
+                return False
+            return True
+        return False
+
+
+_av_circuit_breaker = CircuitBreaker()
+_iex_circuit_breaker = CircuitBreaker()
+
 _get_quotes_lock = threading.Lock()
 
 def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
@@ -380,12 +409,15 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
     if bi_symbols:
         for sym in bi_symbols:
-            bi_quote = get_borsa_italiana_quote(sym)
-            if bi_quote and bi_quote.get("last") is not None:
-                result.setdefault(sym, {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}).update(bi_quote)
-                result[sym]["last_update"] = int(time.time() * 1000)
-                result[sym]["source"] = "borsa_italiana"
-                logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
+            try:
+                bi_quote = get_borsa_italiana_quote(sym)
+                if bi_quote and bi_quote.get("last") is not None:
+                    result.setdefault(sym, {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}).update(bi_quote)
+                    result[sym]["last_update"] = int(time.time() * 1000)
+                    result[sym]["source"] = "borsa_italiana"
+                    logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
+            except Exception as e:
+                logger.warning(f"get_quotes: Borsa Italiana failed for {sym}: {type(e).__name__}: {e}")
 
     if not missing_symbols:
         # All symbols got prices from cache/DB — finalize, persist, and return
@@ -458,7 +490,7 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                                 result[sym]["percentage"] = ((last_val - prev_close) / prev_close) * 100
                 except (KeyError, ValueError, AttributeError, IndexError):
                     pass
-        except (RuntimeError, ValueError, ConnectionError, OSError) as e:
+        except Exception as e:
             logger.warning(f"Batch download failed: {type(e).__name__}: {e}")
     elif stock_symbols and _check_yf_circuit():
         logger.warning(
@@ -471,28 +503,40 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         sym for sym in missing_symbols
         if result.get(sym, {}).get("last") is None
     ]
-    if missing_after_yf:
+    if missing_after_yf and not _av_circuit_breaker.is_open():
         for sym in missing_after_yf[:10]:
-            av_quote = get_alphavantage_quote(sym)
-            if av_quote:
-                result[sym].update(av_quote)
-                result[sym]["last_update"] = int(time.time() * 1000)
-                result[sym]["source"] = "alphavantage"
-                logger.debug(f"get_quotes: Alpha Vantage provided quote for {sym}")
+            try:
+                av_quote = get_alphavantage_quote(sym)
+                if av_quote:
+                    result[sym].update(av_quote)
+                    result[sym]["last_update"] = int(time.time() * 1000)
+                    result[sym]["source"] = "alphavantage"
+                    _av_circuit_breaker.record_success()
+                else:
+                    _av_circuit_breaker.record_failure()
+            except Exception as e:
+                logger.warning(f"get_quotes: Alpha Vantage failed for {sym}: {type(e).__name__}: {e}")
+                _av_circuit_breaker.record_failure()
 
     # --- Try IEX Cloud for stocks still missing valid prices ---
     missing_after_av = [
         sym for sym in missing_symbols
         if result.get(sym, {}).get("last") is None
     ]
-    if missing_after_av:
+    if missing_after_av and not _iex_circuit_breaker.is_open():
         for sym in missing_after_av[:10]:
-            iex_quote = get_iex_quote(sym)
-            if iex_quote:
-                result[sym].update(iex_quote)
-                result[sym]["last_update"] = int(time.time() * 1000)
-                result[sym]["source"] = "iex"
-                logger.debug(f"get_quotes: IEX Cloud provided quote for {sym}")
+            try:
+                iex_quote = get_iex_quote(sym)
+                if iex_quote:
+                    result[sym].update(iex_quote)
+                    result[sym]["last_update"] = int(time.time() * 1000)
+                    result[sym]["source"] = "iex"
+                    _iex_circuit_breaker.record_success()
+                else:
+                    _iex_circuit_breaker.record_failure()
+            except Exception as e:
+                logger.warning(f"get_quotes: IEX Cloud failed for {sym}: {type(e).__name__}: {e}")
+                _iex_circuit_breaker.record_failure()
 
     # Finalize, persist, and enrich quotes
     _finalize_and_persist_quotes(result, symbols, redis_client)
