@@ -2902,13 +2902,19 @@ def update_llm_decision_outcome(decision_id: int, outcome_price: float, outcome_
         conn.close()
 
 
-def get_llm_decision_quality_metrics(period_days: int = 7) -> Dict[str, Any]:
+def get_llm_decision_quality_metrics(period_days: int = 7, model_filter: str = "all") -> Dict[str, Any]:
     """Calculates LLM decision accuracy and counts over a given period."""
     cutoff_timestamp = int((time.time() - period_days * 86400) * 1000)
     conn = get_connection()
     try:
+        where_clause = " WHERE evaluated = 1 AND timestamp >= %s"
+        if model_filter == "main":
+            where_clause += " AND is_fallback = 0"
+        elif model_filter == "fallback":
+            where_clause += " AND is_fallback = 1"
+
         sql = _adapt_sql(
-            """
+            f"""
             SELECT 
                 COUNT(*) as total_decisions,
                 SUM(CASE WHEN outcome_profitable = 1 THEN 1 ELSE 0 END) as profitable_decisions,
@@ -2916,7 +2922,7 @@ def get_llm_decision_quality_metrics(period_days: int = 7) -> Dict[str, Any]:
                 SUM(CASE WHEN action = 'BUY' THEN 1 ELSE 0 END) as buy_decisions,
                 SUM(CASE WHEN action = 'SELL' THEN 1 ELSE 0 END) as sell_decisions
             FROM llm_decision_quality
-            WHERE evaluated = 1 AND timestamp >= %s
+            {where_clause}
             """
         )
         row = conn.execute(sql, (cutoff_timestamp,)).fetchone()

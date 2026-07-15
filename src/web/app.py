@@ -751,10 +751,10 @@ async def llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] 
         raise HTTPException(status_code=500, detail=str(e))
 
 @http_router.get("/api/llm-decision-quality")
-async def llm_decision_quality(period_days: int = 7):
+async def llm_decision_quality(period_days: int = 7, model_filter: str = "main"):
     """Return LLM decision quality metrics for the dashboard."""
     try:
-        return await run_in_threadpool(get_llm_decision_quality_metrics, period_days)
+        return await run_in_threadpool(get_llm_decision_quality_metrics, period_days, model_filter)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
