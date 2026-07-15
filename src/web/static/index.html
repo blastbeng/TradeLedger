@@ -550,9 +550,10 @@
                 <div style="margin-bottom: 12px;">
                     <button id="btn-clear-selected-isins" style="background:var(--red); color:#fff; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🗑️ Clear Selected ISINs</button>
                 </div>
+                <input type="text" id="isin-search" placeholder="🔍 Filter table..." style="width: 100%; padding: 8px; margin-bottom: 8px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem;">
                 <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
                     <table id="isin-table">
-                        <thead><tr><th><input type="checkbox" id="select-all-isins"></th><th>Ticker</th><th>Type</th><th>Name</th><th>Auto ISIN</th><th>Country</th><th>Manual ISIN</th><th>Actions</th></tr></thead>
+                        <thead><tr><th></th><th data-sort="symbol" style="cursor:pointer;">Ticker ↕</th><th data-sort="asset_type" style="cursor:pointer;">Type ↕</th><th data-sort="name" style="cursor:pointer;">Name ↕</th><th data-sort="isin" style="cursor:pointer;">Auto ISIN ↕</th><th data-sort="country" style="cursor:pointer;">Country ↕</th><th data-sort="manual_isin" style="cursor:pointer;">Manual ISIN ↕</th><th>Actions</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -2259,57 +2260,119 @@
         }
         loadDiscoveredSymbols();
 
+        let isinTableData = [];
+        let isinSort = { key: 'symbol', dir: 'asc' };
+        let isinFilter = '';
+
         async function fetchDiscoveredSymbolsForISIN() {
             try {
                 const resp = await fetch('/api/discovered-symbols');
-                const symbols = await resp.json();
-                const tbody = document.querySelector('#isin-table tbody');
-                tbody.innerHTML = '';
-                symbols.forEach(s => {
-                    const row = tbody.insertRow();
-                    row.insertCell().innerHTML = `<input type="checkbox" class="isin-checkbox" data-symbol="${s.symbol}">`;
-                    row.insertCell().textContent = s.symbol;
-                    row.insertCell().textContent = s.asset_type || '—';
-                    row.insertCell().textContent = s.name || '';
-                    row.insertCell().textContent = s.isin || '';
-                    row.insertCell().textContent = s.country || (s.isin ? s.isin.substring(0, 2) : '') || '';
-                    const manualCell = row.insertCell();
-                    const input = document.createElement('input');
-                    input.type = 'text';
-                    input.value = s.manual_isin || '';
-                    input.style.cssText = 'width: 100%; padding: 4px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem;';
-                    input.dataset.symbol = s.symbol;
-                    input.addEventListener('change', async (e) => {
-                        const symbol = e.target.dataset.symbol;
-                        const isin = e.target.value.trim() || null;
-                        await fetch('/api/update-isin', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ symbol, isin })
-                        });
-                        showToast('ISIN updated for ' + symbol);
-                    });
-                    manualCell.appendChild(input);
-                    
-                    const actionsCell = row.insertCell();
-                    const clearBtn = document.createElement('button');
-                    clearBtn.textContent = 'Clear';
-                    clearBtn.style.cssText = 'background: var(--red); color: #fff; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem;';
-                    clearBtn.onclick = async () => {
-                        await fetch('/api/clear-isin', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ symbols: [s.symbol] })
-                        });
-                        input.value = '';
-                        showToast('ISIN cleared for ' + s.symbol);
-                    };
-                    actionsCell.appendChild(clearBtn);
-                });
+                isinTableData = await resp.json();
+                renderISINTable();
             } catch (e) {
                 console.error('Failed to fetch discovered symbols for ISIN', e);
             }
         }
+
+        function renderISINTable() {
+            const tbody = document.querySelector('#isin-table tbody');
+            tbody.innerHTML = '';
+
+            // Filter
+            let filtered = isinTableData;
+            if (isinFilter) {
+                const filter = isinFilter.toLowerCase();
+                filtered = isinTableData.filter(s => {
+                    const country = s.country || (s.isin ? s.isin.substring(0, 2) : '') || '';
+                    return (s.symbol || '').toLowerCase().includes(filter) ||
+                           (s.asset_type || '').toLowerCase().includes(filter) ||
+                           (s.name || '').toLowerCase().includes(filter) ||
+                           (s.isin || '').toLowerCase().includes(filter) ||
+                           country.toLowerCase().includes(filter) ||
+                           (s.manual_isin || '').toLowerCase().includes(filter);
+                });
+            }
+
+            // Sort
+            filtered.sort((a, b) => {
+                let valA = a[isinSort.key] || '';
+                let valB = b[isinSort.key] || '';
+                if (isinSort.key === 'country') {
+                    valA = a.country || (a.isin ? a.isin.substring(0, 2) : '') || '';
+                    valB = b.country || (b.isin ? b.isin.substring(0, 2) : '') || '';
+                }
+                valA = String(valA).toLowerCase();
+                valB = String(valB).toLowerCase();
+                return isinSort.dir === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+            });
+
+            filtered.forEach(s => {
+                const row = tbody.insertRow();
+                row.insertCell().innerHTML = `<input type="checkbox" class="isin-checkbox" data-symbol="${s.symbol}">`;
+                row.insertCell().textContent = s.symbol;
+                row.insertCell().textContent = s.asset_type || '—';
+                row.insertCell().textContent = s.name || '';
+                row.insertCell().textContent = s.isin || '';
+                row.insertCell().textContent = s.country || (s.isin ? s.isin.substring(0, 2) : '') || '';
+                const manualCell = row.insertCell();
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.value = s.manual_isin || '';
+                input.style.cssText = 'width: 100%; padding: 4px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem;';
+                input.dataset.symbol = s.symbol;
+                input.addEventListener('change', async (e) => {
+                    const symbol = e.target.dataset.symbol;
+                    const isin = e.target.value.trim() || null;
+                    await fetch('/api/update-isin', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ symbol, isin })
+                    });
+                    showToast('ISIN updated for ' + symbol);
+                    // Update local data
+                    const item = isinTableData.find(d => d.symbol === symbol);
+                    if (item) item.manual_isin = isin;
+                });
+                manualCell.appendChild(input);
+                
+                const actionsCell = row.insertCell();
+                const clearBtn = document.createElement('button');
+                clearBtn.textContent = 'Clear';
+                clearBtn.style.cssText = 'background: var(--red); color: #fff; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem;';
+                clearBtn.onclick = async () => {
+                    await fetch('/api/clear-isin', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ symbols: [s.symbol] })
+                    });
+                    input.value = '';
+                    showToast('ISIN cleared for ' + s.symbol);
+                    // Update local data
+                    const item = isinTableData.find(d => d.symbol === s.symbol);
+                    if (item) item.manual_isin = null;
+                };
+                actionsCell.appendChild(clearBtn);
+            });
+        }
+
+        document.getElementById('isin-search').addEventListener('input', (e) => {
+            isinFilter = e.target.value;
+            renderISINTable();
+        });
+
+        document.querySelectorAll('#isin-table th[data-sort]').forEach(th => {
+            th.addEventListener('click', () => {
+                const key = th.dataset.sort;
+                if (isinSort.key === key) {
+                    isinSort.dir = isinSort.dir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    isinSort.key = key;
+                    isinSort.dir = 'asc';
+                }
+                renderISINTable();
+            });
+        });
+
         fetchDiscoveredSymbolsForISIN();
 
         document.getElementById('select-all-isins').addEventListener('change', (e) => {
