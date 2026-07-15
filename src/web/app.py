@@ -187,7 +187,6 @@ _engine = None
 # redundant API calls and SQLite queries when multiple tabs are open.
 _ws_payload_cache: Optional[dict] = None
 _ws_payload_cache_time: float = 0.0
-_ws_payload_ttl: float = 5.0  # seconds — fixed cache TTL
 
 def invalidate_ws_payload_cache():
     """Clear the WebSocket payload cache so clients get fresh data immediately."""
