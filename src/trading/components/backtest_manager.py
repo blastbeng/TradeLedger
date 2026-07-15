@@ -426,10 +426,11 @@ class BacktestManager:
         llm_model: Optional[str],
         market_hash: str = None,
         is_critical: bool = False,
-    ) -> Tuple[Signal, Optional[str], Optional[str]]:
+        is_fallback: bool = False,
+    ) -> Tuple[Signal, Optional[str], Optional[str], bool]:
         """Run the Step 2 LLM call and carry over execution-critical fields.
 
-        Returns (final_signal, llm_provider, llm_model).
+        Returns (final_signal, llm_provider, llm_model, is_fallback).
         """
         engine = self.engine
 
@@ -449,11 +450,11 @@ class BacktestManager:
 
         if cb_active:
             logger.error(f"LLM circuit breaker ACTIVE for {symbol} during Step 2 — using preliminary decision. Check LLM connectivity.")
-            return preliminary_signal, llm_provider, llm_model
+            return preliminary_signal, llm_provider, llm_model, is_fallback
 
         if not backtest_results:
             logger.info(f"Insufficient data for any backtest for {symbol}. Using preliminary decision.")
-            return preliminary_signal, llm_provider, llm_model
+            return preliminary_signal, llm_provider, llm_model, is_fallback
 
         # Build Step 2 prompt with ALL backtest results
         total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
@@ -503,6 +504,7 @@ class BacktestManager:
             step2_response = step2_result["response"]
             llm_provider = step2_result["provider"]
             llm_model = step2_result["model"]
+            is_fallback = step2_result.get("is_fallback", False)
             logger.info(f"LLM Step 2 call completed for {symbol} (provider={llm_provider}, model={llm_model})")
 
             # Parse Step 2 response
@@ -536,6 +538,7 @@ class BacktestManager:
                     step2_response = retry_result["response"]
                     llm_provider = retry_result["provider"]
                     llm_model = retry_result["model"]
+                    is_fallback = retry_result.get("is_fallback", False)
                 except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
                     logger.error(f"Step 2 JSON parse retry failed for {symbol}. Using preliminary decision.")
                     final_strategy = None
@@ -626,7 +629,7 @@ class BacktestManager:
             if llm_model is None:
                 llm_model = preliminary_signal.llm_model
 
-        return signal, llm_provider, llm_model
+        return signal, llm_provider, llm_model, is_fallback
 
     async def run_backtest_and_final_decision(
         self,
@@ -647,10 +650,11 @@ class BacktestManager:
         ticker: Dict[str, Any],
         market_hash: str = None,
         is_critical: bool = False,
-    ) -> Tuple[Signal, str, Optional[str], Optional[str]]:
+        is_fallback: bool = False,
+    ) -> Tuple[Signal, str, Optional[str], Optional[str], bool]:
         """Run backtests and the Step 2 LLM call to produce the final signal.
 
-        Returns (final_signal, combined_backtest_summary, llm_provider, llm_model).
+        Returns (final_signal, combined_backtest_summary, llm_provider, llm_model, is_fallback).
         """
         engine = self.engine
         combined_bt_summary = ""
@@ -700,7 +704,7 @@ class BacktestManager:
             else:
                 combined_bt_summary = " | ".join(summaries)
 
-            signal, llm_provider, llm_model = await self.run_step2_llm_call(
+            signal, llm_provider, llm_model, is_fallback = await self.run_step2_llm_call(
                 symbol=symbol,
                 assigned_tf=assigned_tf,
                 preliminary_signal=preliminary_signal,
@@ -714,6 +718,7 @@ class BacktestManager:
                 llm_model=llm_model,
                 market_hash=market_hash,
                 is_critical=is_critical,
+                is_fallback=is_fallback,
             )
         else:
             # For SELL or HOLD, no backtest needed, use preliminary decision
@@ -727,7 +732,7 @@ class BacktestManager:
         else:
             signal.backtest_stats = None
 
-        return signal, combined_bt_summary, llm_provider, llm_model
+        return signal, combined_bt_summary, llm_provider, llm_model, is_fallback
 
     async def run_simulation_step2(
         self,

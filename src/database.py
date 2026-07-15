@@ -297,6 +297,7 @@ def _migrate_db():
         ("llm_metrics", "request_type", "ALTER TABLE llm_metrics ADD COLUMN request_type TEXT"),
         ("llm_metrics", "is_fallback", "ALTER TABLE llm_metrics ADD COLUMN is_fallback INTEGER NOT NULL DEFAULT 0"),
         ("dividends", "reinvested", "ALTER TABLE dividends ADD COLUMN reinvested INTEGER NOT NULL DEFAULT 0"),
+        ("llm_decision_quality", "is_fallback", "ALTER TABLE llm_decision_quality ADD COLUMN is_fallback INTEGER NOT NULL DEFAULT 0"),
     ]
 
     max_retries = 3
@@ -552,7 +553,8 @@ def _get_init_statements() -> List[str]:
             outcome_price REAL,
             outcome_timestamp {bigint_type},
             outcome_profitable INTEGER,
-            evaluated INTEGER DEFAULT 0
+            evaluated INTEGER DEFAULT 0,
+            is_fallback INTEGER NOT NULL DEFAULT 0
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_llm_decision_quality_timestamp ON llm_decision_quality(timestamp)",
@@ -2846,18 +2848,18 @@ def cleanup_old_dividends(retention_days: int = 365):
 
 
 @retry_on_db_lock()
-def insert_llm_decision(symbol: str, action: str, entry_price: float, timeframe: str):
+def insert_llm_decision(symbol: str, action: str, entry_price: float, timeframe: str, is_fallback: bool = False):
     """Inserts a new LLM decision into the quality tracking table."""
     timestamp = int(time.time() * 1000)
     conn = get_connection()
     try:
         sql = _adapt_sql(
             """
-            INSERT INTO llm_decision_quality (symbol, timestamp, action, entry_price, timeframe, evaluated)
-            VALUES (%s, %s, %s, %s, %s, 0)
+            INSERT INTO llm_decision_quality (symbol, timestamp, action, entry_price, timeframe, evaluated, is_fallback)
+            VALUES (%s, %s, %s, %s, %s, 0, %s)
             """
         )
-        conn.execute(sql, (symbol, timestamp, action, entry_price, timeframe))
+        conn.execute(sql, (symbol, timestamp, action, entry_price, timeframe, 1 if is_fallback else 0))
         conn.commit()
     finally:
         conn.close()

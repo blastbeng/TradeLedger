@@ -108,10 +108,10 @@ class LLMStepManager:
         is_critical: bool,
         critical_reason: Optional[str],
         tf_seconds: int,
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str], bool]:
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str], bool, bool]:
         """Run the Step 1a LLM call and handle timeouts/retries.
 
-        Returns (analysis_result, llm_provider, llm_model, should_return).
+        Returns (analysis_result, llm_provider, llm_model, should_return, is_fallback).
         If should_return is True, the caller should return immediately.
         """
         engine = self.engine
@@ -135,7 +135,7 @@ class LLMStepManager:
             # Clear _force_eval to break the retry loop
             async with self.shared_state._eval_state_lock:
                 self.shared_state._force_eval.pop(symbol, None)
-            return None, None, None, False
+            return None, None, None, False, False
 
         try:
             step1a_result = await asyncio.wait_for(
@@ -157,6 +157,7 @@ class LLMStepManager:
             step1a_response = step1a_result["response"]
             llm_provider = step1a_result["provider"]
             llm_model = step1a_result["model"]
+            is_fallback = step1a_result.get("is_fallback", False)
             logger.info(f"LLM Step 1a (analysis) completed for {symbol} (provider={llm_provider}, model={llm_model})")
             analysis_result = self.sp._parse_analysis_response(step1a_response)
             if analysis_result is None:
@@ -186,6 +187,7 @@ class LLMStepManager:
                 analysis_result = self.sp._parse_analysis_response(retry_result["response"])
                 llm_provider = retry_result["provider"]
                 llm_model = retry_result["model"]
+                is_fallback = retry_result.get("is_fallback", False)
             if analysis_result is not None:
                 logger.info(f"Step 1a result for {symbol}: action={analysis_result.get('action')}, confidence={analysis_result.get('confidence', 0):.2f}")
             # Reset consecutive LLM failure counter on success
@@ -212,7 +214,7 @@ class LLMStepManager:
                     Signal(action="SELL", confidence=1.0, reasoning=critical_reason),
                     exit_reason=critical_reason.replace(" ", "_").lower()
                 )
-                return None, None, None, True
+                return None, None, None, True, False
             # Non-critical timeout: fall through to fallback HOLD
             async with self.shared_state._eval_state_lock:
                 self.shared_state._force_eval[symbol] = True  # Force retry on next cycle
@@ -225,7 +227,7 @@ class LLMStepManager:
             await self._increment_llm_failures()
             # Fall through to fallback HOLD below
 
-        return analysis_result, llm_provider, llm_model, False
+        return analysis_result, llm_provider, llm_model, False, is_fallback
 
     async def handle_step1a_fallback(
         self,
@@ -235,7 +237,8 @@ class LLMStepManager:
         strategy_model_type: str,
         llm_provider: Optional[str],
         llm_model: Optional[str],
-    ) -> Tuple[Signal, str, Optional[str], Optional[str], bool]:
+        is_fallback: bool = False,
+    ) -> Tuple[Signal, str, Optional[str], Optional[str], bool, bool]:
         """Handle fallback HOLD signal when Step 1a fails or returns HOLD with no position.
 
         Returns (signal, combined_bt_summary, llm_provider, llm_model, skip_backtest).
@@ -267,6 +270,7 @@ class LLMStepManager:
             llm_model = "default_hold"
             combined_bt_summary = ""
             _skip_backtest = True
+            is_fallback = True
         # If analysis says HOLD with no position, only skip backtesting if confidence is very high
         elif analysis_result.get("action") == "HOLD" and not has_position:
             hold_confidence = analysis_result.get("confidence", 0.0)
@@ -295,7 +299,7 @@ class LLMStepManager:
             combined_bt_summary = ""
             _skip_backtest = False
 
-        return signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest
+        return signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest, is_fallback
 
     async def run_step1b_llm_call(
         self,
@@ -326,14 +330,15 @@ class LLMStepManager:
         market_snapshot: Dict[str, Any],
         historical_backtest_results: Optional[list],
         is_critical: bool = False,
-    ) -> Tuple[Signal, Optional[str], Optional[str]]:
+    ) -> Tuple[Signal, Optional[str], Optional[str], bool]:
         """Run the Step 1b LLM call for backtest variants and parameters.
 
-        Returns (preliminary_signal, llm_provider, llm_model).
+        Returns (preliminary_signal, llm_provider, llm_model, is_fallback).
         """
         engine = self.engine
         llm_provider = None
         llm_model = None
+        is_fallback = False
 
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
         cb_active = False
@@ -351,7 +356,7 @@ class LLMStepManager:
             fallback_signal = self._create_fallback_hold_signal(
                 symbol, "LLM circuit breaker active during Step 1b", strategy_model_type
             )
-            return fallback_signal, "fallback", "default_hold"
+            return fallback_signal, "fallback", "default_hold", True
 
         # --- Build variants prompt ---
         prompt_data = BacktestPromptData(
@@ -416,6 +421,7 @@ class LLMStepManager:
             step1b_response = step1b_result["response"]
             llm_provider = step1b_result["provider"]
             llm_model = step1b_result["model"]
+            is_fallback = step1b_result.get("is_fallback", False)
             logger.info(f"LLM Step 1b (variants) completed for {symbol} (provider={llm_provider}, model={llm_model})")
         except asyncio.TimeoutError:
             logger.warning(f"LLM Step 1b (variants) timed out for {symbol}. Using Step 1a analysis as fallback.")
@@ -468,6 +474,7 @@ class LLMStepManager:
                 preliminary_strategy = create_strategy_from_llm(response2["response"])
                 llm_provider = response2["provider"]
                 llm_model = response2["model"]
+                is_fallback = response2.get("is_fallback", False)
             except (asyncio.TimeoutError, ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e2:
                 logger.error(f"LLM Step 1b response still invalid after retry for {symbol}: {type(e2).__name__}: {e2}")
                 preliminary_strategy = LLMStrategy(self._create_fallback_hold_signal(
@@ -479,4 +486,4 @@ class LLMStepManager:
         preliminary_signal.llm_provider = llm_provider
         preliminary_signal.llm_model = llm_model
 
-        return preliminary_signal, llm_provider, llm_model
+        return preliminary_signal, llm_provider, llm_model, is_fallback

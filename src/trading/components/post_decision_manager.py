@@ -181,7 +181,8 @@ class PostDecisionManager:
                 data.symbol,
                 validated.action,
                 data.current_price,
-                data.assigned_tf
+                data.assigned_tf,
+                is_fallback=data.is_fallback
             )
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to insert LLM decision for quality tracking: {type(e).__name__}: {e}", extra={"event": "insert_llm_decision_failed", "symbol": data.symbol, "error_type": type(e).__name__})

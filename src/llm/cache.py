@@ -1151,6 +1151,7 @@ def get_cached_llm_response(
         "response": response_text,
         "provider": used_provider,
         "model": used_model,
+        "is_fallback": is_fallback,
     }
 
 

@@ -88,6 +88,7 @@ class DecisionContext:
     partial_tp_triggered: bool
     dust_sweep_triggered: bool
     strategy_model_type: str
+    is_fallback: bool = False
 
 
 class SignalProcessor:
@@ -434,7 +435,7 @@ class SignalProcessor:
             elif flags["partial_tp_triggered"]: critical_reason = "Partial TP triggered, LLM timeout"
             elif flags["dust_sweep_triggered"]: critical_reason = "Dust sweep triggered, LLM timeout"
 
-        analysis_result, llm_provider, llm_model, _should_return = await self.llm_step_manager.run_step1a_llm_call(
+        analysis_result, llm_provider, llm_model, _should_return, is_fallback_1a = await self.llm_step_manager.run_step1a_llm_call(
             symbol=symbol, display_symbol=display_symbol, analysis_prompt=ctx["analysis_prompt"],
             system_prompt=compact_prompt(build_system_prompt()), market_hash=ctx["market_hash"],
             strategy_model_type=strategy_model_type, effective_temp=effective_temp,
@@ -445,13 +446,14 @@ class SignalProcessor:
         if _should_return:
             return None
 
-        signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest = await self.llm_step_manager.handle_step1a_fallback(
+        signal, combined_bt_summary, llm_provider, llm_model, _skip_backtest, is_fallback = await self.llm_step_manager.handle_step1a_fallback(
             symbol=symbol, analysis_result=analysis_result, has_position=has_position,
             strategy_model_type=strategy_model_type, llm_provider=llm_provider, llm_model=llm_model,
+            is_fallback=is_fallback_1a,
         )
 
         if not _skip_backtest:
-            preliminary_signal, llm_provider, llm_model = await self.llm_step_manager.run_step1b_llm_call(
+            preliminary_signal, llm_provider, llm_model, is_fallback_1b = await self.llm_step_manager.run_step1b_llm_call(
                 symbol=symbol, analysis_result=analysis_result, ticker=ctx["ticker"], current_price=ctx["current_price"],
                 atr=ctx["atr"], assigned_tf=assigned_tf, base_balance=ctx["base_balance"], per_symbol_budget=ctx["per_symbol_budget"],
                 min_order_amount=ctx["min_order_amount"], min_order_cost=ctx["min_order_cost"], remaining=ctx["remaining"],
@@ -463,7 +465,7 @@ class SignalProcessor:
                 market_snapshot=ctx["market_snapshot"], historical_backtest_results=ctx["historical_backtest_results"],
                 is_critical=is_critical,
             )
-            signal, combined_bt_summary, llm_provider, llm_model = await engine.event_bus.request(
+            signal, combined_bt_summary, llm_provider, llm_model, is_fallback_2 = await engine.event_bus.request(
                 "run_backtest_and_final_decision",
                 symbol=symbol, assigned_tf=assigned_tf, tf_seconds=tf_seconds, current_price=ctx["current_price"],
                 atr=ctx["atr"], historical_ohlcv=ctx["historical_ohlcv"], raw_candles=ctx["raw_candles"],
@@ -472,7 +474,9 @@ class SignalProcessor:
                 preliminary_signal=preliminary_signal, display_symbol=display_symbol, ticker=ctx["ticker"],
                 market_hash=ctx["market_hash"],
                 is_critical=is_critical,
+                is_fallback=is_fallback_1b,
             )
+            is_fallback = is_fallback_2
 
         # --- Automatic adjustment for upcoming earnings ---
         upcoming_earnings = ctx.get("upcoming_earnings")
@@ -499,7 +503,7 @@ class SignalProcessor:
             except (ValueError, TypeError):
                 pass
 
-        return {"signal": signal, "llm_provider": llm_provider, "llm_model": llm_model}
+        return {"signal": signal, "llm_provider": llm_provider, "llm_model": llm_model, "is_fallback": is_fallback}
 
     async def process_symbol(self, symbol_entry: Dict[str, str], trading_paused: bool = False) -> None:
         """Fetch market data, get LLM strategy, validate, and execute."""
@@ -536,6 +540,7 @@ class SignalProcessor:
             signal = llm_result["signal"]
             llm_provider = llm_result["llm_provider"]
             llm_model = llm_result["llm_model"]
+            is_fallback = llm_result["is_fallback"]
 
             decision_data = DecisionContext(
                 symbol=symbol, display_symbol=display_symbol, stock_name=stock_name,
@@ -554,6 +559,7 @@ class SignalProcessor:
                 stop_loss_triggered=_flags["stop_loss_triggered"], take_profit_triggered=_flags["take_profit_triggered"],
                 partial_tp_triggered=_flags["partial_tp_triggered"], dust_sweep_triggered=_flags["dust_sweep_triggered"],
                 strategy_model_type=strategy_model_type,
+                is_fallback=is_fallback,
             )
             await self.event_bus.request("process_post_llm_decision", decision_data)
         except asyncio.CancelledError:
