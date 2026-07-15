@@ -903,6 +903,21 @@ async def websocket_endpoint(websocket: WebSocket):
                         logger.warning(f"WebSocket: failed to read trading:paused from Redis: {type(e).__name__}: {e}")
                         is_paused = False
 
+                    # Fetch discovered symbols for the dashboard table
+                    discovered_symbols = await run_in_threadpool(get_all_discovered_symbols)
+                    discovered_symbols_payload = [
+                        {
+                            "symbol": s.get("symbol"),
+                            "name": s.get("name", ""),
+                            "isin": s.get("isin"),
+                            "manual_isin": s.get("manual_isin"),
+                            "asset_type": s.get("asset_type"),
+                            "country": s.get("country"),
+                            "candle_count": s.get("candle_count", 0)
+                        }
+                        for s in discovered_symbols
+                    ]
+
                     payload = {
                         "current_symbols": current_symbols,
                         "positions": positions,
@@ -912,6 +927,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "queued_orders": queued_orders_payload,
                         "market_open": market_open,
                         "redis_available": is_redis_available(),
+                        "discovered_symbols": discovered_symbols_payload,
                     }
                     _ws_payload_cache = payload
                     _ws_payload_cache_time = now
