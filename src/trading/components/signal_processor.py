@@ -237,10 +237,13 @@ class SignalProcessor:
         if settings.NEWS_ENABLED:
             try:
                 from src.llm.prompt_utils import get_cached_news_summary_async
-                news_summary = await get_cached_news_summary_async(symbol, model_type="weak")
+                news_summary = await asyncio.wait_for(
+                    get_cached_news_summary_async(symbol, model_type="weak"),
+                    timeout=30.0,
+                )
                 if news_summary and news_summary.get("summary") and news_summary["summary"] != "No recent news.":
                     news_section = f"Recent news summary for {symbol}: {news_summary['summary']}"
-            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError) as e:
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError, asyncio.TimeoutError) as e:
                 logger.warning(f"Failed to pre-summarize news for {symbol}: {type(e).__name__}: {e}", extra={"event": "news_presummary_failed", "symbol": symbol, "error_type": type(e).__name__})
 
         prompt_data = StrategyPromptData(
