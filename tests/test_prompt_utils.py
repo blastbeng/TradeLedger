@@ -6,6 +6,7 @@ from src.llm.prompt_utils import (
     _summarize_ohlcv,
     _format_news_for_prompt,
     _format_trade_pattern_analysis,
+    _to_toon,
 )
 
 
@@ -228,3 +229,20 @@ def test_format_trade_pattern_analysis_partial():
     assert "Trade Pattern Analysis" in result
     assert "macd_cross" in result
     assert "BestEntry" in result
+
+
+# ---------- _to_toon ----------
+
+def test_to_toon_dict():
+    result = _to_toon({"key": "value", "num": 42})
+    assert isinstance(result, str)
+
+
+def test_to_toon_list():
+    result = _to_toon([1, 2, 3])
+    assert isinstance(result, str)
+
+
+def test_to_toon_string():
+    result = _to_toon("hello")
+    assert isinstance(result, str)

@@ -1,6 +1,6 @@
 import pytest
 
-from src.strategies.backtester import backtest_strategy, BacktestConfig
+from src.strategies.backtester import backtest_strategy, BacktestConfig, walk_forward_backtest, format_walk_forward_summary
 
 
 def test_backtest_empty_candles():
@@ -360,3 +360,36 @@ def test_compute_stats_consecutive_losses():
     assert result["max_consecutive_losses"] == 3
     assert result["losses"] == 3
     assert result["wins"] == 0
+
+
+# ---------- walk_forward_backtest ----------
+
+def test_walk_forward_backtest_insufficient_data():
+    result = walk_forward_backtest(candles=[], num_windows=5)
+    assert result["insufficient_data"] is True
+
+
+def test_walk_forward_backtest_no_config():
+    candles = [[i * 1000, 100, 101, 99, 100, 1000] for i in range(100)]
+    result = walk_forward_backtest(candles=candles, num_windows=5, config=None)
+    assert result["insufficient_data"] is True
+
+
+# ---------- format_walk_forward_summary ----------
+
+def test_format_walk_forward_summary_insufficient():
+    result = format_walk_forward_summary({"insufficient_data": True})
+    assert result == "WF: N/A"
+
+
+def test_format_walk_forward_summary_basic():
+    wf_stats = {
+        "insufficient_data": False,
+        "per_window": [
+            {"window": 1, "total_trades": 5, "win_rate": 0.6, "total_pnl_pct": 0.02},
+        ],
+        "combined_stats": {"total_trades": 5, "win_rate": 0.6, "total_pnl_pct": 0.02},
+    }
+    result = format_walk_forward_summary(wf_stats)
+    assert "WF|" in result
+    assert "W1:" in result

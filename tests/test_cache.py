@@ -1,5 +1,7 @@
 import pytest
-from src.llm.cache import estimate_tokens, compute_market_hash
+from unittest.mock import patch
+from datetime import datetime, timezone
+from src.llm.cache import estimate_tokens, compute_market_hash, _should_use_primary_model
 
 
 def test_estimate_tokens():
@@ -307,3 +309,33 @@ def test_is_italian_holiday_easter_monday_2025():
     from datetime import datetime
     # Easter 2025 is April 20, Easter Monday is April 21
     assert _is_italian_holiday(datetime(2025, 4, 21)) is True
+
+
+# ---------- _should_use_primary_model ----------
+
+@patch("src.llm.cache.datetime")
+def test_should_use_primary_model_closed_weekend(mock_datetime):
+    mock_datetime.now.return_value = datetime(2024, 1, 6, 12, 0, 0, tzinfo=timezone.utc)
+    mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
+    assert _should_use_primary_model() is False
+
+
+@patch("src.llm.cache.datetime")
+def test_should_use_primary_model_open(mock_datetime):
+    mock_datetime.now.return_value = datetime(2024, 1, 8, 9, 0, 0, tzinfo=timezone.utc)
+    mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
+    assert _should_use_primary_model() is True
+
+
+@patch("src.llm.cache.datetime")
+def test_should_use_primary_model_premarket(mock_datetime):
+    mock_datetime.now.return_value = datetime(2024, 1, 8, 7, 30, 0, tzinfo=timezone.utc)
+    mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
+    assert _should_use_primary_model() is True
+
+
+@patch("src.llm.cache.datetime")
+def test_should_use_primary_model_after_close(mock_datetime):
+    mock_datetime.now.return_value = datetime(2024, 1, 8, 17, 0, 0, tzinfo=timezone.utc)
+    mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
+    assert _should_use_primary_model() is False
