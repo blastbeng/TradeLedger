@@ -90,12 +90,12 @@ class TradingEngine:
         self._clear_time_sensitive_redis_keys()
         self.event_bus = EventBus()
         self.config_service = UnifiedConfigService(self.redis)
-        self._exchange_semaphore = asyncio.Semaphore(10)  # max 10 concurrent API calls
-        self._news_semaphore = asyncio.Semaphore(5)  # max 5 concurrent news fetches
-        self._indicator_semaphore = asyncio.Semaphore(4)  # limit concurrent indicator computations
+        self._exchange_semaphore = asyncio.Semaphore(settings.EXCHANGE_SEMAPHORE_LIMIT)  # max 10 concurrent API calls
+        self._news_semaphore = asyncio.Semaphore(settings.NEWS_SEMAPHORE_LIMIT)  # max 5 concurrent news fetches
+        self._indicator_semaphore = asyncio.Semaphore(settings.INDICATOR_SEMAPHORE_LIMIT)  # limit concurrent indicator computations
         self._backtest_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_BACKTESTS)  # limit concurrent backtest variants
-        self._download_semaphore = asyncio.Semaphore(5)  # max 5 concurrent background OHLCV backfills
-        self._symbol_processing_semaphore = asyncio.Semaphore(3)  # limit concurrent symbol evaluations
+        self._download_semaphore = asyncio.Semaphore(settings.DOWNLOAD_SEMAPHORE_LIMIT)  # max 5 concurrent background OHLCV backfills
+        self._symbol_processing_semaphore = asyncio.Semaphore(settings.SYMBOL_PROCESSING_SEMAPHORE_LIMIT)  # limit concurrent symbol evaluations
 
         # Dedicated thread pool for database writes – prevents write contention
         # from starving the default asyncio thread pool used by the web server,
@@ -409,7 +409,7 @@ class TradingEngine:
             # Limit concurrent symbol downloads to 2 to avoid exhausting the
             # _download_executor thread pool, leaving threads available for
             # tracked tickers.
-            download_concurrency = asyncio.Semaphore(2)
+            download_concurrency = asyncio.Semaphore(settings.FORCE_DOWNLOAD_ALL_CONCURRENCY)
             async def _limited_force_download(pair: str):
                 async with download_concurrency:
                     await _force_download_symbol(pair)
@@ -448,7 +448,7 @@ class TradingEngine:
                 for tf in settings.OHLCV_TIMEFRAMES:
                     await self._market_data_manager._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True, force=True)
 
-            download_concurrency = asyncio.Semaphore(10)
+            download_concurrency = asyncio.Semaphore(settings.FORCE_DOWNLOAD_TRACKED_CONCURRENCY)
             async def _limited_force_download(pair: str):
                 async with download_concurrency:
                     await _force_download_symbol(pair)
@@ -559,6 +559,12 @@ class TradingEngine:
         _invalidate_yf_session()
         # Update backtest concurrency semaphore to pick up MAX_CONCURRENT_BACKTESTS changes
         self._backtest_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_BACKTESTS)
+        # Update async semaphores to pick up concurrency limit changes
+        self._exchange_semaphore = asyncio.Semaphore(settings.EXCHANGE_SEMAPHORE_LIMIT)
+        self._news_semaphore = asyncio.Semaphore(settings.NEWS_SEMAPHORE_LIMIT)
+        self._indicator_semaphore = asyncio.Semaphore(settings.INDICATOR_SEMAPHORE_LIMIT)
+        self._download_semaphore = asyncio.Semaphore(settings.DOWNLOAD_SEMAPHORE_LIMIT)
+        self._symbol_processing_semaphore = asyncio.Semaphore(settings.SYMBOL_PROCESSING_SEMAPHORE_LIMIT)
         # Update paper trader's base currency if it exists
         if self.trader is not None:
             self.trader.base_currency = settings.BASE_CURRENCY
@@ -1357,7 +1363,7 @@ class TradingEngine:
                 # Limit concurrent symbol downloads to 2 to avoid exhausting the
                 # _download_executor thread pool, leaving threads available for
                 # tracked tickers.
-                download_concurrency = asyncio.Semaphore(2)
+                download_concurrency = asyncio.Semaphore(settings.FULL_DOWNLOAD_CONCURRENCY)
                 async def _limited_download(pair: str, tfs: List[str]):
                     async with download_concurrency:
                         await _download_symbol_data(pair, tfs)

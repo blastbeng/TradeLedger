@@ -609,6 +609,28 @@ class Settings(BaseSettings):
             raise ValueError("Executor worker count must be at least 1")
         return v
 
+    # Async semaphore concurrency limits
+    EXCHANGE_SEMAPHORE_LIMIT: int = 10
+    NEWS_SEMAPHORE_LIMIT: int = 5
+    INDICATOR_SEMAPHORE_LIMIT: int = 4
+    DOWNLOAD_SEMAPHORE_LIMIT: int = 5
+    SYMBOL_PROCESSING_SEMAPHORE_LIMIT: int = 3
+    FORCE_DOWNLOAD_ALL_CONCURRENCY: int = 2
+    FORCE_DOWNLOAD_TRACKED_CONCURRENCY: int = 10
+    FULL_DOWNLOAD_CONCURRENCY: int = 2
+
+    @field_validator(
+        "EXCHANGE_SEMAPHORE_LIMIT", "NEWS_SEMAPHORE_LIMIT", "INDICATOR_SEMAPHORE_LIMIT",
+        "DOWNLOAD_SEMAPHORE_LIMIT", "SYMBOL_PROCESSING_SEMAPHORE_LIMIT",
+        "FORCE_DOWNLOAD_ALL_CONCURRENCY", "FORCE_DOWNLOAD_TRACKED_CONCURRENCY",
+        "FULL_DOWNLOAD_CONCURRENCY"
+    )
+    @classmethod
+    def validate_semaphore_limits(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Semaphore limits must be >= 1")
+        return v
+
     @field_validator("OHLCV_TIMEFRAMES")
     @classmethod
     def validate_ohlcv_timeframes(cls, v: list[str]) -> list[str]:
