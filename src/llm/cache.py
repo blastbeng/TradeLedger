@@ -1,4 +1,5 @@
 import asyncio
+import atexit
 import hashlib
 import json
 import logging
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 _split_merge_executor = concurrent.futures.ThreadPoolExecutor(
     max_workers=5, thread_name_prefix="split-merge"
 )
+atexit.register(lambda: _split_merge_executor.shutdown(wait=False))
 
 def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
