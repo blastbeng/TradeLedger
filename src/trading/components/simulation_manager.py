@@ -5,7 +5,7 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
-from src.llm.cache import get_cached_llm_response, compute_market_hash
+from src.llm.cache import get_cached_llm_response, get_cached_llm_response_async, compute_market_hash
 from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, build_analysis_messages, BacktestPromptData, StrategyPromptData
 from src.llm.backtest_prompts import build_backtest_variants_messages
 from src.strategies.llm_parser import create_strategy_from_llm
@@ -44,8 +44,7 @@ class SimulationManager:
         # Step 1a: Analysis
         try:
             step1a_result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    get_cached_llm_response,
+                get_cached_llm_response_async(
                     "", "", 60,
                     market_hash=market_hash,
                     model_type=model_type,
@@ -98,8 +97,7 @@ class SimulationManager:
 
         try:
             step1b_result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    get_cached_llm_response,
+                get_cached_llm_response_async(
                     "", "", 60,
                     market_hash=compute_market_hash({"step": "1b", "analysis": analysis}),
                     model_type=model_type,

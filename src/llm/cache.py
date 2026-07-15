@@ -23,6 +23,13 @@ _split_merge_executor = concurrent.futures.ThreadPoolExecutor(
 )
 atexit.register(lambda: _split_merge_executor.shutdown(wait=False))
 
+# Dedicated thread pool for LLM calls to prevent exhausting the default asyncio
+# executor, which would block the web server and Telegram bot.
+_llm_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=20, thread_name_prefix="llm-call"
+)
+atexit.register(lambda: _llm_executor.shutdown(wait=False))
+
 def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
     return len(text) // 4
@@ -1389,9 +1396,12 @@ async def get_cached_llm_response_async(
 ) -> Optional[dict]:
     """
     Asynchronous wrapper for get_cached_llm_response.
-    Runs the blocking LLM call in a separate thread to avoid blocking the event loop.
+    Runs the blocking LLM call in a dedicated thread pool to avoid blocking
+    the event loop and exhausting the default executor.
     """
-    return await asyncio.to_thread(
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _llm_executor,
         get_cached_llm_response,
         prompt,
         system_prompt,

@@ -14,7 +14,7 @@ from src.config.settings import settings
 from src.database import get_ohlcv, get_recent_backtest_result, save_backtest_result, get_backtest_results_for_symbol
 from src.exchanges.fees import calculate_transaction_costs
 from src.indicators import compute_atr_series, compute_adx_series, compute_rsi_series, compute_macd_series
-from src.llm.cache import get_cached_llm_response
+from src.llm.cache import get_cached_llm_response, get_cached_llm_response_async
 from src.llm.backtest_prompts import build_final_decision_messages
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary, BacktestConfig
 from src.strategies.base import Signal
@@ -467,8 +467,7 @@ class BacktestManager:
         # Call LLM for Step 2
         try:
             step2_result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    get_cached_llm_response,
+                get_cached_llm_response_async(
                     "", "", 60,
                     model_type=strategy_model_type,
                     temperature=effective_temp,
@@ -500,8 +499,7 @@ class BacktestManager:
                 ]
                 try:
                     retry_result = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            get_cached_llm_response,
+                        get_cached_llm_response_async(
                             "", "", 30,
                             model_type="actuator",
                             temperature=effective_temp,
@@ -769,8 +767,7 @@ class BacktestManager:
 
         try:
             step2_result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    get_cached_llm_response,
+                get_cached_llm_response_async(
                     "", "", 60,
                     model_type=model_type,
                     temperature=temperature,
@@ -816,8 +813,7 @@ class BacktestManager:
             ]
             try:
                 retry_result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        get_cached_llm_response,
+                    get_cached_llm_response_async(
                         "", "", 30,
                         model_type="actuator",
                         temperature=temperature,
