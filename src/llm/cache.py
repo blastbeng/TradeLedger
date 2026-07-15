@@ -652,6 +652,7 @@ def _execute_fallback_call(
     add_cache_control: bool,
     thinking_enabled: bool,
     request_type: Optional[str],
+    provider: str = None,
 ) -> Tuple[str, dict, str, str, bool]:
     """Execute fallback LLM call if primary fails."""
     if not settings.LLM_FALLBACK_ENABLED:
@@ -662,11 +663,11 @@ def _execute_fallback_call(
         raise
 
     if model_type == "mind":
-        fallback_provider = settings.LLM_MIND_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+        fallback_provider = settings.LLM_MIND_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
     elif model_type == "weak":
-        fallback_provider = settings.LLM_WEAK_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+        fallback_provider = settings.LLM_WEAK_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
     else:
-        fallback_provider = settings.LLM_ACTUATOR_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+        fallback_provider = settings.LLM_ACTUATOR_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
 
     if not fallback_provider:
         logger.warning(
@@ -1056,7 +1057,7 @@ def get_cached_llm_response(
     # When market is closed (not in pre-market), use fallback models only to save tokens
     is_fallback = False
     if not _should_use_primary_model():
-        fb_provider, fb_model, fb_base_url, fb_api_key = _get_fallback_provider_config(model_type)
+        fb_provider, fb_model, fb_base_url, fb_api_key = _get_fallback_provider_config(model_type, provider)
         if fb_provider and fb_model:
             is_fallback = True
             logger.info("Market is closed - using fallback model only (provider=%s, model=%s, model_type=%s)", fb_provider, fb_model, model_type)
@@ -1099,7 +1100,7 @@ def get_cached_llm_response(
         )
     except Exception as e:
         response_text, usage, used_provider, used_model, is_fallback = _execute_fallback_call(
-            e, model_type, messages, prompt, system_prompt, temperature, effective_timeout, api_messages, add_cache_control, thinking_enabled, request_type
+            e, model_type, messages, prompt, system_prompt, temperature, effective_timeout, api_messages, add_cache_control, thinking_enabled, request_type, provider
         )
     if response_text is None:
         logger.warning("LLM returned None response; not caching.")
@@ -1335,17 +1336,18 @@ def _should_use_primary_model() -> bool:
         return True  # Default to primary if we can't determine market status
 
 
-def _get_fallback_provider_config(model_type: str):
+def _get_fallback_provider_config(model_type: str, provider: str = None):
     """Return (provider, model, base_url, api_key) for the fallback configuration.
 
     Returns (None, None, None, None) if no fallback is configured.
+    If no explicit fallback provider is configured, defaults to the primary provider.
     """
     if model_type == "mind":
-        fallback_provider = settings.LLM_MIND_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+        fallback_provider = settings.LLM_MIND_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
     elif model_type == "weak":
-        fallback_provider = settings.LLM_WEAK_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+        fallback_provider = settings.LLM_WEAK_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
     else:
-        fallback_provider = settings.LLM_ACTUATOR_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER
+        fallback_provider = settings.LLM_ACTUATOR_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
 
     if not fallback_provider:
         return (None, None, None, None)
