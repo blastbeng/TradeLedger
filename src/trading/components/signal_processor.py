@@ -111,7 +111,7 @@ class SignalProcessor:
         self.event_bus.subscribe("check_entry_condition_once", self.entry_signal_manager.check_entry_condition_once)
         self._skip_config_cache: Dict[str, float] = {}
         self._skip_config_cache_time: float = 0.0
-        self._skip_config_cache_ttl: float = 300.0  # 5 minutes
+        self._skip_config_cache_ttl: float = 60.0  # 1 minute
 
     @staticmethod
     def _parse_analysis_response(response: str) -> Optional[Dict[str, Any]]:
@@ -1503,7 +1503,7 @@ class SignalProcessor:
         return True
 
     async def _get_skip_eval_config(self) -> Dict[str, float]:
-        """Fetch LLM-driven skip thresholds from Redis, with a 5-minute cache."""
+        """Fetch LLM-driven skip thresholds from Redis, with a 1-minute cache."""
         engine = self.engine
         now = time.time()
         if now - self._skip_config_cache_time < self._skip_config_cache_ttl:
