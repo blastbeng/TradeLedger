@@ -163,6 +163,8 @@ def _get_g4f_response(
     client_kwargs = {}
     if settings.G4F_BASE_URL:
         client_kwargs["base_url"] = settings.G4F_BASE_URL
+    if settings.G4F_API_KEY:
+        client_kwargs["api_key"] = settings.G4F_API_KEY
 
     # Pass timeout to g4f Client constructor if supported
     if timeout is not None:

@@ -740,6 +740,7 @@ class Settings(BaseSettings):
 
     # G4F (gpt4free)
     G4F_BASE_URL: Optional[str] = None
+    G4F_API_KEY: Optional[str] = None
     # Note: g4f dynamically manages providers and models from code, so model names are not configured here.
     # Max input tokens for main models (defaults: 128K for mind/actuator, 64K for weak)
     G4F_MIND_MAX_INPUT_TOKENS: int = 128_000
