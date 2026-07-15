@@ -2359,7 +2359,7 @@
                 });
                 manualCell.appendChild(input);
                 
-                row.insertCell().textContent = s.candle_count || 0;
+                row.insertCell().textContent = s.candle_count > 0 ? s.candle_count : 'No data';
                 
                 const actionsCell = row.insertCell();
                 const clearBtn = document.createElement('button');
