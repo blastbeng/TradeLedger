@@ -368,19 +368,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     # --- Try Borsa Italiana first for symbols with known ISINs ---
     # Borsa Italiana is the primary source for Italian market quotes.
     # yfinance is only a fallback for symbols without an ISIN.
-    from src.database import get_isin_map_from_db
-    db_lookup_symbols = []
-    for sym in missing_symbols:
-        db_lookup_symbol = sym
-        if settings.TICKER_SUFFIX and db_lookup_symbol.endswith(settings.TICKER_SUFFIX):
-            db_lookup_symbol = db_lookup_symbol[:-len(settings.TICKER_SUFFIX)]
-        db_lookup_symbols.append(db_lookup_symbol)
-    
-    isin_map = get_isin_map_from_db(db_lookup_symbols)
-    
     # Attempt Borsa Italiana for ALL symbols (it resolves ISIN on-demand, BTPs use ISIN directly)
     bi_symbols = list(missing_symbols)
-    no_isin_symbols = []  # No longer needed — all symbols try Borsa Italiana first
 
     if bi_symbols:
         for sym in bi_symbols:
