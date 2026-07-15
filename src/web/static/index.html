@@ -575,23 +575,37 @@
                 </div>
             </div>
 
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top: 16px;">
-                <div>
-                    <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">⚠️ Model Failure Stats</h3>
-                    <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
-                        <table id="llm-failure-stats-table">
-                            <thead><tr><th>Model</th><th>Fails</th><th>Level</th><th>Blacklisted</th><th>TTL (s)</th></tr></thead>
-                            <tbody></tbody>
-                        </table>
+            <div class="card card-full">
+                <h2>🚨 Model Failures & Blacklist</h2>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+                    <div>
+                        <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">⚠️ Model Failure Stats</h3>
+                        <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
+                            <table id="llm-failure-stats-table">
+                                <thead><tr>
+                                    <th data-sort="model" data-type="string" style="cursor:pointer;">Model ↕</th>
+                                    <th data-sort="fail_count" data-type="number" style="cursor:pointer;">Fails ↕</th>
+                                    <th data-sort="blacklist_level" data-type="number" style="cursor:pointer;">Level ↕</th>
+                                    <th data-sort="blacklisted" data-type="boolean" style="cursor:pointer;">Blacklisted ↕</th>
+                                    <th data-sort="ttl_remaining" data-type="number" style="cursor:pointer;">TTL (s) ↕</th>
+                                </tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
                     </div>
-                </div>
-                <div>
-                    <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">⛔ Blacklist History</h3>
-                    <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
-                        <table id="llm-blacklist-table">
-                            <thead><tr><th>Model</th><th>Provider</th><th>Reason</th><th>Expires At</th></tr></thead>
-                            <tbody></tbody>
-                        </table>
+                    <div>
+                        <h3 style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:8px;">⛔ Blacklist History</h3>
+                        <div class="table-wrapper" style="max-height:200px; overflow-y:auto;">
+                            <table id="llm-blacklist-table">
+                                <thead><tr>
+                                    <th data-sort="model" data-type="string" style="cursor:pointer;">Model ↕</th>
+                                    <th data-sort="provider" data-type="string" style="cursor:pointer;">Provider ↕</th>
+                                    <th data-sort="reason" data-type="string" style="cursor:pointer;">Reason ↕</th>
+                                    <th data-sort="expires_at" data-type="date" style="cursor:pointer;">Expires At ↕</th>
+                                </tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -2291,6 +2305,118 @@
             }
         }
 
+        let lastLLMMetricsData = null;
+        let failureStatsSort = { key: 'fail_count', dir: 'desc', type: 'number' };
+        let blacklistSort = { key: 'expires_at', dir: 'asc', type: 'date' };
+
+        function sortData(arr, key, dir, type) {
+            return [...arr].sort((a, b) => {
+                let valA = a[key];
+                let valB = b[key];
+                if (type === 'number') {
+                    valA = Number(valA) || 0;
+                    valB = Number(valB) || 0;
+                    return dir === 'asc' ? valA - valB : valB - valA;
+                } else if (type === 'date') {
+                    valA = new Date(valA).getTime() || 0;
+                    valB = new Date(valB).getTime() || 0;
+                    return dir === 'asc' ? valA - valB : valB - valA;
+                } else if (type === 'boolean') {
+                    valA = valA ? 1 : 0;
+                    valB = valB ? 1 : 0;
+                    return dir === 'asc' ? valA - valB : valB - valA;
+                } else {
+                    return dir === 'asc' ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
+                }
+            });
+        }
+
+        function renderFailureAndBlacklist(data) {
+            // Failure Stats
+            const failureBody = document.querySelector('#llm-failure-stats-table tbody');
+            failureBody.innerHTML = '';
+            if (data.failure_stats && data.failure_stats.length > 0) {
+                const sorted = sortData(data.failure_stats, failureStatsSort.key, failureStatsSort.dir, failureStatsSort.type);
+                sorted.forEach(s => {
+                    const row = failureBody.insertRow();
+                    row.insertCell().textContent = s.model;
+                    row.insertCell().textContent = s.fail_count;
+                    row.insertCell().textContent = s.blacklist_level;
+                    const blCell = row.insertCell();
+                    blCell.textContent = s.blacklisted ? 'Yes' : 'No';
+                    blCell.className = s.blacklisted ? 'red' : '';
+                    row.insertCell().textContent = s.ttl_remaining > 0 ? s.ttl_remaining : '—';
+                });
+            } else {
+                const row = failureBody.insertRow();
+                const cell = row.insertCell();
+                cell.colSpan = 5;
+                cell.textContent = 'No active failures';
+                cell.style.textAlign = 'center';
+                cell.style.color = 'var(--text-secondary)';
+            }
+
+            // Blacklist History
+            const blacklistBody = document.querySelector('#llm-blacklist-table tbody');
+            blacklistBody.innerHTML = '';
+            if (data.blacklisted_models && data.blacklisted_models.length > 0) {
+                const sorted = sortData(data.blacklisted_models, blacklistSort.key, blacklistSort.dir, blacklistSort.type);
+                sorted.forEach(b => {
+                    const row = blacklistBody.insertRow();
+                    row.insertCell().textContent = b.model;
+                    row.insertCell().textContent = b.provider;
+                    row.insertCell().textContent = b.reason ? b.reason.substring(0, 50) : '';
+                    const expCell = row.insertCell();
+                    try {
+                        const expDate = new Date(b.expires_at).toLocaleString();
+                        expCell.textContent = expDate;
+                        if (new Date(b.expires_at) < new Date()) {
+                            expCell.style.color = 'var(--text-secondary)';
+                        } else {
+                            expCell.style.color = 'var(--red)';
+                        }
+                    } catch {
+                        expCell.textContent = b.expires_at;
+                    }
+                });
+            } else {
+                const row = blacklistBody.insertRow();
+                const cell = row.insertCell();
+                cell.colSpan = 4;
+                cell.textContent = 'No blacklisted models';
+                cell.style.textAlign = 'center';
+                cell.style.color = 'var(--text-secondary)';
+            }
+        }
+
+        document.querySelectorAll('#llm-failure-stats-table th, #llm-blacklist-table th').forEach(th => {
+            th.addEventListener('click', () => {
+                const tableId = th.closest('table').id;
+                const key = th.dataset.sort;
+                const type = th.dataset.type;
+                if (tableId === 'llm-failure-stats-table') {
+                    if (failureStatsSort.key === key) {
+                        failureStatsSort.dir = failureStatsSort.dir === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        failureStatsSort.key = key;
+                        failureStatsSort.dir = 'asc';
+                        failureStatsSort.type = type;
+                    }
+                } else if (tableId === 'llm-blacklist-table') {
+                    if (blacklistSort.key === key) {
+                        blacklistSort.dir = blacklistSort.dir === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        blacklistSort.key = key;
+                        blacklistSort.dir = 'asc';
+                        blacklistSort.type = type;
+                    }
+                }
+                if (lastLLMMetricsData) {
+                    renderFailureAndBlacklist(lastLLMMetricsData);
+                }
+            });
+        });
+
         async function fetchLLMMetrics() {
             try {
                 const resp = await fetch(`/api/llm-metrics?model_filter=${llmModelFilter}`);
@@ -2406,60 +2532,8 @@
                     cell.style.color = 'var(--text-secondary)';
                 }
 
-        // Failure Stats
-        const failureBody = document.querySelector('#llm-failure-stats-table tbody');
-        failureBody.innerHTML = '';
-        if (data.failure_stats && data.failure_stats.length > 0) {
-            data.failure_stats.forEach(s => {
-                const row = failureBody.insertRow();
-                row.insertCell().textContent = s.model;
-                row.insertCell().textContent = s.fail_count;
-                row.insertCell().textContent = s.blacklist_level;
-                const blCell = row.insertCell();
-                blCell.textContent = s.blacklisted ? 'Yes' : 'No';
-                blCell.className = s.blacklisted ? 'red' : '';
-                row.insertCell().textContent = s.ttl_remaining > 0 ? s.ttl_remaining : '—';
-            });
-        } else {
-            const row = failureBody.insertRow();
-            const cell = row.insertCell();
-            cell.colSpan = 5;
-            cell.textContent = 'No active failures';
-            cell.style.textAlign = 'center';
-            cell.style.color = 'var(--text-secondary)';
-        }
-
-        // Blacklist History
-        const blacklistBody = document.querySelector('#llm-blacklist-table tbody');
-        blacklistBody.innerHTML = '';
-        if (data.blacklisted_models && data.blacklisted_models.length > 0) {
-            data.blacklisted_models.forEach(b => {
-                const row = blacklistBody.insertRow();
-                row.insertCell().textContent = b.model;
-                row.insertCell().textContent = b.provider;
-                row.insertCell().textContent = b.reason ? b.reason.substring(0, 50) : '';
-                const expCell = row.insertCell();
-                try {
-                    const expDate = new Date(b.expires_at).toLocaleString();
-                    expCell.textContent = expDate;
-                    // Check if expired
-                    if (new Date(b.expires_at) < new Date()) {
-                        expCell.style.color = 'var(--text-secondary)';
-                    } else {
-                        expCell.style.color = 'var(--red)';
-                    }
-                } catch {
-                    expCell.textContent = b.expires_at;
-                }
-            });
-        } else {
-            const row = blacklistBody.insertRow();
-            const cell = row.insertCell();
-            cell.colSpan = 4;
-            cell.textContent = 'No blacklisted models';
-            cell.style.textAlign = 'center';
-            cell.style.color = 'var(--text-secondary)';
-        }
+        lastLLMMetricsData = data;
+        renderFailureAndBlacklist(data);
 
                 // Fetch timeseries and render chart
                 await fetchLLMMetricsChart();
