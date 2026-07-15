@@ -704,7 +704,7 @@ class Settings(BaseSettings):
 
     # Ollama
     OLLAMA_BASE_URL: Optional[str] = None
-    OLLAMA_MODEL: Optional[str] = None
+    OLLAMA_MODEL: Annotated[list[str], NoDecode] = []
     OLLAMA_API_KEY: Optional[str] = None
 
     # LLM Provider selection
@@ -713,15 +713,15 @@ class Settings(BaseSettings):
     # OpenAI-compatible API
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_BASE_URL: Optional[str] = None
-    OPENAI_MODEL: Optional[str] = None
+    OPENAI_MODEL: Annotated[list[str], NoDecode] = []
 
     # Mind model (complex reasoning: symbol selection, strategy generation)
-    OLLAMA_MIND_MODEL: Optional[str] = None
-    OPENAI_MIND_MODEL: Optional[str] = None
+    OLLAMA_MIND_MODEL: Annotated[list[str], NoDecode] = []
+    OPENAI_MIND_MODEL: Annotated[list[str], NoDecode] = []
 
     # Actuator model (fast, time‑critical decisions: stop‑loss/take‑profit reviews, corrections)
-    OLLAMA_ACTUATOR_MODEL: Optional[str] = None
-    OPENAI_ACTUATOR_MODEL: Optional[str] = None
+    OLLAMA_ACTUATOR_MODEL: Annotated[list[str], NoDecode] = []
+    OPENAI_ACTUATOR_MODEL: Annotated[list[str], NoDecode] = []
 
     # Per‑role provider overrides (empty = use global LLM_PROVIDER)
     LLM_MIND_PROVIDER: str = ""
