@@ -87,7 +87,11 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     # Check DB first (not Redis)
     cached = get_isin_from_db(db_symbol)
     if cached:
-        return cached
+        # If strict country filter is enabled, ignore cached ISINs that don't match the target country
+        if settings.COUNTRY_FILTER_STRICT and not cached.startswith(settings.TARGET_COUNTRY):
+            logger.debug(f"DB has non-target ISIN {cached} for {db_symbol}, ignoring and re-fetching.")
+        else:
+            return cached
 
     isin = None
     # If yfinance circuit is open, we can't fetch the ISIN from yfinance.
@@ -99,6 +103,9 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
             if isin:
                 isin = isin.strip()
                 if isin == '-' or not isin:
+                    isin = None
+                elif settings.COUNTRY_FILTER_STRICT and not isin.startswith(settings.TARGET_COUNTRY):
+                    logger.debug(f"yfinance returned non-target ISIN {isin} for {base_symbol}, discarding.")
                     isin = None
         except (RuntimeError, ValueError, KeyError, AttributeError, OSError) as e:
             logger.debug(f"Failed to fetch ISIN for {base_symbol} from yfinance: {e}")
