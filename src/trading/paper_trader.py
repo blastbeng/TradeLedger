@@ -292,7 +292,22 @@ class PaperTrader:
         with self._lock:
             if order.side == "buy":
                 # amount is in quote currency
-                base_amount = order.amount / fill_price
+                requested_base_amount = order.amount / fill_price
+            else:
+                # amount is in base currency
+                requested_base_amount = order.amount
+
+            # Check for volume-based partial fill
+            max_vol = self._get_max_fillable_volume(order.symbol)
+            is_partial = False
+            if max_vol is not None and requested_base_amount > max_vol:
+                logger.info(f"Partial fill for {order.symbol}: requested {requested_base_amount}, capped to {max_vol}")
+                base_amount = max_vol
+                is_partial = True
+            else:
+                base_amount = requested_base_amount
+
+            if order.side == "buy":
                 costs = calculate_transaction_costs("BUY", fill_price, base_amount, symbol=order.symbol)
                 total_cost = costs["net_value"]
                 fee_cost = costs["total_costs"]
@@ -309,10 +324,7 @@ class PaperTrader:
 
                 self._balances[quote] = quote_balance - total_cost
                 self._balances[base] = self._balances.get(base, 0.0) + base_amount
-                order.filled_qty = base_amount
             else:
-                # amount is in base currency
-                base_amount = order.amount
                 base_balance = self._balances.get(base, 0.0)
                 if base_amount > base_balance:
                     order.status = "rejected"
@@ -329,16 +341,26 @@ class PaperTrader:
 
                 self._balances[base] = base_balance - base_amount
                 self._balances[quote] = self._balances.get(quote, 0.0) + net_quote
-                order.filled_qty = base_amount
 
             order.filled_avg_price = fill_price
-            order.status = "filled"
+            if is_partial:
+                # Reduce remaining amount; keep order open for next poll
+                if order.side == "buy":
+                    order.amount -= base_amount * fill_price
+                else:
+                    order.amount -= base_amount
+                order.filled_qty = (order.filled_qty or 0.0) + base_amount
+                order.status = "open"
+            else:
+                order.filled_qty = (order.filled_qty or 0.0) + base_amount
+                order.status = "filled"
             self._balances_dirty = True
             self._save_orders()
             self._save_balances()
+        fill_status = "partially filled" if is_partial else "filled"
         logger.info(
-            f"Paper order filled: {order.side} {order.symbol} "
-            f"qty={order.filled_qty:.6f} @ {fill_price:.4f}"
+            f"Paper order {fill_status}: {order.side} {order.symbol} "
+            f"qty={base_amount:.6f} @ {fill_price:.4f}"
         )
 
     # ------------------------------------------------------------------
