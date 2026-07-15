@@ -2249,6 +2249,19 @@ def get_isin_from_db(symbol: str) -> Optional[str]:
         conn.close()
 
 
+def get_manual_isin_from_db(symbol: str) -> Optional[str]:
+    """Return the manual ISIN for a symbol from the database, or None if not found."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql("SELECT manual_isin FROM discovered_symbols WHERE symbol = %s")
+        row = conn.execute(sql, (symbol,)).fetchone()
+        if row and row["manual_isin"] and row["manual_isin"].strip():
+            return row["manual_isin"]
+        return None
+    finally:
+        conn.close()
+
+
 @retry_on_db_lock()
 def update_manual_isin(symbol: str, isin: Optional[str]):
     """Update or clear the manual ISIN for a discovered symbol."""

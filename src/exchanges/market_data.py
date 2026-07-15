@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
 from src.utils.btp_policy import BTPPolicy
-from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close_prices
+from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close_prices, get_isin_from_db, get_manual_isin_from_db
 from src.exchanges.proxy_utils import DynamicProxyRotator, _dynamic_rotator, _get_proxies
 from src.exchanges.borsa_italiana_utils import (
     _check_bi_circuit,
@@ -105,7 +105,7 @@ _get_quotes_lock = threading.Lock()
 
 def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     """Fetch the ISIN code for a symbol, using DB first, then yfinance as fallback."""
-    from src.database import get_isin_from_db, save_discovered_symbol
+    from src.database import save_discovered_symbol
 
     # Strip suffix for DB lookup (DB stores base symbols without suffix)
     suffix = settings.TICKER_SUFFIX
@@ -113,7 +113,12 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     if suffix and db_symbol.endswith(suffix):
         db_symbol = db_symbol[:-len(suffix)]
 
-    # Check DB first (not Redis)
+    # Manual ISINs take absolute precedence and bypass country filters
+    manual_isin = get_manual_isin_from_db(db_symbol)
+    if manual_isin:
+        return manual_isin
+
+    # Check DB next (auto ISIN)
     cached = get_isin_from_db(db_symbol)
     if cached:
         # If strict country filter is enabled, ignore cached ISINs that don't match the target country
@@ -413,7 +418,13 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     if bi_symbols and not _check_bi_circuit():
         for sym in bi_symbols:
             try:
-                bi_quote = get_borsa_italiana_quote(sym)
+                db_sym = sym
+                suffix = settings.TICKER_SUFFIX
+                if suffix and db_sym.endswith(suffix):
+                    db_sym = db_sym[:-len(suffix)]
+                isin = get_isin_from_db(db_sym)
+                bi_symbol = isin if isin else sym
+                bi_quote = get_borsa_italiana_quote(bi_symbol)
                 if bi_quote and bi_quote.get("last") is not None:
                     result.setdefault(sym, {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}).update(bi_quote)
                     result[sym]["last_update"] = int(time.time() * 1000)
@@ -727,7 +738,7 @@ def get_multi_timeframe_bars(
         borsa_candles = None
         if has_isin and not _check_bi_circuit():
             try:
-                borsa_candles = get_borsa_italiana_candles(symbol, tf, limit=limit)
+                borsa_candles = get_borsa_italiana_candles(db_isin, tf, limit=limit)
             except Exception as e:
                 logger.warning(f"Borsa Italiana candles failed for {symbol} {tf}: {type(e).__name__}: {e}")
                 borsa_candles = None
@@ -878,7 +889,7 @@ def get_bars_range(
     borsa_candles = None
     if has_isin and not _check_bi_circuit():
         try:
-            borsa_candles = get_borsa_italiana_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
+            borsa_candles = get_borsa_italiana_candles(db_isin, timeframe, limit=limit, start_ms=start_ms)
         except Exception as e:
             logger.warning(f"Borsa Italiana candles failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
             borsa_candles = None
