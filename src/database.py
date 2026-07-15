@@ -581,12 +581,39 @@ def _get_init_statements() -> List[str]:
     return statements
 
 
+def _table_exists(conn, table_name: str) -> bool:
+    """Check if a table exists in the database."""
+    if _backend == "postgresql":
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = %s)",
+            (table_name,)
+        )
+        return cur.fetchone()[0]
+    else:
+        cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+        return cur.fetchone() is not None
+
+def _flush_redis_cache():
+    """Flush the entire Redis cache for the current database."""
+    try:
+        redis_client = get_redis_client()
+        redis_client.flushdb()
+        logger.info("Redis cache invalidated due to empty or newly created database.")
+    except Exception as e:
+        logger.warning(f"Failed to flush Redis cache: {type(e).__name__}: {e}")
+
 def init_db():
     """Create tables if they don't exist, then run migrations."""
     conn = get_connection()
+    is_new_db = False
     try:
         if _backend == "postgresql":
             conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+        
+        # Check if the database is empty or not yet created
+        if not _table_exists(conn, "trading_state"):
+            is_new_db = True
         
         statements = _get_init_statements()
         for stmt in statements:
@@ -594,6 +621,10 @@ def init_db():
         conn.commit()
     finally:
         conn.close()
+    
+    if is_new_db:
+        _flush_redis_cache()
+        
     _migrate_db()
     backfill_latest_close_prices()
 
