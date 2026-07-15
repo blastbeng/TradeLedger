@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import copy
 import logging
 import queue
@@ -187,6 +188,11 @@ def _validate_startup_settings():
         sys.exit(1)
 
 async def main():
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(
+        concurrent.futures.ThreadPoolExecutor(max_workers=100, thread_name_prefix="async-default")
+    )
+
     init_db()
     from src.llm.cache import _sync_blacklist_from_db
     _sync_blacklist_from_db()

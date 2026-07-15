@@ -4,6 +4,8 @@ Handles running backtests and the Step 2 LLM call to produce the final signal.
 Extracted from TradingEngine to reduce class size and improve maintainability.
 """
 import asyncio
+import concurrent.futures
+import atexit
 import hashlib
 import json
 import logging
@@ -11,6 +13,13 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
+
+# Dedicated thread pool for backtesting to prevent CPU-intensive tasks
+# from exhausting the default asyncio executor.
+_backtest_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=10, thread_name_prefix="backtest"
+)
+atexit.register(lambda: _backtest_executor.shutdown(wait=False))
 from src.database import get_ohlcv, get_recent_backtest_result, save_backtest_result, get_backtest_results_for_symbol
 from src.exchanges.fees import calculate_transaction_costs
 from src.indicators import compute_atr_series, compute_adx_series, compute_rsi_series, compute_macd_series
@@ -119,8 +128,10 @@ class BacktestManager:
             bt_period_days = max(30, min(int(bt_period_days), settings.OHLCV_RETENTION_DAYS))
             bt_since_ms = int(time.time() * 1000) - bt_period_days * 24 * 60 * 60 * 1000
             bt_limit = int((bt_period_days * 86400) / tf_secs) + 100
-            bt_db_candles = await asyncio.to_thread(
-                get_ohlcv, symbol, assigned_tf, since_ms=bt_since_ms, limit=bt_limit
+            loop = asyncio.get_running_loop()
+            bt_db_candles = await loop.run_in_executor(
+                _backtest_executor,
+                lambda: get_ohlcv(symbol, assigned_tf, since_ms=bt_since_ms, limit=bt_limit)
             )
             if bt_db_candles:
                 bt_candles = [
@@ -184,7 +195,10 @@ class BacktestManager:
                     pass
                 return _atr_series, _adx_series, _rsi_series, _macd_hist_series
 
-            atr_series, adx_series, rsi_series, macd_hist_series = await asyncio.to_thread(_compute_bt_indicator_series)
+            loop = asyncio.get_running_loop()
+            atr_series, adx_series, rsi_series, macd_hist_series = await loop.run_in_executor(
+                _backtest_executor, _compute_bt_indicator_series
+            )
 
         # Fetch LLM-configured thresholds for backtest filters
         bt_max_rsi = 70.0
@@ -259,10 +273,10 @@ class BacktestManager:
                 on_gaps="warn",
                 timeframe_seconds=tf_secs,
             )
-            backtest_stats = await asyncio.to_thread(
-                backtest_strategy,
-                candles=bt_candles,
-                config=bt_config,
+            loop = asyncio.get_running_loop()
+            backtest_stats = await loop.run_in_executor(
+                _backtest_executor,
+                lambda: backtest_strategy(candles=bt_candles, config=bt_config)
             )
             backtest_stats["actual_timeframe"] = assigned_tf
             backtest_stats["assigned_timeframe"] = assigned_tf
@@ -270,11 +284,10 @@ class BacktestManager:
             bt_summary = format_backtest_summary(backtest_stats, entry_config_used=bt_entry_config_used)
 
             if len(bt_candles) >= settings.WALK_FORWARD_CANDLE_THRESHOLD:
-                wf_stats = await asyncio.to_thread(
-                    walk_forward_backtest,
-                    candles=bt_candles,
-                    num_windows=5,
-                    config=bt_config,
+                loop = asyncio.get_running_loop()
+                wf_stats = await loop.run_in_executor(
+                    _backtest_executor,
+                    lambda: walk_forward_backtest(candles=bt_candles, num_windows=5, config=bt_config)
                 )
                 bt_summary = bt_summary + "\n" + format_walk_forward_summary(wf_stats)
 
@@ -309,8 +322,10 @@ class BacktestManager:
 
         # Check database for a recent identical backtest (dedup within 6 hours)
         try:
-            recent = await asyncio.to_thread(
-                get_recent_backtest_result, symbol, assigned_tf, params_hash, 21600
+            loop = asyncio.get_running_loop()
+            recent = await loop.run_in_executor(
+                _backtest_executor,
+                lambda: get_recent_backtest_result(symbol, assigned_tf, params_hash, 21600)
             )
             if recent:
                 logger.debug(f"Backtest DB cache hit for {symbol} {assigned_tf} (params_hash={params_hash})")
@@ -342,9 +357,11 @@ class BacktestManager:
         # Persist the result to the database
         if bt_stats is not None:
             try:
-                await asyncio.to_thread(
-                    save_backtest_result, symbol, assigned_tf, params_hash,
-                    variant_params, bt_stats, bt_summary
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    _backtest_executor,
+                    lambda: save_backtest_result(symbol, assigned_tf, params_hash,
+                        variant_params, bt_stats, bt_summary)
                 )
             except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Failed to persist backtest result to DB for {symbol}: {type(e).__name__}: {e}")
@@ -419,7 +436,10 @@ class BacktestManager:
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
         cb_active = False
         try:
-            cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
+            loop = asyncio.get_running_loop()
+            cb_raw = await loop.run_in_executor(
+                _backtest_executor, lambda: engine.redis.get("llm:circuit_breaker")
+            )
             if cb_raw:
                 cb_data = json.loads(cb_raw)
                 if time.time() < cb_data.get("active_until", 0):
@@ -437,8 +457,10 @@ class BacktestManager:
 
         # Build Step 2 prompt with ALL backtest results
         total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
-        historical_bt_results = await asyncio.to_thread(
-            get_backtest_results_for_symbol, symbol, assigned_tf, 10
+        loop = asyncio.get_running_loop()
+        historical_bt_results = await loop.run_in_executor(
+            _backtest_executor,
+            lambda: get_backtest_results_for_symbol(symbol, assigned_tf, 10)
         )
         step2_messages = build_final_decision_messages(
             symbol=symbol,
@@ -727,7 +749,10 @@ class BacktestManager:
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
         cb_active = False
         try:
-            cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
+            loop = asyncio.get_running_loop()
+            cb_raw = await loop.run_in_executor(
+                _backtest_executor, lambda: engine.redis.get("llm:circuit_breaker")
+            )
             if cb_raw:
                 cb_data = json.loads(cb_raw)
                 if time.time() < cb_data.get("active_until", 0):
