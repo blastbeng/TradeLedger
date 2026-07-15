@@ -719,15 +719,47 @@ class SignalProcessor:
             return None
 
         atr_percentile_key = f"atr_percentile:{symbol}"
+        ttl = 7 * 24 * 3600
+        max_len = 100
+
+        # Lua script to atomically append, trim, and save the ATR history.
+        lua_script = """
+        local key = KEYS[1]
+        local new_atr = tonumber(ARGV[1])
+        local ttl = tonumber(ARGV[2])
+        local max_len = tonumber(ARGV[3])
+
+        local raw = redis.call('GET', key)
+        local history = {}
+        if raw then
+            history = cjson.decode(raw)
+        end
+
+        table.insert(history, new_atr)
+
+        local start_idx = #history - max_len + 1
+        if start_idx < 1 then start_idx = 1 end
+        local trimmed = {}
+        for i = start_idx, #history do
+            table.insert(trimmed, history[i])
+        end
+
+        redis.call('SETEX', key, ttl, cjson.encode(trimmed))
+
+        return cjson.encode(trimmed)
+        """
+
         try:
-            stored_atr = await asyncio.to_thread(engine.redis.get, atr_percentile_key)
-            if stored_atr:
-                atr_history = json.loads(stored_atr)
-            else:
-                atr_history = []
-            atr_history.append(atr)
-            atr_history = atr_history[-100:]
-            await asyncio.to_thread(engine.redis.setex, atr_percentile_key, 7 * 24 * 3600, json.dumps(atr_history))
+            result = await asyncio.to_thread(
+                engine.redis.eval,
+                lua_script,
+                1,
+                atr_percentile_key,
+                str(atr),
+                str(ttl),
+                str(max_len)
+            )
+            atr_history = json.loads(result)
             if len(atr_history) >= 5:
                 sorted_atr = sorted(atr_history)
                 rank = sum(1 for v in sorted_atr if v <= atr)
