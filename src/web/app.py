@@ -563,7 +563,7 @@ async def get_manual_trades():
 async def discovered_symbols_api():
     """Return all discovered symbols for frontend autocomplete."""
     symbols = await run_in_threadpool(get_all_discovered_symbols)
-    return [{"symbol": s.get("symbol"), "name": s.get("name", ""), "isin": s.get("isin"), "manual_isin": s.get("manual_isin")} for s in symbols]
+    return [{"symbol": s.get("symbol"), "name": s.get("name", ""), "isin": s.get("isin"), "manual_isin": s.get("manual_isin"), "asset_type": s.get("asset_type"), "country": s.get("country")} for s in symbols]
 
 @http_router.post("/api/update-isin", dependencies=[Depends(verify_csrf)])
 async def update_isin(req: UpdateISINRequest):
