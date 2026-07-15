@@ -346,7 +346,6 @@
             </div>
         </div>
         <div class="header-right">
-            <span id="model-badge" style="background: #a371f7; color: #fff; padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">...</span>
             <button id="btn-logout" title="Logout" style="background: none; border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; margin-right: 8px;">
                 Logout
             </button>
@@ -2195,13 +2194,6 @@
                     } else {
                         badge.style.background = '#3fb950'; // green for paper
                     }
-                }
-                const modelBadge = document.getElementById('model-badge');
-                if (modelBadge && config.llm_mind_model) {
-                    const mindProvider = config.llm_mind_provider || 'unknown';
-                    const actuatorProvider = config.llm_actuator_provider || 'unknown';
-                    const weakProvider = config.llm_weak_provider || 'unknown';
-                    modelBadge.textContent = `🧠 ${mindProvider.toUpperCase()} Mind: ${config.llm_mind_model} | ${actuatorProvider.toUpperCase()} Actuator: ${config.llm_actuator_model} | ${weakProvider.toUpperCase()} Weak: ${config.llm_weak_model}`;
                 }
             })
             .catch(() => {
