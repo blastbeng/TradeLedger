@@ -1,6 +1,7 @@
 import logging
 import time
 import random
+import re
 import threading
 from typing import Optional, List, Dict, Callable
 
@@ -16,44 +17,62 @@ _G4F_CACHE_TTL = 3600  # 1 hour
 # Keyword heuristics for categorizing models into tiers.
 # Checked in order: mind first, then weak, then actuator (fallback).
 _MIND_KEYWORDS = (
-    "o1", "o3", "o1-pro", "o3-pro",
+    "o1", "o3", "o1-pro", "o3-pro", "o4-mini",
     "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-5",
     "claude-3.5-sonnet", "claude-3.7-sonnet", "claude-3-opus",
+    "claude-sonnet-4", "claude-opus-4", "claude-opus-4.6", "claude-opus-4.7", "claude-opus-4-8",
     "deepseek-r1", "deepseek-v3", "deepseek-v4-pro", "deepseek-v3-pro", "deepseek-r1-pro", "deepseek-pro",
-    "gemini-2", "gemini-2.5-pro", "gemini-pro",
-    "qwen-max", "qwen-3",
+    "gemini-2", "gemini-2.5-pro", "gemini-pro", "gemini-3.1-pro", "gemini-3-pro",
+    "qwen-max", "qwen-3", "qwen-2.5-72b", "qwen-2-72b", "qwen-3-235b", "qwen-3.5-397b", "qwen-3-coder-480b",
     "llama-3.3-70b", "llama-3.1-405b", "llama-4",
-    "mistral-large", "mixtral-8x22b",
-    "grok-2", "grok-3",
-    "command-r-plus", "dbrx",
+    "mistral-large", "mixtral-8x22b", "mistral-large-3",
+    "grok-2", "grok-3", "grok-4",
+    "command-r-plus", "command-a",
+    "kimi-k2", "minimax-m3", "glm-5", "glm-4.6", "glm-4.7",
+    "nemotron-253b", "nemotron-3-ultra", "cogito-v2.1-671b",
 )
 _ACTUATOR_KEYWORDS = (
-    "mini", "haiku", "flash", "70b", "72b", "34b", "32b", "mixtral-8x7b", "gpt-4", "gpt-3.5", 
+    "mixtral-8x7b", "gpt-4", "gpt-3.5", 
     "claude-3", "gemini-1.5", "llama-3.1", "llama-3.2", "llama-3.3", 
     "mistral", "qwen", "deepseek-v2", "deepseek-v4-flash", "deepseek-coder", "grok", "command-r", "mixtral",
-    "yi-34b", "zephyr", "starling", "openhermes", "dolphin", "vicuna", "orca", "solar-pro", "code-llama"
+    "yi-34b", "zephyr", "starling", "openhermes", "dolphin", "vicuna", "orca", "solar-pro", "code-llama",
+    "kimi", "minimax", "glm", "sonnet", "opus", # fallback for claude if not caught by mind
 )
 _WEAK_KEYWORDS = (
-    "1b", "2b", "3b", "6b", "7b", "8b", "9b", "11b", "13b", "14b", "3.5-turbo", "small", "nano", "tiny", "gpt-3", 
+    "3.5-turbo", "small", "nano", "tiny", "gpt-3", 
     "mistral-7b", "qwen-turbo", "deepseek-chat", "gemma", "phi", "solar", "tinyllama", "falcon-7b", "falcon-1b",
-    "stablelm", "redpajama", "qwen-1.5b", "qwen-1.8b", "qwen-7b", "openchat", "wizardlm"
+    "stablelm", "redpajama", "qwen-1.5b", "qwen-1.8b", "qwen-7b", "openchat", "wizardlm", "haiku-4-5"
 )
 
 def _categorize_model(model_name: str) -> Optional[str]:
     """Categorize a model name into 'mind', 'actuator', or 'weak' using keyword heuristics."""
     name_lower = model_name.lower()
     
-    # 1. Check weak first for smaller models (e.g., 7b, 8b, gpt-3.5-turbo)
+    # 1. Check for mini/flash/haiku first to prevent e.g. "gpt-4o-mini" matching "gpt-4o"
+    if any(kw in name_lower for kw in ("mini", "haiku", "flash")):
+        return "actuator"
+        
+    # 2. Check weak keywords (non-sizes)
     if any(kw in name_lower for kw in _WEAK_KEYWORDS):
         return "weak"
-    
-    # 2. Check actuator second for big but flash models (e.g., mini, haiku, flash, 70b)
-    # This prevents "gpt-4o-mini" from being caught by the "gpt-4o" mind keyword.
+        
+    # 3. Check mind keywords
+    if any(kw in name_lower for kw in _MIND_KEYWORDS):
+        return "mind"
+        
+    # 4. Check actuator keywords (non-sizes)
     if any(kw in name_lower for kw in _ACTUATOR_KEYWORDS):
         return "actuator"
-    
-    # 3. Check mind third for huge reasoning models
-    if any(kw in name_lower for kw in _MIND_KEYWORDS):
+        
+    # 5. Check sizes using exact word boundaries to avoid false positives (e.g. "27b" matching "7b")
+    # Weak sizes
+    if re.search(r'\b(1b|2b|3b|6b|7b|8b|9b|11b|13b|14b)\b', name_lower):
+        return "weak"
+    # Actuator sizes
+    if re.search(r'\b(27b|30b|32b|34b|49b|70b|72b|104b)\b', name_lower):
+        return "actuator"
+    # Mind sizes (huge models)
+    if re.search(r'\b(120b|235b|253b|397b|405b|480b|550b|671b|675b)\b', name_lower):
         return "mind"
     
     # Default to actuator for unknown models, but log it for visibility
