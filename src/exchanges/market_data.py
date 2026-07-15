@@ -761,17 +761,31 @@ def get_multi_timeframe_bars(
 
         # Try Alpha Vantage if yfinance returned nothing
         av_candles = None
-        if not yf_candles:
-            av_candles = get_alphavantage_candles(symbol, tf, limit=limit)
-            if av_candles:
-                logger.debug(f"Alpha Vantage provided candles for {symbol} {tf}")
+        if not yf_candles and not _av_circuit_breaker.is_open():
+            try:
+                av_candles = get_alphavantage_candles(symbol, tf, limit=limit)
+                if av_candles:
+                    logger.debug(f"Alpha Vantage provided candles for {symbol} {tf}")
+                    _av_circuit_breaker.record_success()
+                else:
+                    _av_circuit_breaker.record_failure()
+            except Exception as e:
+                logger.warning(f"Alpha Vantage candles failed for {symbol} {tf}: {type(e).__name__}: {e}")
+                _av_circuit_breaker.record_failure()
 
         # Try IEX Cloud if both yfinance and Alpha Vantage returned nothing
         iex_candles = None
-        if not yf_candles and not av_candles:
-            iex_candles = get_iex_candles(symbol, tf, limit=limit)
-            if iex_candles:
-                logger.debug(f"IEX Cloud provided candles for {symbol} {tf}")
+        if not yf_candles and not av_candles and not _iex_circuit_breaker.is_open():
+            try:
+                iex_candles = get_iex_candles(symbol, tf, limit=limit)
+                if iex_candles:
+                    logger.debug(f"IEX Cloud provided candles for {symbol} {tf}")
+                    _iex_circuit_breaker.record_success()
+                else:
+                    _iex_circuit_breaker.record_failure()
+            except Exception as e:
+                logger.warning(f"IEX Cloud candles failed for {symbol} {tf}: {type(e).__name__}: {e}")
+                _iex_circuit_breaker.record_failure()
 
         # Merge all sources (borsa > yf > av > iex precedence by timestamp)
         merged = _merge_candles(borsa_candles, yf_candles)
@@ -885,17 +899,31 @@ def get_bars_range(
 
     # Try Alpha Vantage if yfinance returned nothing
     av_candles = None
-    if not yf_candles:
-        av_candles = get_alphavantage_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
-        if av_candles:
-            logger.debug(f"Alpha Vantage provided candles for {symbol} {timeframe}")
+    if not yf_candles and not _av_circuit_breaker.is_open():
+        try:
+            av_candles = get_alphavantage_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
+            if av_candles:
+                logger.debug(f"Alpha Vantage provided candles for {symbol} {timeframe}")
+                _av_circuit_breaker.record_success()
+            else:
+                _av_circuit_breaker.record_failure()
+        except Exception as e:
+            logger.warning(f"Alpha Vantage candles failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
+            _av_circuit_breaker.record_failure()
 
     # Try IEX Cloud if both yfinance and Alpha Vantage returned nothing
     iex_candles = None
-    if not yf_candles and not av_candles:
-        iex_candles = get_iex_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
-        if iex_candles:
-            logger.debug(f"IEX Cloud provided candles for {symbol} {timeframe}")
+    if not yf_candles and not av_candles and not _iex_circuit_breaker.is_open():
+        try:
+            iex_candles = get_iex_candles(symbol, timeframe, limit=limit, start_ms=start_ms)
+            if iex_candles:
+                logger.debug(f"IEX Cloud provided candles for {symbol} {timeframe}")
+                _iex_circuit_breaker.record_success()
+            else:
+                _iex_circuit_breaker.record_failure()
+        except Exception as e:
+            logger.warning(f"IEX Cloud candles failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
+            _iex_circuit_breaker.record_failure()
 
     # Merge all sources (borsa > yf > av > iex precedence by timestamp)
     merged = _merge_candles(borsa_candles, yf_candles)
