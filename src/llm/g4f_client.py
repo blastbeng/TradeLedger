@@ -170,9 +170,15 @@ def _get_g4f_response(
         dynamic_providers = [OpenaiChat, Gemini, Bing, Phind, FreeChatgpt, Liaobots, Blackbox]
 
     # Use RetryProvider to automatically try multiple providers and blacklist failing ones.
-    client = Client(
-        provider=RetryProvider(dynamic_providers, shuffle=True)
-    )
+    client_kwargs = {
+        "provider": RetryProvider(dynamic_providers, shuffle=True)
+    }
+
+    # Pass timeout to g4f Client constructor if supported
+    if timeout is not None:
+        client_kwargs["timeout"] = timeout
+
+    client = Client(**client_kwargs)
 
     if messages is not None:
         api_messages = [dict(msg) for msg in messages]
@@ -190,10 +196,6 @@ def _get_g4f_response(
         "messages": api_messages,
         "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
     }
-    
-    # Pass timeout to g4f if supported
-    if timeout is not None:
-        payload["timeout"] = timeout
 
     for attempt in range(max_retries):
         try:
