@@ -568,12 +568,21 @@ class SignalProcessor:
                     f"❌ Error processing {display_symbol}: {e}",
                     summary={"symbol": symbol, "action": "ERROR", "reason": str(e)[:200]}
                 )
-        except Exception as e:
-            logger.error(f"Error processing {symbol}: {type(e).__name__}: {e}", exc_info=True, extra={"event": "process_symbol_error", "symbol": symbol, "error_type": type(e).__name__})
+        except (ArithmeticError, IndexError, LookupError, ImportError, NotImplementedError, StopIteration, GeneratorExit, MemoryError, RecursionError, ReferenceError, SystemError) as e:
+            logger.error(
+                f"Unexpected error processing {symbol} ({assigned_tf}): {type(e).__name__}: {e}",
+                exc_info=True,
+                extra={
+                    "event": "process_symbol_error",
+                    "symbol": symbol,
+                    "timeframe": assigned_tf,
+                    "error_type": type(e).__name__,
+                }
+            )
             await self.engine._record_unexpected_exception("process_symbol", e)
             if engine.notifier:
                 await engine.notifier.send_notification(
-                    f"❌ Error processing {display_symbol}: {e}",
+                    f"❌ Error processing {display_symbol} ({assigned_tf}): {e}",
                     summary={"symbol": symbol, "action": "ERROR", "reason": str(e)[:200]}
                 )
 
