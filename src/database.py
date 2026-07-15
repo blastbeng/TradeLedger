@@ -2285,10 +2285,11 @@ def update_manual_isin(symbol: str, isin: Optional[str]):
 
 def get_candle_count_for_symbol(symbol: str) -> int:
     """Return the total number of candles for a symbol across all timeframes."""
+    base = symbol.split("/")[0] if "/" in symbol else symbol
     conn = get_connection()
     try:
-        sql = _adapt_sql("SELECT COUNT(*) as count FROM market_data WHERE symbol = %s")
-        row = conn.execute(sql, (symbol,)).fetchone()
+        sql = _adapt_sql("SELECT COUNT(*) as count FROM market_data WHERE symbol = %s OR symbol LIKE %s")
+        row = conn.execute(sql, (base, base + "/%")).fetchone()
         return row["count"] if row else 0
     finally:
         conn.close()
