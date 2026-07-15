@@ -1,5 +1,6 @@
 import json
 import uuid
+import logging
 from pydantic import field_validator, model_validator, PrivateAttr
 from pydantic_settings import BaseSettings, NoDecode
 from typing import Annotated, Optional
@@ -1364,8 +1365,12 @@ class Settings(BaseSettings):
         from dotenv import load_dotenv
         load_dotenv(override=True)
 
-        new_settings = self.__class__()
-        new_settings.validate_llm_settings()
+        try:
+            new_settings = self.__class__()
+            new_settings.validate_llm_settings()
+        except Exception as e:
+            logging.getLogger(__name__).exception("Failed to reload settings: %s", e)
+            return
 
         old_paper_balance = self.PAPER_INITIAL_BALANCE
 
