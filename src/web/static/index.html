@@ -364,6 +364,19 @@
             #llm-failures-card td {
                 white-space: normal;
             }
+
+            /* Remove min-width for ISIN table on mobile */
+            #isin-table {
+                min-width: 0 !important;
+            }
+
+            /* Hide Name (3) and Auto ISIN (4) columns on mobile to save space */
+            #isin-table th:nth-child(3),
+            #isin-table td:nth-child(3),
+            #isin-table th:nth-child(4),
+            #isin-table td:nth-child(4) {
+                display: none;
+            }
         }
     </style>
 </head>
@@ -539,7 +552,7 @@
                 </div>
                 <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
                     <table id="isin-table">
-                        <thead><tr><th><input type="checkbox" id="select-all-isins"></th><th>Ticker</th><th>Name</th><th>Auto ISIN</th><th>Manual ISIN</th><th>Actions</th></tr></thead>
+                        <thead><tr><th><input type="checkbox" id="select-all-isins"></th><th>Ticker</th><th>Name</th><th>Auto ISIN</th><th>Country</th><th>Manual ISIN</th><th>Actions</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -2258,6 +2271,7 @@
                     row.insertCell().textContent = s.symbol;
                     row.insertCell().textContent = s.name || '';
                     row.insertCell().textContent = s.isin || '';
+                    row.insertCell().textContent = s.country || (s.isin ? s.isin.substring(0, 2) : '') || '';
                     const manualCell = row.insertCell();
                     const input = document.createElement('input');
                     input.type = 'text';
