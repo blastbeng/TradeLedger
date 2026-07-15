@@ -157,7 +157,7 @@ def _get_g4f_response(
     max_retries: int = 3,
 ) -> dict:
     """Send a prompt to the configured g4f model and return a dict with 'content' and 'usage'."""
-    from g4f.client import AsyncClient
+    from g4f.client import ClientFactory
 
     # Use the local g4f API server
     client_kwargs = {
@@ -168,7 +168,7 @@ def _get_g4f_response(
     if timeout is not None:
         client_kwargs["timeout"] = timeout
 
-    client = AsyncClient(**client_kwargs)
+    client = ClientFactory.create_async_client(**client_kwargs)
 
     if messages is not None:
         api_messages = [dict(msg) for msg in messages]
