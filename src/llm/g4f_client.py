@@ -7,6 +7,7 @@ import threading
 from typing import Optional, List, Dict, Callable
 
 from src.config.settings import settings
+from src.exchanges.proxy_utils import _get_proxies
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,11 @@ def _get_g4f_response(
         client_kwargs["base_url"] = settings.G4F_BASE_URL
     if settings.G4F_API_KEY:
         client_kwargs["api_key"] = settings.G4F_API_KEY
+
+    # Pass a random proxy if enabled and available
+    proxy = _get_proxies()
+    if proxy:
+        client_kwargs["proxies"] = proxy
 
     # Pass timeout to g4f Client constructor if supported
     if timeout is not None:
