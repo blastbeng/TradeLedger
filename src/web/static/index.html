@@ -1319,6 +1319,24 @@
                     .join('<br>') || 'None';
             }
 
+            // Discovered Symbols (ISIN table & autocomplete)
+            if (data.discovered_symbols) {
+                isinTableData = data.discovered_symbols;
+                renderISINTable();
+                
+                // Update the manual trade datalist
+                const datalist = document.getElementById('discovered-symbols-list');
+                if (datalist) {
+                    datalist.innerHTML = '';
+                    isinTableData.forEach(s => {
+                        const option = document.createElement('option');
+                        option.value = s.symbol;
+                        option.label = s.name || '';
+                        datalist.appendChild(option);
+                    });
+                }
+            }
+
         }
 
         // Theme toggle
