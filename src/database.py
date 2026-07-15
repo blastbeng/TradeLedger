@@ -3083,6 +3083,26 @@ def remove_model_from_blacklist(model: str) -> None:
     finally:
         conn.close()
 
+@retry_on_db_lock()
+def clear_all_blacklisted_models() -> None:
+    """Remove all models from the blacklist."""
+    conn = get_connection()
+    try:
+        conn.execute(_adapt_sql("DELETE FROM llm_model_blacklist"))
+        conn.commit()
+    finally:
+        conn.close()
+
+@retry_on_db_lock()
+def reset_llm_decision_quality() -> None:
+    """Delete all rows from the llm_decision_quality table."""
+    conn = get_connection()
+    try:
+        conn.execute(_adapt_sql("DELETE FROM llm_decision_quality"))
+        conn.commit()
+    finally:
+        conn.close()
+
 def get_all_blacklisted_models() -> List[Dict[str, Any]]:
     """Return all models from the blacklist table, ordered by most recent."""
     conn = get_connection()

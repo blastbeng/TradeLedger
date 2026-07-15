@@ -16,7 +16,7 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
-from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics, get_all_blacklisted_models, update_manual_isin
+from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics, get_all_blacklisted_models, update_manual_isin, clear_all_blacklisted_models, reset_llm_decision_quality
 from src.llm.cache import get_model_failure_stats
 from typing import Optional, List
 from pydantic import BaseModel
@@ -757,12 +757,25 @@ async def llm_metrics(model_filter: str = "main"):
 
 @http_router.post("/api/llm-metrics/reset", dependencies=[Depends(verify_csrf)])
 async def llm_metrics_reset():
-    """Wipe all LLM metrics from the database and Redis."""
+    """Wipe all LLM metrics, blacklist, and decision quality from the database and Redis."""
     try:
         await run_in_threadpool(reset_llm_metrics)
+        await run_in_threadpool(clear_all_blacklisted_models)
+        await run_in_threadpool(reset_llm_decision_quality)
+        
         # Clear any Redis-based metrics caches if they exist
         redis = get_redis_client()
         await asyncio.to_thread(redis.delete, "llm:metrics:summary", "llm:metrics:timeseries")
+        
+        # Clear Redis blacklist and failure tracking keys
+        blacklist_keys = await asyncio.to_thread(redis.keys, "llm:blacklist:*")
+        fail_count_keys = await asyncio.to_thread(redis.keys, "llm:fail_count:*")
+        blacklist_level_keys = await asyncio.to_thread(redis.keys, "llm:blacklist_level:*")
+        
+        all_keys = blacklist_keys + fail_count_keys + blacklist_level_keys
+        if all_keys:
+            await asyncio.to_thread(redis.delete, *all_keys)
+            
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
