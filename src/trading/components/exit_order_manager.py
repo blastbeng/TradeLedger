@@ -121,7 +121,11 @@ class ExitOrderManager:
                     await asyncio.to_thread(engine.trader.cancel_order, old_id)
                     logger.info(f"Cancelled old exit order {old_id} for {symbol}")
                 except (RuntimeError, ValueError, ConnectionError) as e:
-                    logger.warning(f"Failed to cancel old exit order {old_id}: {e}")
+                    logger.error(
+                        f"Failed to cancel old exit order {old_id} for {symbol}: "
+                        f"{type(e).__name__}: {e}. Aborting new exit order placement to avoid duplicates."
+                    )
+                    return
                 # Remove from queued_orders
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders = [
