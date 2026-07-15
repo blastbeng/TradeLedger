@@ -388,16 +388,18 @@ class MarketDataManager:
                 db_symbols = await asyncio.to_thread(get_all_discovered_symbols)
                 existing_isins = {b["isin"] for b in bonds}
                 for db_entry in db_symbols:
-                    if db_entry.get("asset_type") == "btp" and db_entry["symbol"] not in existing_isins:
-                        bonds.append({
-                            "isin": db_entry["symbol"],
-                            "name": db_entry.get("name") or db_entry["symbol"],
-                            "last_price": None,
-                            "change_pct": 0.0,
-                            "coupon": db_entry.get("coupon"),
-                            "maturity": db_entry.get("maturity"),
-                        })
-                        existing_isins.add(db_entry["symbol"])
+                    if db_entry.get("asset_type") == "btp":
+                        isin = db_entry.get("manual_isin") or db_entry.get("isin") or db_entry["symbol"]
+                        if isin not in existing_isins:
+                            bonds.append({
+                                "isin": isin,
+                                "name": db_entry.get("name") or isin,
+                                "last_price": None,
+                                "change_pct": 0.0,
+                                "coupon": db_entry.get("coupon"),
+                                "maturity": db_entry.get("maturity"),
+                            })
+                            existing_isins.add(isin)
             except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Failed to merge BTPs from DB: {e}")
             engine._btp_bonds_cache = bonds
