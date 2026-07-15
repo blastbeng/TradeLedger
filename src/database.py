@@ -2304,15 +2304,18 @@ def get_isin_map_from_db(symbols: List[str]) -> Dict[str, Optional[str]]:
     conn = get_connection()
     try:
         if _backend == "postgresql":
-            sql = _adapt_sql("SELECT symbol, isin FROM discovered_symbols WHERE symbol = ANY(%s)")
+            sql = _adapt_sql("SELECT symbol, isin, manual_isin FROM discovered_symbols WHERE symbol = ANY(%s)")
             rows = conn.execute(sql, (symbols,)).fetchall()
         else:
             placeholders = ",".join(["?" for _ in symbols])
-            sql = _adapt_sql(f"SELECT symbol, isin FROM discovered_symbols WHERE symbol IN ({placeholders})")
+            sql = _adapt_sql(f"SELECT symbol, isin, manual_isin FROM discovered_symbols WHERE symbol IN ({placeholders})")
             rows = conn.execute(sql, symbols).fetchall()
         result = {s: None for s in symbols}
         for row in rows:
-            result[row["symbol"]] = row["isin"]
+            if row["manual_isin"] and row["manual_isin"].strip():
+                result[row["symbol"]] = row["manual_isin"]
+            else:
+                result[row["symbol"]] = row["isin"]
         return result
     finally:
         conn.close()
