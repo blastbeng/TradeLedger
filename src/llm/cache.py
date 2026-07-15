@@ -1054,9 +1054,10 @@ def get_cached_llm_response(
         and messages is not None
     )
 
-    # When market is closed (not in pre-market), use fallback models only to save tokens
+    # When market is closed (not in pre-market), use fallback models only to save tokens.
+    # This behavior is only active if LLM_FALLBACK_ENABLED is True.
     is_fallback = False
-    if not _should_use_primary_model():
+    if not _should_use_primary_model() and settings.LLM_FALLBACK_ENABLED:
         fb_provider, fb_model, fb_base_url, fb_api_key = _get_fallback_provider_config(model_type, provider)
         if fb_provider and fb_model:
             is_fallback = True
