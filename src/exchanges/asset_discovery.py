@@ -299,8 +299,10 @@ def discover_italian_ucits_etfs() -> List[str]:
             return []
 
         base_symbols = []
+        etf_names: Dict[str, str] = {}
         for symbol, row in df.iterrows():
-            name = str(row.get('name', '')).lower()
+            raw_name = str(row.get('name', ''))
+            name = raw_name.lower()
             # MANDATORY SAFETY FILTER: Must contain "UCITS"
             if 'ucits' not in name and 'ucits' not in symbol.lower():
                 continue
@@ -313,6 +315,8 @@ def discover_italian_ucits_etfs() -> List[str]:
             base = symbol.split(".")[0] if "." in symbol else symbol
             if re.match(r"^[A-Z0-9]+$", base):
                 base_symbols.append(base)
+                if raw_name:
+                    etf_names[base] = raw_name
 
         logger.info(f"Discovered {len(base_symbols)} Italian UCITS ETFs matching keywords.")
         # Cache for 24 hours
@@ -324,7 +328,7 @@ def discover_italian_ucits_etfs() -> List[str]:
         try:
             from src.database import save_discovered_symbols_batch
             symbols_to_save = [
-                {"symbol": sym, "isin": None, "asset_type": "etf", "name": None, "country": "italy"}
+                {"symbol": sym, "isin": None, "asset_type": "etf", "name": etf_names.get(sym), "country": "italy"}
                 for sym in base_symbols
             ]
             if symbols_to_save:
@@ -602,7 +606,8 @@ def get_tradable_assets() -> List[str]:
                 db_base = symbol
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
-                save_discovered_symbol(db_base, isin, "stock", name or None, country=country)
+                asset_type = "etf" if db_base in etf_symbols else "stock"
+                save_discovered_symbol(db_base, isin, asset_type, name or None, country=country)
             except Exception as e:
                 logger.debug(f"get_tradable_assets: failed to save discovered symbol {db_base}: {type(e).__name__}: {e}")
         elif name and not settings.COUNTRY_FILTER_STRICT:
@@ -612,7 +617,8 @@ def get_tradable_assets() -> List[str]:
                 db_base = symbol
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
-                save_discovered_symbol(db_base, isin, "stock", name or None, country=None)
+                asset_type = "etf" if db_base in etf_symbols else "stock"
+                save_discovered_symbol(db_base, isin, asset_type, name or None, country=None)
             except (RuntimeError, ValueError, OSError) as e:
                 logger.debug(f"get_tradable_assets: failed to save discovered symbol {db_base}: {type(e).__name__}: {e}")
         if country is None:
