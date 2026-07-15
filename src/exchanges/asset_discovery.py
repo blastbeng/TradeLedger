@@ -45,7 +45,12 @@ def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optio
                     try:
                         yf_isin = ticker.isin
                         if yf_isin and yf_isin.strip() and yf_isin.strip() != '-':
-                            bi_isin = yf_isin.strip()
+                            yf_isin = yf_isin.strip()
+                            # If strict country filter is enabled, discard non-target ISINs
+                            if settings.COUNTRY_FILTER_STRICT and not yf_isin.startswith(settings.TARGET_COUNTRY):
+                                logger.debug(f"yfinance returned non-target ISIN {yf_isin} for {symbol}, discarding.")
+                            else:
+                                bi_isin = yf_isin
                     except (RuntimeError, ValueError, KeyError, AttributeError, OSError):
                         pass
                     break
@@ -58,15 +63,20 @@ def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optio
                 if attempt < max_retries:
                     _time.sleep(0.5 * (2 ** attempt))
 
-    # Fallback to Borsa Italiana search if yfinance failed or circuit is open
-    if not country or not name:
+    # Fallback to Borsa Italiana search if yfinance failed, circuit is open, or ISIN is missing
+    if not country or not name or not bi_isin:
         # Strip suffix for Borsa Italiana search
         db_symbol = symbol
         if settings.TICKER_SUFFIX and db_symbol.endswith(settings.TICKER_SUFFIX):
             db_symbol = db_symbol[:-len(settings.TICKER_SUFFIX)]
 
-        bi_isin, bi_country, bi_name = _get_isin_and_info_from_borsa_italiana(db_symbol)
-        if not country:
+        bi_isin_new, bi_country, bi_name = _get_isin_and_info_from_borsa_italiana(db_symbol)
+        if bi_isin_new:
+            bi_isin = bi_isin_new
+        # In strict mode, Borsa Italiana is the source of truth for country
+        if settings.COUNTRY_FILTER_STRICT and bi_country:
+            country = bi_country
+        elif not country:
             country = bi_country
         if not name:
             name = bi_name
