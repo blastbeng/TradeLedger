@@ -124,6 +124,8 @@ class ReevalShortlistBuilder:
         etf_pairs: List[str],
         btp_pairs: List[str],
         ohlcv_data: Dict[str, Dict[str, List[List]]],
+        base_balance: float,
+        market_limits: Dict[str, Dict[str, float]],
     ) -> None:
         """Enforce minimum asset class allocation by appending missing ETFs/BTPs.
         
@@ -154,10 +156,13 @@ class ReevalShortlistBuilder:
                     available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
                     if available_tfs:
                         tf = default_tf if default_tf in available_tfs else available_tfs[0]
-                        deduped.append({"symbol": etf, "timeframe": tf})
-                        existing_syms.add(etf)
-                        if len([d for d in deduped if d['symbol'] in etf_pairs]) >= min_etfs:
-                            break
+                        # Check if we can afford the minimum trade cost
+                        min_cost = market_limits.get(etf, {}).get("min_cost", 0)
+                        if base_balance >= min_cost:
+                            deduped.append({"symbol": etf, "timeframe": tf})
+                            existing_syms.add(etf)
+                            if len([d for d in deduped if d['symbol'] in etf_pairs]) >= min_etfs:
+                                break
                             
         # Add BTPs if underrepresented
         if len(current_btps) < min_btps:
@@ -167,10 +172,13 @@ class ReevalShortlistBuilder:
                     available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
                     if available_tfs:
                         tf = default_tf if default_tf in available_tfs else available_tfs[0]
-                        deduped.append({"symbol": btp, "timeframe": tf})
-                        existing_syms.add(btp)
-                        if len([d for d in deduped if d['symbol'] in btp_pairs]) >= min_btps:
-                            break
+                        # Check if we can afford the minimum trade cost
+                        min_cost = market_limits.get(btp, {}).get("min_cost", 0)
+                        if base_balance >= min_cost:
+                            deduped.append({"symbol": btp, "timeframe": tf})
+                            existing_syms.add(btp)
+                            if len([d for d in deduped if d['symbol'] in btp_pairs]) >= min_btps:
+                                break
 
         # Update effective_max_symbols to accommodate newly appended symbols
         engine = self.engine
