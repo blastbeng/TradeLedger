@@ -1439,11 +1439,11 @@ class RiskManager:
                         pos.pop("take_profit_order_id", None)  # Pop early to prevent race
 
                 if tp_already_filled:
-                    # Clean up SL from queued orders just in case
+                    # Clean up SL and TP from queued orders just in case
                     async with self.shared_state._queued_orders_lock:
                         self.shared_state.queued_orders = [
                             q for q in self.shared_state.queued_orders
-                            if q.get("order_id") != sl_order_id
+                            if q.get("order_id") != sl_order_id and q.get("order_id") != tp_order_id
                         ]
                     return True  # Position is closed, no need to process SL
 
@@ -1503,6 +1503,11 @@ class RiskManager:
                         pos.pop("stop_loss_order_type", None)
                         pos.pop("_native_stop_price", None)
                         pos.pop("_native_stop_trigger_ts", None)
+                    async with self.shared_state._queued_orders_lock:
+                        self.shared_state.queued_orders = [
+                            q for q in self.shared_state.queued_orders
+                            if q.get("order_id") != sl_order_id
+                        ]
                     await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
                     return True
                 else:
@@ -1666,6 +1671,11 @@ class RiskManager:
                     if not pos.get("take_profit_order_id"):
                         return True
                     pos.pop("take_profit_order_id", None)
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders = [
+                        q for q in self.shared_state.queued_orders
+                        if q.get("order_id") != tp_order_id
+                    ]
                 await self.event_bus.publish("process_native_exit_fill", symbol, tp_order_id, tp_order_obj, pos, "take_profit")
                 return True
             else:
