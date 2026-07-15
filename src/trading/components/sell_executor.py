@@ -213,8 +213,14 @@ class SellExecutor:
             ticker = quotes.get(base)
             price = ticker['last']
             # --- Stale quote guard: skip SELL if the price is too old ---
+            # Bypass the guard for risk management and manual exits to avoid
+            # accumulating unprotected losses when quotes are consistently stale.
             tf = timeframe or (pos.get("timeframe") if pos else None)
-            if tf and await engine._is_quote_too_stale(ticker, tf):
+            is_risk_exit = exit_reason in {
+                "stop_loss", "take_profit", "force_close", "news_sentiment_exit",
+                "max_hold_time", "manual_sell", "manual_sell_all", "delisted"
+            }
+            if not is_risk_exit and tf and await engine._is_quote_too_stale(ticker, tf):
                 age_seconds = (time.time() * 1000 - ticker.get("last_update", 0)) / 1000
                 logger.warning(
                     f"Skipping SELL {symbol}: quote is {age_seconds:.0f}s old "
@@ -233,6 +239,12 @@ class SellExecutor:
                         }
                     )
                 return
+            elif is_risk_exit and tf and await engine._is_quote_too_stale(ticker, tf):
+                age_seconds = (time.time() * 1000 - ticker.get("last_update", 0)) / 1000
+                logger.warning(
+                    f"Executing risk management SELL {symbol} despite stale quote "
+                    f"({age_seconds:.0f}s old). Exit reason: {exit_reason}."
+                )
             # Fetch minimum order size from asset info
             try:
                 asset = await engine._market_data_manager.get_asset_info(symbol)
