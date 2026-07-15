@@ -277,6 +277,11 @@ def check_llm_health() -> dict:
                 models = settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL
                 base_url = settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL
                 api_key = settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY
+        elif provider == "g4f":
+            from src.llm.g4f_client import _get_g4f_models
+            models = _get_g4f_models(role)
+            base_url = None
+            api_key = None
         else:
             if role == "mind":
                 models = settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL
@@ -294,15 +299,33 @@ def check_llm_health() -> dict:
         model = models[0] if models else "unknown"
 
         if not base_url:
-            results[role] = {
-                "status": "disconnected",
-                "provider": provider,
-                "model": model or "unknown",
-                "error": "No base URL configured",
-            }
+            if provider == "g4f":
+                results[role] = {
+                    "status": "connected",
+                    "provider": provider,
+                    "model": models[0] if models else "dynamic",
+                    "error": None,
+                }
+            else:
+                results[role] = {
+                    "status": "disconnected",
+                    "provider": provider,
+                    "model": model or "unknown",
+                    "error": "No base URL configured",
+                }
             continue
 
         try:
+            if provider == "g4f":
+                # g4f has no base URL to check, assume connected if configured
+                results[role] = {
+                    "status": "connected",
+                    "provider": provider,
+                    "model": models[0] if models else "dynamic",
+                    "error": None,
+                }
+                continue
+
             headers = {}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"

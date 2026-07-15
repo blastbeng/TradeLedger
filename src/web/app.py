@@ -56,6 +56,11 @@ def _resolve_llm_role_settings(role: str):
     if provider == "ollama":
         model = getattr(settings, f"OLLAMA_{role_upper}_MODEL", None)
         url = getattr(settings, f"OLLAMA_{role_upper}_BASE_URL", None) or settings.OLLAMA_BASE_URL
+    elif provider == "g4f":
+        from src.llm.g4f_client import _get_g4f_models
+        models = _get_g4f_models(role)
+        model = models[0] if models else None
+        url = None
     else:
         model = getattr(settings, f"OPENAI_{role_upper}_MODEL", None)
         url = getattr(settings, f"OPENAI_{role_upper}_BASE_URL", None) or settings.OPENAI_BASE_URL
