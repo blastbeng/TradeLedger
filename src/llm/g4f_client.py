@@ -28,13 +28,15 @@ _MIND_KEYWORDS = (
     "command-r-plus", "dbrx",
 )
 _ACTUATOR_KEYWORDS = (
-    "mini", "haiku", "flash", "70b", "72b", "mixtral-8x7b", "gpt-4", "gpt-3.5", 
+    "mini", "haiku", "flash", "70b", "72b", "34b", "32b", "mixtral-8x7b", "gpt-4", "gpt-3.5", 
     "claude-3", "gemini-1.5", "llama-3.1", "llama-3.2", "llama-3.3", 
-    "mistral", "qwen", "deepseek-v2", "grok", "command-r", "mixtral"
+    "mistral", "qwen", "deepseek-v2", "deepseek-v4-flash", "deepseek-coder", "grok", "command-r", "mixtral",
+    "yi-34b", "zephyr", "starling", "openhermes", "dolphin", "vicuna", "orca", "solar-pro", "code-llama"
 )
 _WEAK_KEYWORDS = (
-    "7b", "8b", "3.5-turbo", "small", "nano", "tiny", "gpt-3", 
-    "mistral-7b", "qwen-turbo", "deepseek-chat", "gemma", "phi", "solar"
+    "1b", "2b", "3b", "6b", "7b", "8b", "9b", "11b", "13b", "14b", "3.5-turbo", "small", "nano", "tiny", "gpt-3", 
+    "mistral-7b", "qwen-turbo", "deepseek-chat", "gemma", "phi", "solar", "tinyllama", "falcon-7b", "falcon-1b",
+    "stablelm", "redpajama", "qwen-1.5b", "qwen-1.8b", "qwen-7b", "openchat", "wizardlm"
 )
 
 def _categorize_model(model_name: str) -> Optional[str]:
