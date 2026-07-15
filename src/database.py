@@ -569,6 +569,13 @@ def _get_init_statements() -> List[str]:
         """,
         "CREATE INDEX IF NOT EXISTS idx_dividends_symbol ON dividends(symbol)",
         f"""
+        CREATE TABLE IF NOT EXISTS portfolio_equity (
+            id INTEGER PRIMARY KEY,
+            peak_total_equity REAL NOT NULL,
+            updated_at {float_type} NOT NULL
+        )
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS llm_model_blacklist (
             model TEXT PRIMARY KEY,
             provider TEXT,
@@ -3001,5 +3008,38 @@ def get_all_blacklisted_models() -> List[Dict[str, Any]]:
         )
         rows = conn.execute(sql).fetchall()
         return [{"model": r["model"], "provider": r["provider"], "reason": r["reason"], "blacklisted_at": r["blacklisted_at"], "expires_at": r["expires_at"]} for r in rows]
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def save_peak_total_equity(peak_equity: float):
+    """Persist the peak total equity to the dedicated portfolio_equity table."""
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                "INSERT INTO portfolio_equity (id, peak_total_equity, updated_at) VALUES (1, %s, %s) "
+                "ON CONFLICT (id) DO UPDATE SET peak_total_equity = EXCLUDED.peak_total_equity, updated_at = EXCLUDED.updated_at"
+            )
+        else:
+            sql = _adapt_sql(
+                "INSERT OR REPLACE INTO portfolio_equity (id, peak_total_equity, updated_at) VALUES (1, %s, %s)"
+            )
+        conn.execute(sql, (peak_equity, time.time()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_peak_total_equity() -> Optional[float]:
+    """Retrieve the peak total equity from the dedicated portfolio_equity table."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql("SELECT peak_total_equity FROM portfolio_equity WHERE id = 1")
+        row = conn.execute(sql).fetchone()
+        if row:
+            return float(row["peak_total_equity"])
+        return None
     finally:
         conn.close()

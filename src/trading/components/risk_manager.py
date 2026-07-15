@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.database import insert_position_pnl_snapshot, get_indicators, get_latest_ohlcv_timestamp, get_ohlcv, load_trading_state, save_trading_state
+from src.database import insert_position_pnl_snapshot, get_indicators, get_latest_ohlcv_timestamp, get_ohlcv, get_peak_total_equity, save_peak_total_equity
 from src.strategies.base import Signal
 from src.utils.btp_policy import BTPPolicy
 from src.utils.redis_client import is_redis_available
@@ -154,32 +154,38 @@ class RiskManager:
 
             # Fetch or initialize peak total equity from Redis to persist
             # high-water marks driven by unrealized P&L across calls.
-            peak_equity_raw = await asyncio.to_thread(engine.redis.get, "trading:peak_total_equity")
-            if peak_equity_raw:
-                try:
-                    peak_equity = float(peak_equity_raw)
-                except (ValueError, TypeError):
-                    peak_equity = initial_balance
-            else:
-                # Fallback to database if Redis was restarted
-                db_state = await asyncio.to_thread(load_trading_state)
-                db_peak = db_state.get("peak_total_equity")
-                if db_peak is not None:
+            peak_equity = None
+            if is_redis_available():
+                peak_equity_raw = await asyncio.to_thread(engine.redis.get, "trading:peak_total_equity")
+                if peak_equity_raw:
                     try:
-                        peak_equity = float(db_peak)
-                        # Restore to Redis
-                        await asyncio.to_thread(engine.redis.set, "trading:peak_total_equity", str(peak_equity))
+                        peak_equity = float(peak_equity_raw)
                     except (ValueError, TypeError):
-                        peak_equity = initial_balance
-                else:
+                        peak_equity = None
+            
+            if peak_equity is None:
+                # Fallback to database if Redis is unavailable or key is missing
+                try:
+                    peak_equity = await asyncio.to_thread(get_peak_total_equity)
+                except Exception:
+                    peak_equity = None
+                
+                if peak_equity is None:
                     peak_equity = initial_balance
+                elif is_redis_available():
+                    # Restore to Redis if it was missing
+                    await asyncio.to_thread(engine.redis.set, "trading:peak_total_equity", str(peak_equity))
 
             # Update peak equity if current total equity is higher
             if current_equity > peak_equity:
                 peak_equity = current_equity
-                await asyncio.to_thread(engine.redis.set, "trading:peak_total_equity", str(peak_equity))
+                if is_redis_available():
+                    await asyncio.to_thread(engine.redis.set, "trading:peak_total_equity", str(peak_equity))
                 # Persist to database to survive Redis restarts
-                await asyncio.to_thread(save_trading_state, "peak_total_equity", peak_equity)
+                try:
+                    await asyncio.to_thread(save_peak_total_equity, peak_equity)
+                except Exception as e:
+                    logger.error(f"Failed to persist peak total equity to database: {type(e).__name__}: {e}")
 
             drawdown_pct = 0.0
             if peak_equity > 0:
