@@ -679,11 +679,14 @@ def get_multi_timeframe_bars(
                     redis_client.set(cache_key, json.dumps(result[tf]), ex=cache_ttl)
                 except (TypeError, ValueError, RuntimeError):
                     pass
-            else:
-                result[tf] = []
+                continue
+            # Borsa Italiana failed — fall back to yfinance since we have a valid IT ISIN
+        else:
+            # No valid Italian ISIN — do not use yfinance to avoid wrong-country data
+            result[tf] = []
             continue
 
-        # No ISIN — use yfinance as fallback, then Alpha Vantage, then IEX
+        # Use yfinance as fallback (only reached if has_isin is True and Borsa failed)
         yf_candles: List[List] = []
         if not _check_yf_circuit():
             yf_symbol = symbol
