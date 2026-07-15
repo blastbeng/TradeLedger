@@ -657,7 +657,13 @@
             </div>
 
             <div class="card card-full" id="llm-decision-quality-card">
-                <h2>🎯 LLM Decision Quality</h2>
+                <h2>🎯 LLM Decision Quality
+                    <select id="llm-decision-quality-filter" style="margin-left:12px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:0.85rem;">
+                        <option value="all">All Models</option>
+                        <option value="main" selected>Main Models</option>
+                        <option value="fallback">Fallback Models</option>
+                    </select>
+                </h2>
                 <div id="llm-decision-quality" style="font-size:0.9rem;">Loading...</div>
             </div>
 
@@ -1292,6 +1298,7 @@
         let chartInstance = null;
         let llmMetricsChart = null;
         let llmModelFilter = 'main';
+        let llmDecisionQualityFilter = 'main';
         let chartUpdateTimer = null;
         const modal = document.getElementById('chart-modal');
         const closeBtn = document.getElementById('close-modal');
@@ -2317,7 +2324,7 @@
         // --- LLM Metrics ---
         async function fetchLLMDecisionQuality() {
             try {
-                const resp = await fetch('/api/llm-decision-quality?period_days=7');
+                const resp = await fetch(`/api/llm-decision-quality?period_days=7&model_filter=${llmDecisionQualityFilter}`);
                 if (!resp.ok) throw new Error('Failed to fetch LLM decision quality');
                 const data = await resp.json();
                 const div = document.getElementById('llm-decision-quality');
@@ -2600,6 +2607,11 @@
             llmModelFilter = e.target.value;
             fetchLLMMetrics();
             fetchLLMMetricsChart();
+        });
+
+        document.getElementById('llm-decision-quality-filter').addEventListener('change', (e) => {
+            llmDecisionQualityFilter = e.target.value;
+            fetchLLMDecisionQuality();
         });
 
         function renderLLMMetricsChart(tsData) {
