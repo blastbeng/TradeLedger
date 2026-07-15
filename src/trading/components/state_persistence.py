@@ -14,7 +14,7 @@ import threading
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
@@ -32,6 +32,7 @@ class StatePersistence:
         self.shared_state = engine.shared_state
         self.event_bus = event_bus
         self._persistence_lock = threading.Lock()
+        self._periodic_save_task: Optional[asyncio.Task] = None
         self.event_bus.subscribe("save_state", self.save_state)
         self.event_bus.subscribe("get_pause_status", self.get_pause_status)
 
@@ -43,6 +44,25 @@ class StatePersistence:
         except ValueError:
             # signal.signal can only be called in the main thread
             logger.warning("Could not register signal handlers (not in main thread). Relying on atexit only.")
+
+    def start_periodic_save(self, interval: int = 60) -> None:
+        """Starts a background task that saves state periodically."""
+        if self._periodic_save_task is None or self._periodic_save_task.done():
+            self._periodic_save_task = asyncio.create_task(self._periodic_save_loop(interval))
+
+    async def _periodic_save_loop(self, interval: int) -> None:
+        """Periodically saves state to mitigate data loss on hard crashes."""
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self.save_state(force=True)
+            except Exception as e:
+                logger.error(f"Periodic state save failed: {type(e).__name__}: {e}", exc_info=True)
+
+    def stop_periodic_save(self) -> None:
+        """Cancels the periodic state save background task."""
+        if self._periodic_save_task and not self._periodic_save_task.done():
+            self._periodic_save_task.cancel()
 
     def _handle_signal(self, signum, frame):
         """Handle termination signals by flushing state before exiting."""

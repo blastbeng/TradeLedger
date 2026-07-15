@@ -511,6 +511,7 @@ class TradingEngine:
         """Gracefully stop the engine and all background tasks."""
         logger.info("Stopping trading engine...")
         self._running = False
+        self._state_persistence.stop_periodic_save()
         for task in self.shared_state._delayed_entry_tasks:
             task.cancel()
         self.shared_state._delayed_entry_tasks.clear()
@@ -1772,6 +1773,7 @@ class TradingEngine:
 
     async def run(self):
         """Main event-driven loop using WebSocket ticker updates."""
+        self._state_persistence.start_periodic_save(interval=60)
         await self._orchestrator.run()
 
 
