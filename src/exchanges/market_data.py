@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import logging
 import re
-import threading
 import time
 import warnings
 from datetime import datetime, timezone, timedelta
@@ -101,7 +100,6 @@ class CircuitBreaker:
 _av_circuit_breaker = CircuitBreaker()
 _iex_circuit_breaker = CircuitBreaker()
 
-_get_quotes_lock = threading.Lock()
 
 def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     """Fetch the ISIN code for a symbol, using DB first, then yfinance as fallback."""
@@ -304,31 +302,13 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 
     Returns a dict mapping symbol -> {last, bid, ask, volume, change_24h, percentage, quoteVolume}.
     Uses yf.download for efficient batch fetching.
-    A global lock ensures only one batch download runs at a time to prevent rate limits.
     """
     if symbols is None:
         symbols = []
     if not symbols:
         return {}
 
-    # If a fetch is already in progress, try to fall back to cache.
-    # If the cache is empty for any requested symbol, wait for the lock
-    # to avoid returning empty quotes during startup.
-    if not _get_quotes_lock.acquire(blocking=False):
-        cached = get_quotes_cached(symbols)
-        if any(cached.get(s, {}).get("last") is None for s in symbols):
-            with _get_quotes_lock:
-                # Re-check cache after acquiring lock, the previous fetch might have populated it
-                cached = get_quotes_cached(symbols)
-                if any(cached.get(s, {}).get("last") is None for s in symbols):
-                    return _get_quotes_impl(symbols)
-                return cached
-        return cached
-
-    try:
-        return _get_quotes_impl(symbols)
-    finally:
-        _get_quotes_lock.release()
+    return _get_quotes_impl(symbols)
 
 
 def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
