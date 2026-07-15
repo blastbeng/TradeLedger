@@ -17,14 +17,22 @@ _G4F_CACHE_TTL = 3600  # 1 hour
 # Checked in order: mind first, then weak, then actuator (fallback).
 _MIND_KEYWORDS = ("o1", "o3", "gpt-4o", "gpt-4.1", "claude-3.5-sonnet", "claude-3-opus", "deepseek-r1", "deepseek-v3", "gemini-2", "gemini-pro", "qwen-max", "llama-3.3-70b", "llama-3.1-405b", "mistral-large", "grok-2")
 _WEAK_KEYWORDS = ("mini", "haiku", "flash", "8b", "7b", "3.5-turbo", "small", "nano", "tiny", "gpt-3", "gemini-flash", "llama-3-8b", "mistral-7b", "qwen-turbo", "deepseek-chat")
+_ACTUATOR_KEYWORDS = ("gpt-4", "gpt-3.5", "claude-3", "gemini-1.5", "llama-3.1", "llama-3.2", "llama-3.3", "mistral", "qwen", "deepseek-v2", "grok", "command-r", "mixtral")
 
 def _categorize_model(model_name: str) -> Optional[str]:
     """Categorize a model name into 'mind', 'actuator', or 'weak' using keyword heuristics."""
     name_lower = model_name.lower()
-    if any(kw in name_lower for kw in _MIND_KEYWORDS):
-        return "mind"
+    
+    # Check weak first to avoid misclassifying models like "gpt-4o-mini" as mind
     if any(kw in name_lower for kw in _WEAK_KEYWORDS):
         return "weak"
+    if any(kw in name_lower for kw in _MIND_KEYWORDS):
+        return "mind"
+    if any(kw in name_lower for kw in _ACTUATOR_KEYWORDS):
+        return "actuator"
+    
+    # Default to actuator for unknown models, but log it for visibility
+    logger.debug(f"Model '{model_name}' did not match any specific keywords, defaulting to 'actuator'.")
     return "actuator"
 
 def _discover_g4f_models() -> dict:
