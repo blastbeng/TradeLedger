@@ -577,7 +577,7 @@ class SignalProcessor:
                     f"❌ Error processing {display_symbol}: {e}",
                     summary={"symbol": symbol, "action": "ERROR", "reason": str(e)[:200]}
                 )
-        except (ArithmeticError, IndexError, LookupError, ImportError, NotImplementedError, StopIteration, GeneratorExit, MemoryError, RecursionError, ReferenceError, SystemError) as e:
+        except (ArithmeticError, IndexError, LookupError, ImportError, NotImplementedError, StopIteration, GeneratorExit, ReferenceError) as e:
             logger.error(
                 f"Unexpected error processing {symbol} ({assigned_tf}): {type(e).__name__}: {e}",
                 exc_info=True,
