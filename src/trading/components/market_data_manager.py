@@ -61,7 +61,7 @@ class MarketDataManager:
         self._clock_cache: Optional[Any] = None
         self._clock_cache_time: float = 0.0
         self.notifier = None
-        self._data_quality_warned_symbols: set = set()
+        self._data_quality_warned_symbols: Dict[str, int] = {}
 
     def invalidate_clock_cache(self):
         self._clock_cache = None
@@ -619,10 +619,12 @@ class MarketDataManager:
                 break
 
             from src.exchanges.candle_utils import detect_data_quality_issues
-            alert_msg = detect_data_quality_issues(candles, symbol)
-            if alert_msg and symbol not in self._data_quality_warned_symbols:
-                logger.warning(alert_msg)
-                self._data_quality_warned_symbols.add(symbol)
+            alert_msg, max_issue_ts = detect_data_quality_issues(candles, symbol)
+            if alert_msg:
+                last_warned_ts = self._data_quality_warned_symbols.get(symbol, 0)
+                if max_issue_ts > last_warned_ts:
+                    logger.warning(alert_msg)
+                    self._data_quality_warned_symbols[symbol] = max_issue_ts
 
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(self.engine._db_executor, insert_ohlcv_batch, symbol, timeframe, candles)

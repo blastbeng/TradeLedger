@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -119,34 +119,44 @@ def _merge_candles(borsa_candles: Optional[List[List]], yf_candles: Optional[Lis
     return sorted(merged.values(), key=lambda c: c[0])
 
 
-def detect_data_quality_issues(candles: List[List], symbol: str) -> Optional[str]:
-    """Detects data quality issues like sudden price jumps, gaps, and zero volume."""
+def detect_data_quality_issues(candles: List[List], symbol: str) -> Tuple[Optional[str], Optional[int]]:
+    """Detects data quality issues like sudden price jumps, gaps, and zero volume.
+
+    Returns a tuple of (alert_message, max_issue_timestamp). The timestamp
+    allows callers to suppress repeated warnings for the same historical data
+    while still alerting on newly detected issues.
+    """
     if not candles or len(candles) < 2:
-        return None
+        return None, None
 
     issues = []
+    max_ts = 0
     # Assuming candle format: [timestamp, open, high, low, close, volume]
     for i in range(1, len(candles)):
         prev_close = candles[i-1][4]
         curr_open = candles[i][1]
         curr_close = candles[i][4]
         curr_volume = candles[i][5]
+        ts = candles[i][0]
 
         if prev_close > 0:
             # 1. Sudden price jump (e.g., > 20%)
             change_pct = abs(curr_close - prev_close) / prev_close * 100
             if change_pct > 20.0:
-                issues.append(f"Large price jump of {change_pct:.2f}% at timestamp {candles[i][0]}")
+                issues.append(f"Large price jump of {change_pct:.2f}% at timestamp {ts}")
+                max_ts = max(max_ts, ts)
 
             # 2. Gap detection (e.g., > 10%)
             gap_pct = abs(curr_open - prev_close) / prev_close * 100
             if gap_pct > 10.0:
-                issues.append(f"Price gap of {gap_pct:.2f}% at timestamp {candles[i][0]}")
+                issues.append(f"Price gap of {gap_pct:.2f}% at timestamp {ts}")
+                max_ts = max(max_ts, ts)
 
         # 3. Volume anomaly (zero volume)
         if curr_volume == 0:
-            issues.append(f"Zero volume at timestamp {candles[i][0]}")
+            issues.append(f"Zero volume at timestamp {ts}")
+            max_ts = max(max_ts, ts)
 
     if issues:
-        return f"⚠️ Data quality issues detected for {symbol}:\n" + "\n".join(issues)
-    return None
+        return f"⚠️ Data quality issues detected for {symbol}:\n" + "\n".join(issues), max_ts
+    return None, None
