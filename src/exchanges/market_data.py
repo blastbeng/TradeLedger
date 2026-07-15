@@ -399,6 +399,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
     # Symbols still missing a valid price after Borsa Italiana — try yfinance
     stock_symbols = [s for s in missing_symbols if not BTPPolicy.is_btp(s) and result.get(s, {}).get("last") is None]
+    # Only use yfinance for symbols with a valid Italian ISIN to avoid wrong-country data
+    stock_symbols = [s for s in stock_symbols if _get_isin_from_yfinance(s) is not None]
 
     # --- Batch fetch ALL price data using yf.download (single HTTP request) ---
     # This replaces the slow sequential fast_info calls that caused timeouts.
@@ -798,9 +800,12 @@ def get_bars_range(
             except (TypeError, ValueError, RuntimeError, ConnectionError, TimeoutError, OSError):
                 pass
             return borsa_candles
+        # Borsa Italiana failed — fall back to yfinance since we have a valid IT ISIN
+    else:
+        # No valid Italian ISIN — do not use yfinance to avoid wrong-country data
         return []
 
-    # No ISIN — use yfinance as fallback, then Alpha Vantage, then IEX
+    # Use yfinance as fallback (only reached if has_isin is True and Borsa failed)
     yf_candles: List[List] = []
     if not _check_yf_circuit():
         yf_symbol = symbol
