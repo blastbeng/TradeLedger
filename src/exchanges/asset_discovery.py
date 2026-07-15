@@ -31,6 +31,7 @@ def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optio
     could not provide the information after all retries.
     """
     country, name = None, None
+    bi_isin = None
     if not _check_yf_circuit():
         import time as _time
         for attempt in range(max_retries + 1):
