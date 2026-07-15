@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
-from src.database import save_llm_metrics
+from src.database import save_llm_metrics, add_model_to_blacklist, get_active_blacklisted_models, remove_model_from_blacklist
 
 logger = logging.getLogger(__name__)
 
@@ -310,6 +310,64 @@ def _save_metric(metric_data: dict) -> None:
         logger.warning("Failed to save LLM metric: %s", metric_err)
 
 
+def _sync_blacklist_from_db():
+    """Load active blacklisted models from DB into Redis on startup."""
+    redis_client = get_redis_client()
+    try:
+        active = get_active_blacklisted_models()
+        for item in active:
+            model = item["model"]
+            expires_at = item["expires_at"]
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            
+            remaining_ttl = (expires_at - datetime.now(timezone.utc)).total_seconds()
+            if remaining_ttl > 0:
+                redis_client.setex(f"llm:blacklist:{model}", int(remaining_ttl), "1")
+            else:
+                remove_model_from_blacklist(model)
+    except Exception as e:
+        logger.warning(f"Failed to sync blacklist from DB: {e}")
+
+def _is_model_blacklisted(redis_client, model: str) -> bool:
+    """Check if a model is currently blacklisted in Redis."""
+    try:
+        return bool(redis_client.exists(f"llm:blacklist:{model}"))
+    except Exception:
+        return False
+
+def _record_model_success(redis_client, model: str):
+    """Reset failure counters on successful call."""
+    try:
+        redis_client.delete(f"llm:fail_count:{model}")
+        redis_client.delete(f"llm:blacklist_level:{model}")
+        remove_model_from_blacklist(model)
+    except Exception:
+        pass
+
+def _record_model_failure(redis_client, model: str, provider: str, error: str):
+    """Track failures and blacklist model if threshold reached."""
+    try:
+        fail_count = redis_client.incr(f"llm:fail_count:{model}")
+        redis_client.expire(f"llm:fail_count:{model}", 3600)  # 1 hour window
+        
+        if fail_count >= 3:
+            level = int(redis_client.get(f"llm:blacklist_level:{model}") or 1)
+            ttl = min(3600 * level, 86400)  # 1h * level, max 24h
+            redis_client.setex(f"llm:blacklist:{model}", ttl, "1")
+            redis_client.incr(f"llm:blacklist_level:{model}")
+            redis_client.expire(f"llm:blacklist_level:{model}", 86400 * 7)  # keep level for 7 days
+            redis_client.delete(f"llm:fail_count:{model}")
+            
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl)
+            add_model_to_blacklist(model, provider, error[:500], expires_at)
+            logger.warning(f"Model {model} blacklisted for {ttl}s due to repeated failures.")
+    except Exception as e:
+        logger.warning(f"Failed to record model failure: {e}")
+
+
 def _build_cache_key(
     messages: Optional[List[Dict[str, str]]],
     system_prompt: str,
@@ -463,7 +521,13 @@ def _execute_primary_call(
     is_fallback: bool,
 ) -> Tuple[str, dict, str, str, bool]:
     """Execute the primary LLM call and return response, usage, and model info."""
-    shuffled_models = random.sample(models, len(models))
+    redis_client = get_redis_client()
+    available_models = [m for m in models if not _is_model_blacklisted(redis_client, m)]
+    
+    if not available_models:
+        raise RuntimeError("All primary models are blacklisted or unavailable")
+        
+    shuffled_models = random.sample(available_models, len(available_models))
     last_e = None
     for model in shuffled_models:
         start_time = time.time()
@@ -498,6 +562,8 @@ def _execute_primary_call(
 
             if not response_text or not response_text.strip():
                 raise RuntimeError("LLM returned an empty response")
+            
+            _record_model_success(redis_client, model)
             return response_text, usage, provider, model, is_fallback
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
@@ -516,6 +582,7 @@ def _execute_primary_call(
                 "is_fallback": is_fallback,
             })
             logger.error("LLM primary call failed (provider=%s, model=%s, model_type=%s): %s", provider, model, model_type, e, exc_info=True)
+            _record_model_failure(redis_client, model, provider, str(e))
             last_e = e
     if last_e:
         raise last_e
@@ -628,7 +695,14 @@ def _execute_fallback_call(
 
         if fallback_api_key or fallback_base_url:
             # Shuffle fallback models to try them in random order without repeating
-            shuffled_fallback_models = random.sample(fallback_models, len(fallback_models))
+            redis_client = get_redis_client()
+            available_fallback_models = [m for m in fallback_models if not _is_model_blacklisted(redis_client, m)]
+            
+            if not available_fallback_models:
+                logger.warning("All fallback models are blacklisted or unavailable.")
+                raise RuntimeError("All fallback models are blacklisted") from e
+                
+            shuffled_fallback_models = random.sample(available_fallback_models, len(available_fallback_models))
             last_fallback_e = None
             for fallback_model in shuffled_fallback_models:
                 logger.warning(
@@ -653,6 +727,7 @@ def _execute_fallback_call(
                     )
                     response_text = result["content"]
                     usage = result.get("usage", {})
+                    _record_model_success(redis_client, fallback_model)
                     return response_text, usage, "openai", fallback_model, True
                 except Exception as fallback_e:
                     fallback_latency = (time.time() - fallback_start) * 1000
@@ -671,6 +746,7 @@ def _execute_fallback_call(
                         "is_fallback": True,
                     })
                     logger.error("OpenAI fallback model %s failed: %s", fallback_model, fallback_e, exc_info=True)
+                    _record_model_failure(redis_client, fallback_model, "openai", str(fallback_e))
                     last_fallback_e = fallback_e
             if last_fallback_e:
                 raise last_fallback_e
@@ -745,7 +821,14 @@ def _execute_fallback_call(
 
         if fallback_base_url:
             # Shuffle fallback models to try them in random order without repeating
-            shuffled_fallback_models = random.sample(fallback_models, len(fallback_models))
+            redis_client = get_redis_client()
+            available_fallback_models = [m for m in fallback_models if not _is_model_blacklisted(redis_client, m)]
+            
+            if not available_fallback_models:
+                logger.warning("All fallback models are blacklisted or unavailable.")
+                raise RuntimeError("All fallback models are blacklisted") from e
+                
+            shuffled_fallback_models = random.sample(available_fallback_models, len(available_fallback_models))
             last_fallback_e = None
             for fallback_model in shuffled_fallback_models:
                 logger.warning(
@@ -770,6 +853,7 @@ def _execute_fallback_call(
                     )
                     response_text = result["content"]
                     usage = result.get("usage", {})
+                    _record_model_success(redis_client, fallback_model)
                     return response_text, usage, "ollama", fallback_model, True
                 except Exception as fallback_e:
                     fallback_latency = (time.time() - fallback_start) * 1000
@@ -788,6 +872,7 @@ def _execute_fallback_call(
                         "is_fallback": True,
                     })
                     logger.error("Ollama fallback model %s failed: %s", fallback_model, fallback_e, exc_info=True)
+                    _record_model_failure(redis_client, fallback_model, "ollama", str(fallback_e))
                     last_fallback_e = fallback_e
             if last_fallback_e:
                 raise last_fallback_e

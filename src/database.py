@@ -567,6 +567,15 @@ def _get_init_statements() -> List[str]:
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_dividends_symbol ON dividends(symbol)",
+        f"""
+        CREATE TABLE IF NOT EXISTS llm_model_blacklist (
+            model TEXT PRIMARY KEY,
+            provider TEXT,
+            reason TEXT,
+            blacklisted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP
+        )
+        """,
     ]
     return statements
 
@@ -2901,5 +2910,49 @@ def cleanup_old_llm_decisions(retention_days: int = 30):
         if deleted:
             logger.info(f"Cleaned up {deleted} old LLM decision quality records (older than {retention_days} days)")
         return deleted
+    finally:
+        conn.close()
+
+
+from datetime import datetime, timezone, timedelta
+
+def add_model_to_blacklist(model: str, provider: str, reason: str, expires_at: datetime) -> None:
+    """Add or update a model in the blacklist."""
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                "INSERT INTO llm_model_blacklist (model, provider, reason, blacklisted_at, expires_at) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (model) DO UPDATE SET provider = EXCLUDED.provider, reason = EXCLUDED.reason, blacklisted_at = EXCLUDED.blacklisted_at, expires_at = EXCLUDED.expires_at"
+            )
+        else:
+            sql = _adapt_sql(
+                "INSERT OR REPLACE INTO llm_model_blacklist (model, provider, reason, blacklisted_at, expires_at) "
+                "VALUES (%s, %s, %s, %s, %s)"
+            )
+        conn.execute(sql, (model, provider, reason, datetime.now(timezone.utc), expires_at))
+        conn.commit()
+    finally:
+        conn.close()
+
+def get_active_blacklisted_models() -> List[Dict[str, Any]]:
+    """Return models currently in the blacklist (not expired)."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            "SELECT model, provider, expires_at FROM llm_model_blacklist WHERE expires_at > %s"
+        )
+        rows = conn.execute(sql, (datetime.now(timezone.utc),)).fetchall()
+        return [{"model": r["model"], "provider": r["provider"], "expires_at": r["expires_at"]} for r in rows]
+    finally:
+        conn.close()
+
+def remove_model_from_blacklist(model: str) -> None:
+    """Remove a model from the blacklist."""
+    conn = get_connection()
+    try:
+        conn.execute(_adapt_sql("DELETE FROM llm_model_blacklist WHERE model = %s"), (model,))
+        conn.commit()
     finally:
         conn.close()

@@ -188,6 +188,8 @@ def _validate_startup_settings():
 
 async def main():
     init_db()
+    from src.llm.cache import _sync_blacklist_from_db
+    _sync_blacklist_from_db()
     _validate_startup_settings()
     # Pre-create yfinance cache directory to avoid race condition errors
     # when multiple threads try to create it simultaneously.
