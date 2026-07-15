@@ -68,24 +68,30 @@ def _discover_g4f_models() -> dict:
     categorized = {"mind": [], "actuator": [], "weak": []}
     try:
         import g4f
-        # g4f.models is a dict of model name -> Model object
+        from g4f.models import Model
+        
         all_models = []
-        if hasattr(g4f, 'models') and hasattr(g4f.models, 'utils'):
-            # Access the internal model registry
-            from g4f.models import Model
-            # Try to iterate over all known models
-            if hasattr(g4f.models, '__iter__'):
-                for model_name in g4f.models:
-                    all_models.append(str(model_name))
-        elif hasattr(g4f, 'models'):
-            # Fallback: try dict-like access
+        
+        # Method 1: Iterate over g4f.models module attributes to find Model instances
+        for name, obj in vars(g4f.models).items():
+            if isinstance(obj, Model):
+                model_name = obj.name if hasattr(obj, 'name') else name
+                if model_name and model_name not in all_models:
+                    all_models.append(model_name)
+        
+        # Method 2: If Method 1 found nothing, try getting models from providers
+        if not all_models:
             try:
-                all_models = list(g4f.models.keys())
-            except (AttributeError, TypeError):
+                from g4f.Provider import __providers__
+                for provider in __providers__:
+                    if hasattr(provider, 'models') and provider.models:
+                        for m in provider.models:
+                            if m not in all_models:
+                                all_models.append(m)
+            except Exception:
                 pass
         
-        # If we couldn't get models from the registry, fall back to a minimal
-        # set of well-known g4f model names so the system remains functional.
+        # If we still couldn't get models, fall back to a minimal known list
         if not all_models:
             all_models = [
                 "gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-3.5-turbo",
@@ -144,12 +150,28 @@ def _get_g4f_response(
 ) -> dict:
     """Send a prompt to the configured g4f model and return a dict with 'content' and 'usage'."""
     from g4f.client import Client
-    from g4f.Provider import RetryProvider, Phind, FreeChatgpt, Liaobots, Blackbox, OpenaiChat, Gemini, Bing
+    from g4f.Provider import RetryProvider
+
+    # Dynamically discover all working chat providers from g4f
+    try:
+        from g4f.Provider import __providers__
+        # Filter to providers that are working and support chat completions
+        dynamic_providers = [
+            p for p in __providers__
+            if hasattr(p, 'supports_stream') and p.working
+            and hasattr(p, 'chat_completions')
+        ]
+        if not dynamic_providers:
+            # Fallback to known providers if dynamic discovery fails
+            from g4f.Provider import OpenaiChat, Gemini, Bing, Phind, FreeChatgpt, Liaobots, Blackbox
+            dynamic_providers = [OpenaiChat, Gemini, Bing, Phind, FreeChatgpt, Liaobots, Blackbox]
+    except Exception:
+        from g4f.Provider import OpenaiChat, Gemini, Bing, Phind, FreeChatgpt, Liaobots, Blackbox
+        dynamic_providers = [OpenaiChat, Gemini, Bing, Phind, FreeChatgpt, Liaobots, Blackbox]
 
     # Use RetryProvider to automatically try multiple providers and blacklist failing ones.
-    # This satisfies the requirement to dynamically manage providers and retry/blacklist.
     client = Client(
-        provider=RetryProvider([OpenaiChat, Gemini, Bing, Phind, FreeChatgpt, Liaobots, Blackbox], shuffle=True)
+        provider=RetryProvider(dynamic_providers, shuffle=True)
     )
 
     if messages is not None:
@@ -160,8 +182,6 @@ def _get_g4f_response(
             api_messages.append({"role": "system", "content": system_prompt})
         api_messages.append({"role": "user", "content": prompt})
 
-    # If no specific model is provided, we don't need to pick one here because
-    # the cache layer will pass the model string. However, if it's empty, we fallback.
     if not model:
         model = "gpt-4o-mini"
 
@@ -170,6 +190,10 @@ def _get_g4f_response(
         "messages": api_messages,
         "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
     }
+    
+    # Pass timeout to g4f if supported
+    if timeout is not None:
+        payload["timeout"] = timeout
 
     for attempt in range(max_retries):
         try:
