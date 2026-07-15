@@ -136,8 +136,8 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
                 elif settings.COUNTRY_FILTER_STRICT and not isin.startswith(settings.TARGET_COUNTRY):
                     logger.debug(f"yfinance returned non-target ISIN {isin} for {base_symbol}, discarding.")
                     isin = None
-        except (RuntimeError, ValueError, KeyError, AttributeError, OSError) as e:
-            logger.debug(f"Failed to fetch ISIN for {base_symbol} from yfinance: {e}")
+        except Exception as e:
+            logger.debug(f"Failed to fetch ISIN for {base_symbol} from yfinance: {type(e).__name__}: {e}")
             isin = None
 
     # Fallback to Borsa Italiana search if yfinance failed or circuit is open
