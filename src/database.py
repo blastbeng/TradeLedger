@@ -295,6 +295,7 @@ def _migrate_db():
         ("discovered_symbols", "coupon", "ALTER TABLE discovered_symbols ADD COLUMN coupon REAL"),
         ("discovered_symbols", "country", "ALTER TABLE discovered_symbols ADD COLUMN country TEXT"),
         ("discovered_symbols", "manual_isin", "ALTER TABLE discovered_symbols ADD COLUMN manual_isin TEXT"),
+        ("discovered_symbols", "candle_count", "ALTER TABLE discovered_symbols ADD COLUMN candle_count INTEGER NOT NULL DEFAULT 0"),
         ("llm_metrics", "request_type", "ALTER TABLE llm_metrics ADD COLUMN request_type TEXT"),
         ("llm_metrics", "is_fallback", "ALTER TABLE llm_metrics ADD COLUMN is_fallback INTEGER NOT NULL DEFAULT 0"),
         ("dividends", "reinvested", "ALTER TABLE dividends ADD COLUMN reinvested INTEGER NOT NULL DEFAULT 0"),
@@ -2107,7 +2108,7 @@ def get_all_discovered_symbols() -> List[Dict[str, Any]]:
     """Return all discovered symbols from the database."""
     conn = get_connection()
     try:
-        sql = _adapt_sql("SELECT symbol, isin, asset_type, name, maturity, coupon, country, manual_isin FROM discovered_symbols")
+        sql = _adapt_sql("SELECT symbol, isin, asset_type, name, maturity, coupon, country, manual_isin, candle_count FROM discovered_symbols")
         rows = conn.execute(sql).fetchall()
         return [
             {
@@ -2119,6 +2120,7 @@ def get_all_discovered_symbols() -> List[Dict[str, Any]]:
                 "coupon": row["coupon"],
                 "country": row["country"],
                 "manual_isin": row["manual_isin"],
+                "candle_count": row["candle_count"],
             }
             for row in rows
         ]
@@ -2276,6 +2278,30 @@ def update_manual_isin(symbol: str, isin: Optional[str]):
         else:
             sql = _adapt_sql("UPDATE discovered_symbols SET manual_isin = NULL WHERE symbol = %s")
             conn.execute(sql, (symbol,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_candle_count_for_symbol(symbol: str) -> int:
+    """Return the total number of candles for a symbol across all timeframes."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql("SELECT COUNT(*) as count FROM market_data WHERE symbol = %s")
+        row = conn.execute(sql, (symbol,)).fetchone()
+        return row["count"] if row else 0
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def update_candle_count(symbol: str, count: int):
+    """Update the total candle count for a discovered symbol."""
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+    conn = get_connection()
+    try:
+        sql = _adapt_sql("UPDATE discovered_symbols SET candle_count = %s WHERE symbol = %s")
+        conn.execute(sql, (count, base))
         conn.commit()
     finally:
         conn.close()

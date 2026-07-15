@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 
 from src.config.settings import settings
-from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch
+from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch, get_candle_count_for_symbol, update_candle_count
 from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session, get_bars_range, get_quotes, get_quotes_cached
 from src.indicators import compute_all_indicators
 
@@ -646,6 +646,14 @@ class MarketDataManager:
             since = last_ts + 1
             # Small delay to avoid rate limits
             await asyncio.sleep(0.05)
+
+        if total_inserted > 0:
+            try:
+                loop = asyncio.get_running_loop()
+                count = await loop.run_in_executor(self.engine._db_executor, get_candle_count_for_symbol, symbol)
+                await loop.run_in_executor(self.engine._db_executor, update_candle_count, symbol, count)
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+                logger.debug(f"Failed to update candle count for {symbol}: {type(e).__name__}: {e}")
 
         if total_inserted >= max_candles:
             logger.debug(f"Backfill partial for {symbol} {timeframe}: {total_inserted} candles inserted (limit reached)")

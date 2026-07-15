@@ -561,6 +561,7 @@
                                 <th data-sort="isin" style="cursor:pointer;">Auto ISIN ↕</th>
                                 <th data-sort="country" style="cursor:pointer;">Country ↕</th>
                                 <th data-sort="manual_isin" style="cursor:pointer;">Manual ISIN ↕</th>
+                                <th>Candles</th>
                                 <th>Actions</th>
                             </tr>
                             <tr>
@@ -571,6 +572,7 @@
                                 <th><input type="text" data-col="isin" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
                                 <th><input type="text" data-col="country" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
                                 <th><input type="text" data-col="manual_isin" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
+                                <th></th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -2354,6 +2356,8 @@
                     if (item) item.manual_isin = isin;
                 });
                 manualCell.appendChild(input);
+                
+                row.insertCell().textContent = s.candle_count || 0;
                 
                 const actionsCell = row.insertCell();
                 const clearBtn = document.createElement('button');
