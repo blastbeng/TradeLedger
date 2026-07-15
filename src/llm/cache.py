@@ -478,7 +478,7 @@ def _execute_primary_call(
                     messages=api_messages,
                     add_cache_control=add_cache_control,
                     thinking_enabled=thinking_enabled,
-                    is_fallback=is_fallback,
+                    max_retries=1,
                 )
             else:
                 from src.llm.llm_client import _get_ollama_response
@@ -490,7 +490,7 @@ def _execute_primary_call(
                     messages=api_messages,
                     add_cache_control=add_cache_control,
                     thinking_enabled=thinking_enabled,
-                    is_fallback=is_fallback,
+                    max_retries=1,
                 )
 
             response_text = result["content"]
@@ -649,7 +649,7 @@ def _execute_fallback_call(
                         messages=api_messages,
                         add_cache_control=fallback_add_cache_control,
                         thinking_enabled=thinking_enabled,
-                        is_fallback=True,
+                        max_retries=1,
                     )
                     response_text = result["content"]
                     usage = result.get("usage", {})
@@ -766,7 +766,7 @@ def _execute_fallback_call(
                         messages=api_messages,
                         add_cache_control=fallback_add_cache_control,
                         thinking_enabled=thinking_enabled,
-                        is_fallback=True,
+                        max_retries=1,
                     )
                     response_text = result["content"]
                     usage = result.get("usage", {})

@@ -149,7 +149,7 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
             }
         }
 
-    return _execute_llm_request("ollama", url, headers, payload, timeout, system_prompt, prompt, _parse_ollama, max_retries=1 if is_fallback else 3)
+    return _execute_llm_request("ollama", url, headers, payload, timeout, system_prompt, prompt, _parse_ollama, max_retries=max_retries)
 
 
 def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str = None,
@@ -159,7 +159,7 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
                         messages: Optional[List[Dict[str, str]]] = None,
                         add_cache_control: bool = False,
                         thinking_enabled: bool = True,
-                       is_fallback: bool = False,
+                      max_retries: int = 3,
 ) -> dict:
     """Send a prompt to the configured OpenAI-compatible API and return a dict with 'content' and 'usage'."""
     url = f"{(base_url or settings.OPENAI_BASE_URL).rstrip('/')}/chat/completions"
@@ -222,7 +222,7 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
             }
         }
 
-    return _execute_llm_request("openai", url, headers, payload, timeout, system_prompt, prompt, _parse_openai, max_retries=1 if is_fallback else 3)
+    return _execute_llm_request("openai", url, headers, payload, timeout, system_prompt, prompt, _parse_openai, max_retries=max_retries)
 
 
 def get_llm_response(prompt: str, system_prompt: str = "", model_type: str = "actuator", symbol: Optional[str] = None, messages: Optional[List[Dict[str, str]]] = None, request_type: Optional[str] = None) -> str:
