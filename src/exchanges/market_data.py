@@ -635,6 +635,10 @@ def get_multi_timeframe_bars(
     redis_client = get_redis_client()
     cache_ttl = 60 if any(tf in ("1h",) for tf in timeframes) else 300
 
+    # Check if we have ISIN (resolve on-demand if not in DB) — once for all timeframes
+    db_isin = _get_isin_from_yfinance(symbol)
+    has_isin = db_isin is not None
+
     result = {}
     for tf in timeframes:
         interval = TIMEFRAME_MAP.get(tf)
@@ -664,10 +668,6 @@ def get_multi_timeframe_bars(
                 except (TypeError, ValueError, RuntimeError):
                     pass
             continue
-
-        # Check if we have ISIN (resolve on-demand if not in DB)
-        db_isin = _get_isin_from_yfinance(symbol)
-        has_isin = db_isin is not None
 
         # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
         borsa_candles = None
