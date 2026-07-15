@@ -33,6 +33,7 @@ if _backend == "postgresql":
         # Use execute with autocommit=True (set in kwargs below) - no transaction started
         # This works on all psycopg3 versions
         conn.execute("SELECT 1")
+        conn.execute("SET search_path TO public")
 
     _pg_pool = ConnectionPool(
         kwargs={
@@ -584,6 +585,9 @@ def init_db():
     """Create tables if they don't exist, then run migrations."""
     conn = get_connection()
     try:
+        if _backend == "postgresql":
+            conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+        
         statements = _get_init_statements()
         for stmt in statements:
             conn.execute(stmt)
