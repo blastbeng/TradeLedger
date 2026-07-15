@@ -976,27 +976,29 @@ class PositionManager:
 
             # Try common European date formats
             if maturity_dt is None:
-                # Normalize Italian month names/abbreviations to English
-                # so strptime with %b/%B works regardless of system locale.
-                # Use regex with word boundaries to avoid partial matches
-                # (e.g., "mar" matching inside "marzo").
-                _italian_months = {
-                    # Full names (listed first so longer matches take priority)
-                    "gennaio": "January", "febbraio": "February", "marzo": "March",
-                    "aprile": "April", "maggio": "May", "giugno": "June",
-                    "luglio": "July", "agosto": "August", "settembre": "September",
-                    "ottobre": "October", "novembre": "November", "dicembre": "December",
-                    # Abbreviations
-                    "gen": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr",
-                    "mag": "May", "giu": "Jun", "lug": "Jul", "ago": "Aug",
-                    "set": "Sep", "ott": "Oct", "nov": "Nov", "dic": "Dec",
+                # Normalize English and Italian month names/abbreviations to numeric
+                # equivalents to make parsing completely locale-independent.
+                _month_map = {
+                    "january": "01", "february": "02", "march": "03", "april": "04",
+                    "may": "05", "june": "06", "july": "07", "august": "08",
+                    "september": "09", "october": "10", "november": "11", "december": "12",
+                    "jan": "01", "feb": "02", "mar": "03", "apr": "04",
+                    "jun": "06", "jul": "07", "aug": "08", "sep": "09",
+                    "oct": "10", "nov": "11", "dec": "12",
+                    "gennaio": "01", "febbraio": "02", "marzo": "03",
+                    "aprile": "04", "maggio": "05", "giugno": "06",
+                    "luglio": "07", "agosto": "08", "settembre": "09",
+                    "ottobre": "10", "novembre": "11", "dicembre": "12",
+                    "gen": "01", "mag": "05", "giu": "06", "lug": "07",
+                    "ago": "08", "set": "09", "ott": "10", "dic": "12",
                 }
+                # Sort keys by length descending to ensure longer matches take priority
                 _month_pattern = re.compile(
-                    r'\b(' + '|'.join(re.escape(k) for k in _italian_months) + r')\b',
+                    r'\b(' + '|'.join(re.escape(k) for k in sorted(_month_map.keys(), key=len, reverse=True)) + r')\b',
                     re.IGNORECASE,
                 )
                 maturity_str_clean = _month_pattern.sub(
-                    lambda m: _italian_months[m.group(0).lower()], maturity_str_clean
+                    lambda m: _month_map[m.group(0).lower()], maturity_str_clean
                 )
 
                 _date_formats = [
@@ -1004,9 +1006,10 @@ class PositionManager:
                     "%d-%m-%Y",       # 01-10-2025
                     "%d.%m.%Y",       # 01.10.2025
                     "%d/%m/%y",       # 01/10/25
-                    "%d %b %Y",       # 01 Oct 2025 (also handles Italian after normalization)
-                    "%d %B %Y",       # 01 October 2025 (also handles Italian after normalization)
-                    "%B %d, %Y",      # October 01, 2025
+                    "%d %m %Y",       # 01 10 2025
+                    "%d %m %y",       # 01 10 25
+                    "%m %d, %Y",      # 10 01, 2025
+                    "%m %d %Y",       # 10 01 2025
                     "%Y-%m-%d",       # 2025-10-01 (ISO date only)
                     "%Y/%m/%d",       # 2025/10/01
                 ]
