@@ -2299,6 +2299,10 @@ def get_candle_count_for_symbol(symbol: str) -> int:
 def update_candle_count(symbol: str, count: int):
     """Update the total candle count for a discovered symbol."""
     base = symbol.split("/")[0] if "/" in symbol else symbol
+    # Strip ticker suffix for DB lookup (DB stores base symbols without suffix)
+    suffix = settings.TICKER_SUFFIX
+    if suffix and base.endswith(suffix):
+        base = base[:-len(suffix)]
     conn = get_connection()
     try:
         sql = _adapt_sql("UPDATE discovered_symbols SET candle_count = %s WHERE symbol = %s")
