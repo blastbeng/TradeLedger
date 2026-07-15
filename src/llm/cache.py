@@ -8,7 +8,7 @@ import random
 import time
 import concurrent.futures
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
 from src.database import save_llm_metrics, add_model_to_blacklist, get_active_blacklisted_models, remove_model_from_blacklist
