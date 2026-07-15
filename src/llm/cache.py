@@ -224,6 +224,20 @@ def _split_and_merge_prompt(
                     add_cache_control=False,
                     thinking_enabled=False,
                 )
+            elif weak_provider == "g4f":
+                from src.llm.g4f_client import _get_g4f_response
+                result = _get_g4f_response(
+                    prompt=summary_prompt,
+                    system_prompt="You are an expert summarizer for a stock trading bot.",
+                    model=weak_model,
+                    base_url=weak_base_url,
+                    api_key=weak_api_key,
+                    temperature=summary_temperature,
+                    timeout=summary_timeout,
+                    messages=None,
+                    add_cache_control=False,
+                    thinking_enabled=False,
+                )
             else:
                 from src.llm.llm_client import _get_ollama_response
                 result = _get_ollama_response(
