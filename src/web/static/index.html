@@ -1322,7 +1322,14 @@
             // Discovered Symbols (ISIN table & autocomplete)
             if (data.discovered_symbols) {
                 isinTableData = data.discovered_symbols;
-                renderISINTable();
+                
+                // Only re-render the table if the user is not currently editing a cell
+                const isEditingISIN = document.activeElement && 
+                                      document.activeElement.tagName === 'INPUT' && 
+                                      document.activeElement.closest('#isin-table');
+                if (!isEditingISIN) {
+                    renderISINTable();
+                }
                 
                 // Update the manual trade datalist
                 const datalist = document.getElementById('discovered-symbols-list');
