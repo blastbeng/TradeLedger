@@ -679,8 +679,8 @@ class Settings(BaseSettings):
     @field_validator("LLM_PROVIDER")
     @classmethod
     def validate_llm_provider(cls, v: str) -> str:
-        if v not in ("ollama", "openai"):
-            raise ValueError("LLM_PROVIDER must be 'ollama' or 'openai'")
+        if v not in ("ollama", "openai", "g4f"):
+            raise ValueError("LLM_PROVIDER must be 'ollama', 'openai', or 'g4f'")
         return v
 
     @field_validator(
@@ -737,6 +737,18 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_BASE_URL: Optional[str] = None
     OPENAI_MODEL: Annotated[list[str], NoDecode] = []
+
+    # G4F (gpt4free)
+    # Note: g4f dynamically manages providers and models from code, so model names are not configured here.
+    # Max input tokens for main models (defaults: 128K for mind/actuator, 64K for weak)
+    G4F_MIND_MAX_INPUT_TOKENS: int = 128_000
+    G4F_ACTUATOR_MAX_INPUT_TOKENS: int = 128_000
+    G4F_WEAK_MAX_INPUT_TOKENS: int = 64_000
+
+    # Max input tokens for fallback models (defaults: 16K for mind/actuator, 8K for weak)
+    G4F_MIND_FALLBACK_MAX_INPUT_TOKENS: int = 16_384
+    G4F_ACTUATOR_FALLBACK_MAX_INPUT_TOKENS: int = 16_384
+    G4F_WEAK_FALLBACK_MAX_INPUT_TOKENS: int = 8_192
 
     # Mind model (complex reasoning: symbol selection, strategy generation)
     OLLAMA_MIND_MODEL: Annotated[list[str], NoDecode] = []
@@ -1360,6 +1372,9 @@ class Settings(BaseSettings):
                 raise ValueError("OpenAI LLM provider is selected but OPENAI_API_KEY is not set.")
             if not (self.OPENAI_MODEL or (self.OPENAI_MIND_MODEL and self.OPENAI_ACTUATOR_MODEL)):
                 raise ValueError("OpenAI LLM provider is selected but no model is configured (OPENAI_MODEL or OPENAI_MIND_MODEL/OPENAI_ACTUATOR_MODEL).")
+        elif self.LLM_PROVIDER == "g4f":
+            # g4f dynamically manages models, so no specific model or API key validation is needed here.
+            pass
 
     def reload(self):
         """Reload settings from .env file and environment variables.
@@ -1419,7 +1434,7 @@ class Settings(BaseSettings):
         }
         llm_fields = {
             f for f in self.model_fields
-            if f.startswith(("LLM_", "OLLAMA_", "OPENAI_")) and f not in temperature_fields
+            if f.startswith(("LLM_", "OLLAMA_", "OPENAI_", "G4F_")) and f not in temperature_fields
         }
         # Include fee and system-prompt-related fields that affect LLM cache validity.
         # When these change, LLM_CACHE_VERSION is regenerated to invalidate all cached responses.
