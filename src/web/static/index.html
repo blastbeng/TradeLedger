@@ -2307,7 +2307,7 @@
             // Filter
             let filtered = isinTableData.filter(s => {
                 const country = s.country || (s.isin ? s.isin.substring(0, 2) : '') || '';
-                const candleCount = s.candle_count != null ? String(s.candle_count) : '';
+                const candleCount = s.candle_count > 0 ? String(s.candle_count) : 'No data';
                 return (s.symbol || '').toLowerCase().includes(isinColFilters.symbol) &&
                        (s.asset_type || '').toLowerCase().includes(isinColFilters.asset_type) &&
                        (s.name || '').toLowerCase().includes(isinColFilters.name) &&
