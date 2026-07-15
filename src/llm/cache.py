@@ -1105,6 +1105,7 @@ def _try_weak_model(
     effective_timeout: float,
     add_cache_control: bool,
     thinking_enabled: bool,
+    request_type: Optional[str] = None,
 ) -> Optional[Tuple[str, dict, str, str]]:
     """Try the main weak model. Returns (response_text, usage, provider, model) or None on failure."""
     weak_provider, weak_model, weak_base_url, weak_api_key = _get_weak_model_config()
@@ -1164,6 +1165,20 @@ def _try_weak_model(
     except Exception as weak_e:
         logger.warning("Weak model %s failed: %s", weak_model, weak_e)
         _record_model_failure(redis_client, weak_model, weak_provider, str(weak_e))
+        _save_metric({
+            "timestamp": time.time(),
+            "provider": weak_provider,
+            "model": weak_model,
+            "model_type": model_type,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cache_hit": 0,
+            "latency_ms": 0,
+            "error": str(weak_e)[:500],
+            "request_type": request_type,
+            "is_fallback": False,
+        })
         return None
 
 
@@ -1343,7 +1358,7 @@ def get_cached_llm_response(
             )
             weak_result = _try_weak_model(
                 model_type, messages, prompt, system_prompt,
-                temperature, effective_timeout, add_cache_control, thinking_enabled
+                temperature, effective_timeout, add_cache_control, thinking_enabled, request_type
             )
 
         if weak_result is not None:
@@ -1351,7 +1366,7 @@ def get_cached_llm_response(
             usage = weak_result[1]
             used_provider = weak_result[2]
             used_model = weak_result[3]
-            is_fallback = True
+            is_fallback = False
         else:
             response_text, usage, used_provider, used_model, is_fallback = _execute_fallback_call(
                 e, model_type, messages, prompt, system_prompt, temperature, effective_timeout, api_messages, add_cache_control, thinking_enabled, request_type, provider
