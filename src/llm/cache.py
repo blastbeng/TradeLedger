@@ -633,6 +633,7 @@ def _execute_fallback_call(
                         messages=api_messages,
                         add_cache_control=add_cache_control,
                         thinking_enabled=thinking_enabled,
+                        is_fallback=True,
                     )
                     response_text = result["content"]
                     usage = result.get("usage", {})
@@ -749,6 +750,7 @@ def _execute_fallback_call(
                         messages=api_messages,
                         add_cache_control=add_cache_control,
                         thinking_enabled=thinking_enabled,
+                        is_fallback=True,
                     )
                     response_text = result["content"]
                     usage = result.get("usage", {})
