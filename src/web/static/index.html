@@ -320,6 +320,46 @@
             .llm-metrics-grid {
                 grid-template-columns: 1fr !important;
             }
+
+            /* Remove min-width for LLM metrics tables on mobile */
+            #llm-per-model-table,
+            #llm-recent-calls-table,
+            #llm-failure-stats-table,
+            #llm-blacklist-table {
+                min-width: 0 !important;
+            }
+
+            /* Hide non-critical columns on mobile */
+            /* Per Model: Hide Prompt (3) and Completion (4) */
+            #llm-per-model-table th:nth-child(3),
+            #llm-per-model-table td:nth-child(3),
+            #llm-per-model-table th:nth-child(4),
+            #llm-per-model-table td:nth-child(4) {
+                display: none;
+            }
+
+            /* Recent Calls: Hide Type (3) */
+            #llm-recent-calls-table th:nth-child(3),
+            #llm-recent-calls-table td:nth-child(3) {
+                display: none;
+            }
+
+            /* Failure Stats: Hide Level (3) */
+            #llm-failure-stats-table th:nth-child(3),
+            #llm-failure-stats-table td:nth-child(3) {
+                display: none;
+            }
+
+            /* Blacklist: Hide Provider (2) */
+            #llm-blacklist-table th:nth-child(2),
+            #llm-blacklist-table td:nth-child(2) {
+                display: none;
+            }
+
+            /* Ensure text wrapping in LLM metrics tables on mobile */
+            #llm-metrics-card td {
+                white-space: normal;
+            }
         }
     </style>
 </head>
