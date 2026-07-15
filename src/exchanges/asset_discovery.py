@@ -41,6 +41,13 @@ def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optio
                 country = info.get("country")
                 name = info.get("longName") or info.get("shortName")
                 if country or name:
+                    # Also try to get ISIN from yfinance
+                    try:
+                        yf_isin = ticker.isin
+                        if yf_isin and yf_isin.strip() and yf_isin.strip() != '-':
+                            bi_isin = yf_isin.strip()
+                    except (RuntimeError, ValueError, KeyError, AttributeError, OSError):
+                        pass
                     break
                 # country is None or empty – retry if attempts remain
                 if attempt < max_retries:

@@ -302,13 +302,10 @@ def get_borsa_italiana_candles(
     if BTPPolicy.is_btp(base):
         isin = base
     else:
-        from src.database import get_isin_from_db
-        db_symbol = base
-        if settings.TICKER_SUFFIX and db_symbol.endswith(settings.TICKER_SUFFIX):
-            db_symbol = db_symbol[:-len(settings.TICKER_SUFFIX)]
-        isin = get_isin_from_db(db_symbol)
+        from src.exchanges.market_data import _get_isin_from_yfinance
+        isin = _get_isin_from_yfinance(base)
         if not isin:
-            logger.debug(f"No ISIN in DB for {symbol}, skipping borsaitaliana")
+            logger.debug(f"No ISIN found for {symbol}, skipping borsaitaliana")
             return None
 
     # Determine market code for referer URL

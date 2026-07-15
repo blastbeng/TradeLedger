@@ -378,16 +378,9 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     
     isin_map = get_isin_map_from_db(db_lookup_symbols)
     
-    bi_symbols = []
-    no_isin_symbols = []
-    for sym in missing_symbols:
-        db_lookup_symbol = sym
-        if settings.TICKER_SUFFIX and db_lookup_symbol.endswith(settings.TICKER_SUFFIX):
-            db_lookup_symbol = db_lookup_symbol[:-len(settings.TICKER_SUFFIX)]
-        if isin_map.get(db_lookup_symbol):
-            bi_symbols.append(sym)
-        else:
-            no_isin_symbols.append(sym)
+    # Attempt Borsa Italiana for ALL symbols (it resolves ISIN on-demand, BTPs use ISIN directly)
+    bi_symbols = list(missing_symbols)
+    no_isin_symbols = []  # No longer needed — all symbols try Borsa Italiana first
 
     if bi_symbols:
         for sym in bi_symbols:
@@ -408,8 +401,8 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         if sym not in result or result[sym].get("last") is None:
             result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
 
-    # Filter out BTP ISINs as they are not supported by yfinance and should be served from DB
-    stock_symbols = [s for s in no_isin_symbols if not BTPPolicy.is_btp(s)]
+    # Symbols still missing a valid price after Borsa Italiana — try yfinance
+    stock_symbols = [s for s in missing_symbols if not BTPPolicy.is_btp(s) and result.get(s, {}).get("last") is None]
 
     # --- Batch fetch ALL price data using yf.download (single HTTP request) ---
     # This replaces the slow sequential fast_info calls that caused timeouts.
@@ -502,22 +495,6 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 result[sym]["last_update"] = int(time.time() * 1000)
                 result[sym]["source"] = "iex"
                 logger.debug(f"get_quotes: IEX Cloud provided quote for {sym}")
-
-    # --- Try Borsa Italiana for BTPs and any remaining symbols still missing valid prices ---
-    missing_after_iex = [
-        sym for sym in missing_symbols
-        if result.get(sym, {}).get("last") is None
-    ]
-    if missing_after_iex:
-        # Only try symbols not already attempted via Borsa Italiana
-        bi_fallback = [s for s in missing_after_iex if s not in bi_symbols]
-        for sym in bi_fallback[:5]:
-            bi_quote = get_borsa_italiana_quote(sym)
-            if bi_quote:
-                result[sym].update(bi_quote)
-                result[sym]["last_update"] = int(time.time() * 1000)
-                result[sym]["source"] = "borsa_italiana"
-                logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
 
     # Finalize, persist, and enrich quotes
     _finalize_and_persist_quotes(result, symbols, redis_client)
@@ -690,12 +667,8 @@ def get_multi_timeframe_bars(
                     pass
             continue
 
-        # Check if we have ISIN in DB (strip suffix — DB stores base symbols)
-        from src.database import get_isin_from_db
-        db_lookup_symbol = symbol
-        if settings.TICKER_SUFFIX and db_lookup_symbol.endswith(settings.TICKER_SUFFIX):
-            db_lookup_symbol = db_lookup_symbol[:-len(settings.TICKER_SUFFIX)]
-        db_isin = get_isin_from_db(db_lookup_symbol)
+        # Check if we have ISIN (resolve on-demand if not in DB)
+        db_isin = _get_isin_from_yfinance(symbol)
         has_isin = db_isin is not None
 
         # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
@@ -813,12 +786,8 @@ def get_bars_range(
             return borsa_candles
         return []
 
-    # Check if we have ISIN in DB (strip suffix — DB stores base symbols)
-    from src.database import get_isin_from_db
-    db_lookup_symbol = symbol
-    if settings.TICKER_SUFFIX and db_lookup_symbol.endswith(settings.TICKER_SUFFIX):
-        db_lookup_symbol = db_lookup_symbol[:-len(settings.TICKER_SUFFIX)]
-    db_isin = get_isin_from_db(db_lookup_symbol)
+    # Check if we have ISIN (resolve on-demand if not in DB)
+    db_isin = _get_isin_from_yfinance(symbol)
     has_isin = db_isin is not None
 
     # If we have ISIN, only use borsaitaliana (skip yfinance to avoid rate limits)
