@@ -16,9 +16,9 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
-from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics, get_all_blacklisted_models
+from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics, get_all_blacklisted_models, update_manual_isin
 from src.llm.cache import get_model_failure_stats
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,13 @@ class ManualTradeRequest(BaseModel):
     quantity: float
     money_spent: float
     fee: float = 0.0
+
+class UpdateISINRequest(BaseModel):
+    symbol: str
+    isin: Optional[str] = None
+
+class ClearISINRequest(BaseModel):
+    symbols: List[str]
 
 def _resolve_llm_role_settings(role: str):
     """Resolve provider, model, and base URL for a given LLM role (mind, actuator, weak)."""
@@ -556,7 +563,20 @@ async def get_manual_trades():
 async def discovered_symbols_api():
     """Return all discovered symbols for frontend autocomplete."""
     symbols = await run_in_threadpool(get_all_discovered_symbols)
-    return [{"symbol": s.get("symbol"), "name": s.get("name", "")} for s in symbols]
+    return [{"symbol": s.get("symbol"), "name": s.get("name", ""), "isin": s.get("isin"), "manual_isin": s.get("manual_isin")} for s in symbols]
+
+@http_router.post("/api/update-isin", dependencies=[Depends(verify_csrf)])
+async def update_isin(req: UpdateISINRequest):
+    """Update the manual ISIN for a specific symbol."""
+    await run_in_threadpool(update_manual_isin, req.symbol, req.isin)
+    return {"status": "ok"}
+
+@http_router.post("/api/clear-isin", dependencies=[Depends(verify_csrf)])
+async def clear_isin(req: ClearISINRequest):
+    """Clear the manual ISIN for a list of symbols."""
+    for sym in req.symbols:
+        await run_in_threadpool(update_manual_isin, sym, None)
+    return {"status": "ok"}
 
 @http_router.get("/api/signals")
 async def signals(page: int = 1, limit: int = 5):

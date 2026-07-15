@@ -294,6 +294,7 @@ def _migrate_db():
         ("discovered_symbols", "maturity", "ALTER TABLE discovered_symbols ADD COLUMN maturity TEXT"),
         ("discovered_symbols", "coupon", "ALTER TABLE discovered_symbols ADD COLUMN coupon REAL"),
         ("discovered_symbols", "country", "ALTER TABLE discovered_symbols ADD COLUMN country TEXT"),
+        ("discovered_symbols", "manual_isin", "ALTER TABLE discovered_symbols ADD COLUMN manual_isin TEXT"),
         ("llm_metrics", "request_type", "ALTER TABLE llm_metrics ADD COLUMN request_type TEXT"),
         ("llm_metrics", "is_fallback", "ALTER TABLE llm_metrics ADD COLUMN is_fallback INTEGER NOT NULL DEFAULT 0"),
         ("dividends", "reinvested", "ALTER TABLE dividends ADD COLUMN reinvested INTEGER NOT NULL DEFAULT 0"),
@@ -461,6 +462,7 @@ def _get_init_statements() -> List[str]:
             maturity TEXT,
             coupon REAL,
             country TEXT,
+            manual_isin TEXT,
             discovered_at {float_type} NOT NULL
         )
         """,
@@ -2105,7 +2107,7 @@ def get_all_discovered_symbols() -> List[Dict[str, Any]]:
     """Return all discovered symbols from the database."""
     conn = get_connection()
     try:
-        sql = _adapt_sql("SELECT symbol, isin, asset_type, name, maturity, coupon, country FROM discovered_symbols")
+        sql = _adapt_sql("SELECT symbol, isin, asset_type, name, maturity, coupon, country, manual_isin FROM discovered_symbols")
         rows = conn.execute(sql).fetchall()
         return [
             {
@@ -2116,6 +2118,7 @@ def get_all_discovered_symbols() -> List[Dict[str, Any]]:
                 "maturity": row["maturity"],
                 "coupon": row["coupon"],
                 "country": row["country"],
+                "manual_isin": row["manual_isin"],
             }
             for row in rows
         ]
@@ -2227,14 +2230,40 @@ def get_signals(limit: int = 5, offset: int = 0) -> Dict[str, Any]:
 
 
 def get_isin_from_db(symbol: str) -> Optional[str]:
-    """Return the ISIN for a symbol from the database, or None if not found."""
+    """Return the ISIN for a symbol from the database, or None if not found.
+
+    Returns the manual ISIN if it exists and is not empty, otherwise returns
+    the automatically discovered ISIN.
+    """
     conn = get_connection()
     try:
-        sql = _adapt_sql("SELECT isin FROM discovered_symbols WHERE symbol = %s")
+        sql = _adapt_sql("SELECT isin, manual_isin FROM discovered_symbols WHERE symbol = %s")
         row = conn.execute(sql, (symbol,)).fetchone()
-        if row and row["isin"]:
-            return row["isin"]
+        if row:
+            if row["manual_isin"] and row["manual_isin"].strip():
+                return row["manual_isin"]
+            if row["isin"]:
+                return row["isin"]
         return None
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def update_manual_isin(symbol: str, isin: Optional[str]):
+    """Update or clear the manual ISIN for a discovered symbol."""
+    conn = get_connection()
+    try:
+        if isin:
+            isin = isin.strip()
+            if not isin:
+                isin = None
+            sql = _adapt_sql("UPDATE discovered_symbols SET manual_isin = %s WHERE symbol = %s")
+            conn.execute(sql, (isin, symbol))
+        else:
+            sql = _adapt_sql("UPDATE discovered_symbols SET manual_isin = NULL WHERE symbol = %s")
+            conn.execute(sql, (symbol,))
+        conn.commit()
     finally:
         conn.close()
 

@@ -531,6 +531,20 @@
                 <div id="news" style="max-height: 400px; overflow-y: auto;">-</div>
             </div>
 
+            <div class="card card-full" id="isin-management-card">
+                <h2>📝 Manual ISIN Management</h2>
+                <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 12px;">Manually set or clear ISINs for discovered tickers. Manual ISINs take precedence over automatically discovered ones.</p>
+                <div style="margin-bottom: 12px;">
+                    <button id="btn-clear-selected-isins" style="background:var(--red); color:#fff; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🗑️ Clear Selected ISINs</button>
+                </div>
+                <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
+                    <table id="isin-table">
+                        <thead><tr><th><input type="checkbox" id="select-all-isins"></th><th>Ticker</th><th>Name</th><th>Auto ISIN</th><th>Manual ISIN</th><th>Actions</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
             <div class="card card-full">
                 <h2>🧪 Simulation Lab 
                     <button id="btn-force-download" style="margin-left:12px; background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">⬇️ Download Market Data</button>
@@ -2231,6 +2245,76 @@
             }
         }
         loadDiscoveredSymbols();
+
+        async function fetchDiscoveredSymbolsForISIN() {
+            try {
+                const resp = await fetch('/api/discovered-symbols');
+                const symbols = await resp.json();
+                const tbody = document.querySelector('#isin-table tbody');
+                tbody.innerHTML = '';
+                symbols.forEach(s => {
+                    const row = tbody.insertRow();
+                    row.insertCell().innerHTML = `<input type="checkbox" class="isin-checkbox" data-symbol="${s.symbol}">`;
+                    row.insertCell().textContent = s.symbol;
+                    row.insertCell().textContent = s.name || '';
+                    row.insertCell().textContent = s.isin || '';
+                    const manualCell = row.insertCell();
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.value = s.manual_isin || '';
+                    input.style.cssText = 'width: 100%; padding: 4px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem;';
+                    input.dataset.symbol = s.symbol;
+                    input.addEventListener('change', async (e) => {
+                        const symbol = e.target.dataset.symbol;
+                        const isin = e.target.value.trim() || null;
+                        await fetch('/api/update-isin', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ symbol, isin })
+                        });
+                        showToast('ISIN updated for ' + symbol);
+                    });
+                    manualCell.appendChild(input);
+                    
+                    const actionsCell = row.insertCell();
+                    const clearBtn = document.createElement('button');
+                    clearBtn.textContent = 'Clear';
+                    clearBtn.style.cssText = 'background: var(--red); color: #fff; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem;';
+                    clearBtn.onclick = async () => {
+                        await fetch('/api/clear-isin', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ symbols: [s.symbol] })
+                        });
+                        input.value = '';
+                        showToast('ISIN cleared for ' + s.symbol);
+                    };
+                    actionsCell.appendChild(clearBtn);
+                });
+            } catch (e) {
+                console.error('Failed to fetch discovered symbols for ISIN', e);
+            }
+        }
+        fetchDiscoveredSymbolsForISIN();
+
+        document.getElementById('select-all-isins').addEventListener('change', (e) => {
+            document.querySelectorAll('.isin-checkbox').forEach(cb => cb.checked = e.target.checked);
+        });
+
+        document.getElementById('btn-clear-selected-isins').addEventListener('click', async () => {
+            const selected = Array.from(document.querySelectorAll('.isin-checkbox:checked')).map(cb => cb.dataset.symbol);
+            if (selected.length === 0) {
+                alert('Please select at least one ticker.');
+                return;
+            }
+            await fetch('/api/clear-isin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbols: selected })
+            });
+            fetchDiscoveredSymbolsForISIN();
+            showToast('Selected ISINs cleared.');
+        });
 
         // Fetch trading mode and display in header
         fetch('/api/config')
