@@ -572,7 +572,7 @@
                                 <th><input type="text" data-col="isin" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
                                 <th><input type="text" data-col="country" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
                                 <th><input type="text" data-col="manual_isin" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
-                                <th></th>
+                                <th><input type="text" data-col="candle_count" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -2288,7 +2288,7 @@
 
         let isinTableData = [];
         let isinSort = { key: 'symbol', dir: 'asc' };
-        let isinColFilters = { symbol: '', asset_type: '', name: '', isin: '', country: '', manual_isin: '' };
+        let isinColFilters = { symbol: '', asset_type: '', name: '', isin: '', country: '', manual_isin: '', candle_count: '' };
 
         async function fetchDiscoveredSymbolsForISIN() {
             try {
@@ -2307,12 +2307,14 @@
             // Filter
             let filtered = isinTableData.filter(s => {
                 const country = s.country || (s.isin ? s.isin.substring(0, 2) : '') || '';
+                const candleCount = s.candle_count != null ? String(s.candle_count) : '';
                 return (s.symbol || '').toLowerCase().includes(isinColFilters.symbol) &&
                        (s.asset_type || '').toLowerCase().includes(isinColFilters.asset_type) &&
                        (s.name || '').toLowerCase().includes(isinColFilters.name) &&
                        (s.isin || '').toLowerCase().includes(isinColFilters.isin) &&
                        country.toLowerCase().includes(isinColFilters.country) &&
-                       (s.manual_isin || '').toLowerCase().includes(isinColFilters.manual_isin);
+                       (s.manual_isin || '').toLowerCase().includes(isinColFilters.manual_isin) &&
+                       candleCount.toLowerCase().includes(isinColFilters.candle_count);
             });
 
             // Sort
