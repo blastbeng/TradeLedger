@@ -21,6 +21,12 @@ def get_yahoo_quote(symbol: str) -> Optional[Dict[str, Any]]:
     if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
         return None
 
+    # Ensure we only fetch quotes if the symbol has a valid Italian ISIN
+    from src.exchanges.market_data import _get_isin_from_yfinance
+    if _get_isin_from_yfinance(symbol) is None:
+        logger.debug(f"Skipping yfinance quote for {symbol}: no valid Italian ISIN.")
+        return None
+
     # Normalise symbol: yfinance expects ticker without exchange suffix
     base = symbol.split("/")[0] if "/" in symbol else symbol
     base = base.lstrip('$')
@@ -108,6 +114,12 @@ def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
     if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
         return None
 
+    # Ensure we only fetch fundamentals if the symbol has a valid Italian ISIN
+    from src.exchanges.market_data import _get_isin_from_yfinance
+    if _get_isin_from_yfinance(symbol) is None:
+        logger.debug(f"Skipping yfinance fundamentals for {symbol}: no valid Italian ISIN.")
+        return None
+
     base = symbol.split("/")[0] if "/" in symbol else symbol
     base = base.lstrip('$')
 
@@ -165,6 +177,12 @@ def get_yahoo_dividends(symbol: str) -> List[Dict[str, Any]]:
     Returns a list of dicts with keys 'date' (ISO string) and 'amount' (float).
     """
     if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
+        return []
+
+    # Ensure we only fetch dividends if the symbol has a valid Italian ISIN
+    from src.exchanges.market_data import _get_isin_from_yfinance
+    if _get_isin_from_yfinance(symbol) is None:
+        logger.debug(f"Skipping yfinance dividends for {symbol}: no valid Italian ISIN.")
         return []
 
     base = symbol.split("/")[0] if "/" in symbol else symbol
