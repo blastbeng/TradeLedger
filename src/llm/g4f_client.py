@@ -67,42 +67,22 @@ def _discover_g4f_models() -> dict:
     """
     categorized = {"mind": [], "actuator": [], "weak": []}
     try:
-        import g4f
-        from g4f.models import Model
+        from g4f.providers.any_provider import AnyProvider
         
-        all_models = []
+        # Ensure the model map is populated
+        if not AnyProvider.models:
+            AnyProvider.update_model_map()
+            
+        all_models = AnyProvider.models
         
-        # Method 1: Iterate over g4f.models module attributes to find Model instances
-        for name, obj in vars(g4f.models).items():
-            if isinstance(obj, Model):
-                model_name = obj.name if hasattr(obj, 'name') else name
-                if model_name and model_name not in all_models:
-                    all_models.append(model_name)
+        # Filter out non-text models (images, videos, audio, vision)
+        exclude_models = set(AnyProvider.image_models) | set(AnyProvider.video_models) | set(AnyProvider.audio_models)
+        # Also exclude generic/default entries
+        exclude_models.update(["default", "custom", "video", "auto"])
         
-        # Method 2: If Method 1 found nothing, try getting models from providers
-        if not all_models:
-            try:
-                from g4f.Provider import __providers__
-                for provider in __providers__:
-                    if hasattr(provider, 'models') and provider.models:
-                        for m in provider.models:
-                            if m not in all_models:
-                                all_models.append(m)
-            except Exception:
-                pass
+        text_models = [m for m in all_models if m not in exclude_models]
         
-        # If we still couldn't get models, fall back to a minimal known list
-        if not all_models:
-            all_models = [
-                "gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-3.5-turbo",
-                "claude-3.5-sonnet", "claude-3-haiku",
-                "gemini-flash", "gemini-pro",
-                "llama-3.1-70b", "llama-3-8b",
-                "deepseek-chat", "deepseek-r1",
-                "mistral-7b",
-            ]
-        
-        for model_name in all_models:
+        for model_name in text_models:
             tier = _categorize_model(model_name)
             if tier and model_name not in categorized[tier]:
                 categorized[tier].append(model_name)
@@ -150,28 +130,11 @@ def _get_g4f_response(
 ) -> dict:
     """Send a prompt to the configured g4f model and return a dict with 'content' and 'usage'."""
     from g4f.client import Client
-    from g4f.Provider import RetryProvider
+    from g4f.providers.any_provider import AnyProvider
 
-    # Dynamically discover all working chat providers from g4f
-    try:
-        from g4f.Provider import __providers__
-        # Filter to providers that are working and support chat completions
-        dynamic_providers = [
-            p for p in __providers__
-            if hasattr(p, 'supports_stream') and p.working
-            and hasattr(p, 'chat_completions')
-        ]
-        if not dynamic_providers:
-            # Fallback to known providers if dynamic discovery fails
-            from g4f.Provider import OpenaiChat, Gemini, Bing, Phind, FreeChatgpt, Liaobots, Blackbox
-            dynamic_providers = [OpenaiChat, Gemini, Bing, Phind, FreeChatgpt, Liaobots, Blackbox]
-    except Exception:
-        from g4f.Provider import OpenaiChat, Gemini, Bing, Phind, FreeChatgpt, Liaobots, Blackbox
-        dynamic_providers = [OpenaiChat, Gemini, Bing, Phind, FreeChatgpt, Liaobots, Blackbox]
-
-    # Use RetryProvider to automatically try multiple providers and blacklist failing ones.
+    # Use AnyProvider to automatically route to the correct working provider for the model
     client_kwargs = {
-        "provider": RetryProvider(dynamic_providers, shuffle=True)
+        "provider": AnyProvider
     }
 
     # Pass timeout to g4f Client constructor if supported
