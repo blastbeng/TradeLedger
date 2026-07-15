@@ -142,9 +142,12 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
 
     # Fallback to Borsa Italiana search if yfinance failed or circuit is open
     if not isin:
-        bi_isin, _, _ = _get_isin_and_info_from_borsa_italiana(db_symbol)
-        if bi_isin:
-            isin = bi_isin
+        try:
+            bi_isin, _, _ = _get_isin_and_info_from_borsa_italiana(db_symbol)
+            if bi_isin:
+                isin = bi_isin
+        except Exception as e:
+            logger.debug(f"Borsa Italiana ISIN fetch failed for {db_symbol}: {type(e).__name__}: {e}")
 
     if isin:
         # Save to DB with the base symbol (no suffix)
@@ -766,8 +769,8 @@ def get_multi_timeframe_bars(
                     if needs_aggregation:
                         candles = _aggregate_candles(candles, tf)
                     yf_candles = candles
-            except (RuntimeError, ValueError, KeyError, AttributeError, OSError) as e:
-                logger.debug(f"yfinance fetch failed for {symbol} {tf}: {e}")
+            except Exception as e:
+                logger.debug(f"yfinance fetch failed for {symbol} {tf}: {type(e).__name__}: {e}")
 
         # Try Alpha Vantage if yfinance returned nothing
         av_candles = None
@@ -914,8 +917,8 @@ def get_bars_range(
                 if needs_aggregation:
                     candles = _aggregate_candles(candles, timeframe)
                 yf_candles = candles
-        except (RuntimeError, ValueError, KeyError, AttributeError, OSError) as e:
-            logger.debug(f"yfinance fetch failed for {symbol} {timeframe}: {e}")
+        except Exception as e:
+            logger.debug(f"yfinance fetch failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
 
     # Try Alpha Vantage if yfinance returned nothing
     av_candles = None
