@@ -386,6 +386,20 @@ class MarketDataManager:
             try:
                 from src.database import get_all_discovered_symbols
                 db_symbols = await asyncio.to_thread(get_all_discovered_symbols)
+                
+                # Build a map of original symbol -> manual_isin to override discovered ISINs
+                manual_isin_map = {}
+                for db_entry in db_symbols:
+                    if db_entry.get("asset_type") == "btp":
+                        manual_isin = db_entry.get("manual_isin")
+                        if manual_isin and manual_isin.strip():
+                            manual_isin_map[db_entry["symbol"]] = manual_isin.strip()
+                
+                # Override discovered ISINs with manual ISINs where applicable
+                for b in bonds:
+                    if b["isin"] in manual_isin_map:
+                        b["isin"] = manual_isin_map[b["isin"]]
+                
                 existing_isins = {b["isin"] for b in bonds}
                 for db_entry in db_symbols:
                     if db_entry.get("asset_type") == "btp":
