@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from src.config.settings import settings
 from src.database import get_news_for_symbol
 from src.utils.redis_client import get_redis_client
-from src.llm.cache import get_cached_llm_response
+from src.llm.cache import get_cached_llm_response, _llm_executor
 
 logger = logging.getLogger(__name__)
 
@@ -182,9 +182,12 @@ def get_cached_news_summary(symbol: str, model_type: str = "weak") -> dict:
 async def get_cached_news_summary_async(symbol: str, model_type: str = "weak") -> dict:
     """
     Asynchronous wrapper for get_cached_news_summary.
-    Runs the blocking LLM call in a separate thread to avoid blocking the event loop.
+    Runs the blocking LLM call in a dedicated thread pool to avoid blocking
+    the event loop and exhausting the default executor.
     """
-    return await asyncio.to_thread(
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _llm_executor,
         get_cached_news_summary,
         symbol,
         model_type,

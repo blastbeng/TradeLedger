@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from src.llm.llm_client import get_llm_response
+from src.llm.cache import _llm_executor
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +49,12 @@ def summarize_text(text: str, context: str = "general", max_length: int = 500) -
 async def summarize_text_async(text: str, context: str = "general", max_length: int = 500) -> str:
     """
     Asynchronous wrapper for summarize_text.
-    Runs the blocking summarization call in a separate thread to avoid blocking the event loop.
+    Runs the blocking summarization call in a dedicated thread pool to avoid
+    blocking the event loop and exhausting the default executor.
     """
-    return await asyncio.to_thread(
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _llm_executor,
         summarize_text,
         text,
         context,
