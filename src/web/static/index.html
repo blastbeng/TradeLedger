@@ -554,7 +554,7 @@
                     <table id="isin-table">
                         <thead>
                             <tr>
-                                <th></th>
+                                <th><input type="checkbox" id="select-all-isins"></th>
                                 <th data-sort="symbol" style="cursor:pointer;">Ticker ↕</th>
                                 <th data-sort="asset_type" style="cursor:pointer;">Type ↕</th>
                                 <th data-sort="name" style="cursor:pointer;">Name ↕</th>
@@ -1823,6 +1823,10 @@
             }
         }
 
+        let lastLLMMetricsData = null;
+        let failureStatsSort = { key: 'fail_count', dir: 'desc', type: 'number' };
+        let blacklistSort = { key: 'expires_at', dir: 'asc', type: 'date' };
+
         startRefreshTimer();
         refreshData();  // immediate first load
         fetchLLMMetrics(); // initial LLM metrics load
@@ -2523,10 +2527,6 @@
                 console.error('Failed to fetch LLM decision quality', e);
             }
         }
-
-        let lastLLMMetricsData = null;
-        let failureStatsSort = { key: 'fail_count', dir: 'desc', type: 'number' };
-        let blacklistSort = { key: 'expires_at', dir: 'asc', type: 'date' };
 
         function sortData(arr, key, dir, type) {
             return [...arr].sort((a, b) => {
