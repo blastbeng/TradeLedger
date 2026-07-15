@@ -71,30 +71,31 @@ class SellExecutor:
                 if cleanup_callback:
                     cleanup_callback(symbol, self.shared_state.positions[symbol])
 
-            from src.strategies.base import Signal
-            dummy_params = {
-                "trailing_take_profit": self.shared_state.positions[symbol].get("trailing_take_profit", False),
-                "partial_take_profit_levels": self.shared_state.positions[symbol].get("partial_take_profit_levels"),
-                "partial_take_profit_pct": self.shared_state.positions[symbol].get("partial_take_profit_pct"),
-            }
-            dummy_signal = Signal(
-                action="BUY",
-                confidence=1.0,
-                reasoning="Replacing exit orders after partial sell",
-                stop_loss_order_type=self.shared_state.positions[symbol].get("stop_loss_order_type"),
-                stop_loss_stop_price=self.shared_state.positions[symbol].get("stop_loss"),
-                stop_loss_limit_price=None,
-                take_profit_order_type=self.shared_state.positions[symbol].get("take_profit_order_type"),
-                take_profit_limit_price=self.shared_state.positions[symbol].get("take_profit"),
-                strategy_params=dummy_params,
-            )
-            exit_prices = {
-                "stop_loss_price": self.shared_state.positions[symbol].get("stop_loss"),
-                "take_profit_price": self.shared_state.positions[symbol].get("take_profit"),
-            }
+                dummy_params = {
+                    "trailing_take_profit": self.shared_state.positions[symbol].get("trailing_take_profit", False),
+                    "partial_take_profit_levels": self.shared_state.positions[symbol].get("partial_take_profit_levels"),
+                    "partial_take_profit_pct": self.shared_state.positions[symbol].get("partial_take_profit_pct"),
+                }
+                dummy_signal = Signal(
+                    action="BUY",
+                    confidence=1.0,
+                    reasoning="Replacing exit orders after partial sell",
+                    stop_loss_order_type=self.shared_state.positions[symbol].get("stop_loss_order_type"),
+                    stop_loss_stop_price=self.shared_state.positions[symbol].get("stop_loss"),
+                    stop_loss_limit_price=None,
+                    take_profit_order_type=self.shared_state.positions[symbol].get("take_profit_order_type"),
+                    take_profit_limit_price=self.shared_state.positions[symbol].get("take_profit"),
+                    strategy_params=dummy_params,
+                )
+                exit_prices = {
+                    "stop_loss_price": self.shared_state.positions[symbol].get("stop_loss"),
+                    "take_profit_price": self.shared_state.positions[symbol].get("take_profit"),
+                }
+                pos_timeframe = self.shared_state.positions[symbol].get("timeframe")
+
             await self.event_bus.request(
                 "place_replacement_exit_orders_with_retry",
-                symbol, dummy_signal, exit_prices, self.shared_state.positions[symbol].get("timeframe")
+                symbol, dummy_signal, exit_prices, pos_timeframe
             )
             return False
 
