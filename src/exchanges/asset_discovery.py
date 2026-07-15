@@ -24,10 +24,10 @@ def set_notifier(notifier):
     global _notifier
     _notifier = notifier
 
-def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optional[str]]:
-    """Fetch the country and name from yfinance info for a symbol, with retries.
+def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Fetch the country, name, and ISIN from yfinance info for a symbol, with retries.
 
-    Returns a tuple (country, name) on success, or (None, None) if yfinance
+    Returns a tuple (country, name, isin) on success, or (None, None, None) if yfinance
     could not provide the information after all retries.
     """
     country, name = None, None
@@ -64,8 +64,8 @@ def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optio
             name = bi_name
 
     if country or name:
-        return country, name
-    return None, None
+        return country, name, bi_isin
+    return None, None, None
 
 
 def _discover_wikipedia_tickers(urls: List[str], index_name: str) -> List[str]:
@@ -592,8 +592,8 @@ def get_tradable_assets() -> List[str]:
                 filtered.append(symbol)
             continue
 
-        country, name = _fetch_info(symbol)
-        # Save the fetched country and name to the database for future filtering.
+        country, name, isin = _fetch_info(symbol)
+        # Save the fetched country, name, and ISIN to the database for future filtering.
         # In strict mode, only save Italian symbols to DB.
         if country is not None and (not settings.COUNTRY_FILTER_STRICT or country.lower() == target_country):
             try:
@@ -601,9 +601,9 @@ def get_tradable_assets() -> List[str]:
                 db_base = symbol
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
-                save_discovered_symbol(db_base, None, "stock", name or None, country=country)
+                save_discovered_symbol(db_base, isin, "stock", name or None, country=country)
             except Exception as e:
-                logger.debug(f"get_tradable_assets: failed to save discovered symbol {db_sym}: {type(e).__name__}: {e}")
+                logger.debug(f"get_tradable_assets: failed to save discovered symbol {db_base}: {type(e).__name__}: {e}")
         elif name and not settings.COUNTRY_FILTER_STRICT:
             # Country is None but name is available — save the name for display
             try:
@@ -611,7 +611,7 @@ def get_tradable_assets() -> List[str]:
                 db_base = symbol
                 if suffix and db_base.endswith(suffix):
                     db_base = db_base[:-len(suffix)]
-                save_discovered_symbol(db_base, None, "stock", name or None, country=None)
+                save_discovered_symbol(db_base, isin, "stock", name or None, country=None)
             except (RuntimeError, ValueError, OSError) as e:
                 logger.debug(f"get_tradable_assets: failed to save discovered symbol {db_base}: {type(e).__name__}: {e}")
         if country is None:
