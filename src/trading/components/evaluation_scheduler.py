@@ -64,7 +64,7 @@ class EvaluationScheduler:
                         current_compound = agg.get("avg_compound", 0)
                         if prev_raw:
                             prev_compound = float(prev_raw)
-                            if abs(current_compound - prev_compound) > 0.3:
+                            if abs(current_compound - prev_compound) > settings.SENTIMENT_SHIFT_THRESHOLD:
                                 symbol_has_significant_news[symbol] = True
                 except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
                     continue
