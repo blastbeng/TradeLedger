@@ -127,6 +127,7 @@ class SymbolReevaluator:
         etf_pairs: List[str],
         btp_pairs: List[str],
         is_rebalance: bool,
+        tickers: Dict[str, Dict[str, Any]],
     ) -> Tuple[Dict[str, Any], Optional[bool], str, Optional[Any], List[Dict[str, str]], Optional[str], Optional[str]]:
         """Process the LLM response, parse symbols, and handle pause/resume logic.
 
@@ -216,6 +217,7 @@ class SymbolReevaluator:
                     market_limits=market_limits,
                     base_balance=base_balance,
                     ohlcv_data=ohlcv_data,
+                    tickers=tickers,
                 )
 
                 if is_rebalance:
@@ -474,6 +476,7 @@ class SymbolReevaluator:
             etf_pairs=etf_pairs,
             btp_pairs=btp_pairs,
             is_rebalance=is_rebalance,
+            tickers=tickers,
         )
 
         await self.finalize_reevaluation(

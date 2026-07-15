@@ -185,6 +185,7 @@ class ReevalShortlistBuilder:
         market_limits: Dict[str, Dict[str, float]],
         base_balance: float,
         ohlcv_data: Dict[str, Dict[str, List[List]]],
+        tickers: Dict[str, Dict[str, Any]],
     ) -> None:
         """Enforce MIN_SYMBOLS setting, filling remaining slots from composite scores.
 
@@ -223,6 +224,12 @@ class ReevalShortlistBuilder:
                 if sym in existing_syms:
                     continue
                 if engine._is_excluded(sym, default_tf):
+                    continue
+
+                # Check if the symbol has a valid current quote
+                quote = tickers.get(sym, {})
+                current_price = quote.get('close') or quote.get('last')
+                if not current_price or current_price <= 0:
                     continue
 
                 # Check if OHLCV data is available for the symbol
