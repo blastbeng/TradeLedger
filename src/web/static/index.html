@@ -550,10 +550,30 @@
                 <div style="margin-bottom: 12px;">
                     <button id="btn-clear-selected-isins" style="background:var(--red); color:#fff; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🗑️ Clear Selected ISINs</button>
                 </div>
-                <input type="text" id="isin-search" placeholder="🔍 Filter table..." style="width: 100%; padding: 8px; margin-bottom: 8px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem;">
                 <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
                     <table id="isin-table">
-                        <thead><tr><th></th><th data-sort="symbol" style="cursor:pointer;">Ticker ↕</th><th data-sort="asset_type" style="cursor:pointer;">Type ↕</th><th data-sort="name" style="cursor:pointer;">Name ↕</th><th data-sort="isin" style="cursor:pointer;">Auto ISIN ↕</th><th data-sort="country" style="cursor:pointer;">Country ↕</th><th data-sort="manual_isin" style="cursor:pointer;">Manual ISIN ↕</th><th>Actions</th></tr></thead>
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th data-sort="symbol" style="cursor:pointer;">Ticker ↕</th>
+                                <th data-sort="asset_type" style="cursor:pointer;">Type ↕</th>
+                                <th data-sort="name" style="cursor:pointer;">Name ↕</th>
+                                <th data-sort="isin" style="cursor:pointer;">Auto ISIN ↕</th>
+                                <th data-sort="country" style="cursor:pointer;">Country ↕</th>
+                                <th data-sort="manual_isin" style="cursor:pointer;">Manual ISIN ↕</th>
+                                <th>Actions</th>
+                            </tr>
+                            <tr>
+                                <th></th>
+                                <th><input type="text" data-col="symbol" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
+                                <th><input type="text" data-col="asset_type" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
+                                <th><input type="text" data-col="name" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
+                                <th><input type="text" data-col="isin" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
+                                <th><input type="text" data-col="country" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
+                                <th><input type="text" data-col="manual_isin" placeholder="Filter..." class="isin-col-filter" style="width: 100%; padding: 4px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem;"></th>
+                                <th></th>
+                            </tr>
+                        </thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -2262,7 +2282,7 @@
 
         let isinTableData = [];
         let isinSort = { key: 'symbol', dir: 'asc' };
-        let isinFilter = '';
+        let isinColFilters = { symbol: '', asset_type: '', name: '', isin: '', country: '', manual_isin: '' };
 
         async function fetchDiscoveredSymbolsForISIN() {
             try {
@@ -2279,19 +2299,15 @@
             tbody.innerHTML = '';
 
             // Filter
-            let filtered = isinTableData;
-            if (isinFilter) {
-                const filter = isinFilter.toLowerCase();
-                filtered = isinTableData.filter(s => {
-                    const country = s.country || (s.isin ? s.isin.substring(0, 2) : '') || '';
-                    return (s.symbol || '').toLowerCase().includes(filter) ||
-                           (s.asset_type || '').toLowerCase().includes(filter) ||
-                           (s.name || '').toLowerCase().includes(filter) ||
-                           (s.isin || '').toLowerCase().includes(filter) ||
-                           country.toLowerCase().includes(filter) ||
-                           (s.manual_isin || '').toLowerCase().includes(filter);
-                });
-            }
+            let filtered = isinTableData.filter(s => {
+                const country = s.country || (s.isin ? s.isin.substring(0, 2) : '') || '';
+                return (s.symbol || '').toLowerCase().includes(isinColFilters.symbol) &&
+                       (s.asset_type || '').toLowerCase().includes(isinColFilters.asset_type) &&
+                       (s.name || '').toLowerCase().includes(isinColFilters.name) &&
+                       (s.isin || '').toLowerCase().includes(isinColFilters.isin) &&
+                       country.toLowerCase().includes(isinColFilters.country) &&
+                       (s.manual_isin || '').toLowerCase().includes(isinColFilters.manual_isin);
+            });
 
             // Sort
             filtered.sort((a, b) => {
@@ -2355,9 +2371,11 @@
             });
         }
 
-        document.getElementById('isin-search').addEventListener('input', (e) => {
-            isinFilter = e.target.value;
-            renderISINTable();
+        document.querySelectorAll('.isin-col-filter').forEach(input => {
+            input.addEventListener('input', (e) => {
+                isinColFilters[e.target.dataset.col] = e.target.value.toLowerCase();
+                renderISINTable();
+            });
         });
 
         document.querySelectorAll('#isin-table th[data-sort]').forEach(th => {
