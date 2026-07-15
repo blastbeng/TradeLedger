@@ -86,16 +86,14 @@ def _discover_g4f_models() -> dict:
     """
     categorized = {"mind": [], "actuator": [], "weak": []}
     try:
-        from g4f.providers.any_provider import AnyProvider
+        from g4f.providers import any_model_map
         
-        # Ensure the model map is populated
-        if not AnyProvider.models:
-            AnyProvider.update_model_map()
-            
-        all_models = AnyProvider.models
+        # Get all models from the model_map keys
+        all_models = list(any_model_map.model_map.keys())
         
-        # Filter out non-text models (images, videos, audio, vision)
-        exclude_models = set(AnyProvider.image_models) | set(AnyProvider.video_models) | set(AnyProvider.audio_models)
+        # Exclude non-text models (audio, image, video).
+        # Vision models are intentionally kept as they provide text completions.
+        exclude_models = set(any_model_map.audio_models) | set(any_model_map.image_models) | set(any_model_map.video_models)
         # Also exclude generic/default entries
         exclude_models.update(["default", "custom", "video", "auto"])
         
