@@ -519,7 +519,7 @@ class PositionManager:
         if not sells:
             result: Dict[str, Any] = {}
             engine._trade_pattern_cache = result
-            engine._trade_pattern_cache_trade_count = engine._trade_history_version
+            engine._trade_pattern_cache_trade_count = self.shared_state._trade_history_version
             return result
 
         def _win_rate_stats(trades: list) -> Optional[Dict[str, Any]]:
