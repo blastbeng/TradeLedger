@@ -739,7 +739,7 @@ class Settings(BaseSettings):
     OPENAI_MODEL: Annotated[list[str], NoDecode] = []
 
     # G4F (gpt4free)
-    G4F_BASE_URL: str = "http://127.0.0.1:1337/v1"
+    G4F_BASE_URL: Optional[str] = None
     # Note: g4f dynamically manages providers and models from code, so model names are not configured here.
     # Max input tokens for main models (defaults: 128K for mind/actuator, 64K for weak)
     G4F_MIND_MAX_INPUT_TOKENS: int = 128_000

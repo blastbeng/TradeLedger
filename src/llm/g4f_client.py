@@ -159,10 +159,10 @@ def _get_g4f_response(
     """Send a prompt to the configured g4f model and return a dict with 'content' and 'usage'."""
     from g4f.client import ClientFactory
 
-    # Use the local g4f API server
-    client_kwargs = {
-        "base_url": settings.G4F_BASE_URL
-    }
+    # Use the local g4f API server if configured, otherwise let g4f use its defaults
+    client_kwargs = {}
+    if settings.G4F_BASE_URL:
+        client_kwargs["base_url"] = settings.G4F_BASE_URL
 
     # Pass timeout to g4f Client constructor if supported
     if timeout is not None:
