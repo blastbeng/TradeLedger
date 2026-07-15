@@ -18,7 +18,7 @@ _G4F_CACHE_TTL = 3600  # 1 hour
 # Checked in order: mind first, then weak, then actuator (fallback).
 _MIND_KEYWORDS = (
     "o1", "o3", "o1-pro", "o3-pro", "o4-mini",
-    "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-5",
+    "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-5", "gpt-4-turbo",
     "claude-3.5-sonnet", "claude-3.7-sonnet", "claude-3-opus",
     "claude-sonnet-4", "claude-opus-4", "claude-opus-4.6", "claude-opus-4.7", "claude-opus-4-8",
     "deepseek-r1", "deepseek-v3", "deepseek-v4-pro", "deepseek-v3-pro", "deepseek-r1-pro", "deepseek-pro",
@@ -32,11 +32,11 @@ _MIND_KEYWORDS = (
     "nemotron-253b", "nemotron-3-ultra", "cogito-v2.1-671b",
 )
 _ACTUATOR_KEYWORDS = (
-    "mixtral-8x7b", "gpt-4", "gpt-3.5", 
+    "mixtral-8x7b", "gpt-3.5", 
     "claude-3", "gemini-1.5", "llama-3.1", "llama-3.2", "llama-3.3", 
     "mistral", "qwen", "deepseek-v2", "deepseek-v4-flash", "deepseek-coder", "grok", "command-r", "mixtral",
     "yi-34b", "zephyr", "starling", "openhermes", "dolphin", "vicuna", "orca", "solar-pro", "code-llama",
-    "kimi", "minimax", "glm", "sonnet", "opus", # fallback for claude if not caught by mind
+    "kimi", "minimax", "glm",
 )
 _WEAK_KEYWORDS = (
     "3.5-turbo", "small", "nano", "tiny", "gpt-3", 
@@ -44,10 +44,20 @@ _WEAK_KEYWORDS = (
     "stablelm", "redpajama", "qwen-1.5b", "qwen-1.8b", "qwen-7b", "openchat", "wizardlm", "haiku-4-5"
 )
 
+# Models that contain mini/haiku/flash but should bypass the actuator override
+_MIND_OVERRIDES = ("o4-mini",)
+_WEAK_OVERRIDES = ("haiku-4-5",)
+
 def _categorize_model(model_name: str) -> Optional[str]:
     """Categorize a model name into 'mind', 'actuator', or 'weak' using keyword heuristics."""
     name_lower = model_name.lower()
     
+    # 0. Explicit exceptions that bypass the mini/haiku/flash override below
+    if any(kw in name_lower for kw in _MIND_OVERRIDES):
+        return "mind"
+    if any(kw in name_lower for kw in _WEAK_OVERRIDES):
+        return "weak"
+
     # 1. Check for mini/flash/haiku first to prevent e.g. "gpt-4o-mini" matching "gpt-4o"
     if any(kw in name_lower for kw in ("mini", "haiku", "flash")):
         return "actuator"
@@ -69,7 +79,7 @@ def _categorize_model(model_name: str) -> Optional[str]:
     if re.search(r'\b(1b|2b|3b|6b|7b|8b|9b|11b|13b|14b)\b', name_lower):
         return "weak"
     # Actuator sizes
-    if re.search(r'\b(27b|30b|32b|34b|49b|70b|72b|104b)\b', name_lower):
+    if re.search(r'\b(20b|22b|27b|30b|32b|34b|40b|49b|65b|70b|72b|104b)\b', name_lower):
         return "actuator"
     # Mind sizes (huge models)
     if re.search(r'\b(120b|235b|253b|397b|405b|480b|550b|671b|675b)\b', name_lower):
