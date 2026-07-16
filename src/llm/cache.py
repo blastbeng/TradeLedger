@@ -1382,7 +1382,7 @@ def get_cached_llm_response(
             usage = weak_result[1]
             used_provider = weak_result[2]
             used_model = weak_result[3]
-            is_fallback = False
+            is_fallback = True
         else:
             response_text, usage, used_provider, used_model, is_fallback = _execute_fallback_call(
                 e, model_type, messages, prompt, system_prompt, temperature, effective_timeout, api_messages, add_cache_control, thinking_enabled, request_type, provider
