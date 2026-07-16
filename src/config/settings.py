@@ -693,6 +693,7 @@ class Settings(BaseSettings):
         "OLLAMA_ACTUATOR_FALLBACK_MODEL", "OLLAMA_WEAK_FALLBACK_MODEL",
         "OPENAI_MODEL", "OPENAI_MIND_MODEL", "OPENAI_ACTUATOR_MODEL", "OPENAI_WEAK_MODEL",
         "OLLAMA_MODEL", "OLLAMA_MIND_MODEL", "OLLAMA_ACTUATOR_MODEL", "OLLAMA_WEAK_MODEL",
+        "AOL_LLM_MODEL",
         mode="before"
     )
     @classmethod
@@ -842,7 +843,7 @@ class Settings(BaseSettings):
 
     # Always-Online Locally hosted weak model (last resort fallback)
     AOL_LLM_PROVIDER: str = ""
-    AOL_LLM_MODEL: str = ""
+    AOL_LLM_MODEL: Annotated[list[str], NoDecode] = []
     AOL_LLM_API_KEY: Optional[str] = None
     AOL_BASE_URL: Optional[str] = None
 

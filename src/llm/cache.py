@@ -1123,86 +1123,89 @@ def _try_aol_model(
     thinking_enabled: bool,
     request_type: Optional[str] = None,
 ) -> Optional[Tuple[str, dict, str, str]]:
-    """Try the AOL (Always Online) model. Returns (response_text, usage, provider, model) or None on failure."""
+    """Try the AOL (Always Online) models. Returns (response_text, usage, provider, model) or None on failure."""
     aol_provider = settings.AOL_LLM_PROVIDER
-    aol_model = settings.AOL_LLM_MODEL
+    aol_models = settings.AOL_LLM_MODEL
     aol_base_url = settings.AOL_BASE_URL
     aol_api_key = settings.AOL_LLM_API_KEY
 
-    if not aol_provider or not aol_model:
+    if not aol_provider or not aol_models:
         return None
 
     redis_client = get_redis_client()
-    if _is_model_blacklisted(redis_client, aol_model):
+    available_models = [m for m in aol_models if not _is_model_blacklisted(redis_client, m)]
+    if not available_models:
         return None
 
-    logger.info("Trying AOL (Always Online) model %s (provider=%s).", aol_model, aol_provider)
-    try:
-        aol_api_messages = None
-        if messages is not None:
-            aol_api_messages = []
-            if system_prompt:
-                aol_api_messages.append({"role": "system", "content": system_prompt})
-            aol_api_messages.extend(messages)
+    shuffled_models = random.sample(available_models, len(available_models))
+    for aol_model in shuffled_models:
+        logger.info("Trying AOL (Always Online) model %s (provider=%s).", aol_model, aol_provider)
+        try:
+            aol_api_messages = None
+            if messages is not None:
+                aol_api_messages = []
+                if system_prompt:
+                    aol_api_messages.append({"role": "system", "content": system_prompt})
+                aol_api_messages.extend(messages)
 
-        if aol_provider == "openai":
-            from src.llm.llm_client import _get_openai_response
-            result = _get_openai_response(
-                prompt=prompt if messages is None else "",
-                system_prompt=system_prompt if messages is None else "",
-                model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
-                temperature=temperature, timeout=effective_timeout,
-                messages=aol_api_messages,
-                add_cache_control=add_cache_control,
-                thinking_enabled=thinking_enabled,
-                max_retries=1,
-            )
-        elif aol_provider == "g4f":
-            from src.llm.g4f_client import _get_g4f_response
-            result = _get_g4f_response(
-                prompt=prompt if messages is None else "",
-                system_prompt=system_prompt if messages is None else "",
-                model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
-                temperature=temperature, timeout=effective_timeout,
-                messages=aol_api_messages,
-                add_cache_control=add_cache_control,
-                thinking_enabled=thinking_enabled,
-                max_retries=1,
-            )
-        else:
-            from src.llm.llm_client import _get_ollama_response
-            result = _get_ollama_response(
-                prompt=prompt if messages is None else "",
-                system_prompt=system_prompt if messages is None else "",
-                model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
-                temperature=temperature, timeout=effective_timeout,
-                messages=aol_api_messages,
-                add_cache_control=add_cache_control,
-                thinking_enabled=thinking_enabled,
-                max_retries=1,
-            )
-        response_text = result["content"]
-        usage = result.get("usage", {})
-        _record_model_success(redis_client, aol_model)
-        return response_text, usage, aol_provider, aol_model
-    except Exception as aol_e:
-        logger.warning("AOL model %s failed: %s", aol_model, aol_e)
-        _record_model_failure(redis_client, aol_model, aol_provider, str(aol_e))
-        _save_metric({
-            "timestamp": time.time(),
-            "provider": aol_provider,
-            "model": aol_model,
-            "model_type": model_type,
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-            "cache_hit": 0,
-            "latency_ms": 0,
-            "error": str(aol_e)[:500],
-            "request_type": request_type,
-            "is_fallback": True,
-        })
-        return None
+            if aol_provider == "openai":
+                from src.llm.llm_client import _get_openai_response
+                result = _get_openai_response(
+                    prompt=prompt if messages is None else "",
+                    system_prompt=system_prompt if messages is None else "",
+                    model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
+                    temperature=temperature, timeout=effective_timeout,
+                    messages=aol_api_messages,
+                    add_cache_control=add_cache_control,
+                    thinking_enabled=thinking_enabled,
+                    max_retries=1,
+                )
+            elif aol_provider == "g4f":
+                from src.llm.g4f_client import _get_g4f_response
+                result = _get_g4f_response(
+                    prompt=prompt if messages is None else "",
+                    system_prompt=system_prompt if messages is None else "",
+                    model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
+                    temperature=temperature, timeout=effective_timeout,
+                    messages=aol_api_messages,
+                    add_cache_control=add_cache_control,
+                    thinking_enabled=thinking_enabled,
+                    max_retries=1,
+                )
+            else:
+                from src.llm.llm_client import _get_ollama_response
+                result = _get_ollama_response(
+                    prompt=prompt if messages is None else "",
+                    system_prompt=system_prompt if messages is None else "",
+                    model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
+                    temperature=temperature, timeout=effective_timeout,
+                    messages=aol_api_messages,
+                    add_cache_control=add_cache_control,
+                    thinking_enabled=thinking_enabled,
+                    max_retries=1,
+                )
+            response_text = result["content"]
+            usage = result.get("usage", {})
+            _record_model_success(redis_client, aol_model)
+            return response_text, usage, aol_provider, aol_model
+        except Exception as aol_e:
+            logger.warning("AOL model %s failed: %s", aol_model, aol_e)
+            _record_model_failure(redis_client, aol_model, aol_provider, str(aol_e))
+            _save_metric({
+                "timestamp": time.time(),
+                "provider": aol_provider,
+                "model": aol_model,
+                "model_type": model_type,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cache_hit": 0,
+                "latency_ms": 0,
+                "error": str(aol_e)[:500],
+                "request_type": request_type,
+                "is_fallback": True,
+            })
+    return None
 
 
 def get_cached_llm_response(
