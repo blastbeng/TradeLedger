@@ -1193,7 +1193,7 @@ def _try_weak_model(
             "latency_ms": 0,
             "error": str(weak_e)[:500],
             "request_type": request_type,
-            "is_fallback": False,
+            "is_fallback": True,
         })
         return None
 
