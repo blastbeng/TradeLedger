@@ -1112,7 +1112,7 @@ def _execute_fallback_call(
         raise
 
 
-def _try_weak_model(
+def _try_aol_model(
     model_type: str,
     messages: Optional[List[Dict[str, str]]],
     prompt: str,
@@ -1123,41 +1123,48 @@ def _try_weak_model(
     thinking_enabled: bool,
     request_type: Optional[str] = None,
 ) -> Optional[Tuple[str, dict, str, str]]:
-    """Try the main weak model. Returns (response_text, usage, provider, model) or None on failure."""
-    weak_provider, weak_model, weak_base_url, weak_api_key = _get_weak_model_config()
-    redis_client = get_redis_client()
-    if not weak_model or _is_model_blacklisted(redis_client, weak_model):
+    """Try the AOL (Always Online) model. Returns (response_text, usage, provider, model) or None on failure."""
+    aol_provider = settings.AOL_LLM_PROVIDER
+    aol_model = settings.AOL_LLM_MODEL
+    aol_base_url = settings.AOL_BASE_URL
+    aol_api_key = settings.AOL_LLM_API_KEY
+
+    if not aol_provider or not aol_model:
         return None
 
-    logger.info("Trying main weak model %s (provider=%s).", weak_model, weak_provider)
-    try:
-        weak_api_messages = None
-        if messages is not None:
-            weak_api_messages = []
-            if system_prompt:
-                weak_api_messages.append({"role": "system", "content": system_prompt})
-            weak_api_messages.extend(messages)
+    redis_client = get_redis_client()
+    if _is_model_blacklisted(redis_client, aol_model):
+        return None
 
-        if weak_provider == "openai":
+    logger.info("Trying AOL (Always Online) model %s (provider=%s).", aol_model, aol_provider)
+    try:
+        aol_api_messages = None
+        if messages is not None:
+            aol_api_messages = []
+            if system_prompt:
+                aol_api_messages.append({"role": "system", "content": system_prompt})
+            aol_api_messages.extend(messages)
+
+        if aol_provider == "openai":
             from src.llm.llm_client import _get_openai_response
             result = _get_openai_response(
                 prompt=prompt if messages is None else "",
                 system_prompt=system_prompt if messages is None else "",
-                model=weak_model, base_url=weak_base_url, api_key=weak_api_key,
+                model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
                 temperature=temperature, timeout=effective_timeout,
-                messages=weak_api_messages,
+                messages=aol_api_messages,
                 add_cache_control=add_cache_control,
                 thinking_enabled=thinking_enabled,
                 max_retries=1,
             )
-        elif weak_provider == "g4f":
+        elif aol_provider == "g4f":
             from src.llm.g4f_client import _get_g4f_response
             result = _get_g4f_response(
                 prompt=prompt if messages is None else "",
                 system_prompt=system_prompt if messages is None else "",
-                model=weak_model, base_url=weak_base_url, api_key=weak_api_key,
+                model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
                 temperature=temperature, timeout=effective_timeout,
-                messages=weak_api_messages,
+                messages=aol_api_messages,
                 add_cache_control=add_cache_control,
                 thinking_enabled=thinking_enabled,
                 max_retries=1,
@@ -1167,31 +1174,31 @@ def _try_weak_model(
             result = _get_ollama_response(
                 prompt=prompt if messages is None else "",
                 system_prompt=system_prompt if messages is None else "",
-                model=weak_model, base_url=weak_base_url, api_key=weak_api_key,
+                model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
                 temperature=temperature, timeout=effective_timeout,
-                messages=weak_api_messages,
+                messages=aol_api_messages,
                 add_cache_control=add_cache_control,
                 thinking_enabled=thinking_enabled,
                 max_retries=1,
             )
         response_text = result["content"]
         usage = result.get("usage", {})
-        _record_model_success(redis_client, weak_model)
-        return response_text, usage, weak_provider, weak_model
-    except Exception as weak_e:
-        logger.warning("Weak model %s failed: %s", weak_model, weak_e)
-        _record_model_failure(redis_client, weak_model, weak_provider, str(weak_e))
+        _record_model_success(redis_client, aol_model)
+        return response_text, usage, aol_provider, aol_model
+    except Exception as aol_e:
+        logger.warning("AOL model %s failed: %s", aol_model, aol_e)
+        _record_model_failure(redis_client, aol_model, aol_provider, str(aol_e))
         _save_metric({
             "timestamp": time.time(),
-            "provider": weak_provider,
-            "model": weak_model,
+            "provider": aol_provider,
+            "model": aol_model,
             "model_type": model_type,
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
             "cache_hit": 0,
             "latency_ms": 0,
-            "error": str(weak_e)[:500],
+            "error": str(aol_e)[:500],
             "request_type": request_type,
             "is_fallback": True,
         })
@@ -1364,29 +1371,23 @@ def get_cached_llm_response(
             provider, models, base_url, api_key, temperature, effective_timeout, messages, api_messages, prompt, system_prompt, add_cache_control, thinking_enabled, model_type, request_type, is_fallback
         )
     except Exception as e:
-        # When market is closed and the fallback model (used as primary) fails,
-        # try the main weak model before attempting the normal fallback chain.
-        weak_result = None
-        if not _should_use_primary_model() and is_fallback:
-            logger.warning(
-                "Market is closed and fallback model failed (%s). Trying main weak model.",
-                e
-            )
-            weak_result = _try_weak_model(
-                model_type, messages, prompt, system_prompt,
-                temperature, effective_timeout, add_cache_control, thinking_enabled, request_type
-            )
-
-        if weak_result is not None:
-            response_text = weak_result[0]
-            usage = weak_result[1]
-            used_provider = weak_result[2]
-            used_model = weak_result[3]
-            is_fallback = True
-        else:
+        try:
             response_text, usage, used_provider, used_model, is_fallback = _execute_fallback_call(
                 e, model_type, messages, prompt, system_prompt, temperature, effective_timeout, api_messages, add_cache_control, thinking_enabled, request_type, provider
             )
+        except Exception as fallback_e:
+            aol_result = _try_aol_model(
+                model_type, messages, prompt, system_prompt,
+                temperature, effective_timeout, add_cache_control, thinking_enabled, request_type
+            )
+            if aol_result is not None:
+                response_text = aol_result[0]
+                usage = aol_result[1]
+                used_provider = aol_result[2]
+                used_model = aol_result[3]
+                is_fallback = True
+            else:
+                raise fallback_e
     if response_text is None:
         logger.warning("LLM returned None response; not caching.")
         _save_metric({

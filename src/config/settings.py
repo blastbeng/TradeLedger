@@ -840,6 +840,12 @@ class Settings(BaseSettings):
         Settings.parse_temperature_range(v)  # raises ValueError if invalid
         return v
 
+    # Always-Online Locally hosted weak model (last resort fallback)
+    AOL_LLM_PROVIDER: str = ""
+    AOL_LLM_MODEL: str = ""
+    AOL_LLM_API_KEY: Optional[str] = None
+    AOL_BASE_URL: Optional[str] = None
+
     # Thinking mode (reasoning) control per model type.
     # When False, sends reasoning_effort="low" to the API to minimize deep thinking.
     # Mind: KEEP enabled — deep financial analysis, critical trading decisions.
