@@ -256,45 +256,59 @@ def check_llm_health() -> dict:
     """
     results = {}
 
-    for role in ("mind", "actuator", "weak"):
-        if role == "mind":
-            provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
-        elif role == "weak":
-            provider = settings.LLM_WEAK_PROVIDER or settings.LLM_PROVIDER
+    for role in ("mind", "actuator", "weak", "aol"):
+        if role == "aol":
+            provider = settings.AOL_LLM_PROVIDER
+            models = settings.AOL_LLM_MODEL
+            base_url = settings.AOL_BASE_URL
+            api_key = settings.AOL_LLM_API_KEY
+            if not provider or not models:
+                results[role] = {
+                    "status": "disconnected",
+                    "provider": provider or "none",
+                    "model": "not configured",
+                    "error": "AOL provider not configured",
+                }
+                continue
         else:
-            provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
+            if role == "mind":
+                provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
+            elif role == "weak":
+                provider = settings.LLM_WEAK_PROVIDER or settings.LLM_PROVIDER
+            else:
+                provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
 
-        if provider == "openai":
-            if role == "mind":
-                models = settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL
-                base_url = settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL
-                api_key = settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY
-            elif role == "weak":
-                models = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
-                base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
-                api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
+            if provider == "openai":
+                if role == "mind":
+                    models = settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL
+                    base_url = settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL
+                    api_key = settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY
+                elif role == "weak":
+                    models = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
+                    base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
+                    api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
+                else:
+                    models = settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL
+                    base_url = settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL
+                    api_key = settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY
+            elif provider == "g4f":
+                from src.llm.g4f_client import _get_g4f_models
+                models = _get_g4f_models(role)
+                base_url = None
+                api_key = None
             else:
-                models = settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL
-                base_url = settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL
-                api_key = settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY
-        elif provider == "g4f":
-            from src.llm.g4f_client import _get_g4f_models
-            models = _get_g4f_models(role)
-            base_url = None
-            api_key = None
-        else:
-            if role == "mind":
-                models = settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL
-                base_url = settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL
-                api_key = settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY
-            elif role == "weak":
-                models = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
-                base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
-                api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
-            else:
-                models = settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL
-                base_url = settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL
-                api_key = settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY
+                if role == "mind":
+                    models = settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL
+                    base_url = settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL
+                    api_key = settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY
+                elif role == "weak":
+                    models = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
+                    base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
+                    api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
+                else:
+                    models = settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL
+                    base_url = settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL
+                    api_key = settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY
 
         model = models[0] if models else "unknown"
 

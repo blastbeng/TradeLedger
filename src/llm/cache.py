@@ -1132,6 +1132,9 @@ def _try_aol_model(
     if not aol_provider or not aol_models:
         return None
 
+    # Use a dedicated timeout for AOL calls instead of the caller's effective_timeout
+    effective_timeout = settings.AOL_TIMEOUT
+
     # Context window management for AOL model
     aol_max_input_tokens = settings.AOL_MAX_INPUT_TOKENS
     aol_effective_limit = int(aol_max_input_tokens * 0.8)

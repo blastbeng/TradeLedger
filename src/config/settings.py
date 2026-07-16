@@ -848,6 +848,16 @@ class Settings(BaseSettings):
     AOL_BASE_URL: Optional[str] = None
     AOL_MAX_INPUT_TOKENS: int = 16_384
 
+    # Dedicated timeout (seconds) for AOL (Always-Online) last-resort fallback calls.
+    AOL_TIMEOUT: float = 120.0
+
+    @field_validator("AOL_TIMEOUT")
+    @classmethod
+    def validate_aol_timeout(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("AOL_TIMEOUT must be positive")
+        return v
+
     # Thinking mode (reasoning) control per model type.
     # When False, sends reasoning_effort="low" to the API to minimize deep thinking.
     # Mind: KEEP enabled — deep financial analysis, critical trading decisions.
