@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
-from src.database import get_ohlcv, get_indicators_for_symbols, get_aggregate_sentiment_for_symbols
+from src.database import get_indicators_for_symbols, get_aggregate_sentiment_for_symbols, get_ohlcv_batch
 from src.exchanges.market_data import get_quotes_cached
 
 try:
@@ -288,29 +288,17 @@ class ReevalDataFetcher:
         - available_timeframes_by_symbol: {symbol: [tf1, tf2, ...]}
         """
         ohlcv_data: Dict[str, Dict[str, List[List]]] = {}
-        if settings.OHLCV_TIMEFRAMES:
-            # Use a semaphore to limit concurrent DB queries and avoid exhausting the connection pool
-            sem = asyncio.Semaphore(10)
-
-            async def _fetch_ohlcv(sym: str):
-                async with sem:
-                    data = {}
-                    for tf in settings.OHLCV_TIMEFRAMES:
-                        try:
-                            db_candles = await asyncio.to_thread(
-                                get_ohlcv, sym, tf, limit=50
-                            )
-                            if db_candles:
-                                data[tf] = [
-                                    [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                                    for c in db_candles
-                                ]
-                        except Exception as e:
-                            logger.debug(f"DB OHLCV fetch failed for {sym} {tf}: {type(e).__name__}: {e}")
-                    return sym, data
-            tasks = [_fetch_ohlcv(sym) for sym in sorted_by_vol]
-            results = await asyncio.gather(*tasks)
-            ohlcv_data = dict(results)
+        if settings.OHLCV_TIMEFRAMES and sorted_by_vol:
+            try:
+                # Single batch query for all symbols and timeframes
+                ohlcv_data = await asyncio.to_thread(
+                    get_ohlcv_batch,
+                    sorted_by_vol,
+                    settings.OHLCV_TIMEFRAMES,
+                    50  # limit
+                )
+            except Exception as e:
+                logger.warning(f"Batch OHLCV fetch failed: {type(e).__name__}: {e}")
 
         available_timeframes_by_symbol: Dict[str, List[str]] = {}
         for sym, tf_data in ohlcv_data.items():

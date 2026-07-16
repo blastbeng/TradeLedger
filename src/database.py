@@ -1614,6 +1614,65 @@ def get_ohlcv(symbol: str, timeframe: str, since_ms: int = None, limit: int = 50
         conn.close()
 
 
+def get_ohlcv_batch(symbols: List[str], timeframes: List[str], limit: int = 50) -> Dict[str, Dict[str, List[List]]]:
+    """Retrieve the most recent OHLCV candles for multiple symbols and timeframes.
+    Returns a dict: {symbol: {timeframe: [[ts, o, h, l, c, v], ...]}}
+    """
+    if not symbols or not timeframes:
+        return {}
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                """
+                WITH RankedCandles AS (
+                    SELECT symbol, timeframe, timestamp, open, high, low, close, volume,
+                           ROW_NUMBER() OVER (PARTITION BY symbol, timeframe ORDER BY timestamp DESC) as rn
+                    FROM market_data
+                    WHERE symbol = ANY(%s) AND timeframe = ANY(%s)
+                )
+                SELECT symbol, timeframe, timestamp, open, high, low, close, volume
+                FROM RankedCandles
+                WHERE rn <= %s
+                ORDER BY symbol, timeframe, timestamp ASC
+                """
+            )
+            rows = conn.execute(sql, (symbols, timeframes, limit)).fetchall()
+        else:
+            sym_placeholders = ",".join(["?" for _ in symbols])
+            tf_placeholders = ",".join(["?" for _ in timeframes])
+            sql = _adapt_sql(
+                f"""
+                WITH RankedCandles AS (
+                    SELECT symbol, timeframe, timestamp, open, high, low, close, volume,
+                           ROW_NUMBER() OVER (PARTITION BY symbol, timeframe ORDER BY timestamp DESC) as rn
+                    FROM market_data
+                    WHERE symbol IN ({sym_placeholders}) AND timeframe IN ({tf_placeholders})
+                )
+                SELECT symbol, timeframe, timestamp, open, high, low, close, volume
+                FROM RankedCandles
+                WHERE rn <= ?
+                ORDER BY symbol, timeframe, timestamp ASC
+                """
+            )
+            rows = conn.execute(sql, symbols + timeframes + [limit]).fetchall()
+
+        result: Dict[str, Dict[str, List[List]]] = {s: {} for s in symbols}
+        for row in rows:
+            sym = row["symbol"]
+            tf = row["timeframe"]
+            if sym not in result:
+                result[sym] = {}
+            if tf not in result[sym]:
+                result[sym][tf] = []
+            result[sym][tf].append([
+                row["timestamp"], row["open"], row["high"], row["low"], row["close"], row["volume"]
+            ])
+        return result
+    finally:
+        conn.close()
+
+
 def get_ohlcv_summary_for_symbols(symbols: List[str], timeframes: List[str], since_ms: int) -> Dict[str, Dict[str, Dict[str, Any]]]:
     """Retrieve OHLCV summary (change_pct, high, low, volume, candle_count) for multiple symbols and timeframes.
     Returns a dict: {symbol: {timeframe: summary_dict}}
