@@ -1148,6 +1148,12 @@ def _try_aol_model(
                     aol_api_messages.append({"role": "system", "content": system_prompt})
                 aol_api_messages.extend(messages)
 
+            aol_add_cache_control = (
+                settings.LLM_PROMPT_CACHING_ENABLED
+                and aol_provider in settings.LLM_PROMPT_CACHING_CONTROL_PROVIDERS
+                and messages is not None
+            )
+
             if aol_provider == "openai":
                 from src.llm.llm_client import _get_openai_response
                 result = _get_openai_response(
@@ -1156,7 +1162,7 @@ def _try_aol_model(
                     model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
                     temperature=temperature, timeout=effective_timeout,
                     messages=aol_api_messages,
-                    add_cache_control=add_cache_control,
+                    add_cache_control=aol_add_cache_control,
                     thinking_enabled=thinking_enabled,
                     max_retries=1,
                 )
@@ -1168,7 +1174,7 @@ def _try_aol_model(
                     model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
                     temperature=temperature, timeout=effective_timeout,
                     messages=aol_api_messages,
-                    add_cache_control=add_cache_control,
+                    add_cache_control=aol_add_cache_control,
                     thinking_enabled=thinking_enabled,
                     max_retries=1,
                 )
@@ -1180,7 +1186,7 @@ def _try_aol_model(
                     model=aol_model, base_url=aol_base_url, api_key=aol_api_key,
                     temperature=temperature, timeout=effective_timeout,
                     messages=aol_api_messages,
-                    add_cache_control=add_cache_control,
+                    add_cache_control=aol_add_cache_control,
                     thinking_enabled=thinking_enabled,
                     max_retries=1,
                 )
