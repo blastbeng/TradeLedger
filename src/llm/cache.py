@@ -1132,6 +1132,43 @@ def _try_aol_model(
     if not aol_provider or not aol_models:
         return None
 
+    # Context window management for AOL model
+    aol_max_input_tokens = settings.AOL_MAX_INPUT_TOKENS
+    aol_effective_limit = int(aol_max_input_tokens * 0.8)
+    if messages is not None:
+        aol_total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
+        if aol_total_tokens > aol_effective_limit:
+            logger.warning("AOL messages size (~%d tokens) exceeds limit (%d). Splitting...", aol_total_tokens, aol_effective_limit)
+            messages = [dict(msg) for msg in messages]
+            if messages and messages[-1]["role"] == "user":
+                messages[-1]["content"] = _split_and_merge_prompt(
+                    prompt=messages[-1]["content"],
+                    system_prompt=system_prompt,
+                    model_type=model_type,
+                    provider=aol_provider,
+                    model=aol_models[0],
+                    base_url=aol_base_url,
+                    api_key=aol_api_key,
+                    temperature=temperature,
+                    timeout=effective_timeout,
+                    max_input_tokens=aol_effective_limit - estimate_tokens(system_prompt),
+                )
+    else:
+        aol_prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+        if aol_prompt_tokens > aol_effective_limit:
+            prompt = _split_and_merge_prompt(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                model_type=model_type,
+                provider=aol_provider,
+                model=aol_models[0],
+                base_url=aol_base_url,
+                api_key=aol_api_key,
+                temperature=temperature,
+                timeout=effective_timeout,
+                max_input_tokens=aol_effective_limit - estimate_tokens(system_prompt),
+            )
+
     redis_client = get_redis_client()
     available_models = [m for m in aol_models if not _is_model_blacklisted(redis_client, m)]
     if not available_models:

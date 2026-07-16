@@ -846,6 +846,7 @@ class Settings(BaseSettings):
     AOL_LLM_MODEL: Annotated[list[str], NoDecode] = []
     AOL_LLM_API_KEY: Optional[str] = None
     AOL_BASE_URL: Optional[str] = None
+    AOL_MAX_INPUT_TOKENS: int = 16_384
 
     # Thinking mode (reasoning) control per model type.
     # When False, sends reasoning_effort="low" to the API to minimize deep thinking.
