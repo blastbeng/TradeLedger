@@ -412,9 +412,9 @@ def _record_model_failure(redis_client, model: str, provider: str, error: str):
         fail_count = redis_client.incr(f"llm:fail_count:{model}")
         redis_client.expire(f"llm:fail_count:{model}", 3600)  # 1 hour window
         
-        if fail_count >= 3:
+        if fail_count >= 5:
             level = int(redis_client.get(f"llm:blacklist_level:{model}") or 1)
-            ttl = min(3600 * level, 86400)  # 1h * level, max 24h
+            ttl = min(1800 * level, 172800)  # 30min * level, max 48h
             redis_client.setex(f"llm:blacklist:{model}", ttl, "1")
             redis_client.incr(f"llm:blacklist_level:{model}")
             redis_client.expire(f"llm:blacklist_level:{model}", 86400 * 7)  # keep level for 7 days
@@ -643,7 +643,7 @@ def _execute_primary_call(
                     messages=api_messages,
                     add_cache_control=add_cache_control,
                     thinking_enabled=thinking_enabled,
-                    max_retries=1,
+                    max_retries=3,
                 )
             elif provider == "g4f":
                 from src.llm.g4f_client import _get_g4f_response
@@ -655,7 +655,7 @@ def _execute_primary_call(
                     messages=api_messages,
                     add_cache_control=add_cache_control,
                     thinking_enabled=thinking_enabled,
-                    max_retries=1,
+                    max_retries=3,
                 )
             else:
                 from src.llm.llm_client import _get_ollama_response
@@ -667,7 +667,7 @@ def _execute_primary_call(
                     messages=api_messages,
                     add_cache_control=add_cache_control,
                     thinking_enabled=thinking_enabled,
-                    max_retries=1,
+                    max_retries=3,
                 )
 
             response_text = result["content"]
@@ -837,7 +837,7 @@ def _execute_fallback_call(
                         messages=api_messages,
                         add_cache_control=fallback_add_cache_control,
                         thinking_enabled=thinking_enabled,
-                        max_retries=1,
+                        max_retries=3,
                     )
                     response_text = result["content"]
                     usage = result.get("usage", {})
@@ -954,7 +954,7 @@ def _execute_fallback_call(
                     messages=api_messages,
                     add_cache_control=fallback_add_cache_control,
                     thinking_enabled=thinking_enabled,
-                    max_retries=1,
+                    max_retries=3,
                 )
                 response_text = result["content"]
                 usage = result.get("usage", {})
@@ -1074,7 +1074,7 @@ def _execute_fallback_call(
                         messages=api_messages,
                         add_cache_control=fallback_add_cache_control,
                         thinking_enabled=thinking_enabled,
-                        max_retries=1,
+                        max_retries=3,
                     )
                     response_text = result["content"]
                     usage = result.get("usage", {})
@@ -1204,7 +1204,7 @@ def _try_aol_model(
                     messages=aol_api_messages,
                     add_cache_control=aol_add_cache_control,
                     thinking_enabled=thinking_enabled,
-                    max_retries=1,
+                    max_retries=3,
                 )
             elif aol_provider == "g4f":
                 from src.llm.g4f_client import _get_g4f_response
@@ -1216,7 +1216,7 @@ def _try_aol_model(
                     messages=aol_api_messages,
                     add_cache_control=aol_add_cache_control,
                     thinking_enabled=thinking_enabled,
-                    max_retries=1,
+                    max_retries=3,
                 )
             else:
                 from src.llm.llm_client import _get_ollama_response
@@ -1228,7 +1228,7 @@ def _try_aol_model(
                     messages=aol_api_messages,
                     add_cache_control=aol_add_cache_control,
                     thinking_enabled=thinking_enabled,
-                    max_retries=1,
+                    max_retries=3,
                 )
             response_text = result["content"]
             usage = result.get("usage", {})
