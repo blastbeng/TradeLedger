@@ -414,7 +414,7 @@ def _record_model_failure(redis_client, model: str, provider: str, error: str):
         
         if fail_count >= 5:
             level = int(redis_client.get(f"llm:blacklist_level:{model}") or 1)
-            ttl = min(1800 * level, 172800)  # 30min * level, max 48h
+            ttl = min(1800 * level, 7200)  # 30min * level, max 2h
             redis_client.setex(f"llm:blacklist:{model}", ttl, "1")
             redis_client.incr(f"llm:blacklist_level:{model}")
             redis_client.expire(f"llm:blacklist_level:{model}", 86400 * 7)  # keep level for 7 days
