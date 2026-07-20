@@ -854,11 +854,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 # --- Cached payload: share across all WebSocket clients ---
                 now = time.time()
                 global _ws_payload_cache, _ws_payload_cache_time
-                market_open = await engine._is_market_open()
-                effective_ttl = 5.0 if market_open else 60.0
-                if _ws_payload_cache is not None and (now - _ws_payload_cache_time) < effective_ttl:
+                if _ws_payload_cache is not None and (now - _ws_payload_cache_time) < 5.0:
                     payload = _ws_payload_cache
                 else:
+                    market_open = await engine._is_market_open()
                     # Build current_symbols with display (parallelized to avoid blocking)
                     async def _build_symbol_entry(entry):
                         entry_copy = dict(entry)
