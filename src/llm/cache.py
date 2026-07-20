@@ -266,7 +266,9 @@ def _split_and_merge_prompt(
     
     # Enforce a global timeout for the summarization phase to prevent
     # the split/merge loop from hanging indefinitely if all weak model calls hang.
-    global_summary_timeout = 30.0
+    # Scale the timeout based on the number of chunks to allow sufficient time
+    # for large prompts.
+    global_summary_timeout = max(30.0, len(chunks) * 15.0)
     done, not_done = concurrent.futures.wait(
         future_to_chunk, timeout=global_summary_timeout
     )
