@@ -157,6 +157,8 @@ class TradingEngine:
         self._reconcile_running = False
         self._reevaluate_running = False
         self._pause_check_running = False
+        self._last_risk_check: Dict[str, float] = {}
+        self._last_risk_check_lock = asyncio.Lock()
         self._news_cache_running = False
         self._news_fast_running = False
         self._market_data_running = False
@@ -999,39 +1001,39 @@ class TradingEngine:
     async def _risk_management_loop(self):
         """Check stop-loss, take-profit, and other risk rules on every ticker update."""
         await asyncio.sleep(5)  # initial delay
-        last_risk_check: Dict[str, float] = {}
 
         while self._running:
             try:
                 now = time.time()
                 symbols_to_check = []
                 min_interval = settings.RISK_CHECK_INTERVAL_SECONDS
-                for symbol, pos in self.shared_state.positions.items():
-                    pos_tf = pos.get("timeframe")
-                    if not pos_tf:
-                        pos_tf_secs = settings.RISK_CHECK_INTERVAL_SECONDS
-                    else:
-                        pos_tf_secs = self._timeframe_to_seconds(pos_tf)
+                async with self._last_risk_check_lock:
+                    for symbol, pos in list(self.shared_state.positions.items()):
+                        pos_tf = pos.get("timeframe")
+                        if not pos_tf:
+                            pos_tf_secs = settings.RISK_CHECK_INTERVAL_SECONDS
+                        else:
+                            pos_tf_secs = self._timeframe_to_seconds(pos_tf)
 
-                    if pos_tf_secs >= 31_536_000:  # >= 1 year
-                        pos_interval = settings.RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS
-                    elif pos_tf_secs >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
-                        pos_interval = max(3600, min(3600, int(pos_tf_secs * 0.01)))
-                    else:
-                        pos_interval = settings.RISK_CHECK_INTERVAL_SECONDS
+                        if pos_tf_secs >= 31_536_000:  # >= 1 year
+                            pos_interval = settings.RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS
+                        elif pos_tf_secs >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
+                            pos_interval = max(3600, min(3600, int(pos_tf_secs * 0.01)))
+                        else:
+                            pos_interval = settings.RISK_CHECK_INTERVAL_SECONDS
 
-                    if pos_interval < min_interval:
-                        min_interval = pos_interval
+                        if pos_interval < min_interval:
+                            min_interval = pos_interval
 
-                    last_check = last_risk_check.get(symbol, 0)
-                    if now - last_check >= pos_interval:
-                        symbols_to_check.append(symbol)
-                        last_risk_check[symbol] = now
+                        last_check = self._last_risk_check.get(symbol, 0)
+                        if now - last_check >= pos_interval:
+                            symbols_to_check.append(symbol)
+                            self._last_risk_check[symbol] = now
 
-                # Clean up last_risk_check for closed positions
-                closed_symbols = [s for s in last_risk_check if s not in self.shared_state.positions]
-                for s in closed_symbols:
-                    del last_risk_check[s]
+                    # Clean up last_risk_check for closed positions
+                    closed_symbols = [s for s in self._last_risk_check if s not in self.shared_state.positions]
+                    for s in closed_symbols:
+                        del self._last_risk_check[s]
 
                 if symbols_to_check:
                     await self.event_bus.request("check_risk_management", symbols_to_check)
