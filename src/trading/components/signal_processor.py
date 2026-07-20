@@ -944,7 +944,7 @@ class SignalProcessor:
         # ATR multi-TF
         atr_multi_tf: Dict[str, float] = {}
         for tf in settings.OHLCV_TIMEFRAMES:
-            ind = multi_tf_indicators.get(tf, {})
+            ind = multi_tf_indicators.get(tf) or {}
             tf_atr = ind.get('atr')
             if tf_atr is not None and tf_atr > 0:
                 atr_multi_tf[tf] = tf_atr
