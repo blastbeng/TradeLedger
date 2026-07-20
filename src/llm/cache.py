@@ -30,6 +30,11 @@ _llm_executor = concurrent.futures.ThreadPoolExecutor(
 )
 atexit.register(lambda: _llm_executor.shutdown(wait=False))
 
+# Cache for _should_use_primary_model() to avoid repeated timezone/holiday calculations.
+_primary_model_cache: Optional[bool] = None
+_primary_model_cache_ts: float = 0.0
+_PRIMARY_MODEL_CACHE_TTL = 30.0
+
 def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
     return len(text) // 4
@@ -1646,31 +1651,38 @@ def _should_use_primary_model() -> bool:
     Returns True if market is open or in pre-market session (within 60 mins of open).
     Returns False if market is closed (use fallback models only to save tokens).
     Computes market status locally to avoid dependency on Redis background tasks.
+    Result is cached for 30 seconds to avoid repeated timezone/holiday calculations.
     """
+    global _primary_model_cache, _primary_model_cache_ts
+    now = time.time()
+    if _primary_model_cache is not None and (now - _primary_model_cache_ts) < _PRIMARY_MODEL_CACHE_TTL:
+        return _primary_model_cache
+
     from zoneinfo import ZoneInfo
     try:
         now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
         weekday = now_rome.weekday()
         if weekday >= 5:  # Saturday or Sunday
-            return False
+            result = False
+        elif _is_italian_holiday(now_rome):
+            result = False
+        else:
+            rome_minutes = now_rome.hour * 60 + now_rome.minute
+            open_minutes = settings.MARKET_OPEN_HOUR * 60 + settings.MARKET_OPEN_MINUTE
+            close_minutes = settings.MARKET_CLOSE_HOUR * 60 + settings.MARKET_CLOSE_MINUTE
 
-        if _is_italian_holiday(now_rome):
-            return False
-
-        rome_minutes = now_rome.hour * 60 + now_rome.minute
-        open_minutes = settings.MARKET_OPEN_HOUR * 60 + settings.MARKET_OPEN_MINUTE
-        close_minutes = settings.MARKET_CLOSE_HOUR * 60 + settings.MARKET_CLOSE_MINUTE
-
-        if open_minutes <= rome_minutes < close_minutes:
-            return True  # Market is open
-
-        # Check pre-market (within 60 mins of open)
-        if open_minutes - 60 <= rome_minutes < open_minutes:
-            return True  # Pre-market
-
-        return False  # Market is closed
+            if open_minutes <= rome_minutes < close_minutes:
+                result = True  # Market is open
+            elif open_minutes - 60 <= rome_minutes < open_minutes:
+                result = True  # Pre-market
+            else:
+                result = False  # Market is closed
     except Exception:
-        return True  # Default to primary if we can't determine market status
+        result = True  # Default to primary if we can't determine market status
+
+    _primary_model_cache = result
+    _primary_model_cache_ts = now
+    return result
 
 
 def _get_fallback_provider_config(model_type: str, provider: str = None):
