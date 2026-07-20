@@ -90,6 +90,12 @@ class OrderExecutor:
                     # If this is a manual sell, also cancel any queued SELL order for this symbol to avoid duplicate sells
                     if is_manual:
                         queued_to_cancel.extend([q for q in self.shared_state.queued_orders if q['symbol'] == symbol and q['side'] == 'sell'])
+                    
+                    # Remove the orders to cancel from the queue immediately to prevent race conditions
+                    for q in queued_to_cancel:
+                        if q in self.shared_state.queued_orders:
+                            self.shared_state.queued_orders.remove(q)
+                    self.shared_state._state_dirty = True
 
         if queued_to_cancel:
             logger.info(f"Cancelling queued orders for {symbol} to execute SELL ({exit_reason}).")
@@ -103,11 +109,6 @@ class OrderExecutor:
                 if q['side'] == 'buy':
                     async with self.shared_state._cycle_spent_lock:
                         self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - q.get('amount', 0.0))
-            async with self.shared_state._queued_orders_lock:
-                for q in queued_to_cancel:
-                    if q in self.shared_state.queued_orders:
-                        self.shared_state.queued_orders.remove(q)
-            self.shared_state._state_dirty = True
 
         # In live mode, only execute during regular market hours (manual overrides are allowed anytime)
         if not await engine._is_market_open() and not (exit_reason and exit_reason.startswith("manual")):
