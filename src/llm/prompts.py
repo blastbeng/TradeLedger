@@ -364,15 +364,16 @@ Maximum symbols to trade: {max_symbols}
 
     # --- Volatility, order book imbalance, and position P&L context ---
     if atr is not None:
-        prompt += f"ATR(14,{assigned_timeframe or 'default'}):{atr:.2f}\n"
-    if atr is not None and current_price is not None and current_price > 0:
-        atr_pct = atr / current_price
-        min_sl = min_stop_atr_mult * atr_pct
-        prompt += f"ATR%={atr_pct:.2%},minSL={min_sl:.2%}({min_stop_atr_mult}×ATR%)\n"
-    if atr_percentile is not None:
-        prompt += f"ATR percentile (last 100 obs): {atr_percentile:.1f}%\n"
+        atr_pct = (atr / current_price) if (current_price and current_price > 0) else None
+        min_sl = (min_stop_atr_mult * atr_pct) if atr_pct is not None else None
+        prompt += f"ATR(14,{assigned_timeframe or 'default'}):{atr:.2f}"
+        if atr_pct is not None:
+            prompt += f",ATR%={atr_pct:.2%},minSL={min_sl:.2%}({min_stop_atr_mult}×ATR%)"
+        if atr_percentile is not None:
+            prompt += f",pctile={atr_percentile:.1f}%"
+        prompt += "\n"
     if atr_multi_tf:
-        prompt += f"ATR across timeframes: {_to_toon(_round_floats(atr_multi_tf))}\n"
+        prompt += f"ATR MTF: {_to_toon(_round_floats(atr_multi_tf))}\n"
     # --- Transaction cost break-even calculation ---
     _is_btp = is_btp_isin(symbol)
     # Use per_symbol_budget as the representative trade size — the LLM typically
@@ -466,6 +467,9 @@ Maximum symbols to trade: {max_symbols}
             if tf in multi_tf_raw_candles:
                 if is_long_term and tf in ("1h", "1d"):
                     continue
+                # Only include assigned timeframe and '1d' for context to save space
+                if assigned_timeframe and tf != assigned_timeframe and tf != "1d":
+                    continue
                 summary = _summarize_ohlcv(multi_tf_raw_candles[tf])
                 if summary:
                     tf_summaries.append(
@@ -483,47 +487,61 @@ Maximum symbols to trade: {max_symbols}
                 ind = multi_tf_indicators[tf]
                 if ind is None:
                     continue
-                ind_compact = {}
-                if ind.get('rsi') is not None: ind_compact['rsi'] = round(ind['rsi'], 2)
-                if ind.get('macd') is not None:
-                    ind_compact['macd'] = round(ind['macd'], 2)
-                    ind_compact['macd_sig'] = round(ind['macd_signal'], 2)
-                    ind_compact['macd_h'] = round(ind['macd_hist'], 2)
-                if ind.get('bb_upper') is not None:
-                    ind_compact['bb_u'] = round(ind['bb_upper'], 2)
-                    ind_compact['bb_m'] = round(ind['bb_middle'], 2)
-                    ind_compact['bb_l'] = round(ind['bb_lower'], 2)
-                if ind.get('ema_9') is not None:
-                    ind_compact['ema9'] = round(ind['ema_9'], 2)
-                    if ind.get('ema_21') is not None: ind_compact['ema21'] = round(ind['ema_21'], 2)
-                if ind.get('stochastic_k') is not None:
-                    ind_compact['stoch_k'] = round(ind['stochastic_k'], 2)
-                    if ind.get('stochastic_d') is not None: ind_compact['stoch_d'] = round(ind['stochastic_d'], 2)
-                if ind.get('adx') is not None:
-                    ind_compact['adx'] = round(ind['adx'], 2)
-                    if ind.get('plus_di') is not None: ind_compact['+di'] = round(ind['plus_di'], 2)
-                    if ind.get('minus_di') is not None: ind_compact['-di'] = round(ind['minus_di'], 2)
-                if ind.get('obv') is not None: ind_compact['obv'] = round(ind['obv'], 2)
-                if ind.get('mfi') is not None: ind_compact['mfi'] = round(ind['mfi'], 2)
-                if ind.get('cci') is not None: ind_compact['cci'] = round(ind['cci'], 2)
-                if ind.get('williams_r') is not None: ind_compact['wr'] = round(ind['williams_r'], 2)
-                if ind.get('ichimoku') is not None:
-                    ich = ind['ichimoku']
-                    ind_compact['ich'] = {"t": round(ich['tenkan_sen'], 2), "k": round(ich['kijun_sen'], 2),
-                                          "sa": round(ich['senkou_span_a'], 2), "sb": round(ich['senkou_span_b'], 2),
-                                          "cb": round(ich['cloud_bottom'], 2), "ct": round(ich['cloud_top'], 2)}
-                if ind.get('donchian_channels') is not None:
-                    dc = ind['donchian_channels']
-                    ind_compact['dc'] = {"u": round(dc['upper'], 2), "m": round(dc['middle'], 2), "l": round(dc['lower'], 2)}
-                if ind.get('atr') is not None: ind_compact['atr'] = round(ind['atr'], 2)
-                if ind.get('parabolic_sar') is not None: ind_compact['sar'] = round(ind['parabolic_sar'], 2)
-                if ind.get('keltner_channels') is not None:
-                    kc = ind['keltner_channels']
-                    ind_compact['kc'] = {"u": round(kc['upper'], 2), "m": round(kc['middle'], 2), "l": round(kc['lower'], 2)}
                 
-
-                if not ind_compact: continue
-                ind_lines.append(f"[{tf}] {_to_toon(ind_compact)}")
+                # Truncate indicators for non-assigned timeframes to save space
+                if assigned_timeframe and tf != assigned_timeframe:
+                    ind_compact = {}
+                    if ind.get('rsi') is not None: ind_compact['rsi'] = round(ind['rsi'], 2)
+                    if ind.get('macd') is not None:
+                        ind_compact['macd'] = round(ind['macd'], 2)
+                        ind_compact['macd_h'] = round(ind['macd_hist'], 2)
+                    if ind.get('ema_9') is not None:
+                        ind_compact['ema9'] = round(ind['ema_9'], 2)
+                        if ind.get('ema_21') is not None: ind_compact['ema21'] = round(ind['ema_21'], 2)
+                    if not ind_compact: continue
+                    ind_lines.append(f"[{tf}] {_to_toon(ind_compact)}")
+                else:
+                    # Full indicator set for assigned timeframe
+                    ind_compact = {}
+                    if ind.get('rsi') is not None: ind_compact['rsi'] = round(ind['rsi'], 2)
+                    if ind.get('macd') is not None:
+                        ind_compact['macd'] = round(ind['macd'], 2)
+                        ind_compact['macd_sig'] = round(ind['macd_signal'], 2)
+                        ind_compact['macd_h'] = round(ind['macd_hist'], 2)
+                    if ind.get('bb_upper') is not None:
+                        ind_compact['bb_u'] = round(ind['bb_upper'], 2)
+                        ind_compact['bb_m'] = round(ind['bb_middle'], 2)
+                        ind_compact['bb_l'] = round(ind['bb_lower'], 2)
+                    if ind.get('ema_9') is not None:
+                        ind_compact['ema9'] = round(ind['ema_9'], 2)
+                        if ind.get('ema_21') is not None: ind_compact['ema21'] = round(ind['ema_21'], 2)
+                    if ind.get('stochastic_k') is not None:
+                        ind_compact['stoch_k'] = round(ind['stochastic_k'], 2)
+                        if ind.get('stochastic_d') is not None: ind_compact['stoch_d'] = round(ind['stochastic_d'], 2)
+                    if ind.get('adx') is not None:
+                        ind_compact['adx'] = round(ind['adx'], 2)
+                        if ind.get('plus_di') is not None: ind_compact['+di'] = round(ind['plus_di'], 2)
+                        if ind.get('minus_di') is not None: ind_compact['-di'] = round(ind['minus_di'], 2)
+                    if ind.get('obv') is not None: ind_compact['obv'] = round(ind['obv'], 2)
+                    if ind.get('mfi') is not None: ind_compact['mfi'] = round(ind['mfi'], 2)
+                    if ind.get('cci') is not None: ind_compact['cci'] = round(ind['cci'], 2)
+                    if ind.get('williams_r') is not None: ind_compact['wr'] = round(ind['williams_r'], 2)
+                    if ind.get('ichimoku') is not None:
+                        ich = ind['ichimoku']
+                        ind_compact['ich'] = {"t": round(ich['tenkan_sen'], 2), "k": round(ich['kijun_sen'], 2),
+                                              "sa": round(ich['senkou_span_a'], 2), "sb": round(ich['senkou_span_b'], 2),
+                                              "cb": round(ich['cloud_bottom'], 2), "ct": round(ich['cloud_top'], 2)}
+                    if ind.get('donchian_channels') is not None:
+                        dc = ind['donchian_channels']
+                        ind_compact['dc'] = {"u": round(dc['upper'], 2), "m": round(dc['middle'], 2), "l": round(dc['lower'], 2)}
+                    if ind.get('atr') is not None: ind_compact['atr'] = round(ind['atr'], 2)
+                    if ind.get('parabolic_sar') is not None: ind_compact['sar'] = round(ind['parabolic_sar'], 2)
+                    if ind.get('keltner_channels') is not None:
+                        kc = ind['keltner_channels']
+                        ind_compact['kc'] = {"u": round(kc['upper'], 2), "m": round(kc['middle'], 2), "l": round(kc['lower'], 2)}
+                    
+                    if not ind_compact: continue
+                    ind_lines.append(f"[{tf}] {_to_toon(ind_compact)}")
         if ind_lines:
             prompt += "\nComputed indicators per timeframe:\n" + "\n".join(ind_lines) + "\n"
     elif raw_candles:
