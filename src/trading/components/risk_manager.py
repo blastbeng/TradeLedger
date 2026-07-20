@@ -1414,182 +1414,218 @@ class RiskManager:
                 and sl_order_type in ("stop", "stop_limit")
                 and pos.get("stop_loss") is not None
                 and current_price <= pos["stop_loss"]):
-            if tp_order_id:
-                tp_already_filled = False
-                # 1. Fetch TP status outside lock
-                try:
-                    tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
-                    if tp_order_obj is not None and tp_order_obj.status == "filled":
-                        tp_already_filled = True
-                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-                    logger.debug(f"check_native_exit_triggers: failed to check TP fill status for {symbol}: {type(e).__name__}: {e}")
-                except Exception as e:
-                    logger.debug(f"check_native_exit_triggers: failed to check TP fill status for {symbol}: {type(e).__name__}: {e}")
-
-                # 2. Acquire lock to check and pop
-                async with self.shared_state._positions_lock:
-                    if not pos.get("take_profit_order_id"):
-                        return True
-                    if tp_already_filled:
-                        pos.pop("take_profit_order_id", None)
-                        # If TP already filled, the position is closed.
-                        # Clear SL order ID to prevent future processing.
-                        pos.pop("stop_loss_order_id", None)
-                        pos.pop("stop_loss_order_type", None)
-                        pos.pop("_native_stop_price", None)
-                        pos.pop("_native_stop_trigger_ts", None)
-                    else:
-                        pos.pop("take_profit_order_id", None)  # Pop early to prevent race
-
-                if tp_already_filled:
-                    # Clean up SL and TP from queued orders just in case
-                    async with self.shared_state._queued_orders_lock:
-                        self.shared_state.queued_orders = [
-                            q for q in self.shared_state.queued_orders
-                            if q.get("order_id") != sl_order_id and q.get("order_id") != tp_order_id
-                        ]
-                    return True  # Position is closed, no need to process SL
-
-                # 3. Cancel outside lock if not filled
-                try:
-                    await asyncio.to_thread(engine.trader.cancel_order, tp_order_id)
-                    logger.info(
-                        f"Risk check: stop price reached for {symbol}, "
-                        f"cancelled OCO take-profit {tp_order_id}"
-                    )
-                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-                    logger.warning(f"Failed to cancel OCO TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
-                except Exception as e:
-                    logger.warning(f"Failed to cancel OCO TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
-
-                async with self.shared_state._queued_orders_lock:
-                    self.shared_state.queued_orders = [
-                        q for q in self.shared_state.queued_orders
-                        if q.get("order_id") != tp_order_id
-                    ]
-                    for q in self.shared_state.queued_orders:
-                        if q.get("order_id") == sl_order_id:
-                            q["oco_pair"] = None
-                            break
-
-                if engine.notifier:
-                    await engine.notifier.send_notification(
-                        f"🛑 Stop triggered for {display_symbol} at {current_price:.4f}, "
-                        f"take‑profit order cancelled.",
-                        summary={
-                            "symbol": symbol,
-                            "action": "CANCEL",
-                            "reason": "Stop triggered, OCO pair cancelled (risk check)",
-                        },
-                        disable_notification=False
-                    )
-
-                # Process the stop-loss order: check if it has already filled
-                sl_filled = False
-                sl_order_obj = None
-                manual_sell = False
-            
-                # 1. Fetch SL status outside lock
-                try:
-                    sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
-                    if sl_order_obj is not None and sl_order_obj.status == "filled":
-                        sl_filled = True
-                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, ConnectionError, TimeoutError, OSError):
-                    pass
-
-                if sl_filled:
-                    # 2. Acquire lock and pop if filled
-                    async with self.shared_state._positions_lock:
-                        if not pos.get("stop_loss_order_id"):
-                            return True
-                        pos.pop("stop_loss_order_id", None)
-                        pos.pop("stop_loss_order_type", None)
-                        pos.pop("_native_stop_price", None)
-                        pos.pop("_native_stop_trigger_ts", None)
-                    async with self.shared_state._queued_orders_lock:
-                        self.shared_state.queued_orders = [
-                            q for q in self.shared_state.queued_orders
-                            if q.get("order_id") != sl_order_id
-                        ]
-                    await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
-                    return True
-                else:
-                    # 3. Acquire lock to check timeout
-                    async with self.shared_state._positions_lock:
-                        if not pos.get("stop_loss_order_id"):
-                            return True
-                        now_ts = time.time()
-                        trigger_ts = pos.get("_native_stop_trigger_ts")
-                        if trigger_ts is None:
-                            pos["_native_stop_trigger_ts"] = now_ts
-                            trigger_ts = now_ts
-                        elapsed = now_ts - trigger_ts
-                        if elapsed >= settings.NATIVE_STOP_FILL_TIMEOUT_SECONDS:
-                            logger.warning(
-                                f"Native stop-loss order {sl_order_id} for {symbol} "
-                                f"not filled after {elapsed:.0f}s, falling back to manual market sell."
-                            )
-                            pos.pop("stop_loss_order_id", None)
-                            pos.pop("stop_loss_order_type", None)
-                            pos.pop("_native_stop_price", None)
-                            pos.pop("_native_stop_trigger_ts", None)
-                            manual_sell = True
-                        else:
-                            logger.debug(
-                                f"Stop price reached for {symbol}, waiting for native "
-                                f"stop-loss order {sl_order_id} to fill "
-                                f"({elapsed:.0f}s / {settings.NATIVE_STOP_FILL_TIMEOUT_SECONDS}s)."
-                            )
-                            return True  # Exit lock and function
-
-                # 4. Cancel outside lock if manual_sell
-                if manual_sell:
-                    try:
-                        await asyncio.to_thread(engine.trader.cancel_order, sl_order_id)
-                    except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-                        logger.warning(f"Failed to cancel native stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
-                    except Exception as e:
-                        logger.warning(f"Failed to cancel native stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
-                
-                    async with self.shared_state._queued_orders_lock:
-                        self.shared_state.queued_orders = [
-                            q for q in self.shared_state.queued_orders
-                            if q.get("order_id") != sl_order_id
-                        ]
-                    await self.event_bus.publish(
-                        "execute_signal",
-                        symbol,
-                        Signal(action="SELL", confidence=1.0, reasoning="Stop-loss native fill timeout"),
-                        exit_reason="stop_loss"
-                    )
-                return True
+            return await self._handle_stop_trigger(symbol, pos, current_price, display_symbol, sl_order_id, tp_order_id)
 
         # Take-profit price reached → cancel stop OCO pair
         if (sl_order_id and tp_order_id
                 and pos.get("take_profit") is not None
                 and current_price >= pos["take_profit"]):
-            # 1. Claim SL order by popping it under lock
+            return await self._handle_take_profit_trigger(symbol, pos, current_price, display_symbol, sl_order_id, tp_order_id)
+
+        # Native exit orders are active but neither trigger price reached.
+        # Skip manual stop/tp checks — native orders handle it.
+        # If the price has recovered above the stop-loss, clear the trigger timestamp.
+        if pos.get("_native_stop_trigger_ts") is not None and current_price > pos.get("stop_loss", float('inf')):
+            async with self.shared_state._positions_lock:
+                pos.pop("_native_stop_trigger_ts", None)
+        return True
+
+    async def _handle_stop_trigger(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+        current_price: float,
+        display_symbol: str,
+        sl_order_id: str,
+        tp_order_id: Optional[str],
+    ) -> bool:
+        """Handle stop-loss trigger: cancel TP, check SL fill, or fallback to manual sell."""
+        engine = self.engine
+        
+        if tp_order_id:
+            tp_already_filled = False
+            try:
+                tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
+                if tp_order_obj is not None and tp_order_obj.status == "filled":
+                    tp_already_filled = True
+            except Exception as e:
+                logger.debug(f"check_native_exit_triggers: failed to check TP fill status for {symbol}: {type(e).__name__}: {e}")
+
+            async with self.shared_state._positions_lock:
+                if not pos.get("take_profit_order_id"):
+                    return True
+                if tp_already_filled:
+                    pos.pop("take_profit_order_id", None)
+                    pos.pop("stop_loss_order_id", None)
+                    pos.pop("stop_loss_order_type", None)
+                    pos.pop("_native_stop_price", None)
+                    pos.pop("_native_stop_trigger_ts", None)
+                else:
+                    pos.pop("take_profit_order_id", None)
+
+            if tp_already_filled:
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders = [
+                        q for q in self.shared_state.queued_orders
+                        if q.get("order_id") != sl_order_id and q.get("order_id") != tp_order_id
+                    ]
+                return True
+
+            try:
+                await asyncio.to_thread(engine.trader.cancel_order, tp_order_id)
+                logger.info(f"Risk check: stop price reached for {symbol}, cancelled OCO take-profit {tp_order_id}")
+            except Exception as e:
+                logger.warning(f"Failed to cancel OCO TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
+
+            async with self.shared_state._queued_orders_lock:
+                self.shared_state.queued_orders = [
+                    q for q in self.shared_state.queued_orders
+                    if q.get("order_id") != tp_order_id
+                ]
+                for q in self.shared_state.queued_orders:
+                    if q.get("order_id") == sl_order_id:
+                        q["oco_pair"] = None
+                        break
+
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"🛑 Stop triggered for {display_symbol} at {current_price:.4f}, "
+                    f"take‑profit order cancelled.",
+                    summary={
+                        "symbol": symbol,
+                        "action": "CANCEL",
+                        "reason": "Stop triggered, OCO pair cancelled (risk check)",
+                    },
+                    disable_notification=False
+                )
+
+        # Process the stop-loss order: check if it has already filled
+        sl_filled = False
+        sl_order_obj = None
+        manual_sell = False
+        
+        try:
+            sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
+            if sl_order_obj is not None and sl_order_obj.status == "filled":
+                sl_filled = True
+        except Exception:
+            pass
+
+        if sl_filled:
             async with self.shared_state._positions_lock:
                 if not pos.get("stop_loss_order_id"):
                     return True
                 pos.pop("stop_loss_order_id", None)
                 pos.pop("stop_loss_order_type", None)
                 pos.pop("_native_stop_price", None)
+                pos.pop("_native_stop_trigger_ts", None)
+            async with self.shared_state._queued_orders_lock:
+                self.shared_state.queued_orders = [
+                    q for q in self.shared_state.queued_orders
+                    if q.get("order_id") != sl_order_id
+                ]
+            await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
+            return True
+        else:
+            async with self.shared_state._positions_lock:
+                if not pos.get("stop_loss_order_id"):
+                    return True
+                now_ts = time.time()
+                trigger_ts = pos.get("_native_stop_trigger_ts")
+                if trigger_ts is None:
+                    pos["_native_stop_trigger_ts"] = now_ts
+                    trigger_ts = now_ts
+                elapsed = now_ts - trigger_ts
+                if elapsed >= settings.NATIVE_STOP_FILL_TIMEOUT_SECONDS:
+                    logger.warning(
+                        f"Native stop-loss order {sl_order_id} for {symbol} "
+                        f"not filled after {elapsed:.0f}s, falling back to manual market sell."
+                    )
+                    pos.pop("stop_loss_order_id", None)
+                    pos.pop("stop_loss_order_type", None)
+                    pos.pop("_native_stop_price", None)
+                    pos.pop("_native_stop_trigger_ts", None)
+                    manual_sell = True
+                else:
+                    logger.debug(
+                        f"Stop price reached for {symbol}, waiting for native "
+                        f"stop-loss order {sl_order_id} to fill "
+                        f"({elapsed:.0f}s / {settings.NATIVE_STOP_FILL_TIMEOUT_SECONDS}s)."
+                    )
+                    return True
 
-            # 2. Check SL status
-            sl_filled = False
-            sl_order_obj = None
+        if manual_sell:
+            try:
+                await asyncio.to_thread(engine.trader.cancel_order, sl_order_id)
+            except Exception as e:
+                logger.warning(f"Failed to cancel native stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
+        
+            async with self.shared_state._queued_orders_lock:
+                self.shared_state.queued_orders = [
+                    q for q in self.shared_state.queued_orders
+                    if q.get("order_id") != sl_order_id
+                ]
+            await self.event_bus.publish(
+                "execute_signal",
+                symbol,
+                Signal(action="SELL", confidence=1.0, reasoning="Stop-loss native fill timeout"),
+                exit_reason="stop_loss"
+            )
+        return True
+
+    async def _handle_take_profit_trigger(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+        current_price: float,
+        display_symbol: str,
+        sl_order_id: str,
+        tp_order_id: str,
+    ) -> bool:
+        """Handle take-profit trigger: cancel SL, check TP fill, or fallback to manual sell."""
+        engine = self.engine
+        
+        async with self.shared_state._positions_lock:
+            if not pos.get("stop_loss_order_id"):
+                return True
+            pos.pop("stop_loss_order_id", None)
+            pos.pop("stop_loss_order_type", None)
+            pos.pop("_native_stop_price", None)
+
+        sl_filled = False
+        sl_order_obj = None
+        try:
+            sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
+            if sl_order_obj is not None and sl_order_obj.status == "filled":
+                sl_filled = True
+        except Exception as e:
+            logger.debug(f"check_native_exit_triggers: failed to check SL fill status for {symbol}: {type(e).__name__}: {e}")
+
+        if sl_filled:
+            async with self.shared_state._positions_lock:
+                pos.pop("take_profit_order_id", None)
+                pos.pop("_native_stop_trigger_ts", None)
+            async with self.shared_state._queued_orders_lock:
+                self.shared_state.queued_orders = [
+                    q for q in self.shared_state.queued_orders
+                    if q.get("order_id") != sl_order_id and q.get("order_id") != tp_order_id
+                ]
+            await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
+            return True
+
+        try:
+            await asyncio.to_thread(engine.trader.cancel_order, sl_order_id)
+            logger.info(f"Risk check: take-profit price reached for {symbol}, cancelled OCO stop {sl_order_id}")
+        except Exception as e:
+            logger.warning(f"Failed to cancel OCO stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
             try:
                 sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
                 if sl_order_obj is not None and sl_order_obj.status == "filled":
                     sl_filled = True
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-                logger.debug(f"check_native_exit_triggers: failed to check SL fill status for {symbol}: {type(e).__name__}: {e}")
-            except Exception as e:
-                logger.debug(f"check_native_exit_triggers: failed to check SL fill status for {symbol}: {type(e).__name__}: {e}")
-
+            except Exception:
+                pass
+            
             if sl_filled:
-                # SL filled, position is closed. Clean up TP.
                 async with self.shared_state._positions_lock:
                     pos.pop("take_profit_order_id", None)
                     pos.pop("_native_stop_trigger_ts", None)
@@ -1601,122 +1637,75 @@ class RiskManager:
                 await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
                 return True
 
-            # 3. Cancel SL
-            try:
-                await asyncio.to_thread(engine.trader.cancel_order, sl_order_id)
-                logger.info(
-                    f"Risk check: take-profit price reached for {symbol}, "
-                    f"cancelled OCO stop {sl_order_id}"
-                )
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-                logger.warning(f"Failed to cancel OCO stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
-                # If cancel fails, maybe it filled in the meantime?
-                try:
-                    sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
-                    if sl_order_obj is not None and sl_order_obj.status == "filled":
-                        sl_filled = True
-                except Exception:
-                    pass
-                
-                if sl_filled:
-                    async with self.shared_state._positions_lock:
-                        pos.pop("take_profit_order_id", None)
-                        pos.pop("_native_stop_trigger_ts", None)
-                    async with self.shared_state._queued_orders_lock:
-                        self.shared_state.queued_orders = [
-                            q for q in self.shared_state.queued_orders
-                            if q.get("order_id") != sl_order_id and q.get("order_id") != tp_order_id
-                        ]
-                    await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
-                    return True
-            except Exception as e:
-                logger.warning(f"Failed to cancel OCO stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
+        async with self.shared_state._queued_orders_lock:
+            self.shared_state.queued_orders = [
+                q for q in self.shared_state.queued_orders
+                if q.get("order_id") != sl_order_id
+            ]
+            for q in self.shared_state.queued_orders:
+                if q.get("order_id") == tp_order_id:
+                    q["oco_pair"] = None
+                    break
 
-            # Cancel succeeded, clean up queued orders
+        if engine.notifier:
+            await engine.notifier.send_notification(
+                f"🎯 Take‑profit reached for {display_symbol} at {current_price:.4f}, "
+                f"stop order cancelled.",
+                summary={
+                    "symbol": symbol,
+                    "action": "CANCEL",
+                    "reason": "Take-profit reached, OCO pair cancelled (risk check)",
+                },
+                disable_notification=False
+            )
+
+        tp_filled = False
+        tp_order_obj = None
+        manual_sell = False
+
+        try:
+            tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
+            if tp_order_obj is not None and tp_order_obj.status == "filled":
+                tp_filled = True
+        except Exception as e:
+            logger.debug(f"check_native_exit_triggers: failed to check TP fill for {symbol}: {type(e).__name__}: {e}")
+
+        if tp_filled:
+            async with self.shared_state._positions_lock:
+                if not pos.get("take_profit_order_id"):
+                    return True
+                pos.pop("take_profit_order_id", None)
             async with self.shared_state._queued_orders_lock:
                 self.shared_state.queued_orders = [
                     q for q in self.shared_state.queued_orders
-                    if q.get("order_id") != sl_order_id
+                    if q.get("order_id") != tp_order_id
                 ]
-                for q in self.shared_state.queued_orders:
-                    if q.get("order_id") == tp_order_id:
-                        q["oco_pair"] = None
-                        break
-
-            if engine.notifier:
-                await engine.notifier.send_notification(
-                    f"🎯 Take‑profit reached for {display_symbol} at {current_price:.4f}, "
-                    f"stop order cancelled.",
-                    summary={
-                        "symbol": symbol,
-                        "action": "CANCEL",
-                        "reason": "Take-profit reached, OCO pair cancelled (risk check)",
-                    },
-                    disable_notification=False
-                )
-
-            # Process TP order
-            tp_filled = False
-            tp_order_obj = None
-            manual_sell = False
-
-            # 1. Fetch TP status outside lock
-            try:
-                tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
-                if tp_order_obj is not None and tp_order_obj.status == "filled":
-                    tp_filled = True
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, ConnectionError, TimeoutError, OSError) as e:
-                logger.debug(f"check_native_exit_triggers: failed to check TP fill for {symbol}: {type(e).__name__}: {e}")
-
-            if tp_filled:
-                # 2. Acquire lock and pop if filled
-                async with self.shared_state._positions_lock:
-                    if not pos.get("take_profit_order_id"):
-                        return True
-                    pos.pop("take_profit_order_id", None)
-                async with self.shared_state._queued_orders_lock:
-                    self.shared_state.queued_orders = [
-                        q for q in self.shared_state.queued_orders
-                        if q.get("order_id") != tp_order_id
-                    ]
-                await self.event_bus.publish("process_native_exit_fill", symbol, tp_order_id, tp_order_obj, pos, "take_profit")
-                return True
-            else:
-                # 3. Acquire lock to pop and set manual_sell
-                async with self.shared_state._positions_lock:
-                    if not pos.get("take_profit_order_id"):
-                        return True
-                    pos.pop("take_profit_order_id", None)
-                    manual_sell = True
-
-            # 4. Cancel TP outside lock if manual_sell
-            if manual_sell:
-                try:
-                    await asyncio.to_thread(engine.trader.cancel_order, tp_order_id)
-                except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-                    logger.debug(f"check_native_exit_triggers: failed to cancel TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
-                except Exception as e:
-                    logger.debug(f"check_native_exit_triggers: failed to cancel TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
-
-                async with self.shared_state._queued_orders_lock:
-                    self.shared_state.queued_orders = [
-                        q for q in self.shared_state.queued_orders
-                        if q.get("order_id") != tp_order_id
-                    ]
-                await self.event_bus.publish(
-                    "execute_signal",
-                    symbol,
-                    Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered (risk check)"),
-                    exit_reason="take_profit"
-                )
+            await self.event_bus.publish("process_native_exit_fill", symbol, tp_order_id, tp_order_obj, pos, "take_profit")
             return True
-
-        # Native exit orders are active but neither trigger price reached.
-        # Skip manual stop/tp checks — native orders handle it.
-        # If the price has recovered above the stop-loss, clear the trigger timestamp.
-        if pos.get("_native_stop_trigger_ts") is not None and current_price > pos.get("stop_loss", float('inf')):
+        else:
             async with self.shared_state._positions_lock:
-                pos.pop("_native_stop_trigger_ts", None)
+                if not pos.get("take_profit_order_id"):
+                    return True
+                pos.pop("take_profit_order_id", None)
+                manual_sell = True
+
+        if manual_sell:
+            try:
+                await asyncio.to_thread(engine.trader.cancel_order, tp_order_id)
+            except Exception as e:
+                logger.debug(f"check_native_exit_triggers: failed to cancel TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
+
+            async with self.shared_state._queued_orders_lock:
+                self.shared_state.queued_orders = [
+                    q for q in self.shared_state.queued_orders
+                    if q.get("order_id") != tp_order_id
+                ]
+            await self.event_bus.publish(
+                "execute_signal",
+                symbol,
+                Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered (risk check)"),
+                exit_reason="take_profit"
+            )
         return True
 
     async def check_manual_stop_loss(
