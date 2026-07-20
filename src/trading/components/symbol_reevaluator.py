@@ -183,7 +183,14 @@ class SymbolReevaluator:
         if response is not None:
             try:
                 parsed = json.loads(response)
-                llm_max_stocks = parsed.get("max_stocks") if isinstance(parsed, dict) else None
+                if not isinstance(parsed, dict):
+                    logger.warning(
+                        "LLM symbol selection response is not a JSON object (got %s). "
+                        "Treating as empty dict.",
+                        type(parsed).__name__
+                    )
+                    parsed = {}
+                llm_max_stocks = parsed.get("max_stocks")
                 deduped = self.response_processor.parse_and_validate_symbols(
                     response=response,
                     sample_pairs=sample_pairs,
