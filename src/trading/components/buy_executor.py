@@ -29,6 +29,9 @@ class BuyExecutor:
         self.event_bus = event_bus
         self._exit_order_manager = None
         self.event_bus.subscribe("execute_buy", self.execute_buy)
+        self._portfolio_cache = None
+        self._portfolio_cache_ts = 0.0
+        self._portfolio_cache_ttl = 15.0
 
     async def execute_buy(
         self,
@@ -364,25 +367,42 @@ class BuyExecutor:
         engine = self.engine
 
         # --- Consolidated position sizing: single hard ceiling from all caps ---
-        pos_tickers = await engine._get_cached_position_tickers()
+        now = time.time()
+        if self._portfolio_cache is None or (now - self._portfolio_cache_ts) > self._portfolio_cache_ttl:
+            pos_tickers = await engine._get_cached_position_tickers()
+            total_open_exposure = 0.0
+            total_open_stop_risk = 0.0
+            for sym, pos in self.shared_state.positions.items():
+                try:
+                    t = pos_tickers.get(sym)
+                    price = t['last'] if t and t.get('last') else 0.0
+                    pos_value = pos['amount'] * price
+                    total_open_exposure += pos_value
+                    stop_loss = pos.get('stop_loss')
+                    if stop_loss is not None and price > 0:
+                        loss_if_stop = pos_value * (price - stop_loss) / price
+                        total_open_stop_risk += max(0, loss_if_stop)
+                except (KeyError, TypeError, ValueError) as e:
+                    logger.debug(f"compute_position_size: failed to process {sym}: {type(e).__name__}: {e}")
 
-        # Compute current portfolio state once
-        total_value = quote_balance
-        total_open_exposure = 0.0
-        total_open_stop_risk = 0.0
-        for sym, pos in self.shared_state.positions.items():
-            try:
-                t = pos_tickers.get(sym)
-                price = t['last'] if t and t.get('last') else 0.0
-                pos_value = pos['amount'] * price
-                total_open_exposure += pos_value
-                total_value += pos_value
-                stop_loss = pos.get('stop_loss')
-                if stop_loss is not None and price > 0:
-                    loss_if_stop = pos_value * (price - stop_loss) / price
-                    total_open_stop_risk += max(0, loss_if_stop)
-            except (KeyError, TypeError, ValueError) as e:
-                logger.debug(f"compute_position_size: failed to process {sym}: {type(e).__name__}: {e}")
+            cached_corr = await asyncio.to_thread(engine.redis.get, "reeval:correlation_matrix")
+            corr_matrix = json.loads(cached_corr) if cached_corr else {}
+
+            self._portfolio_cache = {
+                'pos_tickers': pos_tickers,
+                'total_open_exposure': total_open_exposure,
+                'total_open_stop_risk': total_open_stop_risk,
+                'corr_matrix': corr_matrix,
+            }
+            self._portfolio_cache_ts = now
+        else:
+            cache = self._portfolio_cache
+            pos_tickers = cache['pos_tickers']
+            total_open_exposure = cache['total_open_exposure']
+            total_open_stop_risk = cache['total_open_stop_risk']
+            corr_matrix = cache['corr_matrix']
+
+        total_value = quote_balance + total_open_exposure
 
         # Apply global risk multiplier to desired amount (scales all positions)
         global_mult = await engine._get_global_risk_multiplier()
@@ -432,20 +452,17 @@ class BuyExecutor:
             # Adjust available exposure for highly correlated positions to prevent concentrated risk
             correlated_exposure = 0.0
             try:
-                cached_corr = await asyncio.to_thread(engine.redis.get, "reeval:correlation_matrix")
-                if cached_corr:
-                    corr_matrix = json.loads(cached_corr)
-                    if symbol in corr_matrix:
-                        for sym, pos in self.shared_state.positions.items():
-                            if sym == symbol:
-                                continue
-                            corr = corr_matrix.get(symbol, {}).get(sym, 0.0)
-                            if corr > 0.7:  # High correlation threshold
-                                t = pos_tickers.get(sym)
-                                price = t['last'] if t and t.get('last') else 0.0
-                                correlated_exposure += pos['amount'] * price * corr
+                if corr_matrix and symbol in corr_matrix:
+                    for sym, pos in self.shared_state.positions.items():
+                        if sym == symbol:
+                            continue
+                        corr = corr_matrix.get(symbol, {}).get(sym, 0.0)
+                        if corr > 0.7:  # High correlation threshold
+                            t = pos_tickers.get(sym)
+                            price = t['last'] if t and t.get('last') else 0.0
+                            correlated_exposure += pos['amount'] * price * corr
             except Exception as e:
-                logger.debug(f"compute_position_size: failed to fetch/parse correlation matrix: {type(e).__name__}: {e}")
+                logger.debug(f"compute_position_size: failed to parse correlation matrix: {type(e).__name__}: {e}")
 
             available_exposure = max(0.0, (max_port_exp * total_value) - total_open_exposure - correlated_exposure)
             caps.append((available_exposure, f"max_exposure={max_port_exp:.2%}"))
