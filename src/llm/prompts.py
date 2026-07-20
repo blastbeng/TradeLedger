@@ -481,6 +481,8 @@ Maximum symbols to trade: {max_symbols}
                 if is_long_term and tf in ("1h", "1d"):
                     continue
                 ind = multi_tf_indicators[tf]
+                if ind is None:
+                    continue
                 ind_compact = {}
                 if ind.get('rsi') is not None: ind_compact['rsi'] = round(ind['rsi'], 2)
                 if ind.get('macd') is not None:
