@@ -226,7 +226,7 @@ class BacktestManager:
         except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
             pass
 
-        if bt_candles and len(bt_candles) >= 20:
+        if bt_candles and len(bt_candles) >= settings.BACKTEST_MIN_CANDLES:
             bt_config = BacktestConfig(
                 stop_loss_pct=bt_sl_pct,
                 take_profit_pct=bt_tp_pct,
@@ -292,7 +292,7 @@ class BacktestManager:
                 bt_summary = bt_summary + "\n" + format_walk_forward_summary(wf_stats)
 
             return backtest_stats, bt_summary
-        return None, f"Insufficient data for backtest for {assigned_tf} (need ≥{MIN_BACKTEST_CANDLES} candles with {settings.OHLCV_RETENTION_DAYS} days retention)."
+        return None, f"Insufficient data for backtest for {assigned_tf} (need ≥{settings.BACKTEST_MIN_CANDLES} candles, got {len(bt_candles) if bt_candles else 0} with {settings.OHLCV_RETENTION_DAYS} days retention)."
 
     async def _run_backtest_variant(
         self,
