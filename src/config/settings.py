@@ -1258,7 +1258,12 @@ class Settings(BaseSettings):
     WALK_FORWARD_CANDLE_THRESHOLD: int = 100
 
     # Minimum number of candles required for a statistically significant backtest
-    MIN_STATISTICALLY_SIGNIFICANT_CANDLES: int = 50
+    MIN_STATISTICALLY_SIGNIFICANT_CANDLES: int = 10
+
+    # Minimum number of candles required to run a backtest (lower than
+    # MIN_STATISTICALLY_SIGNIFICANT_CANDLES to allow backtesting on long
+    # timeframes like 3M/6M/1Y where few candles are available).
+    MIN_BACKTEST_CANDLES: int = 10
 
     # Maximum number of symbols to include in correlation matrix computation
     MAX_CORR_SYMBOLS: int = 50

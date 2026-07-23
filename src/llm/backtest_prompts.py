@@ -88,11 +88,14 @@ def build_backtest_variants_prompt(data: BacktestPromptData) -> str:
     trade_value = remaining_balance if remaining_balance is not None and remaining_balance > 0 else base_balance
 
     _cp_str = f"{current_price:.2f}" if isinstance(current_price, (int, float)) else str(current_price)
+    _tf_seconds = _timeframe_to_seconds(assigned_timeframe)
+    max_possible_candles = int((_settings.OHLCV_RETENTION_DAYS * 86400) / _tf_seconds) if _tf_seconds > 0 else 0
     prompt = f"""**Step 1b: Parameter Selection & Backtest Variants**
 
 Symbol: {symbol}
 Current price: {_cp_str}
 Assigned timeframe: {assigned_timeframe}
+Max candles available: ~{max_possible_candles} (with {_settings.OHLCV_RETENTION_DAYS} days retention)
 Base currency: {base_currency}
 
 **Your Step 1a Analysis (you already made this decision):**

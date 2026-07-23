@@ -569,10 +569,12 @@ Maximum symbols to trade: {max_symbols}
                 f"chg={hist_summary['change_pct']:.2f}%,H={hist_summary['high']:.2f},L={hist_summary['low']:.2f}\n"
                 f"Last20:avg={avg_close:.2f},max={max_close:.2f},min={min_close:.2f},vol={avg_volume:.0f},mom5={recent_momentum_pct:+.2f}%\n"
             )
+        max_possible_candles = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds) if tf_seconds > 0 else 0
+        actual_candle_count = len(historical_ohlcv) if historical_ohlcv else 0
         prompt += (
-            f"\n**Available Historical Data:** Up to {settings.OHLCV_RETENTION_DAYS} days on {assigned_timeframe or 'default'}.\n"
-            "Set `backtest_period_days` (1w:365-730, 1M:730, 1d:90-365). Default: "
-            f"{settings.OHLCV_RETENTION_DAYS}.\n\n"
+            f"\n**Available Historical Data:** {actual_candle_count} candles on {assigned_timeframe or 'default'} "
+            f"(max possible: ~{max_possible_candles} with {settings.OHLCV_RETENTION_DAYS} days retention).\n"
+            f"Set `backtest_period_days` to control backtest lookback (default: {settings.OHLCV_RETENTION_DAYS}).\n\n"
             "**Step 1: Propose Multiple Backtest Variants**\n"
             "Propose 3-5 backtest variants (max "
             f"{settings.MAX_BACKTEST_VARIANTS}). Each variant = complete param set (SL,TP,hold,trailing,size,entry_config).\n"

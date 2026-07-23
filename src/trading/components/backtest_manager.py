@@ -90,9 +90,9 @@ class BacktestManager:
 
         # Limit number of variants based on available data length
         source_candles = historical_ohlcv or raw_candles or []
-        if source_candles and len(source_candles) < 50:
+        if source_candles and len(source_candles) < settings.MIN_BACKTEST_CANDLES:
             variants_to_test = variants_to_test[:2]
-        elif source_candles and len(source_candles) < 100:
+        elif source_candles and len(source_candles) < settings.MIN_BACKTEST_CANDLES * 5:
             variants_to_test = variants_to_test[:3]
 
         return variants_to_test
@@ -149,7 +149,7 @@ class BacktestManager:
         tf_seconds_bt = engine._timeframe_to_seconds(assigned_tf)
         max_possible_candles = (settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds_bt
         MIN_STATISTICALLY_SIGNIFICANT_CANDLES = settings.MIN_STATISTICALLY_SIGNIFICANT_CANDLES
-        MIN_BACKTEST_CANDLES = 50
+        MIN_BACKTEST_CANDLES = settings.MIN_BACKTEST_CANDLES
         if max_possible_candles < MIN_STATISTICALLY_SIGNIFICANT_CANDLES:
             return None, (
                 f"Backtesting skipped for {assigned_tf}: only ~{int(max_possible_candles)} candles possible "
