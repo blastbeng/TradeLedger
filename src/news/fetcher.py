@@ -15,6 +15,7 @@ from src.config.settings import settings
 from src.database import get_aggregate_sentiment_from_db
 from src.utils.redis_client import get_redis_client
 from src.llm.llm_client import get_llm_response
+from src.exchanges.proxy_utils import _get_proxies
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,9 @@ def _get_enabled_sources() -> List[str]:
     # StockTwits is free/public – no API key required
     if "stocktwits" not in _permanently_disabled_sources:
         sources.append("stocktwits")
+    # DuckDuckGo is free/public – no API key required
+    if "duckduckgo" not in _permanently_disabled_sources:
+        sources.append("duckduckgo")
     if settings.RSS_FEEDS and "rss" not in _permanently_disabled_sources:
         sources.append("rss")
     logger.debug(f"News sources auto-enabled: {sources}")
@@ -392,6 +396,8 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
             tasks.append(asyncio.to_thread(_fetch_googlenews, base_symbol, name, combined_query))
         elif source == "stocktwits":
             tasks.append(asyncio.to_thread(_fetch_stocktwits, base_symbol, name))
+        elif source == "duckduckgo":
+            tasks.append(asyncio.to_thread(_fetch_duckduckgo_news, base_symbol, name, combined_query))
         elif source == "rss":
             for term in search_terms:
                 tasks.append(asyncio.to_thread(_fetch_rss, term, name))
@@ -991,6 +997,68 @@ def _fetch_stocktwits(symbol: str, name: Optional[str] = None) -> List[Dict[str,
         return []
 
 
+
+
+# ---------------------------------------------------------------------------
+# DuckDuckGo News
+# ---------------------------------------------------------------------------
+
+def _fetch_duckduckgo_news(symbol: str, name: Optional[str] = None, search_query: Optional[str] = None) -> List[Dict[str, str]]:
+    """Fetch news from DuckDuckGo using the ddgs library."""
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        logger.debug("ddgs not installed. Skipping DuckDuckGo news lookup.")
+        return []
+
+    try:
+        _get_rate_limiter().wait("duckduckgo")
+        logger.debug(f"Fetching DuckDuckGo news for {symbol}...")
+        
+        query = search_query or symbol
+        base = query.split("/")[0]
+        if " " in base or '"' in base:
+            q = base
+        else:
+            q = f"{base} stock"
+            
+        proxy = _get_proxies()
+        timeout = settings.NEWS_HTTP_TIMEOUT_SECONDS
+        ddgs = DDGS(proxy=proxy, timeout=timeout) if proxy else DDGS(timeout=timeout)
+        
+        # Try news endpoint first, fallback to text search
+        try:
+            results = ddgs.news(q, max_results=settings.NEWS_MAX_ARTICLES_PER_SYMBOL)
+        except Exception:
+            results = ddgs.text(q, max_results=settings.NEWS_MAX_ARTICLES_PER_SYMBOL)
+        
+        articles = []
+        for r in results:
+            title = r.get("title", "")
+            body = r.get("body", "")
+            url = r.get("url", "") or r.get("href", "")
+            published_at = r.get("date", "") or r.get("published", "")
+            
+            if not title or not url:
+                continue
+                
+            sentiment = _analyze_sentiment(f"{title} {body}")
+            if not _is_relevant(symbol, title, body[:300], name=name):
+                continue
+                
+            articles.append({
+                "title": title,
+                "source": r.get("source", "DuckDuckGo"),
+                "url": url,
+                "published_at": published_at,
+                "summary": body[:300],
+                "sentiment": sentiment,
+            })
+        logger.debug(f"DuckDuckGo returned {len(articles)} articles for {symbol}")
+        return articles
+    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
+        logger.warning(f"DuckDuckGo news fetch failed for {symbol}: {type(e).__name__}: {e}")
+        return []
 
 
 # ---------------------------------------------------------------------------
