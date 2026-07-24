@@ -5,7 +5,7 @@ from src.llm.cache import _llm_executor
 
 logger = logging.getLogger(__name__)
 
-def summarize_text(text: str, context: str = "general", max_length: int = 500) -> str:
+def summarize_text(text: str, context: str = "general", max_length: int = 500, force_primary_model: bool = False) -> str:
     """
     Summarize the given text using the weak LLM model to save tokens.
 
@@ -37,7 +37,7 @@ def summarize_text(text: str, context: str = "general", max_length: int = 500) -
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ]
-        summary = get_llm_response("", "", model_type="weak", messages=messages, request_type="summarization")
+        summary = get_llm_response("", "", model_type="weak", messages=messages, request_type="summarization", force_primary_model=force_primary_model)
         if summary and summary.strip():
             return summary.strip()
         return text
@@ -46,7 +46,7 @@ def summarize_text(text: str, context: str = "general", max_length: int = 500) -
         return text
 
 
-async def summarize_text_async(text: str, context: str = "general", max_length: int = 500) -> str:
+async def summarize_text_async(text: str, context: str = "general", max_length: int = 500, force_primary_model: bool = False) -> str:
     """
     Asynchronous wrapper for summarize_text.
     Runs the blocking summarization call in a dedicated thread pool to avoid
@@ -59,4 +59,5 @@ async def summarize_text_async(text: str, context: str = "general", max_length: 
         text,
         context,
         max_length,
+        force_primary_model,
     )
