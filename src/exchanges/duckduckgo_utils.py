@@ -6,12 +6,15 @@ from src.exchanges.proxy_utils import _get_proxies
 
 logger = logging.getLogger(__name__)
 
+# Suppress noisy INFO/DEBUG logs from the ddgs library
+logging.getLogger("ddgs").setLevel(logging.WARNING)
+
 def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optional[str]:
     """Fetch ISIN for a symbol using DuckDuckGo text search as a fallback."""
     try:
         from ddgs import DDGS
     except ImportError:
-        logger.warning("ddgs not installed. Skipping DuckDuckGo ISIN lookup.")
+        logger.debug("ddgs not installed. Skipping DuckDuckGo ISIN lookup.")
         return None
 
     query = f"{name or symbol} ISIN"
@@ -37,6 +40,6 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
                     logger.info(f"DuckDuckGo search provided ISIN {isin} for {symbol}")
                     return isin
     except Exception as e:
-        logger.debug(f"DuckDuckGo ISIN lookup failed for {symbol}: {type(e).__name__}: {e}")
+        logger.warning(f"DuckDuckGo ISIN lookup failed for {symbol}: {type(e).__name__}: {e}")
     
     return None
