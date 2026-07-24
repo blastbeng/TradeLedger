@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
-from src.llm.cache import get_cached_llm_response, compute_market_hash
+from src.llm.cache import get_cached_llm_response, compute_market_hash, is_llm_circuit_breaker_active
 from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, BacktestPromptData, build_analysis_messages
 from src.llm.backtest_prompts import build_backtest_variants_messages
 from src.strategies.base import Signal
@@ -120,17 +120,7 @@ class LLMStepManager:
         llm_model = None
 
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
-        cb_active = False
-        try:
-            cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
-            if cb_raw:
-                cb_data = json.loads(cb_raw)
-                if time.time() < cb_data.get("active_until", 0):
-                    cb_active = True
-        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
-            pass
-
-        if cb_active:
+        if await is_llm_circuit_breaker_active():
             logger.error(f"LLM circuit breaker ACTIVE for {symbol} — all signals will be fallback HOLD. Check LLM connectivity.")
             # Clear _force_eval to break the retry loop
             async with self.shared_state._eval_state_lock:
@@ -314,17 +304,7 @@ class LLMStepManager:
         is_fallback = False
 
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
-        cb_active = False
-        try:
-            cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
-            if cb_raw:
-                cb_data = json.loads(cb_raw)
-                if time.time() < cb_data.get("active_until", 0):
-                    cb_active = True
-        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
-            pass
-
-        if cb_active:
+        if await is_llm_circuit_breaker_active():
             logger.error(f"LLM circuit breaker ACTIVE for {symbol} during Step 1b — returning fallback HOLD. Check LLM connectivity.")
             fallback_signal = self._create_fallback_hold_signal(
                 symbol, "LLM circuit breaker active during Step 1b", strategy_model_type

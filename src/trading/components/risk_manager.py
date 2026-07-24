@@ -18,6 +18,7 @@ from src.strategies.base import Signal
 from src.utils.btp_policy import BTPPolicy
 from src.utils.redis_client import is_redis_available
 from src.exchanges.fees import calculate_transaction_costs
+from src.llm.cache import is_llm_circuit_breaker_active
 
 logger = logging.getLogger(__name__)
 
@@ -506,24 +507,7 @@ class RiskManager:
         fallback model to handle decisions — it may be temporarily rate-limited
         but should not trigger graceful degradation without consulting the LLM.
         """
-        engine = self.engine
-        try:
-            cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
-            if cb_raw:
-                cb_data = json.loads(cb_raw)
-                if time.time() < cb_data.get("active_until", 0):
-                    # Circuit breaker is active — but only short-circuit if
-                    # primary models are in use (pre-market or market open).
-                    # During market closed hours with fallback models, let the
-                    # normal LLM flow proceed (fallback model may recover).
-                    from src.llm.cache import _should_use_primary_model
-                    use_primary = await asyncio.to_thread(_should_use_primary_model)
-                    if not use_primary:
-                        return False
-                    return True
-        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
-            pass
-        return False
+        return await is_llm_circuit_breaker_active(check_primary_model=True)
 
     async def read_review_limits(self) -> Dict[str, int]:
         """Read LLM-decided review limits from Redis, falling back to settings defaults."""

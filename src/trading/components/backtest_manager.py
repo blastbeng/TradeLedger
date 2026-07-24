@@ -23,7 +23,7 @@ atexit.register(lambda: _backtest_executor.shutdown(wait=False))
 from src.database import get_ohlcv, get_recent_backtest_result, save_backtest_result, get_backtest_results_for_symbol
 from src.exchanges.fees import calculate_transaction_costs
 from src.indicators import compute_atr_series, compute_adx_series, compute_rsi_series, compute_macd_series
-from src.llm.cache import get_cached_llm_response, get_cached_llm_response_async
+from src.llm.cache import get_cached_llm_response, get_cached_llm_response_async, is_llm_circuit_breaker_active
 from src.llm.backtest_prompts import build_final_decision_messages
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary, BacktestConfig
 from src.strategies.base import Signal
@@ -435,20 +435,7 @@ class BacktestManager:
         engine = self.engine
 
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
-        cb_active = False
-        try:
-            loop = asyncio.get_running_loop()
-            cb_raw = await loop.run_in_executor(
-                _backtest_executor, lambda: engine.redis.get("llm:circuit_breaker")
-            )
-            if cb_raw:
-                cb_data = json.loads(cb_raw)
-                if time.time() < cb_data.get("active_until", 0):
-                    cb_active = True
-        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
-            pass
-
-        if cb_active:
+        if await is_llm_circuit_breaker_active():
             logger.error(f"LLM circuit breaker ACTIVE for {symbol} during Step 2 — using preliminary decision. Check LLM connectivity.")
             return preliminary_signal, llm_provider, llm_model, is_fallback
 
@@ -752,20 +739,7 @@ class BacktestManager:
         temperature = data.get("temperature", 0.2)
 
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
-        cb_active = False
-        try:
-            loop = asyncio.get_running_loop()
-            cb_raw = await loop.run_in_executor(
-                _backtest_executor, lambda: engine.redis.get("llm:circuit_breaker")
-            )
-            if cb_raw:
-                cb_data = json.loads(cb_raw)
-                if time.time() < cb_data.get("active_until", 0):
-                    cb_active = True
-        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
-            pass
-
-        if cb_active:
+        if await is_llm_circuit_breaker_active():
             logger.error(f"LLM circuit breaker ACTIVE for {symbol} during simulation Step 2 — using preliminary decision. Check LLM connectivity.")
             return None, "LLM circuit breaker active", preliminary_signal, None
 

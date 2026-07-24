@@ -958,6 +958,11 @@ class TradingEngine:
         The staleness threshold is scaled by the symbol's timeframe: longer timeframes
         tolerate staler quotes. Returns False if staleness cannot be determined or
         if the guard is disabled.
+
+        When the market is closed, quotes cannot be refreshed, so stale quotes are
+        not considered too stale. This prevents false positives over weekends and
+        holidays where the most recent quote is necessarily from the last trading
+        session.
         """
         if settings.QUOTE_MAX_STALENESS_SECONDS <= 0:
             return False
@@ -971,7 +976,21 @@ class TradingEngine:
         # trading on excessively stale prices).
         tf_seconds = self._timeframe_to_seconds(timeframe)
         scaled_threshold = max(settings.QUOTE_MAX_STALENESS_SECONDS, min(tf_seconds * 0.1, 21600))
-        return age_seconds > scaled_threshold
+
+        if age_seconds <= scaled_threshold:
+            return False
+
+        # The quote exceeds the staleness threshold, but if the market is currently
+        # closed, we cannot obtain a fresher quote. In this case, don't flag it as
+        # stale — the most recent available quote is the best we can get.
+        try:
+            is_open = await self._is_market_open()
+            if not is_open:
+                return False
+        except Exception:
+            pass  # If market status can't be determined, fall back to the age-based check
+
+        return True
 
     async def _fetch_vix(self) -> Optional[float]:
         """VIX is not available for the Italian market via yfinance. Returns None."""

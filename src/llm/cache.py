@@ -33,6 +33,7 @@ atexit.register(lambda: _llm_executor.shutdown(wait=False))
 # Cache for _should_use_primary_model() to avoid repeated timezone/holiday calculations.
 _primary_model_cache: Optional[bool] = None
 _primary_model_cache_ts: float = 0.0
+_primary_model_cache_settings: Optional[tuple] = None
 _PRIMARY_MODEL_CACHE_TTL = 30.0
 
 def estimate_tokens(text: str) -> int:
@@ -374,6 +375,37 @@ def _save_metric(metric_data: dict) -> None:
         save_llm_metrics(metric_data)
     except Exception as metric_err:
         logger.warning("Failed to save LLM metric: %s", metric_err)
+
+
+async def is_llm_circuit_breaker_active(check_primary_model: bool = False) -> bool:
+    """Check if the LLM circuit breaker is currently active.
+
+    The circuit breaker is set by ``_increment_llm_failures`` when too many
+    consecutive LLM calls fail. While active, callers should skip LLM calls
+    and use fallback HOLD signals instead.
+
+    Args:
+        check_primary_model: If True, only short-circuit when primary models
+            are in use (pre-market or market open). During market closed hours
+            with fallback models, return False so the fallback model can
+            attempt to handle the decision — it may recover even though the
+            primary model is down.
+
+    Returns:
+        True if the circuit breaker is active (and the primary-model check
+        passes when requested), False otherwise.
+    """
+    try:
+        cb_raw = await asyncio.to_thread(get_redis_client().get, "llm:circuit_breaker")
+        if cb_raw:
+            cb_data = json.loads(cb_raw)
+            if time.time() < cb_data.get("active_until", 0):
+                if check_primary_model and not _should_use_primary_model():
+                    return False
+                return True
+    except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
+        pass
+    return False
 
 
 def _sync_blacklist_from_db():
@@ -1654,9 +1686,20 @@ def _should_use_primary_model() -> bool:
     Computes market status locally to avoid dependency on Redis background tasks.
     Result is cached for 30 seconds to avoid repeated timezone/holiday calculations.
     """
-    global _primary_model_cache, _primary_model_cache_ts
+    global _primary_model_cache, _primary_model_cache_ts, _primary_model_cache_settings
     now = time.time()
-    if _primary_model_cache is not None and (now - _primary_model_cache_ts) < _PRIMARY_MODEL_CACHE_TTL:
+    current_settings = (
+        settings.MARKET_TIMEZONE,
+        settings.MARKET_OPEN_HOUR,
+        settings.MARKET_OPEN_MINUTE,
+        settings.MARKET_CLOSE_HOUR,
+        settings.MARKET_CLOSE_MINUTE,
+    )
+    if (
+        _primary_model_cache is not None
+        and (now - _primary_model_cache_ts) < _PRIMARY_MODEL_CACHE_TTL
+        and _primary_model_cache_settings == current_settings
+    ):
         return _primary_model_cache
 
     from zoneinfo import ZoneInfo
@@ -1683,6 +1726,7 @@ def _should_use_primary_model() -> bool:
 
     _primary_model_cache = result
     _primary_model_cache_ts = now
+    _primary_model_cache_settings = current_settings
     return result
 
 
