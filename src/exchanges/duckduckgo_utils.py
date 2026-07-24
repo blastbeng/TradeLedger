@@ -8,9 +8,9 @@ logger = logging.getLogger(__name__)
 def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optional[str]:
     """Fetch ISIN for a symbol using DuckDuckGo AI Chat API as a fallback."""
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
     except ImportError:
-        logger.warning("duckduckgo_search not installed. Skipping DuckDuckGo ISIN lookup.")
+        logger.warning("ddgs not installed. Skipping DuckDuckGo ISIN lookup.")
         return None
 
     query = f"{name or symbol} ISIN code. Respond ONLY with a JSON object like {{\"ISIN\": \"value\"}}."
