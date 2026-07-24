@@ -390,11 +390,13 @@ class TradingEngine:
         try:
             plain_assets = await self._market_data_manager.get_tradable_assets()
             stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+            etf_symbols = await self._market_data_manager.get_etf_symbols()
+            etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
 
             btp_bonds = await self._market_data_manager.get_btp_bonds()
             btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
-            all_pairs = stock_pairs + btp_pairs
+            all_pairs = stock_pairs + etf_pairs + btp_pairs
             if not all_pairs:
                 logger.warning("Force download: no tradable assets found.")
                 return
@@ -1325,12 +1327,14 @@ class TradingEngine:
                 # 1. Get all stock + ETF symbols
                 plain_assets = await self._market_data_manager.get_tradable_assets()
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
+                etf_symbols = await self._market_data_manager.get_etf_symbols()
+                etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
 
                 # 2. Get all BTP symbols
                 btp_bonds = await self._market_data_manager.get_btp_bonds()
                 btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
-                all_pairs = stock_pairs + btp_pairs
+                all_pairs = stock_pairs + etf_pairs + btp_pairs
                 if not all_pairs:
                     logger.info("No tradable assets found; skipping full download.")
                     await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
