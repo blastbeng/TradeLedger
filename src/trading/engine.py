@@ -19,7 +19,7 @@ from src.exchanges.market_data import get_tradable_assets, get_quotes, get_quote
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals, get_yahoo_dividends
 from src.exchanges.yf_session import _invalidate_yf_session
 from src.trading.paper_trader import PaperTrader
-from src.llm.cache import get_cached_llm_response, compute_market_hash
+from src.llm.cache import get_cached_llm_response, compute_market_hash, _should_use_primary_model
 from src.llm.prompts import (
     build_system_prompt,
     build_stock_selection_prompt,
@@ -610,12 +610,25 @@ class TradingEngine:
                 # Use a short sleep so queued triggers are picked up quickly.
                 await asyncio.sleep(settings.SYMBOL_EVALUATION_DELAY_SECONDS)
                 continue
+
+            # Check if market is open or in pre-market (1 hour before open)
+            is_open = await self._is_market_open()
+            is_premarket = not is_open and _should_use_primary_model()
+            is_forced = self._force_reeval or self._reeval_pending_force
+
+            # Disable automatic re-evaluation when market is closed (outside pre-market)
+            if not is_open and not is_premarket and not is_forced:
+                logger.info("Market is closed; skipping automatic symbol re-evaluation.")
+                await asyncio.sleep(300)  # Wait 5 minutes before checking again
+                continue
+
             self._reevaluate_running = True
             try:
                 # Always run re-evaluation, even if paused, to keep generating signals
                 reeval_start_time = time.time()
                 logger.info("Starting symbol re-evaluation...")
-                is_forced = self._force_reeval or self._reeval_pending_force
+                # Force re-evaluation during pre-market to use main models
+                is_forced = self._force_reeval or self._reeval_pending_force or is_premarket
                 self._force_reeval = False
                 self._reeval_pending_force = False
                 async with self._symbol_reeval_lock:
