@@ -6,8 +6,9 @@ from src.exchanges.proxy_utils import _get_proxies
 
 logger = logging.getLogger(__name__)
 
-# Suppress noisy INFO/DEBUG logs from the ddgs library
+# Suppress noisy INFO/DEBUG logs from the ddgs and primp libraries
 logging.getLogger("ddgs").setLevel(logging.WARNING)
+logging.getLogger("primp").setLevel(logging.WARNING)
 
 def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optional[str]:
     """Fetch ISIN for a symbol using DuckDuckGo text search as a fallback."""
