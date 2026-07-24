@@ -128,6 +128,7 @@ class SymbolReevaluator:
         btp_pairs: List[str],
         is_rebalance: bool,
         tickers: Dict[str, Dict[str, Any]],
+        is_user_forced: bool = False,
     ) -> Tuple[Dict[str, Any], Optional[bool], str, Optional[Any], List[Dict[str, str]], Optional[str], Optional[str]]:
         """Process the LLM response, parse symbols, and handle pause/resume logic.
 
@@ -487,6 +488,7 @@ class SymbolReevaluator:
             btp_pairs=btp_pairs,
             is_rebalance=is_rebalance,
             tickers=tickers,
+            is_user_forced=is_user_forced,
         )
 
         await self.finalize_reevaluation(
