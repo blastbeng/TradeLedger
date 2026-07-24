@@ -68,6 +68,7 @@ class ReevalLLMRunner:
         effective_temp: float,
         btp_ytm: Optional[Dict[str, float]] = None,
         news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
+        is_user_forced: bool = False,
     ) -> List[Dict[str, Any]]:
         """Evaluate the shortlist in chunks using the LLM.
 
@@ -216,6 +217,7 @@ class ReevalLLMRunner:
                                     temperature=effective_temp,
                                     messages=chunk_messages,
                                     request_type="symbol_reeval_chunk",
+                                    force_primary_model=is_user_forced,
                                 ),
                                 timeout=settings.LLM_TIMEOUT
                             )
@@ -257,6 +259,7 @@ class ReevalLLMRunner:
                                         model_type="actuator", temperature=effective_temp,
                                         messages=correction_messages,
                                         request_type="symbol_reeval_chunk_retry",
+                                        force_primary_model=is_user_forced,
                                     ),
                                     timeout=settings.LLM_TIMEOUT
                                 )
@@ -301,6 +304,7 @@ class ReevalLLMRunner:
         auto_resume_note: str,
         effective_temp: float,
         news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
+        is_user_forced: bool = False,
     ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """Run the final selection LLM call with retries and fallback merge.
 
@@ -385,6 +389,7 @@ class ReevalLLMRunner:
                             temperature=effective_temp,
                             messages=final_messages,
                             request_type="symbol_reeval_final",
+                            force_primary_model=is_user_forced,
                         ),
                         timeout=settings.LLM_TIMEOUT
                     )
