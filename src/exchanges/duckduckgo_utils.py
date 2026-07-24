@@ -2,6 +2,8 @@ import logging
 import re
 from typing import Optional
 
+from src.exchanges.proxy_utils import _get_proxies
+
 logger = logging.getLogger(__name__)
 
 def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optional[str]:
@@ -15,7 +17,8 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
     query = f"{name or symbol} ISIN"
     
     try:
-        ddgs = DDGS()
+        proxy = _get_proxies()
+        ddgs = DDGS(proxy=proxy, timeout=10) if proxy else DDGS(timeout=10)
         # Use text search to find web pages mentioning the ISIN
         results = ddgs.text(query, max_results=5)
         
