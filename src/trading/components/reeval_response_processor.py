@@ -130,6 +130,7 @@ class ReevalResponseProcessor:
         self,
         response: str,
         effective_temp: float,
+        is_user_forced: bool = False,
     ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """Retry JSON parsing if the first attempt fails.
 
@@ -152,6 +153,7 @@ class ReevalResponseProcessor:
                         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="stock_selection"))},
                         {"role": "user", "content": compact_prompt(correction_prompt)},
                     ],
+                    force_primary_model=is_user_forced,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )

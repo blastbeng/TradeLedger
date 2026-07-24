@@ -178,6 +178,7 @@ class SymbolReevaluator:
                 response, llm_provider, llm_model = await self.response_processor.retry_json_parsing(
                     response=response,
                     effective_temp=effective_temp,
+                    is_user_forced=is_user_forced,
                 )
 
         if response is not None:
