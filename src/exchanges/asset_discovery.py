@@ -81,6 +81,16 @@ def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optio
         if not name:
             name = bi_name
 
+    # Fallback to DuckDuckGo AI Chat API if ISIN is still missing
+    if not bi_isin:
+        try:
+            from src.exchanges.duckduckgo_utils import get_isin_from_duckduckgo
+            ddg_isin = get_isin_from_duckduckgo(db_symbol, name)
+            if ddg_isin:
+                bi_isin = ddg_isin
+        except Exception as e:
+            logger.debug(f"DuckDuckGo ISIN fetch failed for {db_symbol}: {type(e).__name__}: {e}")
+
     if country or name:
         return country, name, bi_isin
     return None, None, None

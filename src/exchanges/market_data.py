@@ -152,6 +152,19 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
         except Exception as e:
             logger.debug(f"Borsa Italiana ISIN fetch failed for {db_symbol}: {type(e).__name__}: {e}")
 
+    # Fallback to DuckDuckGo AI Chat API if ISIN is still missing
+    if not isin:
+        try:
+            from src.exchanges.duckduckgo_utils import get_isin_from_duckduckgo
+            from src.database import get_symbol_name_from_db
+            # Fetch the name from DB to improve DuckDuckGo query accuracy
+            db_name = get_symbol_name_from_db(db_symbol)
+            ddg_isin = get_isin_from_duckduckgo(db_symbol, db_name)
+            if ddg_isin:
+                isin = ddg_isin
+        except Exception as e:
+            logger.debug(f"DuckDuckGo ISIN fetch failed for {db_symbol}: {type(e).__name__}: {e}")
+
     if isin:
         # Save to DB with the base symbol (no suffix)
         try:
