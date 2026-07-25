@@ -10,6 +10,7 @@ from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_
 from src.llm.backtest_prompts import build_backtest_variants_messages
 from src.strategies.llm_parser import create_strategy_from_llm
 from src.trading.components.backtest_manager import _backtest_executor
+from src.utils.macro_data import get_macro_economic_context
 
 try:
     from src.news.fetcher import detect_upcoming_events
@@ -410,6 +411,7 @@ class SimulationManager:
             historical_backtest_results=historical_backtest_results,
             aggregate_sentiment=aggregate_sentiment,
             news_section=news_section,
+            macro_economic_context=get_macro_economic_context(),
         )
         analysis_prompt, market_snapshot, market_hash = await self.sp.build_analysis_prompt_and_snapshot(prompt_data)
         analysis_messages = build_analysis_messages(prompt_data)
