@@ -920,6 +920,9 @@ class BuyExecutor:
         if custom_interval is not None:
             self.shared_state._strategy_intervals[symbol] = custom_interval
 
+        # Invalidate portfolio cache since a position has been created or updated
+        self._portfolio_cache = None
+
     async def update_or_create_buy_position(
         self,
         symbol: str,
