@@ -1193,11 +1193,14 @@ class PositionManager:
                 split_ratio = None
                 if recorded_amount > 0:
                     ratio = actual_balance / recorded_amount
-                    common_ratios = [1.5, 2.0, 3.0, 4.0, 5.0, 10.0]
-                    for cr in common_ratios:
-                        if abs(ratio - cr) < 0.01:
-                            split_ratio = cr
-                            break
+                    if ratio > 1.01:
+                        # Check if the ratio is close to a rational number with a small denominator
+                        # (e.g., 7-for-1, 3-for-2, 5-for-4) to handle uncommon splits.
+                        for denom in range(1, 11):
+                            numer = round(ratio * denom)
+                            if numer > denom and abs(ratio - numer / denom) < 0.01:
+                                split_ratio = numer / denom
+                                break
 
                 if split_ratio is not None:
                     logger.warning(
