@@ -909,6 +909,8 @@ class PositionManager:
             days_in_period = (next_coupon - last_coupon).days
             days_elapsed = (now_dt - last_coupon).days
             if days_in_period > 0 and days_elapsed >= 0:
+                # Cap days_elapsed at days_in_period to avoid over-accruing after maturity
+                days_elapsed = min(days_elapsed, days_in_period)
                 # Coupon is a percentage (e.g., 4.5 for 4.5%)
                 accrued_interest = coupon * 0.5 * (days_elapsed / days_in_period)
 
