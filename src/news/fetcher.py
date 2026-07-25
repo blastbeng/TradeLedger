@@ -15,6 +15,7 @@ from src.config.settings import settings
 from src.database import get_aggregate_sentiment_from_db
 from src.utils.redis_client import get_redis_client
 from src.llm.llm_client import get_llm_response
+from src.llm.cache import get_cached_llm_response
 from src.exchanges.proxy_utils import _get_proxies
 
 logger = logging.getLogger(__name__)
@@ -194,12 +195,14 @@ def _analyze_sentiment(text: str) -> Dict[str, Any]:
     prompt = f"Analyze the sentiment of this text:\n\n{text}"
 
     try:
-        response_text = get_llm_response(
+        llm_result = get_cached_llm_response(
             prompt=prompt,
             system_prompt=system_prompt,
+            ttl=86400,  # Cache sentiment for 24 hours to avoid repeated LLM calls
             model_type="weak",
             request_type="sentiment_analysis"
         )
+        response_text = llm_result.get("response", "")
         # Extract JSON from response (handles both raw JSON and markdown-wrapped JSON)
         json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
         if json_match:
