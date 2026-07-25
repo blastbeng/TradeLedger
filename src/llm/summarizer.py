@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from src.llm.llm_client import get_llm_response
-from src.llm.cache import _llm_executor
+from src.llm.cache import get_cached_llm_response, _llm_executor
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,15 @@ def summarize_text(text: str, context: str = "general", max_length: int = 500, f
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ]
-        summary = get_llm_response("", "", model_type="weak", messages=messages, request_type="summarization", force_primary_model=force_primary_model)
+        llm_result = get_cached_llm_response(
+            "",
+            "",
+            ttl=86400,  # Cache summaries for 24 hours to avoid repeated LLM calls
+            model_type="weak",
+            messages=messages,
+            request_type="summarization"
+        )
+        summary = llm_result.get("response", "")
         if summary and summary.strip():
             return summary.strip()
         return text
