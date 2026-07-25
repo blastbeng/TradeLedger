@@ -101,6 +101,26 @@ class SharedState:
         self._daily_realized_pnl: Dict[str, float] = {}
         self._daily_buy_fees: Dict[str, float] = {}
 
+    async def get_position(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Safely retrieve a single position."""
+        async with self._positions_lock:
+            return self.positions.get(symbol)
+
+    async def get_all_positions(self) -> Dict[str, Dict[str, Any]]:
+        """Safely retrieve a copy of all positions."""
+        async with self._positions_lock:
+            return self.positions.copy()
+
+    async def set_position(self, symbol: str, position: Dict[str, Any]) -> None:
+        """Safely set or update a position."""
+        async with self._positions_lock:
+            self.positions[symbol] = position
+
+    async def remove_position(self, symbol: str) -> None:
+        """Safely remove a position."""
+        async with self._positions_lock:
+            self.positions.pop(symbol, None)
+
     def append_trade(self, trade: Dict[str, Any], max_trades: int = 500):
         """Append a trade to history and prune old entries."""
         with self._trade_history_lock:
