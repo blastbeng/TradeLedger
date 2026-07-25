@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from src.config.settings import settings
 from src.database import insert_trade, get_total_dividends_for_symbol, get_total_dividends_for_symbols
 from src.strategies.base import Signal
+from dateutil.relativedelta import relativedelta
 from src.utils.btp_policy import BTPPolicy
 
 logger = logging.getLogger(__name__)
@@ -874,7 +875,7 @@ class PositionManager:
         logger.info(f"Updated risk parameters for {symbol} from LLM strategy_params")
         self.shared_state._state_dirty = True
 
-    async def _close_btp_at_par(self, symbol: str, entry: dict, pos: dict, exit_reason: str, note: str, log_reason: str):
+    async def _close_btp_at_par(self, symbol: str, entry: dict, pos: dict, exit_reason: str, note: str, log_reason: str, coupon: Optional[float] = None, maturity_dt: Optional[datetime] = None):
         """Helper to close a BTP position at par value (100.0) and record the trade."""
         engine = self.engine
         logger.info(f"Closing BTP {symbol} at par value. Reason: {log_reason}")
@@ -892,9 +893,29 @@ class PositionManager:
             self.shared_state.positions.pop(symbol, None)
 
         par_value = BTPPolicy.PAR_VALUE
-        cost = pos["amount"] * par_value
+        
+        # Compute accrued interest if coupon and maturity are available
+        accrued_interest = 0.0
+        if coupon is not None and coupon > 0 and maturity_dt is not None:
+            now_dt = datetime.now(timezone.utc)
+            # BTPs pay semi-annual coupons. Maturity is a coupon date.
+            # Find the coupon period that contains now_dt.
+            next_coupon = maturity_dt
+            while next_coupon > now_dt:
+                next_coupon -= relativedelta(months=6)
+            last_coupon = next_coupon
+            next_coupon = next_coupon + relativedelta(months=6)
+            
+            days_in_period = (next_coupon - last_coupon).days
+            days_elapsed = (now_dt - last_coupon).days
+            if days_in_period > 0 and days_elapsed >= 0:
+                # Coupon is a percentage (e.g., 4.5 for 4.5%)
+                accrued_interest = coupon * 0.5 * (days_elapsed / days_in_period)
+
+        dirty_price = par_value + accrued_interest
+        cost = pos["amount"] * dirty_price
         from src.exchanges.fees import calculate_transaction_costs
-        costs = calculate_transaction_costs("SELL", par_value, pos["amount"], symbol=symbol)
+        costs = calculate_transaction_costs("SELL", dirty_price, pos["amount"], symbol=symbol)
         fee_cost = costs["total_costs"]
         cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
         net_quote = cost - fee_cost
@@ -903,7 +924,7 @@ class PositionManager:
             "symbol": symbol,
             "side": "sell",
             "amount": pos["amount"],
-            "price": par_value,
+            "price": dirty_price,
             "cost": cost,
             "fee": {"cost": fee_cost, "currency": engine.base_currency},
             "timestamp": time.time() * 1000,
@@ -914,17 +935,17 @@ class PositionManager:
         }
         self.shared_state.append_trade(trade, settings.MAX_TRADES_IN_MEMORY)
         await asyncio.to_thread(insert_trade, trade)
-        logger.info(f"Closed BTP {symbol}: {pos['amount']} at par value {par_value}.")
+        logger.info(f"Closed BTP {symbol}: {pos['amount']} at dirty price {dirty_price:.4f} (par {par_value} + accrued {accrued_interest:.4f}).")
         if engine.notifier:
             stock_name = await engine._market_data_manager.get_stock_name(symbol)
             display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
             await engine.notifier.send_notification(
-                f"💰 BTP {display_symbol} closed at par value {par_value}. P&L: {realized_pnl:+.4f}",
+                f"💰 BTP {display_symbol} closed at par value {par_value} + accrued {accrued_interest:.4f}. P&L: {realized_pnl:+.4f}",
                 summary={
                     "symbol": symbol,
                     "action": "SELL",
                     "reason": log_reason,
-                    "price": par_value,
+                    "price": dirty_price,
                     "realized_pnl": realized_pnl,
                     "exit_reason": exit_reason,
                 }
@@ -945,11 +966,14 @@ class PositionManager:
 
         # Build BTP maturity map for maturity checking
         btp_maturity_map: Dict[str, Optional[str]] = {}
+        btp_coupon_map: Dict[str, Optional[float]] = {}
         for b in btp_bonds:
             isin = b.get("isin")
             maturity = b.get("maturity")
+            coupon = b.get("coupon")
             if isin and maturity:
                 btp_maturity_map[isin] = maturity
+                btp_coupon_map[isin] = coupon
 
         # --- Matured BTP bonds: close at par value (100.0) ---
         now_dt = datetime.now(timezone.utc)
@@ -1061,7 +1085,8 @@ class PositionManager:
             # BTP has matured – close at par value
             pos = self.shared_state.positions.get(symbol)
             if pos:
-                await self._close_btp_at_par(symbol, entry, pos, "btp_matured", "btp_matured", "BTP matured")
+                coupon = btp_coupon_map.get(base)
+                await self._close_btp_at_par(symbol, entry, pos, "btp_matured", "btp_matured", "BTP matured", coupon=coupon, maturity_dt=maturity_dt)
 
         for entry in list(self.shared_state.current_symbols):
             symbol = entry["symbol"]
