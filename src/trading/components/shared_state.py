@@ -121,6 +121,104 @@ class SharedState:
         async with self._positions_lock:
             self.positions.pop(symbol, None)
 
+    # --- Queued orders ---
+
+    async def get_queued_orders(self) -> List[Dict[str, Any]]:
+        """Safely retrieve a copy of all queued orders."""
+        async with self._queued_orders_lock:
+            return self.queued_orders.copy()
+
+    async def append_queued_order(self, order: Dict[str, Any]) -> None:
+        """Safely append an order to the queue."""
+        async with self._queued_orders_lock:
+            self.queued_orders.append(order)
+
+    async def clear_queued_orders(self) -> None:
+        """Safely clear all queued orders."""
+        async with self._queued_orders_lock:
+            self.queued_orders.clear()
+
+    # --- Cycle spending tracker ---
+
+    async def get_cycle_spent(self) -> float:
+        """Safely retrieve the current cycle spend total."""
+        async with self._cycle_spent_lock:
+            return self._cycle_spent
+
+    async def add_cycle_spent(self, amount: float) -> None:
+        """Safely add to the cycle spend total."""
+        async with self._cycle_spent_lock:
+            self._cycle_spent += amount
+
+    async def reset_cycle_spent(self) -> None:
+        """Safely reset the cycle spend total to zero."""
+        async with self._cycle_spent_lock:
+            self._cycle_spent = 0.0
+
+    # --- Pending entries ---
+
+    async def get_pending_entry(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Safely retrieve a single pending entry."""
+        async with self._pending_entries_lock:
+            return self._pending_entries.get(symbol)
+
+    async def get_all_pending_entries(self) -> Dict[str, Dict[str, Any]]:
+        """Safely retrieve a copy of all pending entries."""
+        async with self._pending_entries_lock:
+            return self._pending_entries.copy()
+
+    async def set_pending_entry(self, symbol: str, entry: Dict[str, Any]) -> None:
+        """Safely set or update a pending entry."""
+        async with self._pending_entries_lock:
+            self._pending_entries[symbol] = entry
+
+    async def remove_pending_entry(self, symbol: str) -> None:
+        """Safely remove a pending entry."""
+        async with self._pending_entries_lock:
+            self._pending_entries.pop(symbol, None)
+
+    # --- Evaluation state ---
+
+    async def get_force_eval(self, symbol: str) -> bool:
+        """Safely retrieve the force-eval flag for a symbol."""
+        async with self._eval_state_lock:
+            return self._force_eval.get(symbol, False)
+
+    async def set_force_eval(self, symbol: str, value: bool) -> None:
+        """Safely set the force-eval flag for a symbol."""
+        async with self._eval_state_lock:
+            self._force_eval[symbol] = value
+
+    async def get_force_eval_time(self, symbol: str) -> float:
+        """Safely retrieve the force-eval timestamp for a symbol."""
+        async with self._eval_state_lock:
+            return self._force_eval_time.get(symbol, 0.0)
+
+    async def set_force_eval_time(self, symbol: str, timestamp: float) -> None:
+        """Safely set the force-eval timestamp for a symbol."""
+        async with self._eval_state_lock:
+            self._force_eval_time[symbol] = timestamp
+
+    async def get_last_strategy_eval(self, symbol: str) -> float:
+        """Safely retrieve the last strategy eval timestamp for a symbol."""
+        async with self._eval_state_lock:
+            return self._last_strategy_eval.get(symbol, 0.0)
+
+    async def set_last_strategy_eval(self, symbol: str, timestamp: float) -> None:
+        """Safely set the last strategy eval timestamp for a symbol."""
+        async with self._eval_state_lock:
+            self._last_strategy_eval[symbol] = timestamp
+
+    async def get_strategy_interval(self, symbol: str) -> float:
+        """Safely retrieve the strategy interval for a symbol."""
+        async with self._eval_state_lock:
+            return self._strategy_intervals.get(symbol, 0.0)
+
+    async def set_strategy_interval(self, symbol: str, interval: float) -> None:
+        """Safely set the strategy interval for a symbol."""
+        async with self._eval_state_lock:
+            self._strategy_intervals[symbol] = interval
+
     def append_trade(self, trade: Dict[str, Any], max_trades: int = 500):
         """Append a trade to history and prune old entries."""
         with self._trade_history_lock:
