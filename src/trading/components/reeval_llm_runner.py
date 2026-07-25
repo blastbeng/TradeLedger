@@ -223,7 +223,7 @@ class ReevalLLMRunner:
                                     temperature=effective_temp,
                                     messages=chunk_messages,
                                     request_type="symbol_reeval_chunk",
-                                    force_primary_model=is_user_forced,
+                                    force_primary_model=True,
                                 ),
                                 timeout=settings.LLM_TIMEOUT
                             )
@@ -265,7 +265,7 @@ class ReevalLLMRunner:
                                         model_type="actuator", temperature=effective_temp,
                                         messages=correction_messages,
                                         request_type="symbol_reeval_chunk_retry",
-                                        force_primary_model=is_user_forced,
+                                        force_primary_model=True,
                                     ),
                                     timeout=settings.LLM_TIMEOUT
                                 )
@@ -395,7 +395,7 @@ class ReevalLLMRunner:
                             temperature=effective_temp,
                             messages=final_messages,
                             request_type="symbol_reeval_final",
-                            force_primary_model=is_user_forced,
+                            force_primary_model=True,
                         ),
                         timeout=settings.LLM_TIMEOUT
                     )
