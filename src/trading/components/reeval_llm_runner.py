@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.config.settings import settings
 from src.llm.cache import get_cached_llm_response, compute_market_hash, estimate_tokens
 from src.llm.prompts import build_stock_selection_prompt, build_system_prompt, compact_prompt, build_stock_selection_messages, build_final_selection_messages
+from src.utils.macro_data import get_macro_economic_context
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +178,7 @@ class ReevalLLMRunner:
                     min_viable_trade_amount=min_viable_amount,
                     btp_ytm=btp_ytm,
                     news_section=chunk_news_section,
-                    macro_economic_context=None,  # TODO: Fetch macro economic data
+                    macro_economic_context=get_macro_economic_context(),
                 )
                 if chunk_sentiment_section:
                     chunk_messages[-1]["content"] += "\n" + chunk_sentiment_section
@@ -353,7 +354,7 @@ class ReevalLLMRunner:
                 available_timeframes=settings.OHLCV_TIMEFRAMES,
                 market_limits=market_limits,
                 available_timeframes_by_symbol=available_timeframes_by_symbol,
-                macro_economic_context=None,  # TODO: Fetch macro economic data
+                macro_economic_context=get_macro_economic_context(),
             )
             # Append per-symbol sentiment summary for symbols mentioned in chunk results
             if news_sentiment:
