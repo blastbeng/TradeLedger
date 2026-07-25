@@ -1,11 +1,13 @@
 import redis
 import logging
+import threading
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 _redis_client: redis.Redis = None
 _redis_available = True
+_redis_client_lock = threading.Lock()
 
 class DummyRedis:
     """A no-op Redis client used when Redis is unavailable.
@@ -100,18 +102,20 @@ def get_redis_client() -> redis.Redis:
     if not _redis_available:
         return DummyRedis()
     if _redis_client is None:
-        _redis_client = redis.Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            db=settings.REDIS_DB,
-            ssl=settings.REDIS_TLS,
-            decode_responses=True,
-            socket_timeout=5,           # seconds – max time for any Redis command
-            socket_connect_timeout=5,   # seconds – max time to establish connection
-            max_connections=50,
-            health_check_interval=30,   # ping every 30s to detect stale connections
-            retry_on_timeout=True,      # retry on timeout
-        )
+        with _redis_client_lock:
+            if _redis_client is None:
+                _redis_client = redis.Redis(
+                    host=settings.REDIS_HOST,
+                    port=settings.REDIS_PORT,
+                    db=settings.REDIS_DB,
+                    ssl=settings.REDIS_TLS,
+                    decode_responses=True,
+                    socket_timeout=5,           # seconds – max time for any Redis command
+                    socket_connect_timeout=5,   # seconds – max time to establish connection
+                    max_connections=50,
+                    health_check_interval=30,   # ping every 30s to detect stale connections
+                    retry_on_timeout=True,      # retry on timeout
+                )
     return _redis_client
 
 def check_redis_connection() -> bool:
@@ -119,16 +123,18 @@ def check_redis_connection() -> bool:
     global _redis_client, _redis_available
     try:
         if _redis_client is None:
-            _redis_client = redis.Redis(
-                host=settings.REDIS_HOST,
-                port=settings.REDIS_PORT,
-                db=settings.REDIS_DB,
-                ssl=settings.REDIS_TLS,
-                decode_responses=True,
-                socket_timeout=5,           # seconds – max time for any Redis command
-                socket_connect_timeout=5,   # seconds – max time to establish connection
-                max_connections=50,
-            )
+            with _redis_client_lock:
+                if _redis_client is None:
+                    _redis_client = redis.Redis(
+                        host=settings.REDIS_HOST,
+                        port=settings.REDIS_PORT,
+                        db=settings.REDIS_DB,
+                        ssl=settings.REDIS_TLS,
+                        decode_responses=True,
+                        socket_timeout=5,           # seconds – max time for any Redis command
+                        socket_connect_timeout=5,   # seconds – max time to establish connection
+                        max_connections=50,
+                    )
         _redis_client.ping()
         set_redis_available(True)
         return True
