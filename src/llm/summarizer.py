@@ -43,7 +43,8 @@ def summarize_text(text: str, context: str = "general", max_length: int = 500, f
             ttl=86400,  # Cache summaries for 24 hours to avoid repeated LLM calls
             model_type="weak",
             messages=messages,
-            request_type="summarization"
+            request_type="summarization",
+            force_primary_model=force_primary_model,
         )
         summary = llm_result.get("response", "")
         if summary and summary.strip():
