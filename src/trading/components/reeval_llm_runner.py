@@ -129,7 +129,7 @@ class ReevalLLMRunner:
                                 raw_news,
                                 context="stock selection news",
                                 max_length=1000,
-                                force_primary_model=is_user_forced,
+                                force_primary_model=True,
                             )
                     except Exception as e:
                         logger.warning(f"Failed to pre-summarize news for chunk: {e}")

@@ -153,7 +153,7 @@ class ReevalResponseProcessor:
                         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="stock_selection"))},
                         {"role": "user", "content": compact_prompt(correction_prompt)},
                     ],
-                    force_primary_model=is_user_forced,
+                    force_primary_model=True,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
