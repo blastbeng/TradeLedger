@@ -47,6 +47,10 @@ class SellExecutor:
         cleanup_callback=None
     ) -> bool:
         """Update or remove position after a sell. Returns True if position was removed."""
+        # Invalidate BuyExecutor portfolio cache since a position has been updated or removed
+        if self._order_executor._buy_executor:
+            self._order_executor._buy_executor._portfolio_cache = None
+
         remaining_amount = pos["amount"] - sold_amount
         remaining_cost_basis = cost_basis - prorated_cost_basis
         remaining_net_base = net_base - sold_amount
@@ -500,6 +504,9 @@ class SellExecutor:
                 # Full sell: remove position
                 async with self.shared_state._positions_lock:
                     self.shared_state.positions.pop(symbol, None)
+                # Invalidate BuyExecutor portfolio cache
+                if self._order_executor._buy_executor:
+                    self._order_executor._buy_executor._portfolio_cache = None
                 self.shared_state._strategy_intervals.pop(symbol, None)
                 self.shared_state._last_strategy_eval.pop(symbol, None)
                 self.shared_state._last_decisions.pop(symbol, None)
@@ -591,6 +598,9 @@ class SellExecutor:
                 pos.pop("_stop_loss_review_count", None)
             async with self.shared_state._positions_lock:
                 self.shared_state.positions.pop(symbol, None)
+            # Invalidate BuyExecutor portfolio cache
+            if self._order_executor._buy_executor:
+                self._order_executor._buy_executor._portfolio_cache = None
             self.shared_state._strategy_intervals.pop(symbol, None)
             self.shared_state._last_strategy_eval.pop(symbol, None)
             self.shared_state._last_decisions.pop(symbol, None)
