@@ -993,7 +993,39 @@ class TradingEngine:
         return True
 
     async def _fetch_vix(self) -> Optional[float]:
-        """VIX is not available for the Italian market via yfinance. Returns None."""
+        """Fetch a volatility proxy. Uses US VIX (^VIX) as a global market proxy,
+        falling back to an internal proxy based on tracked symbols if unavailable."""
+        try:
+            # Try fetching US VIX as a global volatility proxy
+            quotes = await asyncio.to_thread(get_quotes_cached, ["^VIX"])
+            vix_quote = quotes.get("^VIX", {})
+            vix_price = vix_quote.get("last")
+            if vix_price and vix_price > 0:
+                return float(vix_price)
+        except Exception:
+            pass
+
+        # Fallback: compute a simple internal volatility proxy from tracked symbols
+        try:
+            if not self.shared_state.current_symbols:
+                return None
+            
+            tracked_symbols = [entry["symbol"].split("/")[0] for entry in self.shared_state.current_symbols]
+            quotes = await asyncio.to_thread(get_quotes_cached, tracked_symbols)
+            
+            changes = []
+            for sym, quote in quotes.items():
+                pct_change = quote.get("percentage")
+                if pct_change is not None:
+                    changes.append(abs(pct_change))
+            
+            if changes:
+                # Scale the average absolute percentage change to a VIX-like scale
+                avg_abs_change = sum(changes) / len(changes)
+                return round(avg_abs_change * 10, 2)
+        except Exception:
+            pass
+
         return None
 
 
