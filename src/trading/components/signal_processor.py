@@ -22,6 +22,7 @@ from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
 from src.utils.btp_policy import BTPPolicy
+from src.utils.macro_data import get_macro_economic_context
 
 from src.trading.components.signal_market_data import SignalMarketDataFetcher
 from src.trading.components.model_tier_manager import ModelTierManager
@@ -346,7 +347,7 @@ class SignalProcessor:
             dividend_yield=_ctx.get("dividend_yield"),
             next_ex_dividend=_ctx.get("next_ex_dividend"),
             news_section=news_section,
-            macro_economic_context=None,  # TODO: Fetch macro economic data (interest rates, inflation, GDP)
+            macro_economic_context=get_macro_economic_context(),
         )
         analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(prompt_data)
 
