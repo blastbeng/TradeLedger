@@ -899,20 +899,24 @@ class PositionManager:
         if coupon is not None and coupon > 0 and maturity_dt is not None:
             now_dt = datetime.now(timezone.utc)
             # BTPs pay semi-annual coupons. Maturity is a coupon date.
-            # Find the coupon period that contains now_dt.
-            next_coupon = maturity_dt
-            while next_coupon > now_dt:
-                next_coupon -= relativedelta(months=6)
-            last_coupon = next_coupon
-            next_coupon = next_coupon + relativedelta(months=6)
-            
-            days_in_period = (next_coupon - last_coupon).days
-            days_elapsed = (now_dt - last_coupon).days
-            if days_in_period > 0 and days_elapsed >= 0:
-                # Cap days_elapsed at days_in_period to avoid over-accruing after maturity
-                days_elapsed = min(days_elapsed, days_in_period)
-                # Coupon is a percentage (e.g., 4.5 for 4.5%)
-                accrued_interest = coupon * 0.5 * (days_elapsed / days_in_period)
+            # If now_dt is past maturity, the bond paid its final coupon at maturity.
+            if now_dt >= maturity_dt:
+                accrued_interest = coupon * 0.5
+            else:
+                # Find the coupon period that contains now_dt.
+                next_coupon = maturity_dt
+                while next_coupon > now_dt:
+                    next_coupon -= relativedelta(months=6)
+                last_coupon = next_coupon
+                next_coupon = next_coupon + relativedelta(months=6)
+                
+                days_in_period = (next_coupon - last_coupon).days
+                days_elapsed = (now_dt - last_coupon).days
+                if days_in_period > 0 and days_elapsed >= 0:
+                    # Cap days_elapsed at days_in_period to avoid over-accruing
+                    days_elapsed = min(days_elapsed, days_in_period)
+                    # Coupon is a percentage (e.g., 4.5 for 4.5%)
+                    accrued_interest = coupon * 0.5 * (days_elapsed / days_in_period)
 
         dirty_price = par_value + accrued_interest
         cost = pos["amount"] * dirty_price
