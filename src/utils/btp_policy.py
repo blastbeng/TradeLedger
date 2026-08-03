@@ -11,7 +11,13 @@ class BTPPolicy:
 
     PAR_VALUE = 100.0
     BTP_SLIPPAGE_PCT = 0.001  # 0.1% fixed slippage for BTPs
-    BTP_MAX_YIELD_SHIFT_BPS = 100  # Max expected yield shift in basis points for risk modeling
+    @staticmethod
+    def get_max_yield_shift_bps(symbol: str) -> float:
+        """Return the max expected yield shift in basis points for risk modeling.
+        
+        Currently returns a fixed value, but can be adapted to current market volatility.
+        """
+        return 100.0
 
     @staticmethod
     def is_btp(symbol: str) -> bool:

@@ -102,6 +102,9 @@ class RiskManager:
         # --- Daily loss limit ---
         await self._check_daily_loss_limit()
 
+        # --- Portfolio-level correlation risk ---
+        await self._check_correlation_risk()
+
         # Read LLM-decided review limits from Redis once (before the per-position loop)
         _review_limits = await self.read_review_limits()
         max_sl_reviews = _review_limits["max_sl_reviews"]
@@ -335,9 +338,21 @@ class RiskManager:
         # the total daily loss (including fees) doesn't exceed the threshold.
         adjusted_max_daily_loss = max(0.0, max_daily_loss - daily_buy_fees)
 
-        if daily_pnl < -adjusted_max_daily_loss:
+        # Include unrealized P&L from open positions
+        unrealized_pnl = 0.0
+        if self.shared_state.positions:
+            pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
+            for symbol, pos in self.shared_state.positions.items():
+                t = pos_tickers.get(symbol)
+                current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
+                unrealized_pnl += (current_price - pos.get('price', 0.0)) * pos.get('amount', 0.0)
+
+        total_daily_pnl = daily_pnl + unrealized_pnl
+
+        if total_daily_pnl < -adjusted_max_daily_loss:
             logger.warning(
-                f"Daily loss limit reached: daily P&L={daily_pnl:.2f}, "
+                f"Daily loss limit reached: total daily P&L={total_daily_pnl:.2f} "
+                f"(realized: {daily_pnl:.2f}, unrealized: {unrealized_pnl:.2f}), "
                 f"max loss={adjusted_max_daily_loss:.2f} ({settings.MAX_DAILY_LOSS_PCT:.2%} of initial balance"
                 f" - {daily_buy_fees:.2f} buy fees). "
                 f"Pausing trading until tomorrow."
@@ -347,15 +362,41 @@ class RiskManager:
                 set_trading_pause,
                 engine.redis,
                 "daily_loss_limit",
-                reason=f"Daily loss limit reached ({daily_pnl:.2f})",
+                reason=f"Daily loss limit reached ({total_daily_pnl:.2f})",
             )
 
             if engine.notifier:
                 await engine.notifier.send_notification(
-                    f"🛑 Daily loss limit reached: {daily_pnl:.2f} {engine.base_currency} "
-                    f"(max: -{adjusted_max_daily_loss:.2f}, incl. {daily_buy_fees:.2f} fees). Trading paused until tomorrow.",
+                    f"🛑 Daily loss limit reached: {total_daily_pnl:.2f} {engine.base_currency} "
+                    f"(realized: {daily_pnl:.2f}, unrealized: {unrealized_pnl:.2f}, "
+                    f"max: -{adjusted_max_daily_loss:.2f}, incl. {daily_buy_fees:.2f} fees). Trading paused until tomorrow.",
                     summary={"action": "PAUSE", "reason": "Daily loss limit reached"}
                 )
+
+    async def _check_correlation_risk(self) -> None:
+        """Check for concentrated exposure in a single asset as a proxy for correlation risk."""
+        engine = self.engine
+        if not self.shared_state.positions:
+            return
+        
+        pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
+        total_exposure = 0.0
+        symbol_exposures = {}
+        for symbol, pos in self.shared_state.positions.items():
+            t = pos_tickers.get(symbol)
+            current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
+            exposure = pos.get('amount', 0.0) * current_price
+            total_exposure += exposure
+            symbol_exposures[symbol] = exposure
+        
+        if total_exposure > 0:
+            for symbol, exposure in symbol_exposures.items():
+                pct = exposure / total_exposure
+                if pct > 0.30:  # 30% hard limit on single asset exposure
+                    logger.warning(
+                        f"Correlation risk: {symbol} represents {pct:.2%} of total exposure, "
+                        f"exceeding the 30% hard limit."
+                    )
 
     async def _fetch_risk_tickers(self, symbols_to_check: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
         """Batch-fetch tickers for all open positions for risk checks."""
@@ -611,7 +652,7 @@ class RiskManager:
         if _is_btp:
             # Use duration/convexity based risk model for BTPs
             est_price_drop_pct = BTPPolicy.compute_btp_price_change(
-                symbol, entry_price, BTPPolicy.BTP_MAX_YIELD_SHIFT_BPS
+                symbol, entry_price, BTPPolicy.get_max_yield_shift_bps(symbol)
             )
             if est_price_drop_pct is not None:
                 _hard_max_loss = abs(est_price_drop_pct)
@@ -875,7 +916,7 @@ class RiskManager:
                         # OHLCV is too sparse (2-10 candles).  Instead, fetch daily candles
                         # which have enough data points to capture intra-check price spikes
                         # that the ticker alone would miss (risk checks run every ~4h).
-                        ohlcv_tf = "1d" if tf_secs >= settings.LONG_TERM_TF_SECONDS else tf
+                        ohlcv_tf = "1h" if tf_secs >= settings.LONG_TERM_TF_SECONDS else tf
                         # Throttle OHLCV fetches: only fetch every ~10% of the
                         # timeframe interval, clamped between 5 min and 1 hour.
                         # For very long timeframes (>= 1 month), fetch daily
@@ -1340,16 +1381,6 @@ class RiskManager:
         max_age = multiplier * original_max_hold
 
         if position_age > max_age:
-            # Skip force-close if the position is currently profitable
-            entry_price = pos.get("price", 0.0)
-            if current_price > entry_price:
-                logger.info(
-                    f"Max position age reached for {symbol} but position is profitable "
-                    f"(current: {current_price:.4f}, entry: {entry_price:.4f}). "
-                    f"Skipping force-close to allow LLM to manage the trade."
-                )
-                return False
-
             logger.warning(
                 f"Maximum position age reached for {symbol}: "
                 f"age {position_age / 86400:.1f} days > limit {max_age / 86400:.1f} days "

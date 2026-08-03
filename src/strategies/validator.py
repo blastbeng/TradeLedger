@@ -179,6 +179,12 @@ def _validate_stop_loss(
                 tp = sl * 1.5
                 params["take_profit_pct"] = tp
                 logger.info(f"Validator: adjusted take_profit_pct to {tp:.4f} (must be > adjusted stop_loss_pct={sl:.4f}) for {symbol}")
+            elif tp is None and params.get("take_profit_atr_multiple") is not None:
+                # Ensure ATR-based TP is at least 1.5x the stop ATR multiple
+                atr_mult = params.get("stop_loss_atr_multiple", 2.0)
+                if params["take_profit_atr_multiple"] < atr_mult * 1.5:
+                    params["take_profit_atr_multiple"] = atr_mult * 1.5
+                    logger.info(f"Validator: adjusted take_profit_atr_multiple to {params['take_profit_atr_multiple']} (must be > stop_loss_atr_multiple) for {symbol}")
 
     return None
 
