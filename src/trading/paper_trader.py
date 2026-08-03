@@ -304,6 +304,9 @@ class PaperTrader:
             else:
                 fill_price = fill_price * (1 - slippage_pct)
 
+        # Fetch max fillable volume outside the lock to avoid blocking during IO
+        max_vol = self._get_max_fillable_volume(order.symbol)
+
         with self._lock:
             if order.side == "buy":
                 # amount is in quote currency
@@ -313,7 +316,6 @@ class PaperTrader:
                 requested_base_amount = order.amount
 
             # Check for volume-based partial fill
-            max_vol = self._get_max_fillable_volume(order.symbol)
             is_partial = False
             if max_vol is not None and requested_base_amount > max_vol:
                 logger.info(f"Partial fill for {order.symbol}: requested {requested_base_amount}, capped to {max_vol}")
