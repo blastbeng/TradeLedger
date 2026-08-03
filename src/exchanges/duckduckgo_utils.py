@@ -14,6 +14,7 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
     """Fetch ISIN for a symbol using DuckDuckGo text search as a fallback."""
     # If the symbol is already a valid ISIN, return it immediately
     if re.match(r'^[A-Z]{2}[A-Z0-9]{9}\d$', symbol):
+        logger.debug(f"Symbol {symbol} is already a valid ISIN")
         return symbol
 
     try:
