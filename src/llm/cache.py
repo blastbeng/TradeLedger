@@ -1432,6 +1432,11 @@ def get_cached_llm_response(
     # Determine effective provider and model for the primary choice
     provider, models, base_url, api_key = _get_primary_provider_config(model_type)
 
+    if not models and model_type == "sentiment":
+        logger.warning("No LLM models configured for model_type=sentiment. Falling back to weak model.")
+        model_type = "weak"
+        provider, models, base_url, api_key = _get_primary_provider_config(model_type)
+
     if not models:
         logger.error("No LLM models configured for provider=%s, model_type=%s", provider, model_type)
         raise RuntimeError(f"No LLM models configured for provider={provider}, model_type={model_type}")
