@@ -485,6 +485,33 @@ def get_model_failure_stats() -> List[Dict[str, Any]]:
     return list(stats.values())
 
 
+_LLM_CIRCUIT_BREAKER_THRESHOLD = 5
+
+
+async def is_llm_circuit_breaker_active(check_primary_model: bool = False) -> bool:
+    """Check if the LLM circuit breaker is currently active.
+
+    Returns True if consecutive LLM failures exceed the threshold.
+    When check_primary_model is True, only returns True if primary models
+    are in use (market open/pre-market). During market closed hours with
+    fallback models, returns False to allow fallback model handling.
+    """
+    redis_client = get_redis_client()
+    try:
+        fail_count_raw = await asyncio.to_thread(redis_client.get, "llm:consecutive_failures")
+        fail_count = int(fail_count_raw) if fail_count_raw else 0
+    except Exception:
+        return False
+
+    if fail_count < _LLM_CIRCUIT_BREAKER_THRESHOLD:
+        return False
+
+    if check_primary_model and not _should_use_primary_model():
+        return False
+
+    return True
+
+
 def _build_cache_key(
     messages: Optional[List[Dict[str, str]]],
     system_prompt: str,
@@ -1505,6 +1532,12 @@ def get_cached_llm_response(
                 used_model = aol_result[3]
                 is_fallback = True
             else:
+                # All LLM providers failed — increment consecutive failure counter
+                try:
+                    redis_client.incr("llm:consecutive_failures")
+                    redis_client.expire("llm:consecutive_failures", 3600)
+                except Exception:
+                    pass
                 raise fallback_e
     if response_text is None:
         logger.warning("LLM returned None response; not caching.")
@@ -1523,6 +1556,12 @@ def get_cached_llm_response(
             "is_fallback": is_fallback,
         })
         return None
+
+    # Reset consecutive LLM failure counter on success
+    try:
+        redis_client.delete("llm:consecutive_failures")
+    except Exception:
+        pass
 
     latency_ms = (time.time() - start_time) * 1000
     _save_metric({
