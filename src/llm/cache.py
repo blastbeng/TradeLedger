@@ -348,9 +348,9 @@ def _normalize_text_for_cache(text: str) -> str:
             val = float(match.group(0))
             if val == 0 or math.isnan(val) or math.isinf(val):
                 return match.group(0)
-            # Percentage-based rounding: round to 6 significant figures
-            decimals = 5 - int(math.floor(math.log10(abs(val))))
-            return f"{round(val, decimals)}"
+            # Round to 4 decimal places to ensure small price changes (e.g., on low-priced assets)
+            # are detected, while still treating floating-point noise as insignificant.
+            return f"{round(val, 4)}"
         except (ValueError, OverflowError):
             return match.group(0)
     return re.sub(r'-?\d+(?:\.\d+)?[eE][+-]?\d+|-?\d+\.\d+', _round_num, text)

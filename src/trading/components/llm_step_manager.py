@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
-from src.llm.cache import get_cached_llm_response, compute_market_hash, is_llm_circuit_breaker_active
+from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, BacktestPromptData, build_analysis_messages
 from src.llm.backtest_prompts import build_backtest_variants_messages
 from src.strategies.base import Signal
@@ -46,52 +46,6 @@ class LLMStepManager:
             "macd_hist": macd_hist,
             "timeframe_seconds": tf_seconds,
         }
-
-    async def _increment_llm_failures(self) -> None:
-        """Increment the global LLM failure counter and activate circuit breaker if threshold reached."""
-        engine = self.engine
-        try:
-            fail_count = await asyncio.to_thread(engine.redis.incr, "llm:consecutive_failures")
-            await asyncio.to_thread(engine.redis.expire, "llm:consecutive_failures", 3600)
-
-            # Read threshold and cooldown from config with defaults
-            cb_threshold = 5
-            cb_cooldown = 300
-            try:
-                raw = await engine.config_service.get_config("llm_circuit_breaker_threshold")
-                if raw:
-                    cb_threshold = int(raw)
-                raw = await engine.config_service.get_config("llm_circuit_breaker_cooldown_seconds")
-                if raw:
-                    cb_cooldown = int(raw)
-            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
-                pass
-
-            # Apply hard min/max bounds to prevent misconfiguration
-            cb_threshold = max(1, min(cb_threshold, 50))
-            cb_cooldown = max(10, min(cb_cooldown, 3600))
-
-            if fail_count >= cb_threshold:
-                cb_data = json.dumps({
-                    "active_until": time.time() + cb_cooldown,
-                    "fail_count": fail_count,
-                })
-                await asyncio.to_thread(engine.redis.setex, "llm:circuit_breaker", cb_cooldown, cb_data)
-                logger.warning(
-                    f"LLM circuit breaker activated after {fail_count} consecutive failures. "
-                    f"Cooldown: {cb_cooldown}s."
-                )
-                if engine.notifier:
-                    await engine.notifier.send_notification(
-                        f"🔌 LLM circuit breaker activated after {fail_count} consecutive failures. "
-                        f"LLM calls will be skipped for {cb_cooldown}s.",
-                        summary={
-                            "action": "CIRCUIT_BREAKER",
-                            "reason": f"Consecutive LLM failures: {fail_count}",
-                        }
-                    )
-        except (ConnectionError, TimeoutError, OSError) as e:
-            logger.debug(f"Could not increment LLM failure counter: {e}")
 
     async def run_step1a_llm_call(
         self,
