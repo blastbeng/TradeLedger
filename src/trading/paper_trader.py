@@ -251,9 +251,10 @@ class PaperTrader:
         """Background thread to poll open orders and trigger stops promptly."""
         while not self._stop_event.is_set():
             try:
-                open_order_ids = [
-                    oid for oid, o in self._orders.items() if o.status == "open"
-                ]
+                with self._lock:
+                    open_order_ids = [
+                        oid for oid, o in self._orders.items() if o.status == "open"
+                    ]
                 for oid in open_order_ids:
                     self.get_order(oid)
             except Exception as e:
