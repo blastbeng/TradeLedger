@@ -495,9 +495,19 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                     if len(sym_data) >= 1:
                         last = sym_data["Close"].iloc[-1]
                         if last is not None and not pd.isna(last) and last > 0:
-                            result[sym]["last"] = float(last)
-                            result[sym]["last_update"] = int(time.time() * 1000)
-                            result[sym]["source"] = "yfinance"
+                            existing_last = result[sym].get("last")
+                            if existing_last and existing_last > 0:
+                                deviation = abs(float(last) - existing_last) / existing_last
+                                if deviation > settings.QUOTE_DEVIATION_THRESHOLD:
+                                    logger.warning(f"Cross-source price inconsistency for {sym}: yfinance={float(last)}, existing={existing_last}. Keeping existing.")
+                                else:
+                                    result[sym]["last"] = float(last)
+                                    result[sym]["last_update"] = int(time.time() * 1000)
+                                    result[sym]["source"] = "yfinance"
+                            else:
+                                result[sym]["last"] = float(last)
+                                result[sym]["last_update"] = int(time.time() * 1000)
+                                result[sym]["source"] = "yfinance"
                         vol = sym_data["Volume"].iloc[-1] if "Volume" in sym_data.columns else None
                         if vol is not None and not pd.isna(vol):
                             result[sym]["volume"] = float(vol)
@@ -528,10 +538,21 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         for sym in missing_after_yf[:10]:
             try:
                 av_quote = get_alphavantage_quote(sym)
-                if av_quote:
-                    result[sym].update(av_quote)
-                    result[sym]["last_update"] = int(time.time() * 1000)
-                    result[sym]["source"] = "alphavantage"
+                if av_quote and av_quote.get("last") is not None:
+                    existing_last = result[sym].get("last")
+                    av_last = av_quote.get("last")
+                    if existing_last and existing_last > 0:
+                        deviation = abs(av_last - existing_last) / existing_last
+                        if deviation > settings.QUOTE_DEVIATION_THRESHOLD:
+                            logger.warning(f"Cross-source price inconsistency for {sym}: alphavantage={av_last}, existing={existing_last}. Keeping existing.")
+                        else:
+                            result[sym].update(av_quote)
+                            result[sym]["last_update"] = int(time.time() * 1000)
+                            result[sym]["source"] = "alphavantage"
+                    else:
+                        result[sym].update(av_quote)
+                        result[sym]["last_update"] = int(time.time() * 1000)
+                        result[sym]["source"] = "alphavantage"
                     _av_circuit_breaker.record_success()
                 else:
                     _av_circuit_breaker.record_failure()
@@ -548,10 +569,21 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         for sym in missing_after_av[:10]:
             try:
                 iex_quote = get_iex_quote(sym)
-                if iex_quote:
-                    result[sym].update(iex_quote)
-                    result[sym]["last_update"] = int(time.time() * 1000)
-                    result[sym]["source"] = "iex"
+                if iex_quote and iex_quote.get("last") is not None:
+                    existing_last = result[sym].get("last")
+                    iex_last = iex_quote.get("last")
+                    if existing_last and existing_last > 0:
+                        deviation = abs(iex_last - existing_last) / existing_last
+                        if deviation > settings.QUOTE_DEVIATION_THRESHOLD:
+                            logger.warning(f"Cross-source price inconsistency for {sym}: iex={iex_last}, existing={existing_last}. Keeping existing.")
+                        else:
+                            result[sym].update(iex_quote)
+                            result[sym]["last_update"] = int(time.time() * 1000)
+                            result[sym]["source"] = "iex"
+                    else:
+                        result[sym].update(iex_quote)
+                        result[sym]["last_update"] = int(time.time() * 1000)
+                        result[sym]["source"] = "iex"
                     _iex_circuit_breaker.record_success()
                 else:
                     _iex_circuit_breaker.record_failure()
