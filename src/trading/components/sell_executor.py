@@ -251,6 +251,10 @@ class SellExecutor:
                             "age_seconds": round(age_seconds, 1),
                         }
                     )
+                async with self.shared_state._positions_lock:
+                    pos = self.shared_state.positions.get(symbol)
+                    if pos:
+                        pos.pop("_selling", None)
                 return
             elif is_risk_exit and tf and await engine._is_quote_too_stale(ticker, tf):
                 age_seconds = (time.time() * 1000 - ticker.get("last_update", 0)) / 1000
@@ -559,6 +563,10 @@ class SellExecutor:
                         "reason": f"Sell order failed: {e}"[:200],
                     }
                 )
+            async with self.shared_state._positions_lock:
+                pos = self.shared_state.positions.get(symbol)
+                if pos:
+                    pos.pop("_selling", None)
     async def handle_queued_sell_fill(self, trade_dict: Dict[str, Any], queued: Dict[str, Any], partial: bool = False):
         """Process a queued SELL limit order that has filled in the simulator.
 
