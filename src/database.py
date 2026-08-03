@@ -171,13 +171,19 @@ class _SqliteConnectionWrapper:
     def executemany(self, sql, params_list):
         return self._conn.executemany(sql, params_list)
 
+_last_pool_warning_ts = 0.0
+
 def get_connection():
     """Return a database connection appropriate for the current backend."""
     if _backend == "postgresql":
         try:
             stats = _pg_pool.get_stats()
             if stats.get("pool_size", 0) >= _pg_pool._max_size - 2:
-                logger.warning(f"PostgreSQL connection pool near exhaustion: {stats}")
+                global _last_pool_warning_ts
+                now = time.time()
+                if now - _last_pool_warning_ts > 60:
+                    logger.warning(f"PostgreSQL connection pool near exhaustion: {stats}")
+                    _last_pool_warning_ts = now
         except Exception:
             pass
         conn = _pg_pool.getconn()
