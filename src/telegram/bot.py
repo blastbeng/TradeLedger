@@ -50,6 +50,8 @@ class TelegramBot:
         self.app.updater.poll_timeout = 30.0   # default 10.0
         self._notification_timestamps = collections.deque()
         self._max_notifications_per_minute = 15
+        self._notification_queue = asyncio.Queue()
+        self._notification_task = None
         self._register_handlers()
         self.keyboard = ReplyKeyboardMarkup(
             [
@@ -1008,19 +1010,18 @@ class TelegramBot:
             return
 
         if context.args:
-            # Sell a specific trade by its displayed ID
-            try:
-                trade_id = int(context.args[0])
-            except ValueError:
-                await update.message.reply_text("ℹ️ Usage: /sell <id>  (e.g., /sell 1)", reply_markup=self.keyboard)
+            # Sell a specific trade by its symbol (e.g., /sell AAPL)
+            symbol_arg = context.args[0].upper()
+            if "/" in symbol_arg:
+                symbol_arg = symbol_arg.split("/")[0]
+
+            target_trade = next((t for t in open_trades if t['symbol'].split("/")[0] == symbol_arg), None)
+            if not target_trade:
+                await update.message.reply_text(f"❌ No open trade found for {symbol_arg}. Use /trades to see open positions.", reply_markup=self.keyboard)
                 return
 
-            if trade_id < 1 or trade_id > len(open_trades):
-                await update.message.reply_text(f"❌ Invalid trade ID. Use a number between 1 and {len(open_trades)}.", reply_markup=self.keyboard)
-                return
-
-            symbol = open_trades[trade_id - 1]['symbol']
-            sell_tf = open_trades[trade_id - 1].get('timeframe')
+            symbol = target_trade['symbol']
+            sell_tf = target_trade.get('timeframe')
             try:
                 sell_name = await asyncio.wait_for(
                     self.engine._market_data_manager.get_stock_name(symbol),
@@ -1217,11 +1218,12 @@ class TelegramBot:
                 self._notification_timestamps.popleft()
 
             rate_limited = len(self._notification_timestamps) >= self._max_notifications_per_minute
-            if rate_limited and not is_critical:
-                logger.warning(f"Telegram rate limit exceeded, dropping non-critical notification: {action}")
+            if rate_limited:
+                if is_critical:
+                    logger.critical(f"Telegram rate limit exceeded, dropping critical notification: {action}")
+                else:
+                    logger.warning(f"Telegram rate limit exceeded, dropping non-critical notification: {action}")
             else:
-                if rate_limited and is_critical:
-                    logger.warning(f"Telegram rate limit exceeded but sending critical notification: {action}")
                 self._notification_timestamps.append(now)
 
                 if summary and summary.get("model_type"):
@@ -1273,39 +1275,20 @@ class TelegramBot:
                 except Exception as e:
                     logger.warning(f"Failed to store message for web interface: {type(e).__name__}: {e}")
 
-                # Send to Telegram
-                max_retries = 3 if is_critical else 1
-                retry_delay = 2.0
+                # --- Determine if notification should be silent ---
+                # All notifications are silent by default.
+                # Only BUY, SELL, and ERROR actions ring the phone, unless
+                # explicitly overridden by the caller via disable_notification=False.
+                if action in ("BUY", "SELL", "ERROR"):
+                    disable_notification = False
 
-                for attempt in range(1, max_retries + 1):
-                    try:
-                        # --- Determine if notification should be silent ---
-                        # All notifications are silent by default.
-                        # Only BUY, SELL, and ERROR actions ring the phone, unless
-                        # explicitly overridden by the caller via disable_notification=False.
-                        if action in ("BUY", "SELL", "ERROR"):
-                            disable_notification = False
-
-                        chunks = self._split_text(message)
-                        for chunk in chunks:
-                            await asyncio.wait_for(
-                                self.app.bot.send_message(
-                                    chat_id=int(chat_id),
-                                    text=chunk,
-                                    disable_notification=disable_notification,
-                                ),
-                                timeout=15.0
-                            )
-                        logger.debug(f"Notification sent successfully (silent={disable_notification}).")
-                        break
-                    except Exception as e:
-                        if attempt < max_retries:
-                            logger.warning(f"Failed to send Telegram notification (attempt {attempt}/{max_retries}): {e}. Retrying in {retry_delay}s...")
-                            await asyncio.sleep(retry_delay)
-                        else:
-                            logger.critical(f"Failed to send Telegram notification after {max_retries} attempts: {e}", exc_info=True)
-                            if is_critical:
-                                raise RuntimeError(f"Failed to send critical Telegram notification: {e}")
+                # Enqueue the message to be sent by the background task
+                await self._notification_queue.put({
+                    "chat_id": int(chat_id),
+                    "message": message,
+                    "disable_notification": disable_notification,
+                    "is_critical": is_critical
+                })
         else:
             logger.info("Notification suppressed by verbosity setting.")
 
@@ -1328,6 +1311,44 @@ class TelegramBot:
                 logger.warning("_write_notification_log timed out")
             except Exception as e:
                 logger.warning(f"Failed to write notification log: {type(e).__name__}: {e}")
+
+    async def _process_notification_queue(self):
+        """Background task to send Telegram notifications without blocking the event loop."""
+        while True:
+            payload = await self._notification_queue.get()
+            try:
+                chat_id = payload["chat_id"]
+                message = payload["message"]
+                disable_notification = payload["disable_notification"]
+                is_critical = payload["is_critical"]
+                
+                max_retries = 3 if is_critical else 1
+                retry_delay = 2.0
+
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        chunks = self._split_text(message)
+                        for chunk in chunks:
+                            await asyncio.wait_for(
+                                self.app.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=chunk,
+                                    disable_notification=disable_notification,
+                                ),
+                                timeout=15.0
+                            )
+                        logger.debug(f"Notification sent successfully (silent={disable_notification}).")
+                        break
+                    except Exception as e:
+                        if attempt < max_retries:
+                            logger.warning(f"Failed to send Telegram notification (attempt {attempt}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                            await asyncio.sleep(retry_delay)
+                        else:
+                            logger.critical(f"Failed to send Telegram notification after {max_retries} attempts: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Error processing notification queue: {e}", exc_info=True)
+            finally:
+                self._notification_queue.task_done()
 
     async def start(self):
         """Start the bot (initialize, start polling, start application)."""
@@ -1354,6 +1375,7 @@ class TelegramBot:
             )
         except Exception as e:
             logger.warning(f"Failed to send startup notification: {type(e).__name__}: {e}")
+        self._notification_task = asyncio.create_task(self._process_notification_queue())
         # Keep the task alive until cancelled by the supervisor during shutdown.
         # Without this, the coroutine returns immediately (PTB v20 start methods
         # are non-blocking), causing the supervisor to think the task exited
@@ -1365,6 +1387,12 @@ class TelegramBot:
 
     async def stop(self):
         """Stop the bot gracefully."""
+        if self._notification_task:
+            self._notification_task.cancel()
+            try:
+                await self._notification_task
+            except asyncio.CancelledError:
+                pass
         await self.app.updater.stop()
         await self.app.stop()
         await self.app.shutdown()
