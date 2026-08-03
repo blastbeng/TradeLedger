@@ -70,6 +70,7 @@ class ReevalLLMRunner:
         btp_ytm: Optional[Dict[str, float]] = None,
         news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
         is_user_forced: bool = False,
+        reasoning_effort: str = "low",
     ) -> List[Dict[str, Any]]:
         """Evaluate the shortlist in chunks using the LLM.
 
@@ -224,6 +225,7 @@ class ReevalLLMRunner:
                                     messages=chunk_messages,
                                     request_type="symbol_reeval_chunk",
                                     force_primary_model=True,
+                                    reasoning_effort=reasoning_effort,
                                 ),
                                 timeout=settings.LLM_TIMEOUT
                             )
@@ -311,6 +313,7 @@ class ReevalLLMRunner:
         effective_temp: float,
         news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
         is_user_forced: bool = False,
+        reasoning_effort: str = "low",
     ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """Run the final selection LLM call with retries and fallback merge.
 
@@ -396,6 +399,7 @@ class ReevalLLMRunner:
                             messages=final_messages,
                             request_type="symbol_reeval_final",
                             force_primary_model=True,
+                            reasoning_effort=reasoning_effort,
                         ),
                         timeout=settings.LLM_TIMEOUT
                     )
@@ -509,5 +513,6 @@ class ReevalLLMRunner:
             is_critical=False,
         )
         effective_temp = engine._signal_processor.model_tier_manager._get_effective_temperature("mind", symbol_selection_complexity)
+        reasoning_effort = engine._signal_processor.model_tier_manager._compute_reasoning_effort("mind", symbol_selection_complexity)
 
-        return trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp
+        return trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp, reasoning_effort

@@ -180,6 +180,7 @@ class PauseResumeManager:
                 is_critical=False,
             )
             effective_temp = self.sp.model_tier_manager._get_effective_temperature("actuator", pause_resume_complexity)
+            reasoning_effort = self.sp.model_tier_manager._compute_reasoning_effort("actuator", pause_resume_complexity)
 
             try:
                 pause_result = await asyncio.wait_for(
@@ -193,6 +194,7 @@ class PauseResumeManager:
                             {"role": "user", "content": compact_prompt(prompt)},
                         ],
                         request_type="pause_resume_decision",
+                        reasoning_effort=reasoning_effort,
                     ),
                     timeout=settings.LLM_TIMEOUT
                 )

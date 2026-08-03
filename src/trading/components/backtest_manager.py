@@ -427,6 +427,7 @@ class BacktestManager:
         market_hash: str = None,
         is_critical: bool = False,
         is_fallback: bool = False,
+        reasoning_effort: str = "low",
     ) -> Tuple[Signal, Optional[str], Optional[str], bool]:
         """Run the Step 2 LLM call and carry over execution-critical fields.
 
@@ -485,6 +486,7 @@ class BacktestManager:
                     market_hash=market_hash,
                     messages=step2_messages,
                     request_type="trading_decision_step2",
+                    reasoning_effort=reasoning_effort,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -638,6 +640,7 @@ class BacktestManager:
         market_hash: str = None,
         is_critical: bool = False,
         is_fallback: bool = False,
+        reasoning_effort: str = "low",
     ) -> Tuple[Signal, str, Optional[str], Optional[str], bool]:
         """Run backtests and the Step 2 LLM call to produce the final signal.
 
@@ -706,6 +709,7 @@ class BacktestManager:
                 market_hash=market_hash,
                 is_critical=is_critical,
                 is_fallback=is_fallback,
+                reasoning_effort=reasoning_effort,
             )
         else:
             # For SELL or HOLD, no backtest needed, use preliminary decision
@@ -737,6 +741,7 @@ class BacktestManager:
         engine = self.engine
         model_type = data.get("model_type", "mind")
         temperature = data.get("temperature", 0.2)
+        reasoning_effort = data.get("reasoning_effort", "low")
 
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
         if await is_llm_circuit_breaker_active():
@@ -779,6 +784,7 @@ class BacktestManager:
                     market_hash=data.get("market_hash"),
                     messages=step2_messages,
                     request_type="simulation_step2",
+                    reasoning_effort=reasoning_effort,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )

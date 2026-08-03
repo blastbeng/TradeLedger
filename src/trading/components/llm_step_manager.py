@@ -108,6 +108,7 @@ class LLMStepManager:
         is_critical: bool,
         critical_reason: Optional[str],
         tf_seconds: int,
+        reasoning_effort: str = "low",
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str], bool, bool]:
         """Run the Step 1a LLM call and handle timeouts/retries.
 
@@ -140,6 +141,7 @@ class LLMStepManager:
                     {"role": "user", "content": compact_prompt(analysis_prompt)},
                 ],
                 request_type="trading_decision_step1a",
+                reasoning_effort=reasoning_effort,
             )
             step1a_response = step1a_result["response"]
             llm_provider = step1a_result["provider"]
@@ -293,6 +295,7 @@ class LLMStepManager:
         market_snapshot: Dict[str, Any],
         historical_backtest_results: Optional[list],
         is_critical: bool = False,
+        reasoning_effort: str = "low",
     ) -> Tuple[Signal, Optional[str], Optional[str], bool]:
         """Run the Step 1b LLM call for backtest variants and parameters.
 
@@ -367,6 +370,7 @@ class LLMStepManager:
                 symbol=symbol,
                 messages=variants_messages,
                 request_type="trading_decision_step1b",
+                reasoning_effort=reasoning_effort,
             )
             step1b_response = step1b_result["response"]
             llm_provider = step1b_result["provider"]

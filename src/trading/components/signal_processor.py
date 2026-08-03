@@ -385,7 +385,7 @@ class SignalProcessor:
             "fundamentals": symbol_data["fundamentals"],
         }
 
-    async def _check_skip_and_model_tier(self, symbol: str, ctx: Dict[str, Any], flags: Dict[str, Any]) -> Optional[Tuple[str, float]]:
+    async def _check_skip_and_model_tier(self, symbol: str, ctx: Dict[str, Any], flags: Dict[str, Any]) -> Optional[Tuple[str, float, str]]:
         """Check if LLM eval should be skipped and compute model tier. Returns (model_type, temp) or None if skipped."""
         engine = self.engine
         is_critical = flags["max_hold_expired"] or flags["stop_loss_triggered"] or flags["take_profit_triggered"] or flags["partial_tp_triggered"] or flags["dust_sweep_triggered"]
@@ -406,7 +406,7 @@ class SignalProcessor:
             # fallback that ensures periodic re-evaluation.
             return None
 
-        strategy_model_type, effective_temp = self.model_tier_manager.compute_model_tier_and_temperature(
+        strategy_model_type, effective_temp, reasoning_effort = self.model_tier_manager.compute_model_tier_and_temperature(
             atr=ctx["atr"], atr_percentile=ctx.get("atr_percentile"), rsi=ctx["rsi"], macd=ctx["macd"],
             macd_signal=ctx["macd_signal"], macd_hist=ctx["macd_hist"], bb_upper=ctx["bb_upper"], bb_middle=ctx["bb_middle"], bb_lower=ctx["bb_lower"],
             ema_9=ctx["ema_9"], ema_21=ctx["ema_21"], stochastic_k=ctx["stochastic_k"], adx=ctx["adx"], plus_di=ctx["plus_di"], minus_di=ctx["minus_di"],
@@ -420,9 +420,9 @@ class SignalProcessor:
             current_price=ctx["current_price"], timeframe=ctx.get("assigned_tf"),
             num_candidates=len(self.shared_state.current_symbols),
         )
-        return strategy_model_type, effective_temp
+        return strategy_model_type, effective_temp, reasoning_effort
 
-    async def _run_llm_steps(self, symbol: str, display_symbol: str, symbol_entry: Dict[str, str], ctx: Dict[str, Any], strategy_model_type: str, effective_temp: float, flags: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def _run_llm_steps(self, symbol: str, display_symbol: str, symbol_entry: Dict[str, str], ctx: Dict[str, Any], strategy_model_type: str, effective_temp: float, flags: Dict[str, Any], reasoning_effort: str = "low") -> Optional[Dict[str, Any]]:
         """Run Step 1a, 1b, and Step 2 LLM calls. Returns dict with signal/provider/model or None if should return."""
         engine = self.engine
         assigned_tf = symbol_entry["timeframe"]
@@ -446,6 +446,7 @@ class SignalProcessor:
             current_price=ctx["current_price"], rsi=ctx["rsi"], macd_hist=ctx["macd_hist"],
             is_critical=is_critical, critical_reason=critical_reason,
             tf_seconds=tf_seconds,
+            reasoning_effort=reasoning_effort,
         )
         if _should_return:
             return None
@@ -468,6 +469,7 @@ class SignalProcessor:
                 has_position=has_position, strategy_model_type=strategy_model_type, effective_temp=effective_temp,
                 market_snapshot=ctx["market_snapshot"], historical_backtest_results=ctx["historical_backtest_results"],
                 is_critical=is_critical,
+                reasoning_effort=reasoning_effort,
             )
             signal, combined_bt_summary, llm_provider, llm_model, is_fallback_2 = await engine.event_bus.request(
                 "run_backtest_and_final_decision",
@@ -479,6 +481,7 @@ class SignalProcessor:
                 market_hash=ctx["market_hash"],
                 is_critical=is_critical,
                 is_fallback=is_fallback_1b,
+                reasoning_effort=reasoning_effort,
             )
             is_fallback = is_fallback_2
 
@@ -536,9 +539,9 @@ class SignalProcessor:
             model_tier = await self._check_skip_and_model_tier(symbol, ctx, _flags)
             if model_tier is None:
                 return
-            strategy_model_type, effective_temp = model_tier
+            strategy_model_type, effective_temp, reasoning_effort = model_tier
 
-            llm_result = await self._run_llm_steps(symbol, display_symbol, symbol_entry, ctx, strategy_model_type, effective_temp, _flags)
+            llm_result = await self._run_llm_steps(symbol, display_symbol, symbol_entry, ctx, strategy_model_type, effective_temp, _flags, reasoning_effort=reasoning_effort)
             if llm_result is None:
                 return
             signal = llm_result["signal"]

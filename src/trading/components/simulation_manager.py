@@ -42,6 +42,7 @@ class SimulationManager:
         model_type = data.get("model_type", "mind")
         temperature = data.get("temperature", 0.2)
         market_hash = data.get("market_hash")
+        reasoning_effort = data.get("reasoning_effort", "low")
 
         # Step 1a: Analysis
         try:
@@ -54,6 +55,7 @@ class SimulationManager:
                     symbol=symbol,
                     messages=data.get("analysis_messages"),
                     request_type="simulation_step1a",
+                    reasoning_effort=reasoning_effort,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -109,6 +111,7 @@ class SimulationManager:
                     symbol=symbol,
                     messages=variants_messages,
                     request_type="simulation_step1b",
+                    reasoning_effort=reasoning_effort,
                 ),
                 timeout=settings.LLM_TIMEOUT
             )
@@ -416,7 +419,7 @@ class SimulationManager:
         analysis_prompt, market_snapshot, market_hash = await self.sp.build_analysis_prompt_and_snapshot(prompt_data)
         analysis_messages = build_analysis_messages(prompt_data)
 
-        strategy_model_type, effective_temp = self.sp.model_tier_manager.compute_model_tier_and_temperature(
+        strategy_model_type, effective_temp, reasoning_effort = self.sp.model_tier_manager.compute_model_tier_and_temperature(
             atr=atr,
             atr_percentile=atr_percentile,
             rsi=rsi,
@@ -460,7 +463,7 @@ class SimulationManager:
             "tf_seconds": tf_seconds, "historical_ohlcv": historical_ohlcv,
             "raw_candles": raw_candles, "current_price": current_price,
             "base_balance": base_balance, "is_btp": is_btp,
-            "model_type": strategy_model_type, "temperature": effective_temp,
+            "model_type": strategy_model_type, "temperature": effective_temp, "reasoning_effort": reasoning_effort,
             "market_hash": market_hash,
             "per_symbol_budget": per_symbol_budget,
             "min_order_amount": min_order_amount,
