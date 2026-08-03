@@ -170,6 +170,12 @@ class _SqliteConnectionWrapper:
 def get_connection():
     """Return a database connection appropriate for the current backend."""
     if _backend == "postgresql":
+        try:
+            stats = _pg_pool.get_stats()
+            if stats.get("pool_size", 0) >= _pg_pool._max_size - 2:
+                logger.warning(f"PostgreSQL connection pool near exhaustion: {stats}")
+        except Exception:
+            pass
         conn = _pg_pool.getconn()
         return _PgConnectionWrapper(conn, _pg_pool)
     else:
@@ -218,6 +224,22 @@ def close_all_sqlite_connections():
         wrapper.force_close()
 
 
+def vacuum_database():
+    """Close all SQLite connections and run VACUUM to reclaim space."""
+    if _backend != "sqlite":
+        logger.info("VACUUM is only supported for SQLite backend.")
+        return
+    close_all_sqlite_connections()
+    conn = sqlite3.connect(settings.DATABASE_PATH, timeout=30)
+    try:
+        conn.execute("VACUUM")
+        logger.info("SQLite VACUUM completed successfully.")
+    except sqlite3.Error as e:
+        logger.error(f"SQLite VACUUM failed: {e}")
+    finally:
+        conn.close()
+
+
 def _normalize_symbol(symbol: str) -> str:
     """Extract the base symbol from a trading pair (e.g., 'AAPL/USD' -> 'AAPL')."""
     return symbol.split("/")[0] if "/" in symbol else symbol
@@ -226,7 +248,7 @@ def _normalize_symbol(symbol: str) -> str:
 # ---------------------------------------------------------------------------
 # Retry decorator (handles both SQLite locks and PostgreSQL deadlocks)
 # ---------------------------------------------------------------------------
-def retry_on_db_lock(max_retries=3, initial_delay=0.5):
+def retry_on_db_lock(max_retries=2, initial_delay=0.1):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -238,7 +260,7 @@ def retry_on_db_lock(max_retries=3, initial_delay=0.5):
                     if "database is locked" in str(e):
                         last_exc = e
                         if attempt < max_retries:
-                            delay = initial_delay * (2 ** attempt)
+                            delay = min(initial_delay * (2 ** attempt), 1.0)
                             time.sleep(delay)
                             continue
                     raise
@@ -248,7 +270,7 @@ def retry_on_db_lock(max_retries=3, initial_delay=0.5):
                     if sqlstate in ('40P01', '40001'):
                         last_exc = e
                         if attempt < max_retries:
-                            delay = initial_delay * (2 ** attempt)
+                            delay = min(initial_delay * (2 ** attempt), 1.0)
                             time.sleep(delay)
                             continue
                     raise
@@ -278,8 +300,8 @@ def _get_existing_columns(table_name: str) -> set:
 def _migrate_db():
     """Add missing columns to existing tables (schema migrations).
 
-    Failed migrations are automatically retried with exponential backoff
-    (up to 3 attempts) to handle transient database locks and deadlocks.
+    All missing migrations are applied in a single transaction to ensure
+    atomicity. If any migration fails, the entire transaction is rolled back.
     """
     migrations = [
         ("trade_history", "timeframe", "ALTER TABLE trade_history ADD COLUMN timeframe TEXT"),
@@ -302,38 +324,28 @@ def _migrate_db():
         ("llm_decision_quality", "is_fallback", "ALTER TABLE llm_decision_quality ADD COLUMN is_fallback INTEGER NOT NULL DEFAULT 0"),
     ]
 
-    max_retries = 3
-    initial_delay = 0.5
+    conn = get_connection()
+    try:
+        missing_migrations = []
+        for table, column, sql in migrations:
+            existing = _get_existing_columns(table)
+            if column not in existing:
+                missing_migrations.append(sql)
 
-    for table, column, sql in migrations:
-        existing = _get_existing_columns(table)
-        if column not in existing:
-            last_exc = None
-            for attempt in range(max_retries + 1):
-                conn = get_connection()
-                try:
-                    conn.execute(_adapt_sql(sql))
-                    conn.commit()
-                    logger.info(f"Migration succeeded: {sql}")
-                    last_exc = None
-                    break
-                except (sqlite3.Error, psycopg.Error) as e:
-                    last_exc = e
-                    if attempt < max_retries:
-                        delay = initial_delay * (2 ** attempt)
-                        logger.warning(
-                            f"Migration {sql} failed (attempt {attempt + 1}/{max_retries + 1}): {type(e).__name__}: {e}. "
-                            f"Retrying in {delay:.1f}s..."
-                        )
-                        time.sleep(delay)
-                    else:
-                        logger.error(
-                            f"Migration {sql} failed after {max_retries + 1} attempts: {type(e).__name__}: {e}"
-                        )
-                finally:
-                    conn.close()
-            # If all retries failed, the column will be retried on next startup
-            # because _get_existing_columns will still report it as missing.
+        if not missing_migrations:
+            return
+
+        try:
+            for sql in missing_migrations:
+                conn.execute(_adapt_sql(sql))
+            conn.commit()
+            logger.info(f"Successfully applied {len(missing_migrations)} database migrations.")
+        except (sqlite3.Error, psycopg.Error) as e:
+            conn.rollback()
+            logger.error(f"Database migration failed, rolling back: {type(e).__name__}: {e}")
+            raise
+    finally:
+        conn.close()
 
 
 def _get_init_statements() -> List[str]:
