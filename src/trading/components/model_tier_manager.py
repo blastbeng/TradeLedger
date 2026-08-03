@@ -1,7 +1,11 @@
 """Model tier selection and prompt complexity computation."""
+import logging
 from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
+from src.database import get_llm_metrics_summary, get_llm_decision_quality_metrics
+
+logger = logging.getLogger(__name__)
 
 
 class ModelTierManager:
@@ -9,6 +13,46 @@ class ModelTierManager:
 
     def __init__(self, engine):
         self.engine = engine
+
+    def _get_dynamic_threshold_adjustment(self) -> float:
+        """Adjust the mind model threshold based on recent cost/performance."""
+        try:
+            metrics = get_llm_metrics_summary(model_filter="main")
+            per_model = metrics.get("per_model", [])
+            
+            mind_tokens = 0
+            mind_calls = 0
+            actuator_tokens = 0
+            actuator_calls = 0
+            
+            for m in per_model:
+                if m["model_type"] == "mind":
+                    mind_tokens += m["tokens"]
+                    mind_calls += m["calls"]
+                elif m["model_type"] == "actuator":
+                    actuator_tokens += m["tokens"]
+                    actuator_calls += m["calls"]
+            
+            # Need sufficient data to make a decision
+            if mind_calls < 10 or actuator_calls < 10:
+                return 0.0
+            
+            mind_avg_tokens = mind_tokens / mind_calls
+            actuator_avg_tokens = actuator_tokens / actuator_calls
+            
+            # If mind is significantly more expensive (e.g., >3x tokens)
+            if mind_avg_tokens > actuator_avg_tokens * 3:
+                # Check overall decision accuracy
+                quality = get_llm_decision_quality_metrics(period_days=7, model_filter="main")
+                accuracy = quality.get("accuracy", 0.0)
+                # If accuracy is below 50%, penalize mind model usage by raising the threshold
+                if accuracy < 50.0:
+                    return 0.1
+            
+            return 0.0
+        except Exception as e:
+            logger.debug(f"Failed to compute dynamic threshold adjustment: {e}")
+            return 0.0
 
     def choose_model_tier(
         self,
@@ -486,7 +530,7 @@ class ModelTierManager:
             # The threshold represents the minimum complexity score (0-1)
             # required to justify the expensive "mind" model.
             # The actuator is the default for routine decisions.
-            threshold = settings.LLM_MIND_MODEL_THRESHOLD
+            threshold = settings.LLM_MIND_MODEL_THRESHOLD + self._get_dynamic_threshold_adjustment()
             # Long-term positions benefit from deeper analysis, so lower
             # the threshold slightly (10% reduction) for those timeframes.
             if timeframe and timeframe in ("1M", "3M", "6M", "1Y", "3Y", "5Y", "10Y"):
