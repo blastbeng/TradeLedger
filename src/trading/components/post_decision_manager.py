@@ -189,8 +189,8 @@ class PostDecisionManager:
                 data.assigned_tf,
                 is_fallback=data.is_fallback,
                 reasoning=validated.reasoning,
-                model=llm_model,
-                provider=llm_provider,
+                model=data.llm_model,
+                provider=data.llm_provider,
                 market_context=market_context,
             )
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
