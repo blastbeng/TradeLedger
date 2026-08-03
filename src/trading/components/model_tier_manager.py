@@ -182,7 +182,7 @@ class ModelTierManager:
         if max_score == 0:
             return "actuator"
         normalized_score = score / max_score
-        return "mind" if normalized_score >= settings.LLM_MIND_MODEL_THRESHOLD * 1.5 else "actuator"
+        return "mind" if normalized_score >= settings.LLM_MIND_MODEL_THRESHOLD else "actuator"
 
     def compute_prompt_complexity(
         self,
@@ -482,10 +482,15 @@ class ModelTierManager:
         if is_critical:
             strategy_model_type = "mind"
         else:
-            threshold = settings.LLM_MIND_MODEL_THRESHOLD * 1.5
-            # Long-term positions benefit from the "mind" model, so use a lower threshold
+            # Use the threshold directly — no artificial multiplier.
+            # The threshold represents the minimum complexity score (0-1)
+            # required to justify the expensive "mind" model.
+            # The actuator is the default for routine decisions.
+            threshold = settings.LLM_MIND_MODEL_THRESHOLD
+            # Long-term positions benefit from deeper analysis, so lower
+            # the threshold slightly (10% reduction) for those timeframes.
             if timeframe and timeframe in ("1M", "3M", "6M", "1Y", "3Y", "5Y", "10Y"):
-                threshold = settings.LLM_MIND_MODEL_THRESHOLD * 1.2
+                threshold = settings.LLM_MIND_MODEL_THRESHOLD * 0.9
             strategy_model_type = "mind" if strategy_complexity >= threshold else "actuator"
 
         effective_temp = self._get_effective_temperature(

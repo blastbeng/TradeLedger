@@ -928,13 +928,13 @@ class Settings(BaseSettings):
     # required to trigger the "mind" model. Lower values = more frequent use
     # of the "mind" model (higher cost/quality); higher values = more frequent
     # use of the "actuator" model (lower cost/faster).
-    LLM_MIND_MODEL_THRESHOLD: float = 0.75
+    LLM_MIND_MODEL_THRESHOLD: float = 0.55
 
     @field_validator("LLM_MIND_MODEL_THRESHOLD")
     @classmethod
     def validate_llm_mind_model_threshold(cls, v: float) -> float:
-        if v < 0.05 or v > 0.95:
-            raise ValueError("LLM_MIND_MODEL_THRESHOLD must be between 0.05 and 0.95")
+        if v < 0.20 or v > 0.95:
+            raise ValueError("LLM_MIND_MODEL_THRESHOLD must be between 0.20 and 0.95")
         return v
 
     @field_validator("LLM_PROMPT_CACHING_ENABLED")
