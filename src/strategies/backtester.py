@@ -882,6 +882,8 @@ def _compute_stats(
             return 0.0
         if 1 + ret <= 0:
             return -1.0
+        if years < 1e-6:
+            return ret
         return (1 + ret) ** (1 / years) - 1
 
     annualized_net_return = 0.0
