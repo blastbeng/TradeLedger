@@ -28,6 +28,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 
+# Run tests to ensure code integrity before starting the bot
+COPY tests/ ./tests/
+RUN pip install --no-cache-dir pytest pytest-asyncio && \
+    python -m pytest tests/ -v && \
+    rm -rf ./tests && \
+    pip uninstall -y pytest pytest-asyncio
+
 # Create data directory for SQLite and set ownership
 RUN mkdir -p /app/data && chown 1000:1000 /app/data
 
