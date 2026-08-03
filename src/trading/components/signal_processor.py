@@ -348,7 +348,7 @@ class SignalProcessor:
             next_ex_dividend=_ctx.get("next_ex_dividend"),
             news_section=news_section,
             macro_economic_context=get_macro_economic_context(),
-            analyst_ratings=analyst_ratings,
+            analyst_ratings=_ctx.get("analyst_ratings"),
         )
         analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(prompt_data)
 
@@ -1144,6 +1144,7 @@ class SignalProcessor:
             "historical_backtest_results": historical_backtest_results,
             "dividend_yield": dividend_yield,
             "next_ex_dividend": next_ex_dividend,
+            "analyst_ratings": analyst_ratings if not isinstance(analyst_ratings, Exception) else None,
         }
 
     async def build_analysis_prompt_and_snapshot(
