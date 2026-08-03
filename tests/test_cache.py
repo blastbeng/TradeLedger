@@ -351,6 +351,11 @@ def test_should_use_primary_model_premarket(mock_datetime):
 
 @patch("src.llm.cache.datetime")
 def test_should_use_primary_model_after_close(mock_datetime):
+    from src.llm import cache
+    cache._primary_model_cache = None
+    cache._primary_model_cache_ts = 0.0
+    cache._primary_model_cache_settings = None
+
     mock_datetime.now.return_value = datetime(2024, 1, 8, 17, 0, 0, tzinfo=timezone.utc)
     mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
     assert _should_use_primary_model() is False

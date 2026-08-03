@@ -15,7 +15,7 @@ async def test_compute_position_size():
     executor.shared_state._cycle_spent_lock = AsyncMock()
     
     mock_engine._get_cached_position_tickers = AsyncMock(return_value={})
-    mock_engine.redis.get = AsyncMock(return_value=None)
+    mock_engine.redis.get = MagicMock(return_value=None)
     mock_engine.config_service.get_config = AsyncMock(return_value=None)
     mock_engine._get_global_risk_multiplier = AsyncMock(return_value=1.0)
     

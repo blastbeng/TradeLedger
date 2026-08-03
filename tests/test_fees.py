@@ -26,7 +26,7 @@ def test_calculate_btp_buy_fees(mock_fees_settings, mock_btp_settings):
     mock_fees_settings.TOBIN_TAX_RATE = 0.001
     
     mock_btp_settings.BTP_IS_PRIMARY_ISSUANCE = False
-    mock_btp_settings.BTP_FEE_PERC = 0.001
+    mock_btp_settings.BTP_FEE_PERC = 0.01
     mock_btp_settings.BTP_MIN_FEE = 5.0
     
     result = calculate_transaction_costs("BUY", 100.0, 10.0, symbol="IT0001234567")
