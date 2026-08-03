@@ -215,7 +215,7 @@ def _analyze_sentiment(text: str) -> Dict[str, Any]:
             compound = max(-1.0, min(1.0, compound))
             return {"label": label, "compound": round(compound, 4)}
     except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
-        logger.warning(f"LLM sentiment analysis failed: {type(e).__name__}: {e}")
+        logger.warning(f"LLM sentiment analysis failed: {type(e).__name__}: {e}", exc_info=True)
 
     return {"label": "neutral", "compound": 0.0}
 

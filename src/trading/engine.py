@@ -1838,12 +1838,19 @@ class TradingEngine:
             await self._interruptible_sleep(600)  # check every 10 minutes
 
     async def _record_unexpected_exception(self, context: str, exc: Exception) -> None:
-        """Record metrics for unexpected exceptions in Redis."""
+        """Record metrics for unexpected exceptions in Redis and alert on persistent failures."""
         try:
             exc_type = type(exc).__name__
             key = f"metrics:unexpected_exception:{context}:{exc_type}"
-            await asyncio.to_thread(self.redis.incr, key)
+            count = await asyncio.to_thread(self.redis.incr, key)
             await asyncio.to_thread(self.redis.expire, key, 86400)
+            
+            # Alert on persistent failures (e.g., 10 occurrences)
+            if count == 10 and self.notifier:
+                await self.notifier.send_notification(
+                    f"⚠️ Persistent error: {exc_type} in {context} occurred {count} times.",
+                    summary={"action": "ALERT", "reason": f"Persistent {exc_type} in {context}"}
+                )
         except Exception:
             pass
 

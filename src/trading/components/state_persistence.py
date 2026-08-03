@@ -80,7 +80,7 @@ class StatePersistence:
         """
         engine = self.engine
         if not self._persistence_lock.acquire(blocking=True, timeout=2.0):
-            logger.warning("Could not acquire persistence lock for sync save — async save in progress.")
+            logger.info("Persistence lock held by async save; state is already being persisted.")
             return
         try:
             save_trading_state("current_symbols", self.shared_state.current_symbols)

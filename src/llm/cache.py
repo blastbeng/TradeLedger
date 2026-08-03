@@ -260,7 +260,7 @@ def _split_and_merge_prompt(
                 )
             return result["content"]
         except Exception as e:
-            logger.error("Failed to summarize chunk %d: %s. Truncating instead.", i + 1, e)
+            logger.error("Failed to summarize chunk %d: %s. Truncating instead.", i + 1, e, exc_info=True)
             # If summarization fails, truncate the chunk to fit the weak model's limit
             return chunk[:chunk_limit * 4]
 
@@ -294,7 +294,7 @@ def _split_and_merge_prompt(
         try:
             results[idx] = future.result()
         except Exception as e:
-            logger.error("Chunk %d summarization failed unexpectedly: %s", idx, e)
+            logger.error("Chunk %d summarization failed unexpectedly: %s", idx, e, exc_info=True)
             results[idx] = chunks[idx][:chunk_limit * 4]
             
     summaries = [r for r in results if r is not None]
@@ -396,7 +396,7 @@ def _sync_blacklist_from_db():
             else:
                 remove_model_from_blacklist(model)
     except Exception as e:
-        logger.warning(f"Failed to sync blacklist from DB: {e}")
+        logger.warning(f"Failed to sync blacklist from DB: {e}", exc_info=True)
 
 def _is_model_blacklisted(redis_client, model: str) -> bool:
     """Check if a model is currently blacklisted in Redis."""
@@ -411,8 +411,8 @@ def _record_model_success(redis_client, model: str):
         redis_client.delete(f"llm:fail_count:{model}")
         redis_client.delete(f"llm:blacklist_level:{model}")
         remove_model_from_blacklist(model)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to record model success: {type(e).__name__}: {e}")
 
 def _record_model_failure(redis_client, model: str, provider: str, error: str):
     """Track failures and blacklist model if threshold reached."""
@@ -432,7 +432,7 @@ def _record_model_failure(redis_client, model: str, provider: str, error: str):
             add_model_to_blacklist(model, provider, error[:500], expires_at)
             logger.warning(f"Model {model} blacklisted for {ttl}s due to repeated failures.")
     except Exception as e:
-        logger.warning(f"Failed to record model failure: {e}")
+        logger.warning(f"Failed to record model failure: {e}", exc_info=True)
 
 
 def get_model_failure_stats() -> List[Dict[str, Any]]:
@@ -472,7 +472,7 @@ def get_model_failure_stats() -> List[Dict[str, Any]]:
             stats[model]["ttl_remaining"] = ttl if ttl > 0 else 0
             
     except Exception as e:
-        logger.warning(f"Failed to get model failure stats: {e}")
+        logger.warning(f"Failed to get model failure stats: {e}", exc_info=True)
     
     return list(stats.values())
 
@@ -552,7 +552,7 @@ def _get_cached_response(
             except (json.JSONDecodeError, TypeError):
                 pass
     except Exception as e:
-        logger.warning(f"Redis cache get failed: {type(e).__name__}: {e}. Proceeding without cache.")
+        logger.warning(f"Redis cache get failed: {type(e).__name__}: {e}. Proceeding without cache.", exc_info=True)
     return None
 
 
@@ -1255,7 +1255,7 @@ def _try_aol_model(
             _record_model_success(redis_client, aol_model)
             return response_text, usage, aol_provider, aol_model
         except Exception as aol_e:
-            logger.warning("AOL model %s failed: %s", aol_model, aol_e)
+            logger.warning("AOL model %s failed: %s", aol_model, aol_e, exc_info=True)
             _record_model_failure(redis_client, aol_model, aol_provider, str(aol_e))
             _save_metric({
                 "timestamp": time.time(),
@@ -1519,7 +1519,7 @@ def get_cached_llm_response(
         redis_client.set(cache_key, cache_data, ex=ttl)
         logger.debug("LLM cache miss – stored response for key %s (provider=%s, model=%s)", cache_key[:32], used_provider, used_model)
     except Exception as e:
-        logger.warning(f"Redis cache setex failed: {type(e).__name__}: {e}. Response will not be cached.")
+        logger.warning(f"Redis cache setex failed: {type(e).__name__}: {e}. Response will not be cached.", exc_info=True)
     return {
         "response": response_text,
         "provider": used_provider,
