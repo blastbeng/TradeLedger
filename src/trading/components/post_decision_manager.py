@@ -176,13 +176,22 @@ class PostDecisionManager:
 
         # Record decision for quality tracking
         try:
+            market_context = {
+                "market_regime": data.market_regime,
+                "sentiment": data.aggregate_sentiment,
+                "atr": data.atr,
+            }
             await asyncio.to_thread(
                 insert_llm_decision,
                 data.symbol,
                 validated.action,
                 data.current_price,
                 data.assigned_tf,
-                is_fallback=data.is_fallback
+                is_fallback=data.is_fallback,
+                reasoning=validated.reasoning,
+                model=llm_model,
+                provider=llm_provider,
+                market_context=market_context,
             )
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to insert LLM decision for quality tracking: {type(e).__name__}: {e}", extra={"event": "insert_llm_decision_failed", "symbol": data.symbol, "error_type": type(e).__name__})

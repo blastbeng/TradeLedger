@@ -1800,11 +1800,31 @@ class TradingEngine:
                     else:
                         profitable = False
 
+                    # Generate a heuristic analysis of why the decision was right or wrong
+                    price_change_pct = ((outcome_price - entry_price) / entry_price) * 100 if entry_price else 0.0
+                    analysis_parts = []
+                    if profitable:
+                        analysis_parts.append(f"Price moved {abs(price_change_pct):.2f}% in favor of the {action} decision.")
+                    else:
+                        analysis_parts.append(f"Price moved {abs(price_change_pct):.2f}% against the {action} decision.")
+                    
+                    ctx = decision.get("market_context")
+                    if isinstance(ctx, dict):
+                        if ctx.get("market_regime"):
+                            analysis_parts.append(f"Market regime was '{ctx['market_regime']}'.")
+                        if ctx.get("sentiment") is not None:
+                            analysis_parts.append(f"News sentiment was {ctx['sentiment']}.")
+                        if ctx.get("atr") is not None:
+                            analysis_parts.append(f"ATR was {ctx['atr']:.4f}.")
+                    
+                    outcome_analysis = " ".join(analysis_parts)
+
                     await asyncio.to_thread(
                         update_llm_decision_outcome,
                         decision["id"],
                         outcome_price,
-                        profitable
+                        profitable,
+                        outcome_analysis
                     )
                 
                 logger.info(f"Evaluated {len(pending_decisions)} LLM decisions for quality tracking.")
