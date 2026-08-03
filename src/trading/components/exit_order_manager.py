@@ -48,18 +48,15 @@ class ExitOrderManager:
 
         # --- Stop-loss price ---
         sl_ot = signal.stop_loss_order_type
-        if sl_ot == "stop":
-            sl_price = signal.stop_loss_stop_price
-            if sl_price is None and stop_loss_pct is not None:
-                sl_price = entry_price * (1 - stop_loss_pct)
-        elif sl_ot == "stop_limit":
+        if sl_ot in ("stop", "stop_limit"):
             sl_price = signal.stop_loss_stop_price
             if sl_price is None and stop_loss_pct is not None:
                 sl_price = entry_price * (1 - stop_loss_pct)
         elif sl_ot == "trailing_stop":
             sl_price = None  # not a fixed price
         else:
-            sl_price = None
+            # Fallback to standard stop loss if order type not specified
+            sl_price = entry_price * (1 - stop_loss_pct) if stop_loss_pct is not None else None
 
         # --- Take-profit price ---
         tp_ot = signal.take_profit_order_type
@@ -70,7 +67,8 @@ class ExitOrderManager:
         elif tp_ot == "market":
             tp_price = None  # will be handled by risk loop later
         else:
-            tp_price = None
+            # Fallback to standard take profit if order type not specified
+            tp_price = entry_price * (1 + take_profit_pct) if take_profit_pct is not None else None
 
         return {
             "stop_loss_price": sl_price,

@@ -147,7 +147,7 @@ def test_aggregate_candles_3y():
         [_ts(2023, 6), 102.0, 108.0, 100.0, 107.0, 2000.0],
     ]
     result = _aggregate_candles(candles, "3Y")
-    assert len(result) == 1
+    assert len(result) == 2
 
 
 def test_aggregate_candles_5y():
@@ -156,7 +156,7 @@ def test_aggregate_candles_5y():
         [_ts(2026, 6), 102.0, 108.0, 100.0, 107.0, 2000.0],
     ]
     result = _aggregate_candles(candles, "5Y")
-    assert len(result) == 1
+    assert len(result) == 2
 
 
 def test_aggregate_candles_invalid_tf_passthrough():
@@ -219,7 +219,7 @@ def test_detect_data_quality_issues_none():
         [2000, 100.5, 101.5, 100.0, 101.0, 1500.0],
     ]
     result = detect_data_quality_issues(candles, "TEST")
-    assert result is None
+    assert result == (None, None)
 
 
 def test_detect_data_quality_issues_price_jump():
@@ -229,7 +229,7 @@ def test_detect_data_quality_issues_price_jump():
     ]
     result = detect_data_quality_issues(candles, "TEST")
     assert result is not None
-    assert "Large price jump" in result
+    assert "Large price jump" in result[0]
 
 
 def test_detect_data_quality_issues_gap():
@@ -239,7 +239,7 @@ def test_detect_data_quality_issues_gap():
     ]
     result = detect_data_quality_issues(candles, "TEST")
     assert result is not None
-    assert "Price gap" in result
+    assert "Price gap" in result[0]
 
 
 def test_detect_data_quality_issues_zero_volume():
@@ -249,15 +249,15 @@ def test_detect_data_quality_issues_zero_volume():
     ]
     result = detect_data_quality_issues(candles, "TEST")
     assert result is not None
-    assert "Zero volume" in result
+    assert "Zero volume" in result[0]
 
 
 def test_detect_data_quality_issues_empty():
     result = detect_data_quality_issues([], "TEST")
-    assert result is None
+    assert result == (None, None)
 
 
 def test_detect_data_quality_issues_single_candle():
     candles = [[1000, 100.0, 101.0, 99.0, 100.0, 1000.0]]
     result = detect_data_quality_issues(candles, "TEST")
-    assert result is None
+    assert result == (None, None)

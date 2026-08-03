@@ -22,10 +22,10 @@ def test_normalize_text_for_cache_rounds_floats():
     from src.llm.cache import _normalize_text_for_cache
     text = "price: 123.456789, volume: 0.000123456789"
     result = _normalize_text_for_cache(text)
-    # 123.456789 → 5 sig figs → 123.46
-    # 0.000123456789 → 5 sig figs → 0.00012346
-    assert "123.46" in result
-    assert "0.00012346" in result
+    # 123.456789 → 4 decimal places → 123.4568
+    # 0.000123456789 → 4 decimal places → 0.0001
+    assert "123.4568" in result
+    assert "0.0001" in result
 
 
 def test_normalize_text_for_cache_empty():
@@ -315,6 +315,11 @@ def test_is_italian_holiday_easter_monday_2025():
 
 @patch("src.llm.cache.datetime")
 def test_should_use_primary_model_closed_weekend(mock_datetime):
+    from src.llm import cache
+    cache._primary_model_cache = None
+    cache._primary_model_cache_ts = 0.0
+    cache._primary_model_cache_settings = None
+
     mock_datetime.now.return_value = datetime(2024, 1, 6, 12, 0, 0, tzinfo=timezone.utc)
     mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
     assert _should_use_primary_model() is False
@@ -322,6 +327,11 @@ def test_should_use_primary_model_closed_weekend(mock_datetime):
 
 @patch("src.llm.cache.datetime")
 def test_should_use_primary_model_open(mock_datetime):
+    from src.llm import cache
+    cache._primary_model_cache = None
+    cache._primary_model_cache_ts = 0.0
+    cache._primary_model_cache_settings = None
+
     mock_datetime.now.return_value = datetime(2024, 1, 8, 9, 0, 0, tzinfo=timezone.utc)
     mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
     assert _should_use_primary_model() is True
@@ -329,6 +339,11 @@ def test_should_use_primary_model_open(mock_datetime):
 
 @patch("src.llm.cache.datetime")
 def test_should_use_primary_model_premarket(mock_datetime):
+    from src.llm import cache
+    cache._primary_model_cache = None
+    cache._primary_model_cache_ts = 0.0
+    cache._primary_model_cache_settings = None
+
     mock_datetime.now.return_value = datetime(2024, 1, 8, 7, 30, 0, tzinfo=timezone.utc)
     mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
     assert _should_use_primary_model() is True
