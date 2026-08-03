@@ -93,17 +93,16 @@ def test_cancel_order(trader):
         assert order.status == "canceled"
 
 
-def test_partial_fill(trader):
+def test_market_buy_capped_volume(trader):
     with patch("src.trading.paper_trader.get_quotes_cached", return_value={"AAPL": {"last": 100.0}}), \
          patch("src.trading.paper_trader.calculate_transaction_costs", return_value={"net_value": 1010.0, "total_costs": 10.0}), \
          patch.object(trader, "_get_dynamic_slippage", return_value=0.0), \
          patch.object(trader, "_get_max_fillable_volume", return_value=5.0):
         
         result = trader.create_market_buy_order("AAPL/EUR", 1000.0)
-        # Since requested is 10 units but max_vol is 5, it should partially fill and remain open
-        assert result["status"] == "open"
-        order = trader.get_order(result["id"])
-        assert order.filled_qty == 5.0
+        # Since requested is 10 units but max_vol is 5, it should cap the amount to 5 and fill
+        assert result["status"] == "filled"
+        assert result["amount"] == 5.0
 
 
 def test_dynamic_slippage_applied(trader):

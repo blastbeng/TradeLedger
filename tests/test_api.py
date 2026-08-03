@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
-from src.web.app import app, set_engine
+from src.web.app import app, set_engine, verify_auth, verify_csrf
 
 
 @pytest.fixture
@@ -9,14 +9,11 @@ def client():
     with patch("src.web.app.get_redis_client") as mock_redis, \
          patch("src.web.app.check_redis_connection", return_value=True), \
          patch("src.web.app.is_redis_available", return_value=True), \
-         patch("src.web.app.settings") as mock_settings, \
          patch("src.web.app.run_in_threadpool", new=AsyncMock(side_effect=lambda f, *args, **kwargs: f(*args, **kwargs))):
         
-        # Disable auth and CSRF for testing
-        mock_settings.WEB_USERNAME = ""
-        mock_settings.WEB_PASSWORD = ""
-        mock_settings.WEB_RATE_LIMIT_REQUESTS = 1000
-        mock_settings.WEB_RATE_LIMIT_WINDOW = 60
+        # Bypass auth and CSRF using FastAPI dependency overrides
+        app.dependency_overrides[verify_auth] = lambda: True
+        app.dependency_overrides[verify_csrf] = lambda: True
         
         mock_redis_client = MagicMock()
         mock_redis.return_value = mock_redis_client
@@ -38,15 +35,19 @@ def client():
         mock_engine._market_data_manager._get_quotes_async = AsyncMock(return_value={})
         mock_engine._get_stock_name = AsyncMock(return_value="Test")
         mock_engine._format_symbol_display.return_value = "TEST"
+        mock_engine.redis = mock_redis_client
         
         set_engine(mock_engine)
         
         with TestClient(app) as c:
             yield c
+        
+        # Clean up dependency overrides
+        app.dependency_overrides.clear()
 
 
 def test_health_endpoint(client):
-    with patch("src.web.app.check_llm_health", new_callable=AsyncMock) as mock_llm:
+    with patch("src.llm.llm_client.check_llm_health") as mock_llm:
         mock_llm.return_value = {
             "mind": {"status": "connected"},
             "actuator": {"status": "connected"},
