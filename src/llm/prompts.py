@@ -124,6 +124,7 @@ class StrategyPromptData:
     next_ex_dividend: Optional[Tuple[str, int]] = None
     news_section: Optional[str] = None
     macro_economic_context: Optional[Dict[str, Any]] = None
+    analyst_ratings: Optional[Dict[str, Any]] = None
 
 
 def build_strategy_prompt(
@@ -229,6 +230,7 @@ def build_strategy_prompt(
     dividend_yield = data.dividend_yield
     next_ex_dividend = data.next_ex_dividend
     macro_economic_context = data.macro_economic_context
+    analyst_ratings = data.analyst_ratings
     # Trim large lists to prevent context window overflow
     if recent_trades and len(recent_trades) > 20:
         recent_trades = recent_trades[-20:]
@@ -655,6 +657,32 @@ Maximum symbols to trade: {max_symbols}
 
     if daily_pivot_points:
         prompt += f"\nPivots: P={daily_pivot_points['pivot']:.2f},R1={daily_pivot_points['r1']:.2f},R2={daily_pivot_points['r2']:.2f},S1={daily_pivot_points['s1']:.2f},S2={daily_pivot_points['s2']:.2f}\n"
+
+    # --- Analyst Ratings ---
+    if analyst_ratings and not is_long_term:
+        recs = analyst_ratings.get("recommendations")
+        target_mean = analyst_ratings.get("target_mean_price")
+        target_high = analyst_ratings.get("target_high_price")
+        target_low = analyst_ratings.get("target_low_price")
+        current_price_analyst = analyst_ratings.get("current_price")
+        
+        if recs or target_mean is not None:
+            prompt += "\n**Analyst Ratings:**"
+            if recs:
+                prompt += (
+                    f" Recs: StrongBuy={recs.get('strong_buy', 0)}, Buy={recs.get('buy', 0)}, "
+                    f"Hold={recs.get('hold', 0)}, Sell={recs.get('sell', 0)}, StrongSell={recs.get('strong_sell', 0)}"
+                )
+            if target_mean is not None:
+                prompt += f". Target: Mean={target_mean:.2f}"
+                if target_high is not None:
+                    prompt += f", High={target_high:.2f}"
+                if target_low is not None:
+                    prompt += f", Low={target_low:.2f}"
+                if current_price_analyst is not None:
+                    upside_pct = ((target_mean - current_price_analyst) / current_price_analyst) * 100 if current_price_analyst > 0 else 0.0
+                    prompt += f" (Upside: {upside_pct:+.1f}%)"
+            prompt += "\n"
 
     # --- News section (detailed articles) ---
     if not is_long_term:

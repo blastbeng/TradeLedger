@@ -348,6 +348,7 @@ class SignalProcessor:
             next_ex_dividend=_ctx.get("next_ex_dividend"),
             news_section=news_section,
             macro_economic_context=get_macro_economic_context(),
+            analyst_ratings=analyst_ratings,
         )
         analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(prompt_data)
 
@@ -1037,6 +1038,7 @@ class SignalProcessor:
             min_stop_atr_mult_raw,
             min_hold_time_mult_raw,
             global_min_rr_raw,
+            analyst_ratings,
         ) = await asyncio.gather(
             asyncio.to_thread(get_backtest_results_for_symbol, symbol, assigned_tf, 10),
             self._fetch_dividend_data(symbol, ticker),
@@ -1048,6 +1050,7 @@ class SignalProcessor:
             engine.config_service.get_config("min_stop_loss_atr_mult"),
             engine.config_service.get_config("min_max_hold_time_mult"),
             engine.config_service.get_config("min_risk_reward_ratio"),
+            engine.event_bus.request("get_analyst_ratings", symbol),
             return_exceptions=True,
         )
 
@@ -1074,6 +1077,9 @@ class SignalProcessor:
         min_stop_atr_mult = float(min_stop_atr_mult_raw) if not isinstance(min_stop_atr_mult_raw, Exception) and min_stop_atr_mult_raw else 1.0
         min_hold_time_mult = float(min_hold_time_mult_raw) if not isinstance(min_hold_time_mult_raw, Exception) and min_hold_time_mult_raw else 1.0
         global_min_rr = float(global_min_rr_raw) if not isinstance(global_min_rr_raw, Exception) and global_min_rr_raw else None
+
+        if isinstance(analyst_ratings, Exception):
+            analyst_ratings = None
 
         # Sentiment trend
         sentiment_trend_val = None
