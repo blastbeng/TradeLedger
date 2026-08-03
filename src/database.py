@@ -326,6 +326,11 @@ def _migrate_db():
         ("llm_metrics", "is_fallback", "ALTER TABLE llm_metrics ADD COLUMN is_fallback INTEGER NOT NULL DEFAULT 0"),
         ("dividends", "reinvested", "ALTER TABLE dividends ADD COLUMN reinvested INTEGER NOT NULL DEFAULT 0"),
         ("llm_decision_quality", "is_fallback", "ALTER TABLE llm_decision_quality ADD COLUMN is_fallback INTEGER NOT NULL DEFAULT 0"),
+        ("llm_decision_quality", "reasoning", "ALTER TABLE llm_decision_quality ADD COLUMN reasoning TEXT"),
+        ("llm_decision_quality", "model", "ALTER TABLE llm_decision_quality ADD COLUMN model TEXT"),
+        ("llm_decision_quality", "provider", "ALTER TABLE llm_decision_quality ADD COLUMN provider TEXT"),
+        ("llm_decision_quality", "market_context", "ALTER TABLE llm_decision_quality ADD COLUMN market_context TEXT"),
+        ("llm_decision_quality", "outcome_analysis", "ALTER TABLE llm_decision_quality ADD COLUMN outcome_analysis TEXT"),
     ]
 
     conn = get_connection()
@@ -2999,18 +3004,33 @@ def cleanup_old_dividends(retention_days: int = 365):
 
 
 @retry_on_db_lock()
-def insert_llm_decision(symbol: str, action: str, entry_price: float, timeframe: str, is_fallback: bool = False):
+def insert_llm_decision(
+    symbol: str,
+    action: str,
+    entry_price: float,
+    timeframe: str,
+    is_fallback: bool = False,
+    reasoning: Optional[str] = None,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+    market_context: Optional[Dict[str, Any]] = None,
+):
     """Inserts a new LLM decision into the quality tracking table."""
     timestamp = int(time.time() * 1000)
     conn = get_connection()
     try:
         sql = _adapt_sql(
             """
-            INSERT INTO llm_decision_quality (symbol, timestamp, action, entry_price, timeframe, evaluated, is_fallback)
-            VALUES (%s, %s, %s, %s, %s, 0, %s)
+            INSERT INTO llm_decision_quality (
+                symbol, timestamp, action, entry_price, timeframe, evaluated, is_fallback,
+                reasoning, model, provider, market_context
+            ) VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s)
             """
         )
-        conn.execute(sql, (symbol, timestamp, action, entry_price, timeframe, 1 if is_fallback else 0))
+        conn.execute(sql, (
+            symbol, timestamp, action, entry_price, timeframe, 1 if is_fallback else 0,
+            reasoning, model, provider, json.dumps(market_context) if market_context else None
+        ))
         conn.commit()
     finally:
         conn.close()
@@ -3023,31 +3043,46 @@ def get_pending_llm_decisions(evaluation_window_seconds: int) -> List[Dict[str, 
     try:
         sql = _adapt_sql(
             """
-            SELECT id, symbol, timestamp, action, entry_price, timeframe
+            SELECT id, symbol, timestamp, action, entry_price, timeframe, reasoning, model, provider, market_context
             FROM llm_decision_quality
             WHERE evaluated = 0 AND timestamp <= %s
             """
         )
         rows = conn.execute(sql, (cutoff_timestamp,)).fetchall()
-        return [dict(row) for row in rows]
+        results = []
+        for row in rows:
+            row_dict = dict(row)
+            if row_dict.get("market_context"):
+                try:
+                    row_dict["market_context"] = json.loads(row_dict["market_context"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append(row_dict)
+        return results
     finally:
         conn.close()
 
 
 @retry_on_db_lock()
-def update_llm_decision_outcome(decision_id: int, outcome_price: float, outcome_profitable: bool):
-    """Updates an LLM decision record with the actual outcome."""
+def update_llm_decision_outcome(
+    decision_id: int,
+    outcome_price: float,
+    outcome_profitable: bool,
+    outcome_analysis: Optional[str] = None
+):
+    """Updates an LLM decision record with the actual outcome and analysis."""
     outcome_timestamp = int(time.time() * 1000)
     conn = get_connection()
     try:
         sql = _adapt_sql(
             """
             UPDATE llm_decision_quality
-            SET outcome_price = %s, outcome_timestamp = %s, outcome_profitable = %s, evaluated = 1
+            SET outcome_price = %s, outcome_timestamp = %s, outcome_profitable = %s, evaluated = 1,
+                outcome_analysis = %s
             WHERE id = %s
             """
         )
-        conn.execute(sql, (outcome_price, outcome_timestamp, 1 if outcome_profitable else 0, decision_id))
+        conn.execute(sql, (outcome_price, outcome_timestamp, 1 if outcome_profitable else 0, outcome_analysis, decision_id))
         conn.commit()
     finally:
         conn.close()
@@ -3220,5 +3255,34 @@ def get_peak_total_equity() -> Optional[float]:
         if row:
             return float(row["peak_total_equity"])
         return None
+    finally:
+        conn.close()
+
+
+def get_recent_wrong_decisions(limit: int = 20) -> List[Dict[str, Any]]:
+    """Retrieve recent incorrect LLM decisions with their reasoning and context."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            SELECT symbol, timestamp, action, entry_price, timeframe, reasoning, model, provider,
+                   market_context, outcome_price, outcome_analysis
+            FROM llm_decision_quality
+            WHERE evaluated = 1 AND outcome_profitable = 0
+            ORDER BY timestamp DESC
+            LIMIT %s
+            """
+        )
+        rows = conn.execute(sql, (limit,)).fetchall()
+        results = []
+        for row in rows:
+            row_dict = dict(row)
+            if row_dict.get("market_context"):
+                try:
+                    row_dict["market_context"] = json.loads(row_dict["market_context"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append(row_dict)
+        return results
     finally:
         conn.close()
