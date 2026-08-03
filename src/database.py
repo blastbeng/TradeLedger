@@ -178,7 +178,12 @@ def get_connection():
     if _backend == "postgresql":
         try:
             stats = _pg_pool.get_stats()
-            if stats.get("pool_size", 0) >= _pg_pool._max_size - 2:
+            # Only warn if requests are actually waiting or pool is completely exhausted
+            is_near_exhaustion = (
+                stats.get("requests_waiting", 0) > 0 or
+                (stats.get("pool_size", 0) >= _pg_pool._max_size and stats.get("pool_available", 0) == 0)
+            )
+            if is_near_exhaustion:
                 global _last_pool_warning_ts
                 now = time.time()
                 if now - _last_pool_warning_ts > 60:
