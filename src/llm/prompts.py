@@ -234,6 +234,7 @@ def build_strategy_prompt(
     macro_economic_context = data.macro_economic_context
     analyst_ratings = data.analyst_ratings
     insider_transactions = data.insider_transactions
+    options_summary = data.options_summary
     # Trim large lists to prevent context window overflow
     if recent_trades and len(recent_trades) > 20:
         recent_trades = recent_trades[-20:]
