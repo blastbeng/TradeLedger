@@ -155,6 +155,7 @@ def _get_g4f_response(
     messages: Optional[List[Dict[str, str]]] = None,
     add_cache_control: bool = False,
     thinking_enabled: bool = True,
+    reasoning_effort: str = "low",
     max_retries: int = 3,
 ) -> dict:
     """Send a prompt to the configured g4f model and return a dict with 'content' and 'usage'."""
@@ -194,6 +195,10 @@ def _get_g4f_response(
         "messages": api_messages,
         "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
     }
+
+    # Always send reasoning_effort: "low" when thinking is disabled,
+    # or the computed value when thinking is enabled.
+    payload["reasoning_effort"] = "low" if not thinking_enabled else reasoning_effort
 
     for attempt in range(max_retries):
         try:

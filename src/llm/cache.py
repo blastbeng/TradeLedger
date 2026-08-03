@@ -659,6 +659,7 @@ def _execute_primary_call(
     model_type: str,
     request_type: Optional[str],
     is_fallback: bool,
+    reasoning_effort: str = "low",
 ) -> Tuple[str, dict, str, str, bool]:
     """Execute the primary LLM call and return response, usage, and model info."""
     redis_client = get_redis_client()
@@ -682,6 +683,7 @@ def _execute_primary_call(
                     messages=api_messages,
                     add_cache_control=add_cache_control,
                     thinking_enabled=thinking_enabled,
+                    reasoning_effort=reasoning_effort,
                     max_retries=3,
                 )
             elif provider == "g4f":
@@ -694,6 +696,7 @@ def _execute_primary_call(
                     messages=api_messages,
                     add_cache_control=add_cache_control,
                     thinking_enabled=thinking_enabled,
+                    reasoning_effort=reasoning_effort,
                     max_retries=3,
                 )
             else:
@@ -706,6 +709,7 @@ def _execute_primary_call(
                     messages=api_messages,
                     add_cache_control=add_cache_control,
                     thinking_enabled=thinking_enabled,
+                    reasoning_effort=reasoning_effort,
                     max_retries=3,
                 )
 
@@ -754,6 +758,7 @@ def _execute_fallback_call(
     thinking_enabled: bool,
     request_type: Optional[str],
     provider: str = None,
+    reasoning_effort: str = "low",
 ) -> Tuple[str, dict, str, str, bool]:
     """Execute fallback LLM call if primary fails."""
     if not settings.LLM_FALLBACK_ENABLED:
@@ -876,6 +881,7 @@ def _execute_fallback_call(
                         messages=api_messages,
                         add_cache_control=fallback_add_cache_control,
                         thinking_enabled=thinking_enabled,
+                        reasoning_effort=reasoning_effort,
                         max_retries=3,
                     )
                     response_text = result["content"]
@@ -993,6 +999,7 @@ def _execute_fallback_call(
                     messages=api_messages,
                     add_cache_control=fallback_add_cache_control,
                     thinking_enabled=thinking_enabled,
+                    reasoning_effort=reasoning_effort,
                     max_retries=3,
                 )
                 response_text = result["content"]
@@ -1113,6 +1120,7 @@ def _execute_fallback_call(
                         messages=api_messages,
                         add_cache_control=fallback_add_cache_control,
                         thinking_enabled=thinking_enabled,
+                        reasoning_effort=reasoning_effort,
                         max_retries=3,
                     )
                     response_text = result["content"]
@@ -1161,6 +1169,7 @@ def _try_aol_model(
     add_cache_control: bool,
     thinking_enabled: bool,
     request_type: Optional[str] = None,
+    reasoning_effort: str = "low",
 ) -> Optional[Tuple[str, dict, str, str]]:
     """Try the AOL (Always Online) models. Returns (response_text, usage, provider, model) or None on failure."""
     aol_provider = settings.AOL_LLM_PROVIDER
@@ -1243,6 +1252,7 @@ def _try_aol_model(
                     messages=aol_api_messages,
                     add_cache_control=aol_add_cache_control,
                     thinking_enabled=thinking_enabled,
+                    reasoning_effort=reasoning_effort,
                     max_retries=3,
                 )
             elif aol_provider == "g4f":
@@ -1255,6 +1265,7 @@ def _try_aol_model(
                     messages=aol_api_messages,
                     add_cache_control=aol_add_cache_control,
                     thinking_enabled=thinking_enabled,
+                    reasoning_effort=reasoning_effort,
                     max_retries=3,
                 )
             else:
@@ -1267,6 +1278,7 @@ def _try_aol_model(
                     messages=aol_api_messages,
                     add_cache_control=aol_add_cache_control,
                     thinking_enabled=thinking_enabled,
+                    reasoning_effort=reasoning_effort,
                     max_retries=3,
                 )
             response_text = result["content"]
@@ -1304,6 +1316,7 @@ def get_cached_llm_response(
     messages: Optional[List[Dict[str, str]]] = None,
     request_type: Optional[str] = None,
     force_primary_model: bool = False,
+    reasoning_effort: str = "low",
 ) -> Optional[dict]:
     """
     Get an LLM response, using Redis cache to avoid duplicate calls.
@@ -1457,17 +1470,20 @@ def get_cached_llm_response(
     start_time = time.time()
     try:
         response_text, usage, used_provider, used_model, is_fallback = _execute_primary_call(
-            provider, models, base_url, api_key, temperature, effective_timeout, messages, api_messages, prompt, system_prompt, add_cache_control, thinking_enabled, model_type, request_type, is_fallback
+            provider, models, base_url, api_key, temperature, effective_timeout, messages, api_messages, prompt, system_prompt, add_cache_control, thinking_enabled, model_type, request_type, is_fallback,
+            reasoning_effort=reasoning_effort,
         )
     except Exception as e:
         try:
             response_text, usage, used_provider, used_model, is_fallback = _execute_fallback_call(
-                e, model_type, messages, prompt, system_prompt, temperature, effective_timeout, api_messages, add_cache_control, thinking_enabled, request_type, provider
+                e, model_type, messages, prompt, system_prompt, temperature, effective_timeout, api_messages, add_cache_control, thinking_enabled, request_type, provider,
+                reasoning_effort=reasoning_effort,
             )
         except Exception as fallback_e:
             aol_result = _try_aol_model(
                 model_type, messages, prompt, system_prompt,
-                temperature, effective_timeout, add_cache_control, thinking_enabled, request_type
+                temperature, effective_timeout, add_cache_control, thinking_enabled, request_type,
+                reasoning_effort=reasoning_effort,
             )
             if aol_result is not None:
                 response_text = aol_result[0]
@@ -1796,6 +1812,7 @@ async def get_cached_llm_response_async(
     messages: Optional[List[Dict[str, str]]] = None,
     request_type: Optional[str] = None,
     force_primary_model: bool = False,
+    reasoning_effort: str = "low",
 ) -> Optional[dict]:
     """
     Asynchronous wrapper for get_cached_llm_response.
@@ -1816,4 +1833,5 @@ async def get_cached_llm_response_async(
         messages,
         request_type,
         force_primary_model,
+        reasoning_effort,
     )

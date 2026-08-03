@@ -91,6 +91,7 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
                         messages: Optional[List[Dict[str, str]]] = None,
                         add_cache_control: bool = False,
                         thinking_enabled: bool = True,
+                        reasoning_effort: str = "low",
                        max_retries: int = 3,
 ) -> dict:
     """Send a prompt to the configured Ollama model and return a dict with 'content' and 'usage'."""
@@ -116,9 +117,9 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
         "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
     }
 
-    # Disable deep thinking/reasoning when not needed (saves tokens, reduces latency)
-    if not thinking_enabled:
-        payload["reasoning_effort"] = "low"
+    # Always send reasoning_effort: "low" when thinking is disabled,
+    # or the computed value when thinking is enabled.
+    payload["reasoning_effort"] = "low" if not thinking_enabled else reasoning_effort
 
     def _parse_ollama(data: dict) -> dict:
         if "message" not in data or "content" not in data["message"]:
@@ -159,6 +160,7 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
                         messages: Optional[List[Dict[str, str]]] = None,
                         add_cache_control: bool = False,
                         thinking_enabled: bool = True,
+                        reasoning_effort: str = "low",
                       max_retries: int = 3,
 ) -> dict:
     """Send a prompt to the configured OpenAI-compatible API and return a dict with 'content' and 'usage'."""
@@ -195,9 +197,9 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
         "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
     }
 
-    # Disable deep thinking/reasoning when not needed (saves tokens, reduces latency)
-    if not thinking_enabled:
-        payload["reasoning_effort"] = "low"
+    # Always send reasoning_effort: "low" when thinking is disabled,
+    # or the computed value when thinking is enabled.
+    payload["reasoning_effort"] = "low" if not thinking_enabled else reasoning_effort
 
     def _parse_openai(data: dict) -> dict:
         if "choices" not in data or not data["choices"]:
