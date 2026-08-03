@@ -111,6 +111,13 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     if suffix and db_symbol.endswith(suffix):
         db_symbol = db_symbol[:-len(suffix)]
 
+    redis_client = get_redis_client()
+    try:
+        if redis_client.get(f"isin_not_found:{db_symbol}"):
+            return None
+    except (TypeError, ValueError, RuntimeError):
+        pass
+
     # Manual ISINs take absolute precedence and bypass country filters
     manual_isin = get_manual_isin_from_db(db_symbol)
     if manual_isin:
@@ -172,6 +179,11 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
             save_discovered_symbol(db_symbol, isin, "stock", None, country=save_country)
         except (RuntimeError, ValueError, OSError):
             pass
+    else:
+        try:
+            redis_client.set(f"isin_not_found:{db_symbol}", "1", ex=3600)
+        except (TypeError, ValueError, RuntimeError):
+            pass
 
     return isin
 
@@ -225,7 +237,8 @@ def _enrich_quotes_with_btp_details(result: Dict[str, Dict[str, Any]], symbols: 
 def _finalize_and_persist_quotes(
     result: Dict[str, Dict[str, Any]],
     symbols: List[str],
-    redis_client
+    redis_client,
+    persist: bool = True
 ) -> None:
     """Finalize quote data (change_24h, bid/ask fallback), persist to Redis/DB, and enrich BTP details."""
     # --- Final pass: compute change_24h and percentage from DB daily candles ---
@@ -266,7 +279,7 @@ def _finalize_and_persist_quotes(
 
                 if existing_last and existing_last > 0 and new_last and new_last > 0:
                     deviation = abs(new_last - existing_last) / existing_last
-                    if deviation > 0.5:
+                    if deviation > settings.QUOTE_DEVIATION_THRESHOLD:
                         # Only revert if the existing quote is recent (within 1 hour)
                         # to avoid blocking valid large price moves over longer periods
                         if existing_update and (int(time.time() * 1000) - existing_update < 3600 * 1000):
@@ -291,20 +304,21 @@ def _finalize_and_persist_quotes(
             if result[sym].get("ask") is None:
                 result[sym]["ask"] = result[sym]["last"]
 
-    # Persist to Redis and database
-    quotes_to_save = {}
-    for sym, q in result.items():
-        if q.get("last") is not None:
+    if persist:
+        # Persist to Redis and database
+        quotes_to_save = {}
+        for sym, q in result.items():
+            if q.get("last") is not None:
+                try:
+                    redis_client.set(f"quote:{sym}", json.dumps(q), ex=300)
+                except (TypeError, ValueError, RuntimeError):
+                    pass
+                quotes_to_save[sym] = q
+        if quotes_to_save:
             try:
-                redis_client.set(f"quote:{sym}", json.dumps(q), ex=300)
-            except (TypeError, ValueError, RuntimeError):
-                pass
-            quotes_to_save[sym] = q
-    if quotes_to_save:
-        try:
-            save_quotes_batch(quotes_to_save)
-        except (RuntimeError, ValueError, OSError) as e:
-            logger.warning(f"Failed to save quotes to database: {type(e).__name__}: {e}")
+                save_quotes_batch(quotes_to_save)
+            except (RuntimeError, ValueError, OSError) as e:
+                logger.warning(f"Failed to save quotes to database: {type(e).__name__}: {e}")
 
     # Enrich BTP quotes with maturity, coupon, and name from discovered_symbols
     _enrich_quotes_with_btp_details(result, symbols)
@@ -658,7 +672,7 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
                        "change_24h": None, "percentage": None, "quoteVolume": None}
 
     # Finalize, persist, and enrich quotes
-    _finalize_and_persist_quotes(result, symbols, redis_client)
+    _finalize_and_persist_quotes(result, symbols, redis_client, persist=False)
 
     return result
 

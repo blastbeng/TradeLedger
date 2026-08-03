@@ -1335,6 +1335,10 @@ class Settings(BaseSettings):
 
     BTP_IS_PRIMARY_ISSUANCE: bool = False
 
+    # Data Quality & Market Data
+    QUOTE_DEVIATION_THRESHOLD: float = 0.5
+    BORSA_TOKEN_CACHE_TTL: int = 300
+
     # Standard stock/ETF fee parameters (Intesa Sanpaolo Investo defaults)
     STOCK_FEE_PERC: float = 0.0024
     STOCK_FEE_MIN: float = 3.50

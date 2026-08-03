@@ -72,7 +72,7 @@ def _reset_bi_circuit():
 # --- Borsa Italiana token cache ---
 _borsa_token_cache: Dict[str, tuple] = {}  # {cache_key: (timestamp, token)}
 _borsa_token_cache_lock = threading.Lock()
-_BORSA_TOKEN_CACHE_TTL = 300  # 5 minutes
+_BORSA_TOKEN_CACHE_TTL = settings.BORSA_TOKEN_CACHE_TTL
 
 
 def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
