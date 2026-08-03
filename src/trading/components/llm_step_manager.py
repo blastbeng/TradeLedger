@@ -162,20 +162,7 @@ class LLMStepManager:
         engine = self.engine
         if analysis_result is None:
             logger.warning(f"Step 1a analysis failed for {symbol} after all retries. Using fallback HOLD.")
-            # Check if circuit breaker is active; if so, clear _force_eval to break retry loop
-            cb_active = False
-            try:
-                cb_raw = await asyncio.to_thread(engine.redis.get, "llm:circuit_breaker")
-                if cb_raw:
-                    cb_data = json.loads(cb_raw)
-                    if time.time() < cb_data.get("active_until", 0):
-                        cb_active = True
-            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
-                pass
-            if cb_active:
-                async with self.shared_state._eval_state_lock:
-                    self.shared_state._force_eval.pop(symbol, None)
-            # Otherwise, keep _force_eval set to retry on the next cycle.
+            # Keep _force_eval set to retry on the next cycle.
             # Create a fallback HOLD signal so the bot continues functioning
             preliminary_signal = self._create_fallback_hold_signal(
                 symbol, "LLM Step 1a analysis failed after retries", strategy_model_type

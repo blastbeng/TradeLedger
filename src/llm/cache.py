@@ -377,37 +377,6 @@ def _save_metric(metric_data: dict) -> None:
         logger.warning("Failed to save LLM metric: %s", metric_err)
 
 
-async def is_llm_circuit_breaker_active(check_primary_model: bool = False) -> bool:
-    """Check if the LLM circuit breaker is currently active.
-
-    The circuit breaker is set by ``_increment_llm_failures`` when too many
-    consecutive LLM calls fail. While active, callers should skip LLM calls
-    and use fallback HOLD signals instead.
-
-    Args:
-        check_primary_model: If True, only short-circuit when primary models
-            are in use (pre-market or market open). During market closed hours
-            with fallback models, return False so the fallback model can
-            attempt to handle the decision — it may recover even though the
-            primary model is down.
-
-    Returns:
-        True if the circuit breaker is active (and the primary-model check
-        passes when requested), False otherwise.
-    """
-    try:
-        cb_raw = await asyncio.to_thread(get_redis_client().get, "llm:circuit_breaker")
-        if cb_raw:
-            cb_data = json.loads(cb_raw)
-            if time.time() < cb_data.get("active_until", 0):
-                if check_primary_model and not _should_use_primary_model():
-                    return False
-                return True
-    except (ValueError, TypeError, ConnectionError, TimeoutError, OSError, json.JSONDecodeError):
-        pass
-    return False
-
-
 def _sync_blacklist_from_db():
     """Load active blacklisted models from DB into Redis on startup."""
     redis_client = get_redis_client()
