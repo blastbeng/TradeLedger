@@ -34,4 +34,4 @@ def test_compute_exit_order_prices_fallback():
     )
     result = manager.compute_exit_order_prices(entry_price=100.0, signal=signal)
     assert result["stop_loss_price"] == 95.0
-    assert result["take_profit_price"] == 110.0
+    assert result["take_profit_price"] == pytest.approx(110.0)
