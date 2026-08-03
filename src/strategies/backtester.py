@@ -128,8 +128,8 @@ def _detect_gaps(candles: List[List], tolerance_mult: float = settings.BACKTEST_
 
 @dataclass
 class BacktestConfig:
-    stop_loss_pct: float
-    take_profit_pct: float
+    stop_loss_pct: Optional[float] = None
+    take_profit_pct: Optional[float] = None
     max_hold_time_seconds: Optional[int] = None
     trailing_stop: bool = False
     trailing_stop_distance_pct: Optional[float] = None
