@@ -125,6 +125,7 @@ class StrategyPromptData:
     news_section: Optional[str] = None
     macro_economic_context: Optional[Dict[str, Any]] = None
     analyst_ratings: Optional[Dict[str, Any]] = None
+    insider_transactions: Optional[List[Dict[str, Any]]] = None
 
 
 def build_strategy_prompt(
@@ -231,6 +232,7 @@ def build_strategy_prompt(
     next_ex_dividend = data.next_ex_dividend
     macro_economic_context = data.macro_economic_context
     analyst_ratings = data.analyst_ratings
+    insider_transactions = data.insider_transactions
     # Trim large lists to prevent context window overflow
     if recent_trades and len(recent_trades) > 20:
         recent_trades = recent_trades[-20:]
@@ -683,6 +685,17 @@ Maximum symbols to trade: {max_symbols}
                     upside_pct = ((target_mean - current_price_analyst) / current_price_analyst) * 100 if current_price_analyst > 0 else 0.0
                     prompt += f" (Upside: {upside_pct:+.1f}%)"
             prompt += "\n"
+
+    # --- Insider Transactions ---
+    if insider_transactions and not is_long_term:
+        prompt += "\n**Recent Insider Transactions:**"
+        for t in insider_transactions:
+            t_type = t.get("transaction_type", "Unknown")
+            shares = t.get("shares", 0)
+            val = t.get("value", 0.0)
+            filer = t.get("filer", "Unknown")
+            prompt += f"\n- {t_type} {shares} shares (Value: {val:.0f}) by {filer}"
+        prompt += "\n"
 
     # --- News section (detailed articles) ---
     if not is_long_term:

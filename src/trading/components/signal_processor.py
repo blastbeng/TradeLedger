@@ -349,6 +349,7 @@ class SignalProcessor:
             news_section=news_section,
             macro_economic_context=get_macro_economic_context(),
             analyst_ratings=_ctx.get("analyst_ratings"),
+            insider_transactions=_ctx.get("insider_transactions"),
         )
         analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(prompt_data)
 
@@ -1039,6 +1040,7 @@ class SignalProcessor:
             min_hold_time_mult_raw,
             global_min_rr_raw,
             analyst_ratings,
+            insider_transactions,
         ) = await asyncio.gather(
             asyncio.to_thread(get_backtest_results_for_symbol, symbol, assigned_tf, 10),
             self._fetch_dividend_data(symbol, ticker),
@@ -1051,6 +1053,7 @@ class SignalProcessor:
             engine.config_service.get_config("min_max_hold_time_mult"),
             engine.config_service.get_config("min_risk_reward_ratio"),
             engine.event_bus.request("get_analyst_ratings", symbol),
+            engine.event_bus.request("get_insider_transactions", symbol),
             return_exceptions=True,
         )
 
@@ -1080,6 +1083,9 @@ class SignalProcessor:
 
         if isinstance(analyst_ratings, Exception):
             analyst_ratings = None
+
+        if isinstance(insider_transactions, Exception):
+            insider_transactions = None
 
         # Sentiment trend
         sentiment_trend_val = None
@@ -1145,6 +1151,7 @@ class SignalProcessor:
             "dividend_yield": dividend_yield,
             "next_ex_dividend": next_ex_dividend,
             "analyst_ratings": analyst_ratings if not isinstance(analyst_ratings, Exception) else None,
+            "insider_transactions": insider_transactions if not isinstance(insider_transactions, Exception) else None,
         }
 
     async def build_analysis_prompt_and_snapshot(

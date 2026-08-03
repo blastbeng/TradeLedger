@@ -213,3 +213,57 @@ def get_yahoo_dividends(symbol: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"Yahoo Finance dividends failed for {base}: {type(e).__name__}: {e}")
         return []
+
+
+def get_yahoo_insider_transactions(symbol: str) -> Optional[List[Dict[str, Any]]]:
+    """Fetch recent insider transactions from Yahoo Finance."""
+    if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
+        return None
+
+    from src.exchanges.market_data import _get_isin_from_yfinance
+    if _get_isin_from_yfinance(symbol) is None:
+        logger.debug(f"Skipping yfinance insider transactions for {symbol}: no valid Italian ISIN.")
+        return None
+
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+    base = base.lstrip('$')
+
+    redis_client = get_redis_client()
+    cache_key = f"yahoo_insider_transactions:{base}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    try:
+        ticker = yf.Ticker(base, session=_get_yf_session())
+        transactions = ticker.insider_transactions
+
+        if transactions is None or transactions.empty:
+            return None
+
+        # Get the most recent 5 transactions
+        recent = transactions.head(5)
+        result = []
+        for _, row in recent.iterrows():
+            result.append({
+                "filer": row.get("Filer", ""),
+                "transaction_date": str(row.get("Transaction Date", "")),
+                "transaction_type": row.get("Transaction Type", ""),
+                "shares": int(row.get("Shares", 0)) if row.get("Shares") is not None else 0,
+                "value": float(row.get("Value", 0)) if row.get("Value") is not None else 0.0,
+            })
+
+        if not result:
+            return None
+
+        try:
+            redis_client.set(cache_key, json.dumps(result), ex=86400)  # 24h
+        except Exception:
+            pass
+        return result
+    except Exception as e:
+        logger.warning(f"Yahoo Finance insider transactions failed for {base}: {type(e).__name__}: {e}")
+        return None

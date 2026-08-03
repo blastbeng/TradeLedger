@@ -50,6 +50,7 @@ class MarketDataManager:
         self.event_bus.subscribe("get_btp_bonds", self.get_btp_bonds)
         self.event_bus.subscribe("get_etf_symbols", self.get_etf_symbols)
         self.event_bus.subscribe("get_asset_info", self.get_asset_info)
+        self.event_bus.subscribe("get_insider_transactions", self.get_insider_transactions)
         self.event_bus.subscribe("get_quotes_async", self._get_quotes_async)
         self.event_bus.subscribe("get_quotes_batched", self._get_quotes_batched)
         self.event_bus.subscribe("get_all_position_tickers", self._get_all_position_tickers)
@@ -492,6 +493,15 @@ class MarketDataManager:
         engine._asset_cache[base] = asset
         engine._asset_cache_time[base] = now
         return asset
+
+    async def get_insider_transactions(self, symbol: str) -> Optional[List[Dict[str, Any]]]:
+        """Fetch recent insider transactions for a symbol, cached for 24 hours."""
+        from src.exchanges.yahoo_finance import get_yahoo_insider_transactions
+        try:
+            return await asyncio.to_thread(get_yahoo_insider_transactions, symbol)
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Failed to fetch insider transactions for {symbol}: {type(e).__name__}: {e}")
+            return None
 
     async def _get_quotes_async(self, symbols: List[str], timeout: float = 45.0) -> Dict[str, Dict[str, Any]]:
         """Fetch quotes using the dedicated quote thread pool with a timeout.
