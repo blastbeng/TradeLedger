@@ -44,8 +44,8 @@ if _backend == "postgresql":
             "password": settings.DB_PASSWORD,
             "autocommit": True,  # Health check runs in autocommit mode
         },
-        min_size=5,
-        max_size=20,
+        min_size=10,
+        max_size=50,
         timeout=30.0,
         max_idle=60.0,
         reconnect_timeout=300.0,
