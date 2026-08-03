@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 
 from src.config.settings import settings
-from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch, get_candle_count_for_symbol, update_candle_count
+from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch, get_candle_count_for_symbol, update_candle_count, get_indicators
 from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session, get_bars_range, get_quotes, get_quotes_cached
 from src.indicators import compute_all_indicators
 
@@ -685,12 +685,17 @@ class MarketDataManager:
         if not candles or len(candles) < 2:
             return None
         try:
+            loop = asyncio.get_running_loop()
+            latest_ts = candles[-1][0]
+            
+            # Avoid recomputing if indicators are already up-to-date for the latest candle
+            existing_ind = await loop.run_in_executor(engine._db_executor, get_indicators, symbol, timeframe)
+            if existing_ind and existing_ind.get("timestamp") == latest_ts:
+                return existing_ind.get("indicators")
+
             async with engine._indicator_semaphore:
-                loop = asyncio.get_running_loop()
                 ind = await loop.run_in_executor(engine._download_executor, compute_all_indicators, candles)
             if ind:
-                latest_ts = candles[-1][0]
-                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(engine._db_executor, save_indicators, symbol, timeframe, latest_ts, ind)
                 logger.debug(f"Indicators computed and stored for {symbol} {timeframe}")
                 return ind

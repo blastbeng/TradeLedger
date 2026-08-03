@@ -531,25 +531,21 @@ class ReevalDataFetcher:
     ) -> Dict[str, Dict[str, float]]:
         """Compute pairwise Pearson correlation matrix from OHLCV close prices.
 
-        For each pair of symbols, uses the longest timeframe where both have
-        enough data (minimum 20 candles and 19 returns) to avoid missing pairs.
-        Processes all candidate symbols to ensure no important correlations are missed.
+        Uses pandas DataFrame.corr() for vectorized, pairwise correlation
+        computation, which is significantly faster than O(n²) manual loops.
         """
         corr_matrix: Dict[str, Dict[str, float]] = {}
         if ohlcv_data and settings.OHLCV_TIMEFRAMES:
             MIN_CANDLES = 20
             MIN_RETURNS = 19
 
-            # Include all symbols to avoid missing important correlations
-            top_vol_symbols = sorted_by_vol
-
-            # Pre-compute valid returns for each symbol on each timeframe
-            sym_tf_returns: Dict[str, Dict[str, List[float]]] = {}
-            for sym in top_vol_symbols:
+            sym_returns: Dict[str, List[float]] = {}
+            for sym in sorted_by_vol:
                 if sym not in ohlcv_data:
                     continue
-                sym_tf_returns[sym] = {}
-                for tf in settings.OHLCV_TIMEFRAMES:
+                # Find the longest timeframe with enough data for this symbol
+                best_tf = None
+                for tf in reversed(settings.OHLCV_TIMEFRAMES):
                     if tf in ohlcv_data[sym]:
                         candles = ohlcv_data[sym][tf]
                         if len(candles) >= MIN_CANDLES:
@@ -557,58 +553,33 @@ class ReevalDataFetcher:
                             returns = [(closes[i] - closes[i - 1]) / closes[i - 1]
                                        for i in range(1, len(closes)) if closes[i - 1] != 0]
                             if len(returns) >= MIN_RETURNS:
-                                sym_tf_returns[sym][tf] = returns
+                                best_tf = tf
+                                break
+                if best_tf:
+                    sym_returns[sym] = returns
 
-            corr_symbols = list(sym_tf_returns.keys())
-            if not corr_symbols:
+            if not sym_returns:
                 return corr_matrix
 
             try:
-                import numpy as np
-                use_numpy = True
+                import pandas as pd
+                # Create a DataFrame where each column is a symbol's returns.
+                # pandas automatically aligns by index and handles different lengths
+                # by filling with NaN, then .corr() computes pairwise correlations.
+                df = pd.DataFrame(sym_returns)
+                corr_df = df.corr(method='pearson')
+                
+                for sym_a in corr_df.columns:
+                    corr_matrix[sym_a] = {}
+                    for sym_b in corr_df.columns:
+                        if sym_a == sym_b:
+                            corr_matrix[sym_a][sym_b] = 1.0
+                        else:
+                            val = corr_df.loc[sym_a, sym_b]
+                            corr_matrix[sym_a][sym_b] = round(float(val), 3) if pd.notna(val) else 0.0
             except ImportError:
-                use_numpy = False
+                pass
 
-            for sym_a in corr_symbols:
-                corr_matrix[sym_a] = {}
-                for sym_b in corr_symbols:
-                    if sym_a == sym_b:
-                        corr_matrix[sym_a][sym_b] = 1.0
-                    elif sym_b in corr_matrix and sym_a in corr_matrix[sym_b]:
-                        corr_matrix[sym_a][sym_b] = corr_matrix[sym_b][sym_a]
-                    else:
-                        # Find the longest timeframe where both symbols have valid returns
-                        best_tf = None
-                        for tf in reversed(settings.OHLCV_TIMEFRAMES):
-                            if tf in sym_tf_returns[sym_a] and tf in sym_tf_returns[sym_b]:
-                                best_tf = tf
-                                break
-
-                        if best_tf:
-                            ret_a = sym_tf_returns[sym_a][best_tf]
-                            ret_b = sym_tf_returns[sym_b][best_tf]
-                            min_len = min(len(ret_a), len(ret_b))
-                            if min_len < 2:
-                                continue
-                            
-                            if use_numpy:
-                                a = np.array(ret_a[-min_len:])
-                                b = np.array(ret_b[-min_len:])
-                                std_a = np.std(a)
-                                std_b = np.std(b)
-                                if std_a > 0 and std_b > 0:
-                                    cov = np.mean((a - np.mean(a)) * (b - np.mean(b)))
-                                    corr_matrix[sym_a][sym_b] = round(float(cov / (std_a * std_b)), 3)
-                            else:
-                                a = ret_a[-min_len:]
-                                b = ret_b[-min_len:]
-                                mean_a = sum(a) / min_len
-                                mean_b = sum(b) / min_len
-                                cov = sum((a[k] - mean_a) * (b[k] - mean_b) for k in range(min_len)) / min_len
-                                std_a = (sum((x - mean_a) ** 2 for x in a) / min_len) ** 0.5
-                                std_b = (sum((x - mean_b) ** 2 for x in b) / min_len) ** 0.5
-                                if std_a > 0 and std_b > 0:
-                                    corr_matrix[sym_a][sym_b] = round(cov / (std_a * std_b), 3)
         return corr_matrix
 
     async def get_or_compute_correlation_matrix(

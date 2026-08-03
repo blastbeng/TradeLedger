@@ -80,7 +80,7 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
     if _check_bi_circuit():
         return None
 
-    cache_key = f"{isin}-{market_code}"
+    cache_key = f"market-{market_code}"
     now = time.time()
 
     # Check cache first
@@ -131,7 +131,7 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
 
 def _invalidate_borsa_token_cache(isin: str, market_code: str) -> None:
     """Remove a cached Borsa Italiana token so it is re-fetched on next use."""
-    cache_key = f"{isin}-{market_code}"
+    cache_key = f"market-{market_code}"
     with _borsa_token_cache_lock:
         _borsa_token_cache.pop(cache_key, None)
 

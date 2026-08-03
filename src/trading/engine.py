@@ -139,6 +139,7 @@ class TradingEngine:
         self._orchestrator = EngineOrchestrator(self)
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
+        self._balance_cache_lock = asyncio.Lock()
         self._reeval_trigger = asyncio.Event()
         self._reeval_pending_force: bool = False
         self._force_reeval: bool = False
@@ -476,10 +477,17 @@ class TradingEngine:
         now = time.time()
         if self.shared_state._balance_cache is not None and (now - self.shared_state._balance_cache_time) < ttl:
             return self.shared_state._balance_cache
-        balance = await asyncio.to_thread(self.trader.fetch_balance)
-        self.shared_state._balance_cache = balance
-        self.shared_state._balance_cache_time = now
-        return balance
+        
+        async with self._balance_cache_lock:
+            # Double-check after acquiring lock
+            now = time.time()
+            if self.shared_state._balance_cache is not None and (now - self.shared_state._balance_cache_time) < ttl:
+                return self.shared_state._balance_cache
+            
+            balance = await asyncio.to_thread(self.trader.fetch_balance)
+            self.shared_state._balance_cache = balance
+            self.shared_state._balance_cache_time = now
+            return balance
 
     async def _get_cached_position_tickers(self, ttl: float = 30.0) -> Dict[str, Dict[str, Any]]:
         """Return cached position tickers, refreshing if older than ttl seconds."""
