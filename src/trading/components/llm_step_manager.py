@@ -120,14 +120,6 @@ class LLMStepManager:
         llm_provider = None
         llm_model = None
 
-        # --- LLM circuit breaker: skip calls if too many consecutive failures ---
-        if await is_llm_circuit_breaker_active():
-            logger.error(f"LLM circuit breaker ACTIVE for {symbol} — all signals will be fallback HOLD. Check LLM connectivity.")
-            # Clear _force_eval to break the retry loop
-            async with self.shared_state._eval_state_lock:
-                self.shared_state._force_eval.pop(symbol, None)
-            return None, None, None, False, False
-
         try:
             step1a_result = await asyncio.to_thread(
                 get_cached_llm_response,
@@ -185,11 +177,15 @@ class LLMStepManager:
             self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist, tf_seconds)
             async with self.shared_state._eval_state_lock:
                 self.shared_state._force_eval.pop(symbol, None)
-        except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
-            logger.error(f"LLM Step 1a failed for {symbol}: {type(e).__name__}: {e}")
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.error(f"LLM Step 1a network error for {symbol}: {type(e).__name__}: {e}")
             async with self.shared_state._eval_state_lock:
                 self.shared_state._force_eval[symbol] = True  # Force retry on next cycle
-            await self._increment_llm_failures()
+            # Per-model blacklisting in cache.py handles failures
+            # Fall through to fallback HOLD below
+        except (ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
+            logger.error(f"LLM Step 1a parse/logic error for {symbol}: {type(e).__name__}: {e}")
+            # Do not force retry or increment failures for parse errors, as the model is reachable.
             # Fall through to fallback HOLD below
 
         return analysis_result, llm_provider, llm_model, False, is_fallback
@@ -305,14 +301,6 @@ class LLMStepManager:
         llm_provider = None
         llm_model = None
         is_fallback = False
-
-        # --- LLM circuit breaker: skip calls if too many consecutive failures ---
-        if await is_llm_circuit_breaker_active():
-            logger.error(f"LLM circuit breaker ACTIVE for {symbol} during Step 1b — returning fallback HOLD. Check LLM connectivity.")
-            fallback_signal = self._create_fallback_hold_signal(
-                symbol, "LLM circuit breaker active during Step 1b", strategy_model_type
-            )
-            return fallback_signal, "fallback", "default_hold", True
 
         # --- Build variants prompt ---
         prompt_data = BacktestPromptData(

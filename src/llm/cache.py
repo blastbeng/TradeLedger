@@ -1305,6 +1305,66 @@ def _try_aol_model(
     return None
 
 
+def _get_primary_provider_config(model_type: str) -> Tuple[str, List[str], str, str]:
+    """Return (provider, models, base_url, api_key) for the primary choice."""
+    if model_type == "mind":
+        provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
+    elif model_type == "weak":
+        provider = settings.LLM_WEAK_PROVIDER or settings.LLM_PROVIDER
+    else:
+        provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
+
+    if provider == "openai":
+        if model_type == "mind":
+            models = settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL
+            base_url = settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL
+            api_key = settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY
+        elif model_type == "weak":
+            models = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
+            base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
+            api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
+        else:
+            models = settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL
+            base_url = settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL
+            api_key = settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY
+    elif provider == "g4f":
+        from src.llm.g4f_client import _get_g4f_models
+        models = _get_g4f_models(model_type)
+        base_url = None
+        api_key = None
+    else:  # ollama
+        if model_type == "mind":
+            models = settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL
+            base_url = settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL
+            api_key = settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY
+        elif model_type == "weak":
+            models = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
+            base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
+            api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
+        else:
+            models = settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL
+            base_url = settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL
+            api_key = settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY
+    return provider, models, base_url, api_key
+
+
+def _get_effective_temperature(model_type: str, temperature: Optional[float]) -> float:
+    """Resolve effective temperature based on model_type and settings."""
+    if temperature is not None:
+        return temperature
+    if model_type == "mind" and settings.LLM_MIND_TEMPERATURE:
+        temp_range = settings.parse_temperature_range(settings.LLM_MIND_TEMPERATURE)
+        return temp_range[0] if temp_range else settings.LLM_TEMPERATURE
+    elif model_type == "weak" and settings.LLM_WEAK_TEMPERATURE:
+        temp_range = settings.parse_temperature_range(settings.LLM_WEAK_TEMPERATURE)
+        return temp_range[0] if temp_range else settings.LLM_TEMPERATURE
+    elif model_type == "actuator" and settings.LLM_ACTUATOR_TEMPERATURE:
+        temp_range = settings.parse_temperature_range(settings.LLM_ACTUATOR_TEMPERATURE)
+        return temp_range[0] if temp_range else settings.LLM_TEMPERATURE
+    else:
+        return settings.LLM_TEMPERATURE
+
+
 def get_cached_llm_response(
     prompt: str,
     system_prompt: str = "",
@@ -1344,44 +1404,7 @@ def get_cached_llm_response(
 
 
     # Determine effective provider and model for the primary choice
-    if model_type == "mind":
-        provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
-    elif model_type == "weak":
-        provider = settings.LLM_WEAK_PROVIDER or settings.LLM_PROVIDER
-    else:
-        provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
-
-    if provider == "openai":
-        if model_type == "mind":
-            models = settings.OPENAI_MIND_MODEL or settings.OPENAI_MODEL
-            base_url = settings.OPENAI_MIND_BASE_URL or settings.OPENAI_BASE_URL
-            api_key = settings.OPENAI_MIND_API_KEY or settings.OPENAI_API_KEY
-        elif model_type == "weak":
-            models = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
-            base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
-            api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
-        else:
-            models = settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL
-            base_url = settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL
-            api_key = settings.OPENAI_ACTUATOR_API_KEY or settings.OPENAI_API_KEY
-    elif provider == "g4f":
-        from src.llm.g4f_client import _get_g4f_models
-        models = _get_g4f_models(model_type)
-        base_url = None
-        api_key = None
-    else:  # ollama
-        if model_type == "mind":
-            models = settings.OLLAMA_MIND_MODEL or settings.OLLAMA_MODEL
-            base_url = settings.OLLAMA_MIND_BASE_URL or settings.OLLAMA_BASE_URL
-            api_key = settings.OLLAMA_MIND_API_KEY or settings.OLLAMA_API_KEY
-        elif model_type == "weak":
-            models = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
-            base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
-            api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
-        else:
-            models = settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL
-            base_url = settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL
-            api_key = settings.OLLAMA_ACTUATOR_API_KEY or settings.OLLAMA_API_KEY
+    provider, models, base_url, api_key = _get_primary_provider_config(model_type)
 
     if not models:
         logger.error("No LLM models configured for provider=%s, model_type=%s", provider, model_type)
@@ -1389,18 +1412,7 @@ def get_cached_llm_response(
 
     # Resolve effective temperature: use explicit temperature if provided,
     # otherwise fall back to per-role temperature, then global temperature.
-    if temperature is None:
-        if model_type == "mind" and settings.LLM_MIND_TEMPERATURE:
-            temp_range = settings.parse_temperature_range(settings.LLM_MIND_TEMPERATURE)
-            temperature = temp_range[0] if temp_range else settings.LLM_TEMPERATURE
-        elif model_type == "weak" and settings.LLM_WEAK_TEMPERATURE:
-            temp_range = settings.parse_temperature_range(settings.LLM_WEAK_TEMPERATURE)
-            temperature = temp_range[0] if temp_range else settings.LLM_TEMPERATURE
-        elif model_type == "actuator" and settings.LLM_ACTUATOR_TEMPERATURE:
-            temp_range = settings.parse_temperature_range(settings.LLM_ACTUATOR_TEMPERATURE)
-            temperature = temp_range[0] if temp_range else settings.LLM_TEMPERATURE
-        else:
-            temperature = settings.LLM_TEMPERATURE
+    temperature = _get_effective_temperature(model_type, temperature)
 
     # Round temperature to the nearest 0.5 for cache key to improve cache hit rate
     # when temperature is dynamically computed based on complexity.
@@ -1587,11 +1599,9 @@ def _normalize_for_hash(obj, depth=0):
             return 0.0
         if math.isnan(obj) or math.isinf(obj):
             return obj
-        # Percentage-based rounding: round to 6 significant figures
-        # to treat tiny floating-point noise as insignificant while
-        # preserving meaningful price changes (e.g., 100.12 vs 100.14).
-        decimals = 5 - int(math.floor(math.log10(abs(obj))))
-        return round(obj, decimals)
+        # Round to 4 decimal places to ensure small price changes (e.g., on low-priced assets)
+        # are detected, while still treating floating-point noise as insignificant.
+        return round(obj, 4)
     if obj is None:
         return "null"
     return obj

@@ -118,6 +118,32 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
     return action, reasoning
 
 
+def _clamp_parameter_ranges(params: dict) -> dict:
+    """Clamps LLM-provided parameters to safe, reasonable ranges to prevent hallucinations."""
+    limits = {
+        "stop_loss_pct": (0.01, 0.5),
+        "take_profit_pct": (0.01, 5.0),
+        "position_size_fraction": (0.01, 1.0),
+        "stop_loss_atr_multiple": (0.1, 10.0),
+        "take_profit_atr_multiple": (0.1, 20.0),
+        "trailing_stop_distance_pct": (0.01, 0.5),
+        "trailing_stop_atr_multiple": (0.1, 10.0),
+        "trailing_stop_activation_pct": (0.01, 5.0),
+        "breakeven_activation_pct": (0.01, 5.0),
+        "max_unrealized_loss_pct": (0.01, 0.5),
+        "max_hold_time_seconds": (60, 30 * 24 * 3600),
+        "cooldown_after_loss_seconds": (0, 30 * 24 * 3600),
+    }
+    for key, (min_val, max_val) in limits.items():
+        if key in params and params[key] is not None:
+            try:
+                val = float(params[key])
+                params[key] = max(min_val, min(max_val, val))
+            except (ValueError, TypeError):
+                pass
+    return params
+
+
 def _score_reasoning_quality(reasoning: str) -> float:
     """Scores the quality of LLM reasoning from 0.0 to 1.0 based on heuristics."""
     if not reasoning:
@@ -384,6 +410,9 @@ def parse_llm_response(response_text: str) -> Signal:
             bec = backtest_variants[0].get("backtest_entry_config")
             if isinstance(bec, dict):
                 params["backtest_entry_config"] = bec
+
+        # --- Clamp parameter ranges to prevent hallucinations ---
+        params = _clamp_parameter_ranges(params)
 
         # --- Semantic quality validation ---
         action, reasoning = _validate_semantic_quality(action, params, reasoning)

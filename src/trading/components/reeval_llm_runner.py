@@ -86,7 +86,8 @@ class ReevalLLMRunner:
         logger.info("Re-evaluation step 11/%d: Evaluating %d chunks of ~%d symbols each...", total_steps, len(chunks), CHUNK_SIZE)
 
         semaphore = asyncio.Semaphore(settings.LLM_CHUNK_CONCURRENCY_LIMIT)  # Limit concurrent chunk evaluations
-        token_limiter = _TokenBudgetSemaphore(40000)  # Limit concurrent token usage to avoid rate limits
+        token_budget = getattr(settings, 'LLM_CHUNK_TOKEN_BUDGET', 40000)
+        token_limiter = _TokenBudgetSemaphore(token_budget)  # Limit concurrent token usage to avoid rate limits
 
         async def _evaluate_chunk(chunk_idx: int, chunk_symbols: List[str]) -> Optional[Dict[str, Any]]:
             async with semaphore:
