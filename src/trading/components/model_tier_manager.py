@@ -40,14 +40,22 @@ class ModelTierManager:
             mind_avg_tokens = mind_tokens / mind_calls
             actuator_avg_tokens = actuator_tokens / actuator_calls
             
+            # Check overall decision accuracy
+            quality = get_llm_decision_quality_metrics(period_days=7, model_filter="main")
+            accuracy = quality.get("accuracy", 0.0)
+            
             # If mind is significantly more expensive (e.g., >3x tokens)
             if mind_avg_tokens > actuator_avg_tokens * 3:
-                # Check overall decision accuracy
-                quality = get_llm_decision_quality_metrics(period_days=7, model_filter="main")
-                accuracy = quality.get("accuracy", 0.0)
                 # If accuracy is below 50%, penalize mind model usage by raising the threshold
                 if accuracy < 50.0:
-                    return 0.1
+                    # Scale penalty based on how much more expensive mind is (max 0.2)
+                    cost_ratio = mind_avg_tokens / (actuator_avg_tokens * 3)
+                    return min(0.2, 0.1 * cost_ratio)
+            
+            # If mind is cheaper or comparable in cost but significantly more accurate,
+            # reward mind model usage by lowering the threshold
+            if mind_avg_tokens <= actuator_avg_tokens * 1.5 and accuracy > 70.0:
+                return -0.1
             
             return 0.0
         except Exception as e:
