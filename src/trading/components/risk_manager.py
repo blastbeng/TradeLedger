@@ -560,7 +560,7 @@ class RiskManager:
 
         pos_tf = pos.get("timeframe")
         if not pos_tf:
-            for entry in self.shared_state.current_symbols:
+            for entry in list(self.shared_state.current_symbols):
                 if entry["symbol"] == symbol:
                     pos_tf = entry.get("timeframe")
                     break

@@ -465,6 +465,10 @@ class SellExecutor:
                         f"❌ SELL order rejected for {display_symbol}",
                         summary={"symbol": symbol, "action": "REJECT", "reason": "Order rejected by simulator"}
                     )
+                async with self.shared_state._positions_lock:
+                    pos = self.shared_state.positions.get(symbol)
+                    if pos:
+                        pos.pop("_selling", None)
                 return
             logger.info(f"SELL {symbol}: {order}")
             # Queue remaining partial market order for polling

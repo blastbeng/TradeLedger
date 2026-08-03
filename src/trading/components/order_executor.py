@@ -503,6 +503,11 @@ class OrderExecutor:
         if queued['side'] == 'buy':
             async with self.shared_state._cycle_spent_lock:
                 self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
+        else:
+            async with self.shared_state._positions_lock:
+                pos = self.shared_state.positions.get(queued["symbol"])
+                if pos:
+                    pos.pop("_selling", None)
 
         # Remove from queue regardless of cancel success
         async with self.shared_state._queued_orders_lock:
@@ -533,6 +538,11 @@ class OrderExecutor:
         if queued['side'] == 'buy':
             async with self.shared_state._cycle_spent_lock:
                 self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
+        else:
+            async with self.shared_state._positions_lock:
+                pos = self.shared_state.positions.get(queued["symbol"])
+                if pos:
+                    pos.pop("_selling", None)
         async with self.shared_state._queued_orders_lock:
             if queued in self.shared_state.queued_orders:
                 self.shared_state.queued_orders.remove(queued)
@@ -553,6 +563,11 @@ class OrderExecutor:
         if queued['side'] == 'buy':
             async with self.shared_state._cycle_spent_lock:
                 self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
+        else:
+            async with self.shared_state._positions_lock:
+                pos = self.shared_state.positions.get(queued["symbol"])
+                if pos:
+                    pos.pop("_selling", None)
         if engine.notifier:
             stock_name = await engine._market_data_manager.get_stock_name(queued['symbol'])
             tf = queued.get('timeframe')
