@@ -419,11 +419,11 @@ def parse_llm_response(response_text: str) -> Signal:
             if isinstance(bec, dict):
                 params["backtest_entry_config"] = bec
 
-        # --- Clamp parameter ranges to prevent hallucinations ---
-        params = _clamp_parameter_ranges(params)
-
         # --- Semantic quality validation ---
         action, reasoning = _validate_semantic_quality(action, params, reasoning)
+
+        # --- Clamp parameter ranges to prevent hallucinations ---
+        params = _clamp_parameter_ranges(params)
 
         return Signal(
             action=action,

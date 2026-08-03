@@ -487,8 +487,6 @@ def _validate_optional_params(
         rqs = params["reasoning_quality_score"]
         if not isinstance(rqs, (int, float)) or not (0.0 <= rqs <= 1.0):
             return Signal(action="HOLD", confidence=0.0, reasoning="Invalid reasoning_quality_score")
-        if rqs < 0.3:
-            return Signal(action="HOLD", confidence=0.0, reasoning="Reasoning quality score too low")
 
     return None
 
@@ -601,9 +599,18 @@ def _validate_signal_impl(
     if signal.action == "HOLD":
         return signal
 
+    if signal.action not in ("BUY", "SELL"):
+        return Signal(action="HOLD", confidence=0.0, reasoning="Invalid action")
+
     # Require risk parameters for BUY/SELL
     if signal.action in ("BUY", "SELL"):
         params = signal.strategy_params or {}
+
+        # Derive percentages from absolute sl/tp if provided
+        if "stop_loss_pct" not in params and signal.sl is not None and price is not None and price > 0:
+            params["stop_loss_pct"] = abs(signal.sl - price) / price
+        if "take_profit_pct" not in params and signal.tp is not None and price is not None and price > 0:
+            params["take_profit_pct"] = abs(signal.tp - price) / price
 
         # Validate backtest_entry_config (only required for BUY signals)
         if signal.action == "BUY":
@@ -654,5 +661,12 @@ def _validate_signal_impl(
         cons_error = _validate_logical_consistency(params, symbol, sl, tp, stop_method, tp_atr_valid, trailing)
         if cons_error:
             return cons_error
+
+        if signal.sl is None:
+            signal.sl = params.get("stop_loss_pct")
+        if signal.tp is None:
+            signal.tp = params.get("take_profit_pct")
+        if signal.price is None:
+            signal.price = price
 
     return signal

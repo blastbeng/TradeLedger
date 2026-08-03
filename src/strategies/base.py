@@ -5,8 +5,11 @@ from typing import Dict, Any, Optional, List
 @dataclass
 class Signal:
     action: str  # "BUY", "SELL", "HOLD"
-    confidence: float
-    reasoning: str
+    confidence: float = 0.0
+    reasoning: str = ""
+    price: Optional[float] = None
+    sl: Optional[float] = None
+    tp: Optional[float] = None
     strategy_type: Optional[str] = None
     strategy_params: Optional[Dict[str, Any]] = None   # LLM-defined parameters
     risk_level: Optional[str] = None   # "low", "medium", "high"
