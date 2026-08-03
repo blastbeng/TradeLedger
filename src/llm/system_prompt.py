@@ -1,4 +1,5 @@
 from src.config.settings import settings
+from src.utils.redis_client import get_redis_client
 
 SYSTEM_PROMPT_TEMPLATE = """You are a professional stock, ETF, and BTP bond trading bot assistant for medium/long-term investments. Goal: consistent profit, avoid large drawdowns, trade only with a clear edge. Universe: Italian stocks, UCITS ETFs, Italian government bonds (BTPs).
 
@@ -146,5 +147,15 @@ def build_system_prompt(task_type: str = "trading") -> str:
         role_instruction = "Your current task is to summarize news articles.\n\n"
     else:  # trading
         role_instruction = "Your current task is to make a trading decision (BUY, SELL, or HOLD) for a specific asset.\n\n"
+
+    # Append LLM mistake analysis if available
+    try:
+        redis_client = get_redis_client()
+        mistake_analysis = redis_client.get("llm:wrong_decision_analysis")
+        if mistake_analysis:
+            analysis_str = mistake_analysis.decode() if isinstance(mistake_analysis, bytes) else mistake_analysis
+            prompt += f"\n\n## Past Mistakes Analysis\nLearn from these recent incorrect decisions and avoid repeating the same patterns:\n{analysis_str}"
+    except Exception:
+        pass
 
     return role_instruction + prompt

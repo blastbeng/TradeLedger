@@ -49,6 +49,7 @@ class EngineOrchestrator:
             self.engine._redis_health_check_loop,
             self.engine._health_check_loop,
             self.engine._evaluate_llm_decisions_loop,
+            self._analyze_wrong_decisions_loop,
         ]
         
         for factory in background_factories:
@@ -315,3 +316,61 @@ class EngineOrchestrator:
                 logger.error(f"Market clock monitor error: {type(e).__name__}: {e}", exc_info=True)
                 await engine._record_unexpected_exception("market_clock_monitor", e)
             await asyncio.sleep(30)  # check every 30 seconds
+
+    async def _analyze_wrong_decisions_loop(self):
+        """Periodically analyze recent incorrect LLM decisions and store the analysis in Redis."""
+        engine = self.engine
+        await asyncio.sleep(300)  # 5 min initial delay
+        while engine._running:
+            try:
+                from src.database import get_recent_wrong_decisions
+                from src.llm.cache import get_cached_llm_response
+                
+                wrong_decisions = await asyncio.to_thread(get_recent_wrong_decisions, 20)
+                if not wrong_decisions:
+                    await asyncio.sleep(21600)  # 6 hours
+                    continue
+                
+                # Format the decisions into a compact string
+                decisions_str = ""
+                for d in wrong_decisions:
+                    decisions_str += (
+                        f"- Symbol: {d.get('symbol')}, Action: {d.get('action')}, "
+                        f"Entry: {d.get('entry_price')}, Outcome: {d.get('outcome_price')}, "
+                        f"Reasoning: {d.get('reasoning', 'N/A')[:100]}\n"
+                    )
+                
+                system_prompt = (
+                    "You are an AI performance analyst. Analyze the provided list of recent incorrect trading decisions "
+                    "made by another AI. Identify common patterns, logical fallacies, or recurring mistakes. "
+                    "Output a concise, actionable summary of what the AI did wrong and how it should adjust its thinking."
+                )
+                prompt = f"Recent incorrect decisions:\n{decisions_str}\n\nProvide a concise analysis of the common mistakes:"
+                
+                llm_result = await asyncio.to_thread(
+                    get_cached_llm_response,
+                    prompt,
+                    system_prompt,
+                    86400,  # 24h cache
+                    None,  # market_hash
+                    "weak",  # model_type
+                    None,  # temperature
+                    None,  # symbol
+                    None,  # messages
+                    "mistake_analysis",
+                    False,  # force_primary_model
+                    "low"   # reasoning_effort
+                )
+                
+                analysis = llm_result.get("response", "")
+                if analysis and analysis.strip():
+                    await asyncio.to_thread(engine.redis.set, "llm:wrong_decision_analysis", analysis.strip())
+                    logger.info("Updated LLM wrong decision analysis in Redis.")
+                
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Error in analyze_wrong_decisions_loop: {type(e).__name__}: {e}", exc_info=True)
+                await engine._record_unexpected_exception("analyze_wrong_decisions_loop", e)
+            
+            await asyncio.sleep(21600)  # Run every 6 hours
