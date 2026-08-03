@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
 from src.database import get_latest_ohlcv_timestamp, get_ohlcv, get_indicators, get_backtest_results_for_symbol, get_indicators_for_symbols, get_aggregate_sentiment_from_db, insert_signal
-from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals
+from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals, get_yahoo_analyst_ratings
 from src.indicators import compute_all_indicators, compute_ema, compute_vwap, compute_pivot_points
 from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import build_analysis_prompt, compact_prompt, build_backtest_variants_prompt, build_system_prompt, get_cached_news_summary, StrategyPromptData, BacktestPromptData
@@ -111,9 +111,19 @@ class SignalProcessor:
         self.event_bus.subscribe("detect_entry_signal", self.entry_signal_manager.detect_entry_signal)
         self.event_bus.subscribe("process_pending_entry", self.entry_signal_manager.process_pending_entry)
         self.event_bus.subscribe("check_entry_condition_once", self.entry_signal_manager.check_entry_condition_once)
+        self.event_bus.subscribe("get_analyst_ratings", self._get_analyst_ratings)
         self._skip_config_cache: Dict[str, float] = {}
         self._skip_config_cache_time: float = 0.0
         self._skip_config_cache_ttl: float = 60.0  # 1 minute
+
+    async def _get_analyst_ratings(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Fetch analyst ratings for a symbol."""
+        if not settings.YAHOO_FINANCE_ENABLED:
+            return None
+        base_symbol = symbol.split("/")[0]
+        if BTPPolicy.is_btp(base_symbol):
+            return None
+        return await asyncio.to_thread(get_yahoo_analyst_ratings, symbol)
 
     @staticmethod
     def _parse_analysis_response(response: str) -> Optional[Dict[str, Any]]:

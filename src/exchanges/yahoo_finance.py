@@ -267,3 +267,70 @@ def get_yahoo_insider_transactions(symbol: str) -> Optional[List[Dict[str, Any]]
     except Exception as e:
         logger.warning(f"Yahoo Finance insider transactions failed for {base}: {type(e).__name__}: {e}")
         return None
+
+
+def get_yahoo_analyst_ratings(symbol: str) -> Optional[Dict[str, Any]]:
+    """Fetch analyst ratings and target prices from Yahoo Finance."""
+    if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
+        return None
+
+    from src.exchanges.market_data import _get_isin_from_yfinance
+    if _get_isin_from_yfinance(symbol) is None:
+        logger.debug(f"Skipping yfinance analyst ratings for {symbol}: no valid Italian ISIN.")
+        return None
+
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+    base = base.lstrip('$')
+
+    redis_client = get_redis_client()
+    cache_key = f"yahoo_analyst_ratings:{base}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    try:
+        ticker = yf.Ticker(base, session=_get_yf_session())
+        info = ticker.info
+        
+        target_mean_price = info.get("targetMeanPrice")
+        target_high_price = info.get("targetHighPrice")
+        target_low_price = info.get("targetLowPrice")
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice")
+        
+        recommendations = None
+        try:
+            recs = ticker.recommendations_summary
+            if recs is not None and not recs.empty:
+                latest = recs.iloc[0]
+                recommendations = {
+                    "strong_buy": int(latest.get("strongBuy", 0)),
+                    "buy": int(latest.get("buy", 0)),
+                    "hold": int(latest.get("hold", 0)),
+                    "sell": int(latest.get("sell", 0)),
+                    "strong_sell": int(latest.get("strongSell", 0)),
+                }
+        except Exception as e:
+            logger.debug(f"Failed to fetch recommendations for {base}: {e}")
+
+        if target_mean_price is None and recommendations is None:
+            return None
+
+        result = {
+            "target_mean_price": target_mean_price,
+            "target_high_price": target_high_price,
+            "target_low_price": target_low_price,
+            "current_price": current_price,
+            "recommendations": recommendations,
+        }
+
+        try:
+            redis_client.set(cache_key, json.dumps(result), ex=86400)  # 24h
+        except Exception:
+            pass
+        return result
+    except Exception as e:
+        logger.warning(f"Yahoo Finance analyst ratings failed for {base}: {type(e).__name__}: {e}")
+        return None
