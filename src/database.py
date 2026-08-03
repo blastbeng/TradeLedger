@@ -55,6 +55,10 @@ if _backend == "postgresql":
     _placeholder = "%s"
 else:
     _placeholder = "?"
+    import types
+    # Define a dummy psycopg namespace so that exception handlers referencing
+    # psycopg.Error don't raise NameError when using the SQLite backend.
+    psycopg = types.SimpleNamespace(Error=type('Error', (Exception,), {}))
 
 
 def _adapt_sql(sql: str) -> str:
