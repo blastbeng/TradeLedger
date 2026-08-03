@@ -364,6 +364,38 @@ class ModelTierManager:
         # Invert the scale: higher complexity -> lower temperature (more deterministic)
         return hi - (hi - lo) * complexity
 
+    def _compute_reasoning_effort(
+        self,
+        model_type: str,
+        complexity: float,
+        is_critical: bool = False,
+    ) -> str:
+        """Compute reasoning effort level from thinking_enabled and prompt complexity.
+
+        When thinking is disabled for the model type, always returns 'low'.
+        When thinking is enabled, maps the complexity score to 'low', 'medium', or 'high'.
+        Critical decisions always get 'high' when thinking is enabled.
+        """
+        if model_type == "mind":
+            thinking_enabled = settings.LLM_MIND_THINKING_ENABLED
+        elif model_type == "weak":
+            thinking_enabled = settings.LLM_WEAK_THINKING_ENABLED
+        else:
+            thinking_enabled = settings.LLM_ACTUATOR_THINKING_ENABLED
+
+        if not thinking_enabled:
+            return "low"
+
+        if is_critical:
+            return "high"
+
+        if complexity < 0.35:
+            return "low"
+        elif complexity < 0.65:
+            return "medium"
+        else:
+            return "high"
+
     def compute_model_tier_and_temperature(
         self,
         atr: Optional[float],
@@ -402,7 +434,7 @@ class ModelTierManager:
         current_price: float,
         timeframe: Optional[str] = None,
         num_candidates: int = 0,
-    ) -> Tuple[str, float]:
+    ) -> Tuple[str, float, str]:
         """Compute the strategy model type and effective temperature."""
         _conflicting = False
         if rsi is not None and macd_hist is not None:
@@ -465,4 +497,8 @@ class ModelTierManager:
             drawdown_pct=drawdown_pct,
         )
 
-        return strategy_model_type, effective_temp
+        reasoning_effort = self._compute_reasoning_effort(
+            strategy_model_type, strategy_complexity, is_critical,
+        )
+
+        return strategy_model_type, effective_temp, reasoning_effort
