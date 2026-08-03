@@ -199,7 +199,7 @@ def _analyze_sentiment(text: str) -> Dict[str, Any]:
             prompt=prompt,
             system_prompt=system_prompt,
             ttl=86400,  # Cache sentiment for 24 hours to avoid repeated LLM calls
-            model_type="weak",
+            model_type="sentiment",
             request_type="sentiment_analysis"
         )
         response_text = llm_result.get("response", "")

@@ -689,10 +689,14 @@ class Settings(BaseSettings):
         "LLM_PROMPT_CACHING_CONTROL_PROVIDERS", "OHLCV_TIMEFRAMES",
         "OPENAI_FALLBACK_MODEL", "OPENAI_MIND_FALLBACK_MODEL",
         "OPENAI_ACTUATOR_FALLBACK_MODEL", "OPENAI_WEAK_FALLBACK_MODEL",
+        "OPENAI_SENTIMENT_FALLBACK_MODEL",
         "OLLAMA_FALLBACK_MODEL", "OLLAMA_MIND_FALLBACK_MODEL",
         "OLLAMA_ACTUATOR_FALLBACK_MODEL", "OLLAMA_WEAK_FALLBACK_MODEL",
+        "OLLAMA_SENTIMENT_FALLBACK_MODEL",
         "OPENAI_MODEL", "OPENAI_MIND_MODEL", "OPENAI_ACTUATOR_MODEL", "OPENAI_WEAK_MODEL",
+        "OPENAI_SENTIMENT_MODEL",
         "OLLAMA_MODEL", "OLLAMA_MIND_MODEL", "OLLAMA_ACTUATOR_MODEL", "OLLAMA_WEAK_MODEL",
+        "OLLAMA_SENTIMENT_MODEL",
         "AOL_LLM_MODEL",
         mode="before"
     )
@@ -839,6 +843,64 @@ class Settings(BaseSettings):
         if v is None or v.strip() == "":
             return None
         Settings.parse_temperature_range(v)  # raises ValueError if invalid
+        return v
+
+    # Dedicated sentiment model (news sentiment analysis) - used to save tokens and improve accuracy
+    LLM_SENTIMENT_PROVIDER: str = ""  # empty = use global LLM_PROVIDER
+
+    # Per-role OpenAI settings for sentiment model (empty or None = use global OPENAI_*)
+    OPENAI_SENTIMENT_MODEL: Annotated[list[str], NoDecode] = []
+    OPENAI_SENTIMENT_API_KEY: Optional[str] = None
+    OPENAI_SENTIMENT_BASE_URL: Optional[str] = None
+
+    # Per-role Ollama settings for sentiment model (empty or None = use global OLLAMA_*)
+    OLLAMA_SENTIMENT_MODEL: Annotated[list[str], NoDecode] = []
+    OLLAMA_SENTIMENT_BASE_URL: Optional[str] = None
+    OLLAMA_SENTIMENT_API_KEY: Optional[str] = None
+
+    # Per-role temperature override for sentiment model
+    LLM_SENTIMENT_TEMPERATURE: Optional[str] = None
+
+    @field_validator("LLM_SENTIMENT_TEMPERATURE")
+    @classmethod
+    def validate_sentiment_temperature(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v.strip() == "":
+            return None
+        Settings.parse_temperature_range(v)  # raises ValueError if invalid
+        return v
+
+    # Thinking mode (reasoning) control for sentiment model.
+    LLM_SENTIMENT_THINKING_ENABLED: bool = False
+
+    # Max input tokens for sentiment models
+    OPENAI_SENTIMENT_MAX_INPUT_TOKENS: int = 64_000
+    OLLAMA_SENTIMENT_MAX_INPUT_TOKENS: int = 64_000
+
+    # Max input tokens for fallback sentiment models
+    OPENAI_SENTIMENT_FALLBACK_MAX_INPUT_TOKENS: int = 8_192
+    OLLAMA_SENTIMENT_FALLBACK_MAX_INPUT_TOKENS: int = 8_192
+
+    # Fallback provider settings for sentiment model
+    LLM_SENTIMENT_FALLBACK_PROVIDER: str = ""
+
+    # OpenAI fallback settings for sentiment model
+    OPENAI_SENTIMENT_FALLBACK_MODEL: Annotated[list[str], NoDecode] = []
+    OPENAI_SENTIMENT_FALLBACK_BASE_URL: Optional[str] = None
+    OPENAI_SENTIMENT_FALLBACK_API_KEY: Optional[str] = None
+
+    # Ollama fallback settings for sentiment model
+    OLLAMA_SENTIMENT_FALLBACK_MODEL: Annotated[list[str], NoDecode] = []
+    OLLAMA_SENTIMENT_FALLBACK_BASE_URL: Optional[str] = None
+    OLLAMA_SENTIMENT_FALLBACK_API_KEY: Optional[str] = None
+
+    # Cache TTL for sentiment model
+    LLM_SENTIMENT_CACHE_TTL: int = 3600
+
+    @field_validator("LLM_SENTIMENT_CACHE_TTL")
+    @classmethod
+    def validate_llm_sentiment_cache_ttl(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("LLM_SENTIMENT_CACHE_TTL must be positive")
         return v
 
     # Always-Online Locally hosted weak model (last resort fallback)

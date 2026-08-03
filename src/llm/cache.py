@@ -48,6 +48,8 @@ def _get_max_input_tokens(provider: str, model_type: str, is_fallback: bool) -> 
                 return settings.OPENAI_MIND_FALLBACK_MAX_INPUT_TOKENS
             elif model_type == "weak":
                 return settings.OPENAI_WEAK_FALLBACK_MAX_INPUT_TOKENS
+            elif model_type == "sentiment":
+                return settings.OPENAI_SENTIMENT_FALLBACK_MAX_INPUT_TOKENS
             else:
                 return settings.OPENAI_ACTUATOR_FALLBACK_MAX_INPUT_TOKENS
         else:
@@ -55,6 +57,8 @@ def _get_max_input_tokens(provider: str, model_type: str, is_fallback: bool) -> 
                 return settings.OPENAI_MIND_MAX_INPUT_TOKENS
             elif model_type == "weak":
                 return settings.OPENAI_WEAK_MAX_INPUT_TOKENS
+            elif model_type == "sentiment":
+                return settings.OPENAI_SENTIMENT_MAX_INPUT_TOKENS
             else:
                 return settings.OPENAI_ACTUATOR_MAX_INPUT_TOKENS
     elif provider == "g4f":
@@ -78,6 +82,8 @@ def _get_max_input_tokens(provider: str, model_type: str, is_fallback: bool) -> 
                 return settings.OLLAMA_MIND_FALLBACK_MAX_INPUT_TOKENS
             elif model_type == "weak":
                 return settings.OLLAMA_WEAK_FALLBACK_MAX_INPUT_TOKENS
+            elif model_type == "sentiment":
+                return settings.OLLAMA_SENTIMENT_FALLBACK_MAX_INPUT_TOKENS
             else:
                 return settings.OLLAMA_ACTUATOR_FALLBACK_MAX_INPUT_TOKENS
         else:
@@ -85,6 +91,8 @@ def _get_max_input_tokens(provider: str, model_type: str, is_fallback: bool) -> 
                 return settings.OLLAMA_MIND_MAX_INPUT_TOKENS
             elif model_type == "weak":
                 return settings.OLLAMA_WEAK_MAX_INPUT_TOKENS
+            elif model_type == "sentiment":
+                return settings.OLLAMA_SENTIMENT_MAX_INPUT_TOKENS
             else:
                 return settings.OLLAMA_ACTUATOR_MAX_INPUT_TOKENS
 
@@ -741,6 +749,8 @@ def _execute_fallback_call(
         fallback_provider = settings.LLM_MIND_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
     elif model_type == "weak":
         fallback_provider = settings.LLM_WEAK_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
+    elif model_type == "sentiment":
+        fallback_provider = settings.LLM_SENTIMENT_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
     else:
         fallback_provider = settings.LLM_ACTUATOR_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
 
@@ -767,6 +777,10 @@ def _execute_fallback_call(
             fallback_models = settings.OPENAI_WEAK_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
             fallback_base_url = settings.OPENAI_WEAK_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
             fallback_api_key = settings.OPENAI_WEAK_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
+        elif model_type == "sentiment":
+            fallback_models = settings.OPENAI_SENTIMENT_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fallback_base_url = settings.OPENAI_SENTIMENT_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
+            fallback_api_key = settings.OPENAI_SENTIMENT_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
         else:
             fallback_models = settings.OPENAI_ACTUATOR_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
             fallback_base_url = settings.OPENAI_ACTUATOR_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
@@ -1006,6 +1020,10 @@ def _execute_fallback_call(
             fallback_models = settings.OLLAMA_WEAK_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
             fallback_base_url = settings.OLLAMA_WEAK_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
             fallback_api_key = settings.OLLAMA_WEAK_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
+        elif model_type == "sentiment":
+            fallback_models = settings.OLLAMA_SENTIMENT_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fallback_base_url = settings.OLLAMA_SENTIMENT_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
+            fallback_api_key = settings.OLLAMA_SENTIMENT_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
         else:
             fallback_models = settings.OLLAMA_ACTUATOR_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
             fallback_base_url = settings.OLLAMA_ACTUATOR_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
@@ -1280,6 +1298,8 @@ def _get_primary_provider_config(model_type: str) -> Tuple[str, List[str], str, 
         provider = settings.LLM_MIND_PROVIDER or settings.LLM_PROVIDER
     elif model_type == "weak":
         provider = settings.LLM_WEAK_PROVIDER or settings.LLM_PROVIDER
+    elif model_type == "sentiment":
+        provider = settings.LLM_SENTIMENT_PROVIDER or settings.LLM_PROVIDER
     else:
         provider = settings.LLM_ACTUATOR_PROVIDER or settings.LLM_PROVIDER
 
@@ -1292,6 +1312,10 @@ def _get_primary_provider_config(model_type: str) -> Tuple[str, List[str], str, 
             models = settings.OPENAI_WEAK_MODEL or settings.OPENAI_MODEL
             base_url = settings.OPENAI_WEAK_BASE_URL or settings.OPENAI_BASE_URL
             api_key = settings.OPENAI_WEAK_API_KEY or settings.OPENAI_API_KEY
+        elif model_type == "sentiment":
+            models = settings.OPENAI_SENTIMENT_MODEL or settings.OPENAI_MODEL
+            base_url = settings.OPENAI_SENTIMENT_BASE_URL or settings.OPENAI_BASE_URL
+            api_key = settings.OPENAI_SENTIMENT_API_KEY or settings.OPENAI_API_KEY
         else:
             models = settings.OPENAI_ACTUATOR_MODEL or settings.OPENAI_MODEL
             base_url = settings.OPENAI_ACTUATOR_BASE_URL or settings.OPENAI_BASE_URL
@@ -1310,6 +1334,10 @@ def _get_primary_provider_config(model_type: str) -> Tuple[str, List[str], str, 
             models = settings.OLLAMA_WEAK_MODEL or settings.OLLAMA_MODEL
             base_url = settings.OLLAMA_WEAK_BASE_URL or settings.OLLAMA_BASE_URL
             api_key = settings.OLLAMA_WEAK_API_KEY or settings.OLLAMA_API_KEY
+        elif model_type == "sentiment":
+            models = settings.OLLAMA_SENTIMENT_MODEL or settings.OLLAMA_MODEL
+            base_url = settings.OLLAMA_SENTIMENT_BASE_URL or settings.OLLAMA_BASE_URL
+            api_key = settings.OLLAMA_SENTIMENT_API_KEY or settings.OLLAMA_API_KEY
         else:
             models = settings.OLLAMA_ACTUATOR_MODEL or settings.OLLAMA_MODEL
             base_url = settings.OLLAMA_ACTUATOR_BASE_URL or settings.OLLAMA_BASE_URL
@@ -1368,6 +1396,8 @@ def get_cached_llm_response(
     if ttl is None:
         if model_type == "mind":
             ttl = settings.LLM_MIND_CACHE_TTL
+        elif model_type == "sentiment":
+            ttl = settings.LLM_SENTIMENT_CACHE_TTL
         else:
             ttl = settings.LLM_CACHE_TTL
 
@@ -1392,6 +1422,8 @@ def get_cached_llm_response(
         thinking_enabled = settings.LLM_MIND_THINKING_ENABLED
     elif model_type == "weak":
         thinking_enabled = settings.LLM_WEAK_THINKING_ENABLED
+    elif model_type == "sentiment":
+        thinking_enabled = settings.LLM_SENTIMENT_THINKING_ENABLED
     else:
         thinking_enabled = settings.LLM_ACTUATOR_THINKING_ENABLED
 
@@ -1735,6 +1767,8 @@ def _get_fallback_provider_config(model_type: str, provider: str = None):
         fallback_provider = settings.LLM_MIND_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
     elif model_type == "weak":
         fallback_provider = settings.LLM_WEAK_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
+    elif model_type == "sentiment":
+        fallback_provider = settings.LLM_SENTIMENT_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
     else:
         fallback_provider = settings.LLM_ACTUATOR_FALLBACK_PROVIDER or settings.LLM_FALLBACK_PROVIDER or provider
 
@@ -1750,6 +1784,10 @@ def _get_fallback_provider_config(model_type: str, provider: str = None):
             fb_models = settings.OPENAI_WEAK_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
             fb_base_url = settings.OPENAI_WEAK_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
             fb_api_key = settings.OPENAI_WEAK_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
+        elif model_type == "sentiment":
+            fb_models = settings.OPENAI_SENTIMENT_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
+            fb_base_url = settings.OPENAI_SENTIMENT_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
+            fb_api_key = settings.OPENAI_SENTIMENT_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
         else:
             fb_models = settings.OPENAI_ACTUATOR_FALLBACK_MODEL or settings.OPENAI_FALLBACK_MODEL
             fb_base_url = settings.OPENAI_ACTUATOR_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
@@ -1768,6 +1806,10 @@ def _get_fallback_provider_config(model_type: str, provider: str = None):
             fb_models = settings.OLLAMA_WEAK_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
             fb_base_url = settings.OLLAMA_WEAK_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
             fb_api_key = settings.OLLAMA_WEAK_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
+        elif model_type == "sentiment":
+            fb_models = settings.OLLAMA_SENTIMENT_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
+            fb_base_url = settings.OLLAMA_SENTIMENT_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
+            fb_api_key = settings.OLLAMA_SENTIMENT_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
         else:
             fb_models = settings.OLLAMA_ACTUATOR_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
             fb_base_url = settings.OLLAMA_ACTUATOR_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
