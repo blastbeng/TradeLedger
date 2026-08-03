@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
 from src.database import get_latest_ohlcv_timestamp, get_ohlcv, get_indicators, get_backtest_results_for_symbol, get_indicators_for_symbols, get_aggregate_sentiment_from_db, insert_signal
-from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals, get_yahoo_analyst_ratings
+from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals, get_yahoo_analyst_ratings, get_yahoo_options_summary
 from src.indicators import compute_all_indicators, compute_ema, compute_vwap, compute_pivot_points
 from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import build_analysis_prompt, compact_prompt, build_backtest_variants_prompt, build_system_prompt, get_cached_news_summary, StrategyPromptData, BacktestPromptData
@@ -112,6 +112,7 @@ class SignalProcessor:
         self.event_bus.subscribe("process_pending_entry", self.entry_signal_manager.process_pending_entry)
         self.event_bus.subscribe("check_entry_condition_once", self.entry_signal_manager.check_entry_condition_once)
         self.event_bus.subscribe("get_analyst_ratings", self._get_analyst_ratings)
+        self.event_bus.subscribe("get_options_summary", self._get_options_summary)
         self._skip_config_cache: Dict[str, float] = {}
         self._skip_config_cache_time: float = 0.0
         self._skip_config_cache_ttl: float = 60.0  # 1 minute
@@ -124,6 +125,15 @@ class SignalProcessor:
         if BTPPolicy.is_btp(base_symbol):
             return None
         return await asyncio.to_thread(get_yahoo_analyst_ratings, symbol)
+
+    async def _get_options_summary(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Fetch options summary for a symbol."""
+        if not settings.YAHOO_FINANCE_ENABLED:
+            return None
+        base_symbol = symbol.split("/")[0]
+        if BTPPolicy.is_btp(base_symbol):
+            return None
+        return await asyncio.to_thread(get_yahoo_options_summary, symbol)
 
     @staticmethod
     def _parse_analysis_response(response: str) -> Optional[Dict[str, Any]]:
@@ -360,6 +370,7 @@ class SignalProcessor:
             macro_economic_context=get_macro_economic_context(),
             analyst_ratings=_ctx.get("analyst_ratings"),
             insider_transactions=_ctx.get("insider_transactions"),
+            options_summary=_ctx.get("options_summary"),
         )
         analysis_prompt, market_snapshot, market_hash = await self.build_analysis_prompt_and_snapshot(prompt_data)
 
@@ -1051,6 +1062,7 @@ class SignalProcessor:
             global_min_rr_raw,
             analyst_ratings,
             insider_transactions,
+            options_summary,
         ) = await asyncio.gather(
             asyncio.to_thread(get_backtest_results_for_symbol, symbol, assigned_tf, 10),
             self._fetch_dividend_data(symbol, ticker),
@@ -1064,6 +1076,7 @@ class SignalProcessor:
             engine.config_service.get_config("min_risk_reward_ratio"),
             engine.event_bus.request("get_analyst_ratings", symbol),
             engine.event_bus.request("get_insider_transactions", symbol),
+            engine.event_bus.request("get_options_summary", symbol),
             return_exceptions=True,
         )
 
@@ -1096,6 +1109,9 @@ class SignalProcessor:
 
         if isinstance(insider_transactions, Exception):
             insider_transactions = None
+
+        if isinstance(options_summary, Exception):
+            options_summary = None
 
         # Sentiment trend
         sentiment_trend_val = None
@@ -1162,6 +1178,7 @@ class SignalProcessor:
             "next_ex_dividend": next_ex_dividend,
             "analyst_ratings": analyst_ratings if not isinstance(analyst_ratings, Exception) else None,
             "insider_transactions": insider_transactions if not isinstance(insider_transactions, Exception) else None,
+            "options_summary": options_summary if not isinstance(options_summary, Exception) else None,
         }
 
     async def build_analysis_prompt_and_snapshot(

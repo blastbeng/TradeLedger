@@ -126,6 +126,7 @@ class StrategyPromptData:
     macro_economic_context: Optional[Dict[str, Any]] = None
     analyst_ratings: Optional[Dict[str, Any]] = None
     insider_transactions: Optional[List[Dict[str, Any]]] = None
+    options_summary: Optional[Dict[str, Any]] = None
 
 
 def build_strategy_prompt(
@@ -695,6 +696,16 @@ Maximum symbols to trade: {max_symbols}
             val = t.get("value", 0.0)
             filer = t.get("filer", "Unknown")
             prompt += f"\n- {t_type} {shares} shares (Value: {val:.0f}) by {filer}"
+        prompt += "\n"
+
+    # --- Options Summary ---
+    if options_summary and not is_long_term:
+        prompt += "\n**Options Market Data:**"
+        prompt += f" Expiration: {options_summary.get('expiration_date', 'N/A')}"
+        prompt += f", Put/Call Ratio: {options_summary.get('put_call_ratio', 'N/A')}"
+        if options_summary.get('implied_volatility') is not None:
+            prompt += f", IV: {options_summary.get('implied_volatility'):.2%}"
+        prompt += f" (Call Vol: {options_summary.get('call_volume', 0)}, Put Vol: {options_summary.get('put_volume', 0)})"
         prompt += "\n"
 
     # --- News section (detailed articles) ---

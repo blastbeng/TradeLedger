@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 from typing import Any, Dict, List, Optional
 
 import yfinance as yf
@@ -333,4 +334,76 @@ def get_yahoo_analyst_ratings(symbol: str) -> Optional[Dict[str, Any]]:
         return result
     except Exception as e:
         logger.warning(f"Yahoo Finance analyst ratings failed for {base}: {type(e).__name__}: {e}")
+        return None
+
+
+def get_yahoo_options_summary(symbol: str) -> Optional[Dict[str, Any]]:
+    """Fetch a summary of the options chain for the nearest expiration date."""
+    if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
+        return None
+
+    from src.exchanges.market_data import _get_isin_from_yfinance
+    if _get_isin_from_yfinance(symbol) is None:
+        logger.debug(f"Skipping yfinance options for {symbol}: no valid Italian ISIN.")
+        return None
+
+    base = symbol.split("/")[0] if "/" in symbol else symbol
+    base = base.lstrip('$')
+
+    redis_client = get_redis_client()
+    cache_key = f"yahoo_options_summary:{base}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    try:
+        ticker = yf.Ticker(base, session=_get_yf_session())
+        expirations = ticker.options
+        if not expirations:
+            return None
+
+        # Fetch the nearest expiration date
+        nearest_exp = expirations[0]
+        chain = ticker.option_chain(nearest_exp)
+        
+        calls = chain.calls
+        puts = chain.puts
+        
+        if calls.empty or puts.empty:
+            return None
+            
+        call_volume = calls['volume'].sum()
+        put_volume = puts['volume'].sum()
+        
+        # Put/Call ratio (PCR)
+        pcr = put_volume / call_volume if call_volume > 0 else 0.0
+        
+        # Implied volatility (average of ATM options)
+        # ATM strike is roughly the current price
+        current_price = ticker.info.get("currentPrice") or ticker.info.get("regularMarketPrice")
+        if current_price:
+            atm_calls = calls.iloc[(calls['strike'] - current_price).abs().argsort()[:1]]
+            atm_puts = puts.iloc[(puts['strike'] - current_price).abs().argsort()[:1]]
+            iv = (atm_calls['impliedVolatility'].mean() + atm_puts['impliedVolatility'].mean()) / 2
+        else:
+            iv = None
+
+        result = {
+            "expiration_date": nearest_exp,
+            "put_call_ratio": round(pcr, 2),
+            "implied_volatility": round(iv, 4) if iv is not None and not math.isnan(iv) else None,
+            "call_volume": int(call_volume),
+            "put_volume": int(put_volume),
+        }
+
+        try:
+            redis_client.set(cache_key, json.dumps(result), ex=86400)  # 24h
+        except Exception:
+            pass
+        return result
+    except Exception as e:
+        logger.warning(f"Yahoo Finance options summary failed for {base}: {type(e).__name__}: {e}")
         return None
