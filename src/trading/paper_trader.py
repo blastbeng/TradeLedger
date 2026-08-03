@@ -64,6 +64,9 @@ class PaperTrader:
         self._balances_dirty = False
         self._slippage_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, slippage)
         self._lock = threading.RLock()
+        self._stop_event = threading.Event()
+        self._poller_thread = threading.Thread(target=self._poll_open_orders, daemon=True)
+        self._poller_thread.start()
         self._load_balances()
 
     # ------------------------------------------------------------------
@@ -190,7 +193,7 @@ class PaperTrader:
         cached = self._slippage_cache.get(symbol)
         if cached:
             ts, cached_slippage = cached
-            if time.time() - ts < 60:
+            if time.time() - ts < 5:
                 return cached_slippage
 
         base = symbol.split("/")[0] if "/" in symbol else symbol
@@ -238,24 +241,35 @@ class PaperTrader:
                 return vol * settings.PARTIAL_FILL_VOLUME_CAP_PCT
 
             # Fallback to daily volume if 1m is unavailable
-            logger.info(f"1m volume unavailable for {symbol}, falling back to daily volume for fill cap.")
-            daily_candles = get_ohlcv(base, "1d", limit=21)
-            if daily_candles:
-                volumes = [c["volume"] for c in daily_candles[:-1]]
-                avg_vol = sum(volumes) / len(volumes) if volumes else 0.0
-                # Estimate 1m volume as average daily volume / 510 (Borsa Italiana minutes: 9:00-17:30)
-                est_1m_vol = avg_vol / 510.0
-                return est_1m_vol * settings.PARTIAL_FILL_VOLUME_CAP_PCT
-
-            logger.warning(f"No volume data available for {symbol}, skipping partial fill cap.")
+            logger.info(f"1m volume unavailable for {symbol}, skipping partial fill cap.")
             return None
         except Exception as e:
             logger.warning(f"Failed to fetch volume for partial fill check for {symbol}: {type(e).__name__}: {e}")
             return None
 
+    def _poll_open_orders(self):
+        """Background thread to poll open orders and trigger stops promptly."""
+        while not self._stop_event.is_set():
+            try:
+                open_order_ids = [
+                    oid for oid, o in self._orders.items() if o.status == "open"
+                ]
+                for oid in open_order_ids:
+                    self.get_order(oid)
+            except Exception as e:
+                logger.warning(f"Error polling open orders: {e}")
+            time.sleep(1.0)
+
     @staticmethod
     def _generate_order_id() -> str:
         return str(uuid.uuid4())
+
+    def _compute_market_impact_pct(self, base_amount: float, max_vol: Optional[float]) -> float:
+        """Compute market impact percentage using a simple square-root model."""
+        if max_vol is None or max_vol <= 0:
+            return 0.0
+        impact_ratio = base_amount / max_vol
+        return 0.05 * (impact_ratio ** 0.5)
 
     @staticmethod
     def _make_order_dict(
@@ -306,6 +320,13 @@ class PaperTrader:
                 is_partial = True
             else:
                 base_amount = requested_base_amount
+
+            # Apply market impact
+            impact_pct = self._compute_market_impact_pct(base_amount, max_vol)
+            if order.side == "buy":
+                fill_price = fill_price * (1 + impact_pct)
+            else:
+                fill_price = fill_price * (1 - impact_pct)
 
             if order.side == "buy":
                 costs = calculate_transaction_costs("BUY", fill_price, base_amount, symbol=order.symbol)
@@ -411,10 +432,15 @@ class PaperTrader:
         slippage_pct = self._get_dynamic_slippage(symbol, fill_price)
         fill_price = fill_price * (1 + slippage_pct)
 
+        max_vol = self._get_max_fillable_volume(symbol)
+        
+        # Apply market impact
+        impact_pct = self._compute_market_impact_pct(amount / fill_price, max_vol)
+        fill_price = fill_price * (1 + impact_pct)
+
         base_amount = amount / fill_price
 
         # Check for volume-based partial fill
-        max_vol = self._get_max_fillable_volume(symbol)
         if max_vol is not None and base_amount > max_vol:
             logger.info(f"Partial fill for {symbol}: requested {base_amount}, capped to {max_vol}")
             base_amount = max_vol
@@ -505,8 +531,13 @@ class PaperTrader:
         slippage_pct = self._get_dynamic_slippage(symbol, fill_price)
         fill_price = fill_price * (1 - slippage_pct)
 
-        # Check for volume-based partial fill
         max_vol = self._get_max_fillable_volume(symbol)
+        
+        # Apply market impact
+        impact_pct = self._compute_market_impact_pct(amount, max_vol)
+        fill_price = fill_price * (1 - impact_pct)
+
+        # Check for volume-based partial fill
         if max_vol is not None and amount > max_vol:
             logger.info(f"Partial fill for {symbol}: requested {amount}, capped to {max_vol}")
             amount = max_vol
