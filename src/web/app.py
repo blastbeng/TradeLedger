@@ -193,39 +193,15 @@ async def logout(request: Request, response: Response):
 # Serve static files (dashboard)
 app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
 
-# Global engine reference
-_engine = None
-
-# WebSocket payload cache – shared across all connected clients to avoid
-# redundant API calls and SQLite queries when multiple tabs are open.
-_ws_payload_cache: Optional[dict] = None
-_ws_payload_cache_time: float = 0.0
-
-def invalidate_ws_payload_cache():
-    """Clear the WebSocket payload cache so clients get fresh data immediately."""
-    global _ws_payload_cache, _ws_payload_cache_time
-    _ws_payload_cache = None
-    _ws_payload_cache_time = 0.0
-
-def set_engine(engine):
-    global _engine
-    _engine = engine
-    logger.info("Trading engine attached to web server")
-
-def get_engine():
-    if _engine is None:
-        raise HTTPException(status_code=503, detail="Engine not initialized")
-    return _engine
-
-@public_router.get("/")
+@app.get("/")
 async def root():
     return FileResponse("src/web/static/index.html")
 
-@public_router.get("/sw.js")
+@app.get("/sw.js")
 async def service_worker():
     return FileResponse("src/web/static/sw.js", media_type="application/javascript")
 
-@public_router.get("/icon-{size}.png")
+@app.get("/icon-{size}.png")
 async def icon_png(size: int):
     """Generate PNG PWA icons on-the-fly (Chrome Android requires PNG icons for installability)."""
     try:
@@ -265,6 +241,30 @@ async def icon_png(size: int):
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
         )
         return Response(content=transparent_png, media_type="image/png")
+
+# Global engine reference
+_engine = None
+
+# WebSocket payload cache – shared across all connected clients to avoid
+# redundant API calls and SQLite queries when multiple tabs are open.
+_ws_payload_cache: Optional[dict] = None
+_ws_payload_cache_time: float = 0.0
+
+def invalidate_ws_payload_cache():
+    """Clear the WebSocket payload cache so clients get fresh data immediately."""
+    global _ws_payload_cache, _ws_payload_cache_time
+    _ws_payload_cache = None
+    _ws_payload_cache_time = 0.0
+
+def set_engine(engine):
+    global _engine
+    _engine = engine
+    logger.info("Trading engine attached to web server")
+
+def get_engine():
+    if _engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+    return _engine
 
 @http_router.get("/health")
 async def health():
