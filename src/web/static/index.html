@@ -831,7 +831,7 @@
             const options = args[1] || {};
 
             // Don't intercept the login request itself
-            if (typeof url === 'string' && url === '/api/login') {
+            if (typeof url === 'string' && url === '/api/v1/login') {
                 return originalFetch(...args);
             }
 
@@ -860,7 +860,7 @@
             const errorDiv = document.getElementById('login-error');
             errorDiv.textContent = '';
 
-            const resp = await originalFetch('/api/login', {
+            const resp = await originalFetch('/api/v1/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
@@ -879,7 +879,7 @@
         });
 
         document.getElementById('btn-logout').addEventListener('click', async () => {
-            await originalFetch('/api/logout', { method: 'POST' });
+            await originalFetch('/api/v1/logout', { method: 'POST' });
             localStorage.removeItem('csrf_token');
             if (ws) ws.close(); // Close WebSocket to stop data flow
             if (pollingTimer) { clearInterval(pollingTimer); pollingTimer = null; }
@@ -888,7 +888,7 @@
             showLoginOverlay();
         });
 
-        const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
+        const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/v1/ws`;
         let ws;
         function connect() {
             if (pollingMode) return; // Don't try WebSocket if in polling mode
@@ -1421,7 +1421,7 @@
 
         async function pollData() {
             try {
-                const resp = await fetch('/api/status');
+                const resp = await fetch('/api/v1/status');
                 if (resp.ok) {
                     const data = await resp.json();
                     updateUI(data);
@@ -1493,7 +1493,7 @@
         async function fetchSignals(page = 1) {
             currentSignalsPage = page;
             try {
-                const resp = await fetch(`/api/signals?page=${page}&limit=${signalsPerPage}`);
+                const resp = await fetch(`/api/v1/signals?page=${page}&limit=${signalsPerPage}`);
                 const data = await resp.json();
                 const signals = data.signals || [];
                 const total = data.total || 0;
@@ -1676,7 +1676,7 @@
 
         async function fetchMessages() {
             try {
-                const resp = await fetch('/api/messages');
+                const resp = await fetch('/api/v1/messages');
                 const msgs = await resp.json();
                 const messagesDiv = document.getElementById('messages');
                 if (msgs && msgs.length > 0) {
@@ -1697,7 +1697,7 @@
         async function fetchNews() {
             const newsDiv = document.getElementById('news');
             try {
-                const resp = await fetch('/api/news');
+                const resp = await fetch('/api/v1/news');
                 const news = await resp.json();
                 if (news && news.length > 0) {
                     let html = '';
@@ -1718,7 +1718,7 @@
         async function fetchLogs() {
             const container = document.getElementById('logs-content');
             try {
-                const resp = await fetch('/api/logs?limit=200');
+                const resp = await fetch('/api/v1/logs?limit=200');
                 if (!resp.ok) throw new Error('Failed to fetch logs');
                 const entries = await resp.json();
                 if (entries.length === 0) {
@@ -1754,23 +1754,23 @@
 
         async function refreshData() {
             await fetchPositionPrices();
-            fetch('/api/history?limit=50')
+            fetch('/api/v1/history?limit=50')
                 .then(res => res.json())
                 .then(history => updateHistoryUI(history))
                 .catch(() => {});
-            fetch('/api/risk')
+            fetch('/api/v1/risk')
                 .then(res => res.json())
                 .then(risk => updateRiskUI(risk))
                 .catch(() => {});
-            fetch('/api/profit')
+            fetch('/api/v1/profit')
                 .then(res => res.json())
                 .then(profit => updateProfitUI(profit))
                 .catch(() => {});
-            fetch('/api/performance')
+            fetch('/api/v1/performance')
                 .then(res => res.json())
                 .then(perf => updatePerformanceUI(perf))
                 .catch(() => {});
-            fetch('/api/market-status')
+            fetch('/api/v1/market-status')
                 .then(res => res.json())
                 .then(ms => updateMarketStatusUI(ms))
                 .catch(() => {});
@@ -1792,7 +1792,7 @@
             const symList = symbols.join(',');
             let tickersMap = {};
             try {
-                const resp = await fetch(`/api/tickers?symbols=${encodeURIComponent(symList)}`);
+                const resp = await fetch(`/api/v1/tickers?symbols=${encodeURIComponent(symList)}`);
                 tickersMap = await resp.json();
             } catch (e) {
                 console.error('Batch ticker fetch failed', e);
@@ -1956,7 +1956,7 @@
             const showVolume = document.getElementById('chart-show-volume')?.checked !== false;
 
             try {
-                const resp = await fetch(`/api/ohlcv/${encodeURIComponent(baseSymbol)}?timeframe=${timeframe}&limit=${limit}`);
+                const resp = await fetch(`/api/v1/ohlcv/${encodeURIComponent(baseSymbol)}?timeframe=${timeframe}&limit=${limit}`);
                 if (!resp.ok) throw new Error('Failed to fetch OHLCV data');
                 const json = await resp.json();
                 let data = json.data || [];
@@ -2095,10 +2095,10 @@
         }
 
         document.getElementById('btn-pause').addEventListener('click', () => {
-            fetch('/api/pause', { method: 'POST' }).then(() => alert('Trading paused.'));
+            fetch('/api/v1/pause', { method: 'POST' }).then(() => alert('Trading paused.'));
         });
         document.getElementById('btn-resume').addEventListener('click', () => {
-            fetch('/api/resume', { method: 'POST' })
+            fetch('/api/v1/resume', { method: 'POST' })
                 .then(res => {
                     if (res.ok) return res.json();
                     else return res.json().then(err => { throw new Error(err.detail || 'Resume failed'); });
@@ -2108,15 +2108,15 @@
         });
         document.getElementById('btn-sell-all').addEventListener('click', () => {
             if (confirm('Sell all open positions?')) {
-                fetch('/api/sell', { method: 'POST' }).then(() => alert('Sell order placed.'));
+                fetch('/api/v1/sell', { method: 'POST' }).then(() => alert('Sell order placed.'));
             }
         });
         document.getElementById('btn-reload').addEventListener('click', () => {
-            fetch('/api/reload', { method: 'POST' }).then(() => alert('Settings reloaded.'));
+            fetch('/api/v1/reload', { method: 'POST' }).then(() => alert('Settings reloaded.'));
         });
         document.getElementById('btn-restart').addEventListener('click', () => {
             if (confirm('⚠️ This will fully restart the bot. All positions will be preserved. Continue?')) {
-                fetch('/api/restart', { method: 'POST' }).catch(() => {});
+                fetch('/api/v1/restart', { method: 'POST' }).catch(() => {});
                 // The page will disconnect; no need to handle the response.
             }
         });
@@ -2128,7 +2128,7 @@
             setTimeout(() => { btn.textContent = originalText; }, 1500);
         });
         document.getElementById('btn-force-reeval').addEventListener('click', () => {
-            fetch('/api/force-reeval', { method: 'POST' })
+            fetch('/api/v1/force-reeval', { method: 'POST' })
                 .then(res => res.json())
                 .then(data => showToast(data.status || 'Forced re-evaluation triggered.'))
                 .catch(err => showToast('Error: ' + err.message));
@@ -2138,7 +2138,7 @@
             const originalText = btn.textContent;
             btn.textContent = '⏳ Downloading...';
             btn.disabled = true;
-            fetch('/api/force-download', { method: 'POST' })
+            fetch('/api/v1/force-download', { method: 'POST' })
                 .then(res => res.json())
                 .then(data => {
                     showToast(data.status || 'Market data download triggered.');
@@ -2156,7 +2156,7 @@
             const originalText = btn.textContent;
             btn.textContent = '⏳ Backfilling...';
             btn.disabled = true;
-            fetch('/api/force-backfill', { method: 'POST' })
+            fetch('/api/v1/force-backfill', { method: 'POST' })
                 .then(res => res.json())
                 .then(data => {
                     showToast(data.status || 'Backfill triggered.');
@@ -2207,7 +2207,7 @@
             if (symbols.length === 0) return;
             const symList = symbols.join(',');
             try {
-                const resp = await fetch(`/api/tickers?symbols=${encodeURIComponent(symList)}`);
+                const resp = await fetch(`/api/v1/tickers?symbols=${encodeURIComponent(symList)}`);
                 const tickersMap = await resp.json();
                 for (const sym of symbols) {
                     const row = document.getElementById(`sim-row-${sym}`);
@@ -2237,7 +2237,7 @@
 
             try {
                 const endpoint = type === 'backtest' ? 'backtest' : 'decision';
-                const resp = await fetch(`/api/simulate/${endpoint}/${encodeURIComponent(symbol)}`, { method: 'POST' });
+                const resp = await fetch(`/api/v1/simulate/${endpoint}/${encodeURIComponent(symbol)}`, { method: 'POST' });
                 if (!resp.ok) {
                     const err = await resp.json();
                     resultDiv.textContent = `Error: ${err.detail || 'Simulation failed'}`;
@@ -2293,7 +2293,7 @@
         // Prefetch discovered symbols for manual trade autocomplete
         async function loadDiscoveredSymbols() {
             try {
-                const resp = await fetch('/api/discovered-symbols');
+                const resp = await fetch('/api/v1/discovered-symbols');
                 const symbols = await resp.json();
                 const datalist = document.getElementById('discovered-symbols-list');
                 if (datalist) {
@@ -2317,7 +2317,7 @@
 
         async function fetchDiscoveredSymbolsForISIN() {
             try {
-                const resp = await fetch('/api/discovered-symbols');
+                const resp = await fetch('/api/v1/discovered-symbols');
                 isinTableData = await resp.json();
                 renderISINTable();
             } catch (e) {
@@ -2372,7 +2372,7 @@
                 input.addEventListener('change', async (e) => {
                     const symbol = e.target.dataset.symbol;
                     const isin = e.target.value.trim() || null;
-                    await fetch('/api/update-isin', {
+                    await fetch('/api/v1/update-isin', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ symbol, isin })
@@ -2391,7 +2391,7 @@
                 clearBtn.textContent = 'Clear';
                 clearBtn.style.cssText = 'background: var(--red); color: #fff; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem;';
                 clearBtn.onclick = async () => {
-                    await fetch('/api/clear-isin', {
+                    await fetch('/api/v1/clear-isin', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ symbols: [s.symbol] })
@@ -2438,7 +2438,7 @@
                 alert('Please select at least one ticker.');
                 return;
             }
-            await fetch('/api/clear-isin', {
+            await fetch('/api/v1/clear-isin', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ symbols: selected })
@@ -2448,7 +2448,7 @@
         });
 
         // Fetch trading mode and display in header
-        fetch('/api/config')
+        fetch('/api/v1/config')
             .then(res => res.json())
             .then(config => {
                 const badge = document.getElementById('mode-badge');
@@ -2484,7 +2484,7 @@
                 }
                 manualTradeResult.textContent = 'Saving...';
                 try {
-                    const resp = await fetch('/api/manual-trade', {
+                    const resp = await fetch('/api/v1/manual-trade', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ ticker, side, quantity, money_spent: moneySpent, fee })
@@ -2539,7 +2539,7 @@
         // --- LLM Metrics ---
         async function fetchLLMDecisionQuality() {
             try {
-                const resp = await fetch(`/api/llm-decision-quality?period_days=7&model_filter=${llmDecisionQualityFilter}`);
+                const resp = await fetch(`/api/v1/llm-decision-quality?period_days=7&model_filter=${llmDecisionQualityFilter}`);
                 if (!resp.ok) throw new Error('Failed to fetch LLM decision quality');
                 const data = await resp.json();
                 const div = document.getElementById('llm-decision-quality');
@@ -2669,7 +2669,7 @@
 
         async function fetchLLMMetrics() {
             try {
-                const resp = await fetch(`/api/llm-metrics?model_filter=${llmModelFilter}`);
+                const resp = await fetch(`/api/v1/llm-metrics?model_filter=${llmModelFilter}`);
                 if (!resp.ok) throw new Error('Failed to fetch LLM metrics');
                 const data = await resp.json();
 
@@ -2797,7 +2797,7 @@
             const fromDate = document.getElementById('llm-chart-from')?.value;
             const toDate = document.getElementById('llm-chart-to')?.value;
             
-            let url = `/api/llm-metrics/timeseries?period=${period}&model_filter=${llmModelFilter}`;
+            let url = `/api/v1/llm-metrics/timeseries?period=${period}&model_filter=${llmModelFilter}`;
             if (fromDate) url += `&from_date=${fromDate}`;
             if (toDate) url += `&to_date=${toDate}`;
 
@@ -2934,7 +2934,7 @@
         document.getElementById('btn-reset-llm-metrics').addEventListener('click', async () => {
             if (!confirm('Are you sure you want to wipe all LLM metrics, blacklist, and decision quality? This cannot be undone.')) return;
             try {
-                const resp = await fetch('/api/llm-metrics/reset', { method: 'POST' });
+                const resp = await fetch('/api/v1/llm-metrics/reset', { method: 'POST' });
                 if (resp.ok) {
                     showToast('LLM metrics, blacklist, and decision quality reset successfully.');
                     fetchLLMMetrics();
