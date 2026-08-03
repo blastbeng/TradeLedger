@@ -147,16 +147,17 @@ async def rate_limit_middleware(request: Request, call_next):
         await asyncio.to_thread(redis.zadd, global_rate_limit_key, {request_id: now})
         await asyncio.to_thread(redis.expire, global_rate_limit_key, rate_limit_window)
     except Exception as e:
-        # Fail-open if Redis is unavailable
-        logger.warning(f"Rate limiter failed, allowing request: {e}")
+        # Fail-closed if Redis is unavailable
+        logger.error(f"Rate limiter failed, rejecting request: {e}")
+        return JSONResponse(status_code=503, content={"detail": "Rate limiter unavailable"})
 
     response = await call_next(request)
     return response
 
-public_router = APIRouter()
-http_router = APIRouter(dependencies=[Depends(verify_auth)])
+public_router = APIRouter(prefix="/api/v1")
+http_router = APIRouter(prefix="/api/v1", dependencies=[Depends(verify_auth)])
 
-@public_router.post("/api/login")
+@public_router.post("/login")
 async def login(request: Request, response: Response, credentials: dict = Body(...)):
     """Authenticate the user and set a session cookie."""
     username = credentials.get("username", "")
@@ -178,7 +179,7 @@ async def login(request: Request, response: Response, credentials: dict = Body(.
 
     return {"status": "ok", "csrf_token": csrf_token}
 
-@public_router.post("/api/logout", dependencies=[Depends(verify_csrf)])
+@public_router.post("/logout", dependencies=[Depends(verify_csrf)])
 async def logout(request: Request, response: Response):
     """Clear the session cookie and invalidate the token."""
     token = request.cookies.get("session_token")
@@ -282,7 +283,7 @@ async def health():
         "llm_weak": llm_health.get("weak", {}),
     }
 
-@http_router.get("/api/status")
+@http_router.get("/status")
 async def status():
     engine = get_engine()
     redis = get_redis_client()
@@ -342,7 +343,7 @@ async def status():
         "redis_available": is_redis_available(),
     }
 
-@http_router.get("/api/trades")
+@http_router.get("/trades")
 async def trades(limit: int = 0):
     engine = get_engine()
     open_trades = await engine.event_bus.request("get_open_trades")
@@ -397,12 +398,12 @@ async def trades(limit: int = 0):
 
     return {"trades": enriched_trades}
 
-@http_router.get("/api/profit")
+@http_router.get("/profit")
 async def profit():
     engine = get_engine()
     return await engine.event_bus.request("get_profit_summary")
 
-@http_router.get("/api/performance")
+@http_router.get("/performance")
 async def performance():
     engine = get_engine()
     perf = await engine.get_performance_summary()
@@ -416,7 +417,7 @@ async def performance():
         total["display_symbol"] = "TOTAL"
     return perf
 
-@http_router.get("/api/market-status")
+@http_router.get("/market-status")
 async def market_status_api():
     redis = get_redis_client()
     market_status = None
@@ -428,12 +429,12 @@ async def market_status_api():
         logger.warning(f"market_status_api: failed to read market status from Redis: {type(e).__name__}: {e}")
     return market_status or {}
 
-@http_router.get("/api/risk")
+@http_router.get("/risk")
 async def risk():
     engine = get_engine()
     return await engine.event_bus.request("get_risk_metrics")
 
-@http_router.get("/api/news")
+@http_router.get("/news")
 async def news():
     engine = get_engine()
     symbols = engine.current_symbols
@@ -463,7 +464,7 @@ async def news():
     ]
     return filtered_result
 
-@http_router.get("/api/messages")
+@http_router.get("/messages")
 async def messages():
     redis = get_redis_client()
     raw_messages = await asyncio.to_thread(redis.lrange, "web:messages", 0, -1)
@@ -476,7 +477,7 @@ async def messages():
             logger.debug(f"messages: failed to parse raw message: {e}")
     return messages
 
-@http_router.get("/api/logs")
+@http_router.get("/logs")
 async def logs(limit: int = 200):
     """Return the most recent log entries from Redis."""
     redis = get_redis_client()
@@ -492,7 +493,7 @@ async def logs(limit: int = 200):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@http_router.get("/api/history")
+@http_router.get("/history")
 async def history(limit: int = 50):
     engine = get_engine()
     trades = engine.trade_history[-limit:]
@@ -503,7 +504,7 @@ async def history(limit: int = 50):
         trades = await asyncio.gather(*[_add_display_to_trade(t) for t in trades])
     return trades
 
-@http_router.post("/api/pause", dependencies=[Depends(verify_csrf)])
+@http_router.post("/pause", dependencies=[Depends(verify_csrf)])
 async def pause():
     engine = get_engine()
     redis = engine.redis
@@ -511,7 +512,7 @@ async def pause():
     await asyncio.to_thread(set_trading_pause, redis, "manual", set_pause_start=False)
     return {"status": "paused"}
 
-@http_router.post("/api/resume", dependencies=[Depends(verify_csrf)])
+@http_router.post("/resume", dependencies=[Depends(verify_csrf)])
 async def resume():
     engine = get_engine()
     if not await engine._is_market_open():
@@ -521,7 +522,7 @@ async def resume():
     await asyncio.to_thread(clear_trading_pause_keys, redis)
     return {"status": "resumed"}
 
-@http_router.post("/api/sell", dependencies=[Depends(verify_csrf)])
+@http_router.post("/sell", dependencies=[Depends(verify_csrf)])
 async def sell(symbol: str = None):
     engine = get_engine()
     if not await engine._is_market_open():
@@ -533,7 +534,7 @@ async def sell(symbol: str = None):
         asyncio.create_task(engine.sell_all_positions())
         return {"status": "selling all"}
 
-@http_router.post("/api/manual-trade", dependencies=[Depends(verify_csrf)])
+@http_router.post("/manual-trade", dependencies=[Depends(verify_csrf)])
 async def manual_trade(req: ManualTradeRequest):
     engine = get_engine()
     if not await engine._is_market_open():
@@ -553,10 +554,29 @@ async def manual_trade(req: ManualTradeRequest):
     if not any(s.get("symbol", "").upper() == base_ticker for s in known_symbols):
         raise HTTPException(status_code=400, detail=f"Unknown ticker: {req.ticker}. Please use a valid discovered symbol.")
 
+    # Validate price against current market conditions
+    try:
+        quotes = await engine._market_data_manager._get_quotes_async([base_ticker], timeout=15.0)
+        q = quotes.get(base_ticker)
+        if q and q.get("last"):
+            implied_price = req.money_spent / req.quantity
+            current_price = q["last"]
+            # Allow 10% deviation to account for slight price movements
+            if abs(implied_price - current_price) / current_price > 0.10:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Implied price {implied_price:.2f} deviates more than 10% from current market price {current_price:.2f}"
+                )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"manual_trade: failed to fetch market price for {base_ticker}: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=503, detail="Could not verify market price for ticker")
+
     result = await engine.log_manual_trade(req.ticker, req.side, req.quantity, req.money_spent, req.fee)
     return result
 
-@http_router.get("/api/manual-trades")
+@http_router.get("/manual-trades")
 async def get_manual_trades():
     engine = get_engine()
     manual = [t for t in engine.trade_history if t.get("note") == "manual"]
@@ -564,56 +584,56 @@ async def get_manual_trades():
         t["display_symbol"] = t["symbol"]
     return manual
 
-@http_router.get("/api/discovered-symbols")
+@http_router.get("/discovered-symbols")
 async def discovered_symbols_api():
     """Return all discovered symbols for frontend autocomplete."""
     symbols = await run_in_threadpool(get_all_discovered_symbols)
     return [{"symbol": s.get("symbol"), "name": s.get("name", ""), "isin": s.get("isin"), "manual_isin": s.get("manual_isin"), "asset_type": s.get("asset_type"), "country": s.get("country"), "candle_count": s.get("candle_count", 0)} for s in symbols]
 
-@http_router.post("/api/update-isin", dependencies=[Depends(verify_csrf)])
+@http_router.post("/update-isin", dependencies=[Depends(verify_csrf)])
 async def update_isin(req: UpdateISINRequest):
     """Update the manual ISIN for a specific symbol."""
     await run_in_threadpool(update_manual_isin, req.symbol, req.isin)
     return {"status": "ok"}
 
-@http_router.post("/api/clear-isin", dependencies=[Depends(verify_csrf)])
+@http_router.post("/clear-isin", dependencies=[Depends(verify_csrf)])
 async def clear_isin(req: ClearISINRequest):
     """Clear the manual ISIN for a list of symbols."""
     for sym in req.symbols:
         await run_in_threadpool(update_manual_isin, sym, None)
     return {"status": "ok"}
 
-@http_router.get("/api/signals")
+@http_router.get("/signals")
 async def signals(page: int = 1, limit: int = 5):
     if page < 1:
         page = 1
     offset = (page - 1) * limit
     return await run_in_threadpool(get_signals, limit, offset)
 
-@http_router.post("/api/reload", dependencies=[Depends(verify_csrf)])
+@http_router.post("/reload", dependencies=[Depends(verify_csrf)])
 async def reload():
     await run_in_threadpool(settings.reload)
     return {"status": "reloaded"}
 
-@http_router.post("/api/force-reeval", dependencies=[Depends(verify_csrf)])
+@http_router.post("/force-reeval", dependencies=[Depends(verify_csrf)])
 async def force_reeval():
     engine = get_engine()
     engine.trigger_symbol_reevaluation(force=True)
     return {"status": "Forced re-evaluation triggered"}
 
-@http_router.post("/api/force-download", dependencies=[Depends(verify_csrf)])
+@http_router.post("/force-download", dependencies=[Depends(verify_csrf)])
 async def force_download():
     engine = get_engine()
     asyncio.create_task(engine.force_download_tracked_symbols())
     return {"status": "Force download of tracked symbols OHLCV data triggered"}
 
-@http_router.post("/api/force-backfill", dependencies=[Depends(verify_csrf)])
+@http_router.post("/force-backfill", dependencies=[Depends(verify_csrf)])
 async def force_backfill():
     engine = get_engine()
     asyncio.create_task(engine.force_download_all_assets())
     return {"status": "Force backfill of all discovered symbols triggered"}
 
-@http_router.post("/api/restart", dependencies=[Depends(verify_csrf)])
+@http_router.post("/restart", dependencies=[Depends(verify_csrf)])
 async def restart():
     """
     Restart the entire application by exiting the process.
@@ -623,7 +643,7 @@ async def restart():
     await engine.stop()
     sys.exit(0)
 
-@http_router.get("/api/config")
+@http_router.get("/config")
 def config():
     mind_provider, mind_model, _ = _resolve_llm_role_settings("mind")
     actuator_provider, actuator_model, _ = _resolve_llm_role_settings("actuator")
@@ -642,7 +662,7 @@ def config():
         "web_port": settings.WEB_PORT,
     }
 
-@http_router.get("/api/ohlcv/{symbol:path}")
+@http_router.get("/ohlcv/{symbol:path}")
 async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
     engine = get_engine()
     base_symbol = symbol.split("/")[0]
@@ -670,7 +690,7 @@ async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@http_router.get("/api/ticker/{symbol:path}")
+@http_router.get("/ticker/{symbol:path}")
 async def ticker(symbol: str):
     engine = get_engine()
     base_symbol = symbol.split("/")[0]
@@ -697,7 +717,7 @@ async def ticker(symbol: str):
         "percentage": None,
     }
 
-@http_router.get("/api/tickers")
+@http_router.get("/tickers")
 async def tickers(symbols: str = ""):
     """Return quotes for a comma-separated list of symbols."""
     if not symbols:
@@ -726,7 +746,7 @@ async def tickers(symbols: str = ""):
             result[full_sym] = {"last": None, "bid": None, "ask": None, "change_24h": None, "percentage": None}
     return result
 
-@http_router.get("/api/llm-metrics")
+@http_router.get("/llm-metrics")
 async def llm_metrics(model_filter: str = "main"):
     """Return aggregated LLM metrics for the dashboard."""
     try:
@@ -755,7 +775,7 @@ async def llm_metrics(model_filter: str = "main"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@http_router.post("/api/llm-metrics/reset", dependencies=[Depends(verify_csrf)])
+@http_router.post("/llm-metrics/reset", dependencies=[Depends(verify_csrf)])
 async def llm_metrics_reset():
     """Wipe all LLM metrics, blacklist, and decision quality from the database and Redis."""
     try:
@@ -780,7 +800,7 @@ async def llm_metrics_reset():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@http_router.get("/api/llm-metrics/timeseries")
+@http_router.get("/llm-metrics/timeseries")
 async def llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = None, to_date: Optional[str] = None, model_filter: str = "main"):
     """Return aggregated LLM metrics for charting based on period and date range."""
     try:
@@ -788,7 +808,7 @@ async def llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@http_router.get("/api/llm-decision-quality")
+@http_router.get("/llm-decision-quality")
 async def llm_decision_quality(period_days: int = 7, model_filter: str = "main"):
     """Return LLM decision quality metrics for the dashboard."""
     try:
@@ -796,7 +816,7 @@ async def llm_decision_quality(period_days: int = 7, model_filter: str = "main")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.websocket("/ws")
+@app.websocket("/api/v1/ws")
 async def websocket_endpoint(websocket: WebSocket):
     # --- WebSocket Rate Limiting ---
     client_ip = websocket.client.host if websocket.client else "unknown"
@@ -816,8 +836,10 @@ async def websocket_endpoint(websocket: WebSocket):
         await asyncio.to_thread(redis.zadd, ws_rate_limit_key, {request_id: now})
         await asyncio.to_thread(redis.expire, ws_rate_limit_key, rate_limit_window)
     except Exception as e:
-        # Fail-open if Redis is unavailable
-        logger.warning(f"WebSocket rate limiter failed, allowing connection: {e}")
+        # Fail-closed if Redis is unavailable
+        logger.error(f"WebSocket rate limiter failed, rejecting connection: {e}")
+        await websocket.close(code=1011)  # Internal Error
+        return
 
     # Verify session for WebSocket
     if settings.WEB_USERNAME and settings.WEB_PASSWORD:
@@ -834,6 +856,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info("WebSocket client connected")
     last_sent_str = None
+    is_first_iteration = True
     try:
         while True:
             try:
@@ -854,7 +877,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 # --- Cached payload: share across all WebSocket clients ---
                 now = time.time()
                 global _ws_payload_cache, _ws_payload_cache_time
-                if _ws_payload_cache is not None and (now - _ws_payload_cache_time) < 5.0:
+                if not is_first_iteration and _ws_payload_cache is not None and (now - _ws_payload_cache_time) < 5.0:
                     payload = _ws_payload_cache
                 else:
                     market_open = await engine._is_market_open()
@@ -949,6 +972,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     _ws_payload_cache = payload
                     _ws_payload_cache_time = now
 
+                is_first_iteration = False
                 payload_str = json.dumps(payload)
                 if payload_str != last_sent_str:
                     await websocket.send_text(payload_str)
@@ -968,12 +992,12 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
 
-@http_router.post("/api/simulate/backtest/{symbol:path}", dependencies=[Depends(verify_csrf)])
+@http_router.post("/simulate/backtest/{symbol:path}", dependencies=[Depends(verify_csrf)])
 async def simulate_backtest(symbol: str):
     engine = get_engine()
     return await engine.simulate_backtest(symbol)
 
-@http_router.post("/api/simulate/decision/{symbol:path}", dependencies=[Depends(verify_csrf)])
+@http_router.post("/simulate/decision/{symbol:path}", dependencies=[Depends(verify_csrf)])
 async def simulate_decision(symbol: str):
     engine = get_engine()
     return await engine.simulate_decision(symbol)
