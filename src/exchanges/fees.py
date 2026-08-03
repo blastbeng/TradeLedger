@@ -1,6 +1,7 @@
 import logging
 from typing import Dict, Any
 from src.utils.btp_policy import BTPPolicy
+from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +20,6 @@ def calculate_transaction_costs(operation_type: str, stock_price: float, quantit
     Returns:
         dict with keys: 'gross_value', 'bank_fee', 'tobin_tax', 'total_costs', 'net_value'
     """
-    from src.config.settings import settings
-
     operation_type = operation_type.upper()
     if operation_type not in ("BUY", "SELL"):
         raise ValueError("operation_type must be 'BUY' or 'SELL'")
