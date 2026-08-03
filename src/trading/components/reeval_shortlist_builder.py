@@ -81,6 +81,10 @@ class ReevalShortlistBuilder:
         # Build a shortlist for the LLM: all symbols sorted by composite score,
         # plus any currently held symbols and historically best symbols.
         sorted_by_composite = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
+        # Limit the base shortlist to avoid token explosion for large universes
+        max_candidates = engine.max_symbols * 3
+        if len(sorted_by_composite) > max_candidates:
+            sorted_by_composite = sorted_by_composite[:max_candidates]
         shortlist = sorted_by_composite
 
         # Always include currently held symbols (they must be managed)
@@ -126,6 +130,7 @@ class ReevalShortlistBuilder:
         ohlcv_data: Dict[str, Dict[str, List[List]]],
         base_balance: float,
         market_limits: Dict[str, Dict[str, float]],
+        tickers: Dict[str, Dict[str, Any]],
     ) -> None:
         """Enforce minimum asset class allocation by appending missing ETFs/BTPs.
         
@@ -156,6 +161,11 @@ class ReevalShortlistBuilder:
                     available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
                     if available_tfs:
                         tf = default_tf if default_tf in available_tfs else available_tfs[0]
+                        # Check if the symbol has a valid current quote
+                        quote = tickers.get(etf, {})
+                        current_price = quote.get('close') or quote.get('last')
+                        if not current_price or current_price <= 0:
+                            continue
                         # Check if we can afford the minimum trade cost
                         min_cost = market_limits.get(etf, {}).get("min_cost", 0)
                         if base_balance >= min_cost:
@@ -172,6 +182,11 @@ class ReevalShortlistBuilder:
                     available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
                     if available_tfs:
                         tf = default_tf if default_tf in available_tfs else available_tfs[0]
+                        # Check if the symbol has a valid current quote
+                        quote = tickers.get(btp, {})
+                        current_price = quote.get('close') or quote.get('last')
+                        if not current_price or current_price <= 0:
+                            continue
                         # Check if we can afford the minimum trade cost
                         min_cost = market_limits.get(btp, {}).get("min_cost", 0)
                         if base_balance >= min_cost:
