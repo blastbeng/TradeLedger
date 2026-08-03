@@ -72,6 +72,8 @@ class SellExecutor:
                 self.shared_state.positions[symbol]["cost_basis"] = remaining_cost_basis
                 self.shared_state.positions[symbol]["net_base"] = remaining_net_base
                 self.shared_state.positions[symbol]["price"] = remaining_cost_basis / remaining_net_base if remaining_net_base > 0 else 0.0
+                self.shared_state.positions[symbol]["_replacing_exit_orders"] = True
+                self.shared_state.positions[symbol].pop("_selling", None)
                 if cleanup_callback:
                     cleanup_callback(symbol, self.shared_state.positions[symbol])
 
@@ -101,6 +103,9 @@ class SellExecutor:
                 "place_replacement_exit_orders_with_retry",
                 symbol, dummy_signal, exit_prices, pos_timeframe
             )
+            async with self.shared_state._positions_lock:
+                if symbol in self.shared_state.positions:
+                    self.shared_state.positions[symbol]["_replacing_exit_orders"] = False
             return False
 
     async def _send_sell_notification(
@@ -208,6 +213,10 @@ class SellExecutor:
                         "reason": "No base balance to sell",
                     }
                 )
+            async with self.shared_state._positions_lock:
+                pos = self.shared_state.positions.get(symbol)
+                if pos:
+                    pos.pop("_selling", None)
             return
 
         # Check minimum sell size
@@ -272,6 +281,10 @@ class SellExecutor:
                             "reason": "Sell amount below minimum",
                         }
                     )
+                async with self.shared_state._positions_lock:
+                    pos = self.shared_state.positions.get(symbol)
+                    if pos:
+                        pos.pop("_selling", None)
                 return
             if min_cost_limit is not None and gross_amount * price < float(min_cost_limit):
                 logger.info(f"SELL cost {gross_amount * price:.2f} {quote} below min cost {min_cost_limit} for {symbol}, skipping")
@@ -284,6 +297,10 @@ class SellExecutor:
                             "reason": "Sell cost below minimum",
                         }
                     )
+                async with self.shared_state._positions_lock:
+                    pos = self.shared_state.positions.get(symbol)
+                    if pos:
+                        pos.pop("_selling", None)
                 return
         except (AttributeError, TypeError, ValueError, RuntimeError, KeyError) as e:
             logger.warning(f"Could not verify min sell size for {symbol}: {type(e).__name__}: {e}")
@@ -318,6 +335,10 @@ class SellExecutor:
                     f"❌ Invalid limit price for {display_symbol}, skipping.",
                     summary={"symbol": symbol, "action": "SKIP", "reason": "Invalid limit price"}
                 )
+            async with self.shared_state._positions_lock:
+                pos = self.shared_state.positions.get(symbol)
+                if pos:
+                    pos.pop("_selling", None)
             return
 
         if limit_price is not None:
@@ -342,6 +363,10 @@ class SellExecutor:
                             f"⚠️ Skipping SELL {display_symbol}: limit price {limit_price} too far above bid {bid}.",
                             summary={"symbol": symbol, "action": "SKIP", "reason": "Limit price too far from market"}
                         )
+                    async with self.shared_state._positions_lock:
+                        pos = self.shared_state.positions.get(symbol)
+                        if pos:
+                            pos.pop("_selling", None)
                     return
 
         # --- Determine order type for SELL ---

@@ -110,6 +110,15 @@ class OrderExecutor:
                     async with self.shared_state._cycle_spent_lock:
                         self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - q.get('amount', 0.0))
 
+        if signal.action == "SELL":
+            async with self.shared_state._positions_lock:
+                pos = self.shared_state.positions.get(symbol)
+                if pos and pos.get("_selling"):
+                    logger.info(f"Skipping SELL for {symbol}: already selling.")
+                    return
+                if pos:
+                    pos["_selling"] = True
+
         # In live mode, only execute during regular market hours (manual overrides are allowed anytime)
         if not await engine._is_market_open() and not (exit_reason and exit_reason.startswith("manual")):
             logger.info(f"Skipping {signal.action} for {symbol}: market closed (live mode).")
@@ -668,7 +677,7 @@ class OrderExecutor:
         trailing_stop_distance_pct = params.get("trailing_stop_distance_pct")
         indicator_config = signal_dict.get('indicator_config')
 
-        self._buy_executor._apply_buy_to_position(
+        await self._buy_executor._apply_buy_to_position(
             symbol=symbol,
             cost_basis=cost_basis,
             net_base=net_base,

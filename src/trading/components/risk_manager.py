@@ -112,7 +112,10 @@ class RiskManager:
         # Batch-fetch missing tickers once before the per-position loop
         risk_tickers = await self._fetch_risk_tickers(symbols_to_check)
 
-        for symbol, pos in list(self.shared_state.positions.items()):
+        async with self.shared_state._positions_lock:
+            positions_snapshot = list(self.shared_state.positions.items())
+
+        for symbol, pos in positions_snapshot:
             if symbols_to_check is not None and symbol not in symbols_to_check:
                 continue
             await self._check_position_risk(
@@ -390,6 +393,9 @@ class RiskManager:
     ) -> None:
         """Run all risk checks for a single open position."""
         engine = self.engine
+        if pos.get("_replacing_exit_orders"):
+            logger.debug(f"Skipping risk check for {symbol}: exit orders are being replaced.")
+            return
         try:
             # Skip if there is already a queued non-exit BUY order for this symbol.
             # Exit orders (SELL) should not block risk checks.
@@ -417,7 +423,8 @@ class RiskManager:
             # --- Staleness guard: skip risk checks if the quote is too stale ---
             pos_tf = pos.get("timeframe")
             if not pos_tf:
-                for entry in self.shared_state.current_symbols:
+                current_symbols = await self.shared_state.get_current_symbols()
+                for entry in current_symbols:
                     if entry["symbol"] == symbol:
                         pos_tf = entry.get("timeframe")
                         break
@@ -854,7 +861,8 @@ class RiskManager:
                 tf = pos.get("timeframe")
                 if not tf:
                     # Fallback to the assigned timeframe from current_symbols
-                    for entry in self.shared_state.current_symbols:
+                    current_symbols = await self.shared_state.get_current_symbols()
+                    for entry in current_symbols:
                         if entry["symbol"] == symbol:
                             tf = entry.get("timeframe")
                             break

@@ -49,6 +49,7 @@ class SharedState:
 
         # --- Current symbols ---
         self.current_symbols: List[Dict[str, str]] = []
+        self._current_symbols_lock = asyncio.Lock()
 
         # --- Recent signals ---
         self.recent_signals: List[Dict[str, Any]] = []
@@ -120,6 +121,26 @@ class SharedState:
         """Safely remove a position."""
         async with self._positions_lock:
             self.positions.pop(symbol, None)
+
+    # --- Current symbols ---
+
+    async def get_current_symbols(self) -> List[Dict[str, str]]:
+        """Safely retrieve a copy of current symbols."""
+        async with self._current_symbols_lock:
+            return self.current_symbols.copy()
+
+    async def set_current_symbols(self, symbols: List[Dict[str, str]]) -> None:
+        """Safely set the current symbols list."""
+        async with self._current_symbols_lock:
+            self.current_symbols = symbols
+
+    async def update_current_symbol(self, symbol: str, updates: Dict[str, Any]) -> None:
+        """Safely update a specific symbol in the current symbols list."""
+        async with self._current_symbols_lock:
+            for entry in self.current_symbols:
+                if entry.get("symbol") == symbol:
+                    entry.update(updates)
+                    break
 
     # --- Queued orders ---
 

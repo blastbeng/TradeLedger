@@ -818,7 +818,7 @@ class BuyExecutor:
 
         return limit_price, time_in_force, need_limit
 
-    def _apply_buy_to_position(
+    async def _apply_buy_to_position(
         self,
         symbol: str,
         cost_basis: float,
@@ -837,91 +837,92 @@ class BuyExecutor:
         timeframe: Optional[str],
     ) -> None:
         """Shared helper to update or create a position after a BUY fill."""
-        positions = self.shared_state.positions
-        if symbol in positions:
-            old_cost_basis = positions[symbol].get("cost_basis", positions[symbol]["amount"] * positions[symbol]["price"])
-            old_net_base = positions[symbol].get("net_base", positions[symbol]["amount"])
-            new_cost_basis = old_cost_basis + cost_basis
-            new_net_base = old_net_base + net_base
-            new_price = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
-            positions[symbol]["amount"] = new_net_base
-            positions[symbol]["price"] = new_price
-            positions[symbol]["cost_basis"] = new_cost_basis
-            positions[symbol]["net_base"] = new_net_base
-            positions[symbol]["take_profit_atr_multiple"] = params.get("take_profit_atr_multiple")
-            positions[symbol]["trailing_stop"] = trailing_stop
-            positions[symbol]["trailing_stop_distance_pct"] = trailing_stop_distance_pct
-            positions[symbol]["trailing_stop_atr_multiple"] = params.get("trailing_stop_atr_multiple")
-            positions[symbol]["max_hold_time_seconds"] = params.get("max_hold_time_seconds")
-            positions[symbol]["trailing_stop_activation_pct"] = params.get("trailing_stop_activation_pct")
-            positions[symbol]["trailing_take_profit"] = params.get("trailing_take_profit", False)
-            positions[symbol]["trailing_take_profit_distance_pct"] = params.get("trailing_take_profit_distance_pct")
-            positions[symbol]["breakeven_activation_pct"] = params.get("breakeven_activation_pct")
-            partial_levels = params.get("partial_take_profit_levels")
-            if partial_levels:
-                positions[symbol]["partial_take_profit_levels"] = partial_levels
-                positions[symbol]["partial_tp_levels_triggered"] = []
-                positions[symbol]["partial_tp_depth_wait_start"] = {}
-                positions[symbol]["partial_take_profit_pct"] = None
-                positions[symbol]["partial_take_profit_fraction"] = None
-                positions[symbol]["partial_tp_triggered"] = None
+        async with self.shared_state._positions_lock:
+            positions = self.shared_state.positions
+            if symbol in positions:
+                old_cost_basis = positions[symbol].get("cost_basis", positions[symbol]["amount"] * positions[symbol]["price"])
+                old_net_base = positions[symbol].get("net_base", positions[symbol]["amount"])
+                new_cost_basis = old_cost_basis + cost_basis
+                new_net_base = old_net_base + net_base
+                new_price = new_cost_basis / new_net_base if new_net_base > 0 else 0.0
+                positions[symbol]["amount"] = new_net_base
+                positions[symbol]["price"] = new_price
+                positions[symbol]["cost_basis"] = new_cost_basis
+                positions[symbol]["net_base"] = new_net_base
+                positions[symbol]["take_profit_atr_multiple"] = params.get("take_profit_atr_multiple")
+                positions[symbol]["trailing_stop"] = trailing_stop
+                positions[symbol]["trailing_stop_distance_pct"] = trailing_stop_distance_pct
+                positions[symbol]["trailing_stop_atr_multiple"] = params.get("trailing_stop_atr_multiple")
+                positions[symbol]["max_hold_time_seconds"] = params.get("max_hold_time_seconds")
+                positions[symbol]["trailing_stop_activation_pct"] = params.get("trailing_stop_activation_pct")
+                positions[symbol]["trailing_take_profit"] = params.get("trailing_take_profit", False)
+                positions[symbol]["trailing_take_profit_distance_pct"] = params.get("trailing_take_profit_distance_pct")
+                positions[symbol]["breakeven_activation_pct"] = params.get("breakeven_activation_pct")
+                partial_levels = params.get("partial_take_profit_levels")
+                if partial_levels:
+                    positions[symbol]["partial_take_profit_levels"] = partial_levels
+                    positions[symbol]["partial_tp_levels_triggered"] = []
+                    positions[symbol]["partial_tp_depth_wait_start"] = {}
+                    positions[symbol]["partial_take_profit_pct"] = None
+                    positions[symbol]["partial_take_profit_fraction"] = None
+                    positions[symbol]["partial_tp_triggered"] = None
+                else:
+                    positions[symbol]["partial_take_profit_pct"] = params.get("partial_take_profit_pct")
+                    positions[symbol]["partial_take_profit_fraction"] = params.get("partial_take_profit_fraction")
+                    positions[symbol]["partial_tp_triggered"] = False
+                positions[symbol]["cooldown_after_loss_seconds"] = params.get("cooldown_after_loss_seconds", 0)
+                positions[symbol]["news_sentiment_exit_threshold"] = params.get("news_sentiment_exit_threshold")
+                positions[symbol]["max_unrealized_loss_pct"] = params.get("max_unrealized_loss_pct")
+                positions[symbol]["timeframe"] = timeframe
+                positions[symbol]["indicator_config"] = indicator_config
+                positions[symbol]["entry_order_type"] = order_type
+                positions[symbol]["buy_confidence"] = signal_confidence
+                positions[symbol]["buy_reasoning"] = (signal_reasoning or "")[:200]
             else:
-                positions[symbol]["partial_take_profit_pct"] = params.get("partial_take_profit_pct")
-                positions[symbol]["partial_take_profit_fraction"] = params.get("partial_take_profit_fraction")
-                positions[symbol]["partial_tp_triggered"] = False
-            positions[symbol]["cooldown_after_loss_seconds"] = params.get("cooldown_after_loss_seconds", 0)
-            positions[symbol]["news_sentiment_exit_threshold"] = params.get("news_sentiment_exit_threshold")
-            positions[symbol]["max_unrealized_loss_pct"] = params.get("max_unrealized_loss_pct")
-            positions[symbol]["timeframe"] = timeframe
-            positions[symbol]["indicator_config"] = indicator_config
-            positions[symbol]["entry_order_type"] = order_type
-            positions[symbol]["buy_confidence"] = signal_confidence
-            positions[symbol]["buy_reasoning"] = (signal_reasoning or "")[:200]
-        else:
-            entry_price = cost_basis / net_base if net_base > 0 else 0.0
-            positions[symbol] = {
-                "symbol": symbol,
-                "side": "buy",
-                "amount": net_base,
-                "price": entry_price,
-                "timestamp": timestamp,
-                "stop_loss": entry_price * (1 - sl_pct) if sl_pct else None,
-                "take_profit": entry_price * (1 + tp_pct) if tp_pct else None,
-                "take_profit_atr_multiple": params.get("take_profit_atr_multiple"),
-                "cost_basis": cost_basis,
-                "net_base": net_base,
-                "buy_confidence": signal_confidence,
-                "buy_reasoning": (signal_reasoning or "")[:200],
-                "trailing_stop": trailing_stop,
-                "trailing_stop_distance_pct": trailing_stop_distance_pct,
-                "trailing_stop_atr_multiple": params.get("trailing_stop_atr_multiple"),
-                "max_hold_time_seconds": params.get("max_hold_time_seconds"),
-                "trailing_stop_activation_pct": params.get("trailing_stop_activation_pct"),
-                "trailing_take_profit": params.get("trailing_take_profit", False),
-                "trailing_take_profit_distance_pct": params.get("trailing_take_profit_distance_pct"),
-                "breakeven_activation_pct": params.get("breakeven_activation_pct"),
-                "partial_take_profit_levels": params.get("partial_take_profit_levels"),
-                "partial_tp_levels_triggered": [],
-                "partial_tp_depth_wait_start": {},
-                "original_amount": net_base,
-                "partial_take_profit_pct": params.get("partial_take_profit_pct") if not params.get("partial_take_profit_levels") else None,
-                "partial_take_profit_fraction": params.get("partial_take_profit_fraction") if not params.get("partial_take_profit_levels") else None,
-                "partial_tp_triggered": False if not params.get("partial_take_profit_levels") else None,
-                "cooldown_after_loss_seconds": params.get("cooldown_after_loss_seconds", 0),
-                "news_sentiment_exit_threshold": params.get("news_sentiment_exit_threshold"),
-                "max_unrealized_loss_pct": params.get("max_unrealized_loss_pct"),
-                "timeframe": timeframe,
-                "indicator_config": indicator_config,
-                "entry_order_type": order_type,
-                "strategy_type": signal_strategy_type,
-            }
+                entry_price = cost_basis / net_base if net_base > 0 else 0.0
+                positions[symbol] = {
+                    "symbol": symbol,
+                    "side": "buy",
+                    "amount": net_base,
+                    "price": entry_price,
+                    "timestamp": timestamp,
+                    "stop_loss": entry_price * (1 - sl_pct) if sl_pct else None,
+                    "take_profit": entry_price * (1 + tp_pct) if tp_pct else None,
+                    "take_profit_atr_multiple": params.get("take_profit_atr_multiple"),
+                    "cost_basis": cost_basis,
+                    "net_base": net_base,
+                    "buy_confidence": signal_confidence,
+                    "buy_reasoning": (signal_reasoning or "")[:200],
+                    "trailing_stop": trailing_stop,
+                    "trailing_stop_distance_pct": trailing_stop_distance_pct,
+                    "trailing_stop_atr_multiple": params.get("trailing_stop_atr_multiple"),
+                    "max_hold_time_seconds": params.get("max_hold_time_seconds"),
+                    "trailing_stop_activation_pct": params.get("trailing_stop_activation_pct"),
+                    "trailing_take_profit": params.get("trailing_take_profit", False),
+                    "trailing_take_profit_distance_pct": params.get("trailing_take_profit_distance_pct"),
+                    "breakeven_activation_pct": params.get("breakeven_activation_pct"),
+                    "partial_take_profit_levels": params.get("partial_take_profit_levels"),
+                    "partial_tp_levels_triggered": [],
+                    "partial_tp_depth_wait_start": {},
+                    "original_amount": net_base,
+                    "partial_take_profit_pct": params.get("partial_take_profit_pct") if not params.get("partial_take_profit_levels") else None,
+                    "partial_take_profit_fraction": params.get("partial_take_profit_fraction") if not params.get("partial_take_profit_levels") else None,
+                    "partial_tp_triggered": False if not params.get("partial_take_profit_levels") else None,
+                    "cooldown_after_loss_seconds": params.get("cooldown_after_loss_seconds", 0),
+                    "news_sentiment_exit_threshold": params.get("news_sentiment_exit_threshold"),
+                    "max_unrealized_loss_pct": params.get("max_unrealized_loss_pct"),
+                    "timeframe": timeframe,
+                    "indicator_config": indicator_config,
+                    "entry_order_type": order_type,
+                    "strategy_type": signal_strategy_type,
+                }
 
-        custom_interval = params.get("strategy_interval_seconds")
-        if custom_interval is not None:
-            self.shared_state._strategy_intervals[symbol] = custom_interval
+            custom_interval = params.get("strategy_interval_seconds")
+            if custom_interval is not None:
+                self.shared_state._strategy_intervals[symbol] = custom_interval
 
-        # Invalidate portfolio cache since a position has been created or updated
-        self._portfolio_cache = None
+            # Invalidate portfolio cache since a position has been created or updated
+            self._portfolio_cache = None
 
     async def update_or_create_buy_position(
         self,
@@ -947,7 +948,7 @@ class BuyExecutor:
         cost_basis = order['cost'] + (fee_cost if fee_currency == quote else 0.0)
         net_base = order['amount'] - (fee_cost if fee_currency == base else 0.0)
 
-        self._apply_buy_to_position(
+        await self._apply_buy_to_position(
             symbol=symbol,
             cost_basis=cost_basis,
             net_base=net_base,
