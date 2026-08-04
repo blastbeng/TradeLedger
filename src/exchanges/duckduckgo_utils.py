@@ -4,6 +4,7 @@ from typing import Optional
 
 from src.exchanges.proxy_utils import _get_proxies
 from src.config.settings import settings
+from src.database import save_discovered_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -65,19 +66,24 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
     def _is_valid(isin_str: Optional[str]) -> bool:
         return bool(isin_str and (not isin_prefix or isin_str.startswith(isin_prefix)))
 
+    def _save_non_target_isin(non_target_isin: str) -> None:
+        """Save a non-target ISIN to the DB so re-evaluation skips it, then return None."""
+        logger.info(f"Found non-{country_name} ISIN {non_target_isin} for {symbol}. Saving to DB to skip in future re-evaluations.")
+        try:
+            save_discovered_symbol(symbol, non_target_isin, "stock", name)
+        except Exception as e:
+            logger.warning(f"Failed to save non-target ISIN {non_target_isin} for {symbol} to DB: {e}")
+
     # First attempt: explicitly ask for an ISIN from the target country
     query = f"{name or symbol} {country_name} ISIN"
     isin = _search_isin(query)
     if _is_valid(isin):
         return isin
         
-    # If a non-target ISIN is found, redo the search to be sure we have the correct one
+    # If a non-target ISIN is found, save it to the DB and return None
     if isin and isin_prefix and not isin.startswith(isin_prefix):
-        logger.info(f"Found non-{country_name} ISIN {isin} for {symbol}, redoing search to confirm.")
-        retry_query = f"{name or symbol} ISIN {country_name}"
-        retry_isin = _search_isin(retry_query)
-        if _is_valid(retry_isin):
-            return retry_isin
+        _save_non_target_isin(isin)
+        return None
             
     # If the first attempt found nothing, do a generic search
     if not isin:
@@ -85,5 +91,10 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
         generic_isin = _search_isin(generic_query)
         if _is_valid(generic_isin):
             return generic_isin
+        
+        # If generic search finds a non-target ISIN, save it and return None
+        if generic_isin and isin_prefix and not generic_isin.startswith(isin_prefix):
+            _save_non_target_isin(generic_isin)
+            return None
         
     return None
