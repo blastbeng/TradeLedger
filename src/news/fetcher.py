@@ -220,6 +220,61 @@ def _analyze_sentiment(text: str) -> Dict[str, Any]:
     return {"label": "neutral", "compound": 0.0}
 
 
+def _batch_analyze_sentiments(articles: List[Dict[str, Any]]) -> None:
+    """Analyze sentiment for a list of articles in batches to reduce LLM calls."""
+    # Only analyze articles that don't already have a sentiment (e.g., from StockTwits)
+    articles_to_analyze = [a for a in articles if "sentiment" not in a]
+    if not articles_to_analyze:
+        return
+    
+    batch_size = 15
+    for i in range(0, len(articles_to_analyze), batch_size):
+        batch = articles_to_analyze[i:i + batch_size]
+        texts = [f"{a.get('title', '')} {a.get('summary', '')}" for a in batch]
+        
+        system_prompt = (
+            "You are a multilingual sentiment analysis engine. "
+            "Analyze the sentiment of the provided texts and return a JSON array of objects. "
+            "Each object must have two keys: "
+            '"label" (which must be "positive", "negative", or "neutral") and '
+            '"compound" (a float score between -1.0 and 1.0). '
+            "The array must have exactly the same number of elements as the input texts, in the same order. "
+            "Output ONLY the raw JSON array, no other text."
+        )
+        prompt = "Analyze the sentiment of these texts:\n\n"
+        for idx, text in enumerate(texts):
+            prompt += f"{idx + 1}. {text[:500]}\n"
+        
+        try:
+            llm_result = get_cached_llm_response(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                ttl=86400,
+                model_type="sentiment",
+                request_type="sentiment_analysis_batch"
+            )
+            response_text = llm_result.get("response", "")
+            json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group(0))
+                if isinstance(data, list) and len(data) == len(batch):
+                    for j, item in enumerate(data):
+                        label = str(item.get("label", "neutral")).lower()
+                        compound = float(item.get("compound", 0.0))
+                        if label not in ("positive", "negative", "neutral"):
+                            label = "neutral"
+                        compound = max(-1.0, min(1.0, compound))
+                        batch[j]["sentiment"] = {"label": label, "compound": round(compound, 4)}
+                    continue
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
+            logger.warning(f"Batch LLM sentiment analysis failed: {type(e).__name__}: {e}")
+        
+        # Fallback to neutral if batch failed or response was malformed
+        for a in batch:
+            if "sentiment" not in a:
+                a["sentiment"] = {"label": "neutral", "compound": 0.0}
+
+
 def _is_relevant(symbol: str, title: str, summary: str, name: Optional[str] = None) -> bool:
     """Return True if the article is likely relevant to the trading symbol."""
     text = f"{title} {summary}".lower()
@@ -438,6 +493,9 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
     # Limit per symbol
     unique = unique[:settings.NEWS_MAX_ARTICLES_PER_SYMBOL]
 
+    # Batch sentiment analysis to reduce LLM calls
+    _batch_analyze_sentiments(unique)
+
     # Cache
     try:
         redis_client.set(cache_key, json.dumps(unique), ex=settings.NEWS_CACHE_TTL_SECONDS)
@@ -650,8 +708,6 @@ def _fetch_newsapi(symbol: str, name: Optional[str] = None, search_query: Option
         for art in data.get("articles", []):
             title = art.get("title", "")
             description = art.get("description", "") or ""
-            text = f"{title} {description}"
-            sentiment = _analyze_sentiment(text)
             if not _is_relevant(symbol, title, description, name=name):
                 continue
             articles.append({
@@ -660,7 +716,6 @@ def _fetch_newsapi(symbol: str, name: Optional[str] = None, search_query: Option
                 "url": art.get("url", ""),
                 "published_at": art.get("publishedAt", ""),
                 "summary": description[:300],
-                "sentiment": sentiment,
             })
         logger.debug(f"NewsAPI returned {len(articles)} articles for {symbol}")
         return articles
@@ -698,7 +753,6 @@ def _fetch_twitter(symbol: str, use_cashtag: bool = True, name: Optional[str] = 
         articles = []
         if tweets.data:
             for tweet in tweets.data:
-                sentiment = _analyze_sentiment(tweet.text)
                 if not _is_relevant(symbol, tweet.text[:100], tweet.text, name=name):
                     continue
                 articles.append({
@@ -707,7 +761,6 @@ def _fetch_twitter(symbol: str, use_cashtag: bool = True, name: Optional[str] = 
                     "url": f"https://twitter.com/i/web/status/{tweet.id}",
                     "published_at": str(tweet.created_at) if tweet.created_at else "",
                     "summary": tweet.text,
-                    "sentiment": sentiment,
                 })
         logger.debug(f"Twitter returned {len(articles)} articles for {symbol}")
         return articles
@@ -751,8 +804,6 @@ def _fetch_reddit(symbol: str, name: Optional[str] = None, search_query: Optiona
         )
         articles = []
         for sub in submissions:
-            text = f"{sub.title} {sub.selftext[:300] if sub.selftext else ''}"
-            sentiment = _analyze_sentiment(text)
             reddit_summary = sub.selftext[:300] if sub.selftext else sub.title
             if not _is_relevant(symbol, sub.title, reddit_summary, name=name):
                 continue
@@ -762,7 +813,6 @@ def _fetch_reddit(symbol: str, name: Optional[str] = None, search_query: Optiona
                 "url": f"https://reddit.com{sub.permalink}",
                 "published_at": str(sub.created_utc),
                 "summary": reddit_summary,
-                "sentiment": sentiment,
             })
         logger.debug(f"Reddit returned {len(articles)} articles for {symbol}")
         return articles
@@ -804,14 +854,12 @@ def _fetch_facebook(symbol: str, name: Optional[str] = None) -> List[Dict[str, s
             else:
                 if sym_lower not in message_lower:
                     continue
-            sentiment = _analyze_sentiment(message)
             articles.append({
                 "title": message[:100],
                 "source": "Facebook",
                 "url": post.get("permalink_url", ""),
                 "published_at": post.get("created_time", ""),
                 "summary": message[:300],
-                "sentiment": sentiment,
             })
         logger.debug(f"Facebook returned {len(articles)} articles for {symbol}")
         return articles
@@ -854,8 +902,6 @@ def _fetch_youtube(symbol: str, name: Optional[str] = None, search_query: Option
             snippet = item["snippet"]
             title = snippet.get("title", "")
             description = snippet.get("description", "")
-            text = f"{title} {description}"
-            sentiment = _analyze_sentiment(text)
             if not _is_relevant(symbol, title, description[:300], name=name):
                 continue
             articles.append({
@@ -864,7 +910,6 @@ def _fetch_youtube(symbol: str, name: Optional[str] = None, search_query: Option
                 "url": f"https://www.youtube.com/watch?v={item['id']['videoId']}",
                 "published_at": snippet.get("publishedAt", ""),
                 "summary": description[:300],
-                "sentiment": sentiment,
             })
         logger.debug(f"YouTube returned {len(articles)} articles for {symbol}")
         return articles
@@ -899,8 +944,6 @@ def _fetch_googlenews(symbol: str, name: Optional[str] = None, search_query: Opt
         for entry in feed.entries[:settings.GOOGLE_NEWS_MAX_ARTICLES]:
             title = entry.get("title", "")
             summary = entry.get("summary", "") or entry.get("description", "")
-            text = f"{title} {summary}"
-            sentiment = _analyze_sentiment(text)
             if not _is_relevant(symbol, title, summary[:300], name=name):
                 continue
             articles.append({
@@ -909,7 +952,6 @@ def _fetch_googlenews(symbol: str, name: Optional[str] = None, search_query: Opt
                 "url": entry.get("link", ""),
                 "published_at": entry.get("published", ""),
                 "summary": summary[:300],
-                "sentiment": sentiment,
             })
         logger.debug(f"Google News returned {len(articles)} articles for {symbol}")
         return articles
@@ -972,9 +1014,8 @@ def _fetch_stocktwits(symbol: str, name: Optional[str] = None) -> List[Dict[str,
                     label = "negative"
                     compound = -0.5
                 else:
-                    sentiment = _analyze_sentiment(body)
-                    label = sentiment["label"]
-                    compound = sentiment["compound"]
+                    label = "neutral"
+                    compound = 0.0
 
                 if not _is_relevant(symbol, title, body[:300], name=name):
                     continue
@@ -1045,7 +1086,6 @@ def _fetch_duckduckgo_news(symbol: str, name: Optional[str] = None, search_query
             if not title or not url:
                 continue
                 
-            sentiment = _analyze_sentiment(f"{title} {body}")
             if not _is_relevant(symbol, title, body[:300], name=name):
                 continue
                 
@@ -1055,7 +1095,6 @@ def _fetch_duckduckgo_news(symbol: str, name: Optional[str] = None, search_query
                 "url": url,
                 "published_at": published_at,
                 "summary": body[:300],
-                "sentiment": sentiment,
             })
         logger.debug(f"DuckDuckGo returned {len(articles)} articles for {symbol}")
         return articles
@@ -1159,8 +1198,6 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
 
                 if not found:
                     continue
-                text = f"{title} {summary}"
-                sentiment = _analyze_sentiment(text)
                 if not _is_relevant(symbol, title, summary[:300], name=name):
                     continue
                 articles.append({
@@ -1169,7 +1206,6 @@ def _fetch_rss(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
                     "url": entry.get("link", ""),
                     "published_at": entry.get("published", ""),
                     "summary": summary[:300],
-                    "sentiment": sentiment,
                 })
         except (ValueError, TypeError, KeyError, AttributeError, IndexError) as e:
             logger.warning(f"RSS parse/processing failed for {feed_url}: {type(e).__name__}: {e}")
@@ -1228,7 +1264,6 @@ def _fetch_banca_d_italia_btp_news(symbol: str, name: Optional[str] = None) -> L
                             "url": full_url,
                             "published_at": date_str,
                             "summary": title,
-                            "sentiment": _analyze_sentiment(title),
                         })
             if not found_items:
                 break
