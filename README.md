@@ -151,6 +151,80 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 | `DB_NAME` | PostgreSQL database name | `trade_ledger` |
 | `DB_USER` | PostgreSQL user | `trade_ledger` |
 | `DB_PASSWORD` | PostgreSQL password | |
+| `DATABASE_BACKEND` | Database backend (`sqlite` or `postgresql`) | `sqlite` |
+| `DATABASE_PATH` | Path to SQLite database file (if using sqlite) | `data/trading_bot.db` |
+| `DATA_DIR` | Data directory for logs, database, etc. | `data` |
+| `LLM_CHUNK_SIZE` | Number of candidate symbols per LLM chunk call | `20` |
+| `LLM_CHUNK_CONCURRENCY_LIMIT` | Maximum concurrent LLM chunk evaluations | `5` |
+| `LLM_ACTUATOR_TIMEOUT` | LLM timeout (seconds) for time-critical actuator calls | `60.0` |
+| `LLM_FALLBACK_TIMEOUT` | LLM timeout (seconds) for fallback model calls | `600.0` |
+| `LLM_CACHE_TTL` | LLM cache time-to-live (seconds) | `1800` |
+| `LLM_MIND_CACHE_TTL` | LLM mind model cache time-to-live (seconds) | `3600` |
+| `AOL_LLM_PROVIDER` | Always-Online Locally hosted weak model provider (last resort fallback) | |
+| `AOL_LLM_MODEL` | Always-Online Locally hosted weak model name | `[]` |
+| `AOL_LLM_API_KEY` | Always-Online Locally hosted weak model API key | |
+| `AOL_BASE_URL` | Always-Online Locally hosted weak model base URL | |
+| `AOL_MAX_INPUT_TOKENS` | Max input tokens for AOL model | `16384` |
+| `AOL_TIMEOUT` | AOL timeout (seconds) for last-resort fallback calls | `120.0` |
+| `HARD_MAX_LOSS_PCT_1H` | Timeframe-specific hard max loss for 1h | `0.10` |
+| `HARD_MAX_LOSS_PCT_1D` | Timeframe-specific hard max loss for 1d | `0.12` |
+| `HARD_MAX_LOSS_PCT_1W` | Timeframe-specific hard max loss for 1w | `0.15` |
+| `HARD_MAX_LOSS_PCT_1M` | Timeframe-specific hard max loss for 1M | `0.20` |
+| `HARD_MAX_LOSS_PCT_3M` | Timeframe-specific hard max loss for 3M | `0.25` |
+| `HARD_MAX_LOSS_PCT_6M_1Y` | Timeframe-specific hard max loss for 6M/1Y | `0.30` |
+| `BTP_HARD_MAX_LOSS_PCT_1H` | Timeframe-specific BTP hard max loss for 1h | `0.03` |
+| `BTP_HARD_MAX_LOSS_PCT_1D` | Timeframe-specific BTP hard max loss for 1d | `0.04` |
+| `BTP_HARD_MAX_LOSS_PCT_1W` | Timeframe-specific BTP hard max loss for 1w | `0.05` |
+| `BTP_HARD_MAX_LOSS_PCT_1M` | Timeframe-specific BTP hard max loss for 1M | `0.06` |
+| `BTP_HARD_MAX_LOSS_PCT_3M` | Timeframe-specific BTP hard max loss for 3M | `0.08` |
+| `BTP_HARD_MAX_LOSS_PCT_6M_1Y` | Timeframe-specific BTP hard max loss for 6M/1Y | `0.10` |
+| `MAX_PARTIAL_TP_REVIEWS` | Maximum consecutive partial take-profit reviews | `10` |
+| `MAX_DUST_SWEEP_REVIEWS` | Maximum consecutive dust sweep reviews | `10` |
+| `NATIVE_STOP_FILL_TIMEOUT_SECONDS` | Max time to wait for native stop-loss to fill | `300` |
+| `DUST_KEEP_TIMEOUT_SECONDS` | Maximum time dust can be kept before auto-selling | `604800` |
+| `TRIGGERED_REEVALUATION_COOLDOWN` | Minimum seconds between condition-triggered re-evaluations | `1800` |
+| `EVAL_INTERVAL_1H` | Evaluation interval for 1h timeframe (seconds) | `900` |
+| `EVAL_INTERVAL_1D` | Evaluation interval for 1d timeframe (seconds) | `1800` |
+| `EVAL_INTERVAL_1W` | Evaluation interval for 1w timeframe (seconds) | `3600` |
+| `EVAL_INTERVAL_1M` | Evaluation interval for 1M timeframe (seconds) | `86400` |
+| `EVAL_INTERVAL_3M` | Evaluation interval for 3M timeframe (seconds) | `172800` |
+| `EVAL_INTERVAL_6M_1Y` | Evaluation interval for 6M/1Y timeframe (seconds) | `604800` |
+| `EVAL_INTERVAL_DEFAULT` | Default evaluation interval (seconds) | `3600` |
+| `MAX_SKIP_INTERVAL_SECONDS` | Maximum interval (seconds) to skip LLM evaluation | `604800` |
+| `QUOTE_MAX_STALENESS_SECONDS` | Maximum age (seconds) for a quote to be considered fresh | `3600.0` |
+| `FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS` | Interval for all-asset news download (seconds) | `10800` |
+| `OHLCV_DOWNLOAD_SYMBOL_DELAY_SECONDS` | OHLCV download staggering (delay between symbols) | `2.0` |
+| `BACKFILL_MAX_CANDLES_PER_CALL` | Maximum OHLCV candles to insert in a single backfill call | `5000` |
+| `MAX_GAPS_PER_CYCLE` | Maximum number of OHLCV gaps to fill per cycle | `20` |
+| `MAX_BACKTEST_VARIANTS` | Maximum number of backtest variants per cycle | `10` |
+| `MAX_CONCURRENT_BACKTESTS` | Maximum number of concurrent backtest variants | `8` |
+| `DB_EXECUTOR_WORKERS` | Thread pool size for database executor | `10` |
+| `DOWNLOAD_EXECUTOR_WORKERS` | Thread pool size for download executor | `10` |
+| `QUOTE_EXECUTOR_WORKERS` | Thread pool size for quote executor | `20` |
+| `EXCHANGE_SEMAPHORE_LIMIT` | Async semaphore concurrency limit for exchanges | `10` |
+| `NEWS_SEMAPHORE_LIMIT` | Async semaphore concurrency limit for news | `5` |
+| `INDICATOR_SEMAPHORE_LIMIT` | Async semaphore concurrency limit for indicators | `4` |
+| `DOWNLOAD_SEMAPHORE_LIMIT` | Async semaphore concurrency limit for downloads | `5` |
+| `SYMBOL_PROCESSING_SEMAPHORE_LIMIT` | Async semaphore concurrency limit for symbol processing | `3` |
+| `FORCE_DOWNLOAD_ALL_CONCURRENCY` | Concurrency limit for force downloading all assets | `2` |
+| `FORCE_DOWNLOAD_TRACKED_CONCURRENCY` | Concurrency limit for force downloading tracked assets | `10` |
+| `FULL_DOWNLOAD_CONCURRENCY` | Concurrency limit for full asset downloads | `2` |
+| `ORPHANED_ORDER_TIMEOUT_SECONDS` | Orphaned order timeout (seconds) | `600.0` |
+| `SYMBOL_EVALUATION_DELAY_SECONDS` | Delay between symbol evaluations (seconds) | `1.0` |
+| `BACKTEST_MIN_CANDLES` | Minimum candles required for backtesting | `5` |
+| `BACKTEST_SLIPPAGE_BASE_PCT` | Backtest slippage base percentage | `0.001` |
+| `BACKTEST_SLIPPAGE_MAX_PCT` | Backtest slippage max percentage | `0.01` |
+| `MIN_STATISTICALLY_SIGNIFICANT_CANDLES` | Minimum candles for statistical significance | `5` |
+| `STALENESS_NOTIFY_THRESHOLD_SECONDS` | Staleness notify threshold (seconds) | `3600` |
+| `NEWS_UPDATE_INTERVAL_MINUTES` | News update interval (minutes) | `60` |
+| `NEWS_RATE_LIMIT_ENABLED` | Enable rate limiting for news providers | `true` |
+| `ENTRY_SIGNAL_MACD_ATR_MULT` | Entry signal MACD magnitude threshold as a multiple of ATR | `0.05` |
+| `NEWS_SENTIMENT_EXIT_TF_SECONDS` | News sentiment exit timeframe threshold (seconds) | `604800` |
+| `WALK_FORWARD_CANDLE_THRESHOLD` | Walk-forward backtest candle threshold | `100` |
+| `PARTIAL_FILL_VOLUME_CAP_PCT` | Partial fill volume cap (fraction of last minute's volume) | `0.1` |
+| `MAX_CORR_SYMBOLS` | Maximum number of symbols in correlation matrix computation | `50` |
+| `SENTIMENT_SHIFT_THRESHOLD` | Sentiment shift threshold to trigger immediate re-evaluation | `0.3` |
+| `NOTIFICATION_LOG_ENABLED` | Enable notification logging | `true` |
 
 ## Quick Start (Docker)
 
@@ -248,13 +322,17 @@ Copy `.env.example` to `.env` and fill in your settings. Here are the key variab
 .
 ├── src/
 │   ├── config/          # Settings and validation
+│   ├── database.py      # Database connection wrappers, migrations, state persistence, metrics
 │   ├── exchanges/       # yfinance market data, fees, BTP scrapers, Borsa Italiana API
+│   ├── indicators.py    # Technical indicators computation
 │   ├── llm/             # LLM client, caching, prompts
-│   ├── strategies/      # Signal, strategy, validation, backtester
-│   ├── trading/         # Engine, paper trader (no live trader — paper only)
-│   ├── telegram/        # Telegram bot
+│   ├── main.py          # Application entry point
 │   ├── news/            # News fetcher and sentiment analysis
-│   ├── utils/           # Redis client, retry
+│   ├── strategies/      # Signal, strategy, validation, backtester
+│   ├── telegram/        # Telegram bot
+│   ├── trading/         # Engine, paper trader (no live trader — paper only)
+│   │   └── components/  # Buy/exit/order executors, market data, position managers, shared state
+│   ├── utils/           # Redis client, retry, event bus, BTP policy
 │   └── web/             # FastAPI app and dashboard
 ├── .env.example
 ├── Dockerfile
