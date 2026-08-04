@@ -59,7 +59,7 @@ from src.utils.redis_client import get_redis_client, check_redis_connection, is_
 from src.utils.symbol_utils import is_btp_isin
 from src.utils.task_supervisor import TaskSupervisor
 from src.utils.event_bus import EventBus
-from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, get_latest_ohlcv_timestamps_batch, insert_ohlcv_batch, save_paper_balances, load_paper_balances, cleanup_old_ohlcv, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data, insert_dividend, cleanup_old_dividends, get_pending_llm_decisions, update_llm_decision_outcome, get_llm_decision_quality_metrics, cleanup_old_llm_decisions, get_pending_dividends_for_symbol, mark_dividend_reinvested
+from src.database import load_trading_state, save_trading_state, insert_trade, get_performance, store_news_articles, get_aggregate_sentiment_from_db, get_aggregate_sentiment_for_symbols, get_news_for_symbol, get_ohlcv, get_latest_ohlcv_timestamp, get_latest_ohlcv_timestamps_batch, insert_ohlcv_batch, save_paper_balances, load_paper_balances, save_indicators, get_indicators, get_indicators_for_symbols, get_ohlcv_summary_for_symbols, get_all_trades, get_latest_close_prices, insert_position_pnl_snapshot, cleanup_old_position_pnl, save_backtest_result, get_recent_backtest_result, get_backtest_results_for_symbol, cleanup_old_backtest_results, reset_paper_trading_data, insert_dividend, cleanup_old_dividends, get_pending_llm_decisions, update_llm_decision_outcome, get_llm_decision_quality_metrics, cleanup_old_llm_decisions, get_pending_dividends_for_symbol, mark_dividend_reinvested
 from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.buy_executor import BuyExecutor
 from src.trading.components.exit_order_manager import ExitOrderManager
@@ -421,8 +421,6 @@ class TradingEngine:
             download_tasks = [_limited_force_download(pair) for pair in all_pairs]
             await asyncio.gather(*download_tasks)
 
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(self._db_executor, cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
             logger.info("Force download: complete.")
         except asyncio.CancelledError:
             raise
@@ -1354,9 +1352,6 @@ class TradingEngine:
                     download_tasks = [_download_symbol_data(entry) for entry in shuffled_symbols]
                     await asyncio.gather(*download_tasks)
                     logger.info("Market data download cycle complete.")
-                    # Clean up old OHLCV data (older than retention period)
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(self._db_executor, cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
             except asyncio.CancelledError:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
@@ -1450,7 +1445,6 @@ class TradingEngine:
 
                 # Clean up old data
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(self._db_executor, cleanup_old_ohlcv, settings.OHLCV_RETENTION_DAYS)
                 await loop.run_in_executor(self._db_executor, cleanup_old_position_pnl, 90)
                 await loop.run_in_executor(self._db_executor, cleanup_old_backtest_results, 90)
                 logger.info("Full asset OHLCV download cycle complete.")
