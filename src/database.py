@@ -1046,14 +1046,6 @@ def get_telegram_chat_id() -> Optional[int]:
             return None
     return None
 
-def cleanup_old_ohlcv(retention_days: int = 30):
-    """Delete OHLCV candles older than retention_days for all symbols and timeframes.
-    
-    NOTE: Cleanup is disabled to preserve all historical candles for backtesting.
-    """
-    return 0
-
-
 def get_all_trades() -> List[Dict[str, Any]]:
     """Retrieve all trades from the trade_history table, ordered by timestamp ascending."""
     conn = get_connection()
