@@ -43,12 +43,8 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
                 match = isin_pattern.search(text)
                 if match:
                     isin = match.group(0)
-                    # Only accept Italian ISINs (start with 'IT')
-                    if isin.startswith("IT"):
-                        logger.info(f"DuckDuckGo search provided ISIN {isin} for {symbol}")
-                        return isin
-                    else:
-                        logger.debug(f"DuckDuckGo found non-Italian ISIN {isin} for {symbol}, skipping.")
+                    logger.info(f"DuckDuckGo search provided ISIN {isin} for {symbol}")
+                    return isin
     except Exception as e:
         logger.warning(f"DuckDuckGo ISIN lookup failed for {symbol}: {type(e).__name__}: {e}")
     
