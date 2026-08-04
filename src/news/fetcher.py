@@ -180,46 +180,6 @@ def _is_feed_disabled(feed_url: str) -> bool:
     return True
 
 
-def _analyze_sentiment(text: str) -> Dict[str, Any]:
-    """Return sentiment label and compound score for a text using the weak LLM model."""
-    if not text or not text.strip():
-        return {"label": "neutral", "compound": 0.0}
-
-    system_prompt = (
-        "You are a multilingual sentiment analysis engine. "
-        "Analyze the sentiment of the provided text and return a JSON object with two keys: "
-        '"label" (which must be "positive", "negative", or "neutral") and '
-        '"compound" (a float score between -1.0 and 1.0, where -1.0 is very negative, 1.0 is very positive, and 0.0 is neutral). '
-        "Output ONLY the raw JSON object, no other text."
-    )
-    prompt = f"Analyze the sentiment of this text:\n\n{text}"
-
-    try:
-        llm_result = get_cached_llm_response(
-            prompt=prompt,
-            system_prompt=system_prompt,
-            ttl=86400,  # Cache sentiment for 24 hours to avoid repeated LLM calls
-            model_type="sentiment",
-            request_type="sentiment_analysis"
-        )
-        response_text = llm_result.get("response", "")
-        # Extract JSON from response (handles both raw JSON and markdown-wrapped JSON)
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group(0))
-            label = str(data.get("label", "neutral")).lower()
-            compound = float(data.get("compound", 0.0))
-            if label not in ("positive", "negative", "neutral"):
-                label = "neutral"
-            # Clamp compound to [-1.0, 1.0]
-            compound = max(-1.0, min(1.0, compound))
-            return {"label": label, "compound": round(compound, 4)}
-    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
-        logger.warning(f"LLM sentiment analysis failed: {type(e).__name__}: {e}", exc_info=True)
-
-    return {"label": "neutral", "compound": 0.0}
-
-
 def _batch_analyze_sentiments(articles: List[Dict[str, Any]]) -> None:
     """Analyze sentiment for a list of articles in batches to reduce LLM calls."""
     # Only analyze articles that don't already have a sentiment (e.g., from StockTwits)
