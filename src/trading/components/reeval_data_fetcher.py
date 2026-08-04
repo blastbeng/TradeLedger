@@ -52,21 +52,46 @@ class ReevalDataFetcher:
         etf_pairs = [f"{sym}/{engine.base_currency}" for sym in etf_symbols]
         available_pairs = stock_pairs + btp_pairs
 
-        # --- Filter: only include symbols that have a name in discovered_symbols ---
-        from src.database import get_discovered_symbols_with_names
+        # --- Filter: only include symbols that have a name and a valid target ISIN ---
+        from src.database import get_discovered_symbols_with_names, get_isin_map_from_db
         symbols_with_names = await asyncio.to_thread(get_discovered_symbols_with_names)
         _suffix = settings.TICKER_SUFFIX
 
-        def _has_name(pair: str) -> bool:
+        def _get_db_base(pair: str) -> str:
             base = pair.split("/")[0]
-            db_base = base
-            if _suffix and db_base.endswith(_suffix):
-                db_base = db_base[:-len(_suffix)]
-            return db_base in symbols_with_names or base in symbols_with_names
+            if _suffix and base.endswith(_suffix):
+                return base[:-len(_suffix)]
+            return base
 
-        available_pairs = [p for p in available_pairs if _has_name(p)]
-        btp_pairs = [p for p in btp_pairs if p.split("/")[0] in symbols_with_names]
-        etf_pairs = [p for p in etf_pairs if _has_name(p)]
+        # Fetch ISINs to filter out non-target country symbols saved in the DB
+        all_db_bases = list(set(_get_db_base(p) for p in available_pairs + btp_pairs + etf_pairs))
+        isin_map = await asyncio.to_thread(get_isin_map_from_db, all_db_bases)
+
+        # Map of common country names to their 2-letter ISIN country codes
+        _COUNTRY_ISIN_PREFIX = {
+            "italy": "IT", "france": "FR", "germany": "DE", "spain": "ES",
+            "netherlands": "NL", "united states": "US", "usa": "US",
+            "united kingdom": "GB", "uk": "GB",
+        }
+        isin_prefix = _COUNTRY_ISIN_PREFIX.get(settings.TARGET_COUNTRY, "")
+
+        def _is_valid_isin(db_base: str) -> bool:
+            if not isin_prefix:
+                return True
+            isin = isin_map.get(db_base)
+            if not isin:
+                return True  # No ISIN found yet, allow it to be looked up later
+            return isin.startswith(isin_prefix)
+
+        def _has_name_and_valid_isin(pair: str) -> bool:
+            db_base = _get_db_base(pair)
+            base = pair.split("/")[0]
+            has_name = db_base in symbols_with_names or base in symbols_with_names
+            return has_name and _is_valid_isin(db_base)
+
+        available_pairs = [p for p in available_pairs if _has_name_and_valid_isin(p)]
+        btp_pairs = [p for p in btp_pairs if _has_name_and_valid_isin(p)]
+        etf_pairs = [p for p in etf_pairs if _has_name_and_valid_isin(p)]
 
         if not available_pairs and not btp_pairs:
             logger.warning("No symbols with names in discovered_symbols. Skipping re-evaluation.")
