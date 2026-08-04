@@ -1046,20 +1046,12 @@ def get_telegram_chat_id() -> Optional[int]:
             return None
     return None
 
-@retry_on_db_lock()
 def cleanup_old_ohlcv(retention_days: int = 30):
-    """Delete OHLCV candles older than retention_days for all symbols and timeframes."""
-    conn = get_connection()
-    try:
-        cutoff_ms = int((time.time() - retention_days * 24 * 60 * 60) * 1000)
-        sql = _adapt_sql("DELETE FROM market_data WHERE timestamp < %s")
-        deleted = conn.execute(sql, (cutoff_ms,)).rowcount
-        conn.commit()
-        if deleted:
-            logger.info(f"Cleaned up {deleted} old OHLCV candles (older than {retention_days} days)")
-        return deleted
-    finally:
-        conn.close()
+    """Delete OHLCV candles older than retention_days for all symbols and timeframes.
+    
+    NOTE: Cleanup is disabled to preserve all historical candles for backtesting.
+    """
+    return 0
 
 
 def get_all_trades() -> List[Dict[str, Any]]:
