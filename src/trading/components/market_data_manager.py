@@ -18,6 +18,7 @@ from src.config.settings import settings
 from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch, get_candle_count_for_symbol, update_candle_count, get_indicators
 from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session, get_bars_range, get_quotes, get_quotes_cached
 from src.indicators import compute_all_indicators
+from src.utils.symbol_utils import is_italian_isin
 
 logger = logging.getLogger(__name__)
 
@@ -383,6 +384,8 @@ class MarketDataManager:
             if engine._btp_bonds_cache and (now - engine._btp_bonds_cache_time) < 1800:
                 return engine._btp_bonds_cache
             bonds = await asyncio.to_thread(discover_btp_bonds)
+            # Filter out non-Italian BTPs
+            bonds = [b for b in bonds if is_italian_isin(b["isin"])]
             # Merge with DB-saved BTPs so nothing is lost between runs
             try:
                 from src.database import get_all_discovered_symbols
@@ -405,6 +408,8 @@ class MarketDataManager:
                 for db_entry in db_symbols:
                     if db_entry.get("asset_type") == "btp":
                         isin = db_entry.get("manual_isin") or db_entry.get("isin") or db_entry["symbol"]
+                        if not is_italian_isin(isin):
+                            continue
                         if isin not in existing_isins:
                             bonds.append({
                                 "isin": isin,

@@ -13,3 +13,10 @@ def is_btp_isin(symbol: str) -> bool:
         return False
     base = symbol.split("/")[0] if "/" in symbol else symbol
     return bool(_BTP_ISIN_PATTERN.match(base))
+
+
+def is_italian_isin(isin: str) -> bool:
+    """Check if an ISIN is Italian (starts with 'IT')."""
+    if not isin:
+        return False
+    return isin.strip().upper().startswith("IT")

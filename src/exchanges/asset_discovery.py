@@ -12,7 +12,7 @@ import yfinance as yf
 
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
-from src.utils.symbol_utils import is_btp_isin
+from src.utils.symbol_utils import is_btp_isin, is_italian_isin
 from src.exchanges.yf_session import _check_yf_circuit, _get_yf_session
 from src.exchanges.borsa_italiana_utils import _get_isin_and_info_from_borsa_italiana
 
@@ -542,6 +542,9 @@ def get_tradable_assets() -> List[str]:
                         continue
                     if settings.COUNTRY_FILTER_STRICT and db_country is None and not re.match(r'^IT[A-Z0-9]{10}$', db_sym):
                         continue
+                    db_isin = db_entry.get("isin")
+                    if db_isin is not None and not is_italian_isin(db_isin):
+                        continue
                     if is_btp_isin(db_sym):
                         db_only_list.append(db_sym)
                     else:
@@ -607,6 +610,9 @@ def get_tradable_assets() -> List[str]:
                         continue
                     if settings.COUNTRY_FILTER_STRICT and db_country is None and not re.match(r'^IT[A-Z0-9]{10}$', db_sym):
                         continue
+                    db_isin = db_entry.get("isin")
+                    if db_isin is not None and not is_italian_isin(db_isin):
+                        continue
                     if is_btp_isin(db_sym):
                         if db_sym not in existing_set:
                             cached_list.append(db_sym)
@@ -637,6 +643,12 @@ def get_tradable_assets() -> List[str]:
             continue
 
         country, name, isin = _fetch_info(symbol)
+
+        # Skip symbols with a non-Italian ISIN
+        if isin is not None and not is_italian_isin(isin):
+            logger.debug(f"Symbol {symbol} skipped (ISIN {isin} is not Italian)")
+            continue
+
         # Save the fetched country, name, and ISIN to the database for future filtering.
         # In strict mode, only save Italian symbols to DB.
         if country is not None and (not settings.COUNTRY_FILTER_STRICT or country.lower() == target_country):
@@ -719,6 +731,9 @@ def get_tradable_assets() -> List[str]:
             db_country = db_entry.get("country")
             # Skip symbols confirmed to be non-Italian
             if db_country is not None and db_country.lower() != target_country:
+                continue
+            db_isin = db_entry.get("isin")
+            if db_isin is not None and not is_italian_isin(db_isin):
                 continue
             if is_btp_isin(db_sym):
                 # BTP ISIN — add as-is (no suffix)
