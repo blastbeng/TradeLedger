@@ -3,8 +3,22 @@ import re
 from typing import Optional
 
 from src.exchanges.proxy_utils import _get_proxies
+from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+# Map of common country names to their 2-letter ISIN country codes
+_COUNTRY_ISIN_PREFIX = {
+    "italy": "IT",
+    "france": "FR",
+    "germany": "DE",
+    "spain": "ES",
+    "netherlands": "NL",
+    "united states": "US",
+    "usa": "US",
+    "united kingdom": "GB",
+    "uk": "GB",
+}
 
 # Suppress noisy INFO/DEBUG logs from the ddgs and primp libraries
 logging.getLogger("ddgs").setLevel(logging.WARNING)
@@ -45,17 +59,20 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
         logger.debug("ddgs not installed. Skipping DuckDuckGo ISIN lookup.")
         return None
 
-    # First attempt: explicitly ask for an Italian ISIN
-    query = f"{name or symbol} Italian ISIN"
+    country_name = settings.TARGET_COUNTRY.capitalize()
+    isin_prefix = _COUNTRY_ISIN_PREFIX.get(settings.TARGET_COUNTRY, "")
+
+    # First attempt: explicitly ask for an ISIN from the target country
+    query = f"{name or symbol} {country_name} ISIN"
     isin = _search_isin(query)
     
-    if isin and isin.startswith("IT"):
+    if isin and (not isin_prefix or isin.startswith(isin_prefix)):
         return isin
         
-    # If a non-Italian ISIN is found, redo the search to be sure we have the correct one
-    if isin and not isin.startswith("IT"):
-        logger.info(f"Found non-Italian ISIN {isin} for {symbol}, redoing search to confirm.")
-        retry_query = f"{name or symbol} ISIN Italia"
+    # If a non-target ISIN is found, redo the search to be sure we have the correct one
+    if isin and isin_prefix and not isin.startswith(isin_prefix):
+        logger.info(f"Found non-{country_name} ISIN {isin} for {symbol}, redoing search to confirm.")
+        retry_query = f"{name or symbol} ISIN {country_name}"
         retry_isin = _search_isin(retry_query)
         if retry_isin:
             return retry_isin
