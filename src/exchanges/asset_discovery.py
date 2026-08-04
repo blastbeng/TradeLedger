@@ -541,7 +541,11 @@ def get_tradable_assets() -> List[str]:
                     if is_btp_isin(db_sym):
                         db_only_list.append(db_sym)
                     else:
-                        candidate = f"{db_sym}{suffix}" if suffix and not db_sym.endswith(suffix) else db_sym
+                        # Sanitize db_sym: strip /currency suffix, then strip ticker suffix if present
+                        clean_sym = db_sym.split("/")[0] if "/" in db_sym else db_sym
+                        if suffix and clean_sym.endswith(suffix):
+                            clean_sym = clean_sym[:-len(suffix)]
+                        candidate = f"{clean_sym}{suffix}" if suffix else clean_sym
                         db_only_list.append(candidate)
                 if db_only_list:
                     logger.info(f"Discovery failed but recovered {len(db_only_list)} symbols from DB only")
@@ -604,7 +608,11 @@ def get_tradable_assets() -> List[str]:
                             cached_list.append(db_sym)
                             existing_set.add(db_sym)
                     else:
-                        candidate = f"{db_sym}{suffix}" if suffix and not db_sym.endswith(suffix) else db_sym
+                        # Sanitize db_sym: strip /currency suffix, then strip ticker suffix if present
+                        clean_sym = db_sym.split("/")[0] if "/" in db_sym else db_sym
+                        if suffix and clean_sym.endswith(suffix):
+                            clean_sym = clean_sym[:-len(suffix)]
+                        candidate = f"{clean_sym}{suffix}" if suffix else clean_sym
                         if candidate not in existing_set:
                             cached_list.append(candidate)
                             existing_set.add(candidate)
@@ -715,7 +723,11 @@ def get_tradable_assets() -> List[str]:
                     existing_set.add(db_sym)
             else:
                 # Stock/ETF — add with suffix
-                candidate = f"{db_sym}{suffix}" if suffix and not db_sym.endswith(suffix) else db_sym
+                # Sanitize db_sym: strip /currency suffix, then strip ticker suffix if present
+                clean_sym = db_sym.split("/")[0] if "/" in db_sym else db_sym
+                if suffix and clean_sym.endswith(suffix):
+                    clean_sym = clean_sym[:-len(suffix)]
+                candidate = f"{clean_sym}{suffix}" if suffix else clean_sym
                 if candidate not in existing_set:
                     filtered.append(candidate)
                     existing_set.add(candidate)

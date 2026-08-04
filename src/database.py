@@ -653,6 +653,7 @@ def init_db():
         _flush_redis_cache()
         
     _migrate_db()
+    cleanup_malformed_discovered_symbols()
     backfill_latest_close_prices()
 
 
@@ -2096,6 +2097,11 @@ def save_discovered_symbol(symbol: str, isin: Optional[str], asset_type: str, na
         name = name.strip()
         if not name:
             name = None
+    # Sanitize symbol: strip /currency suffix and ticker suffix to prevent malformed entries
+    symbol = symbol.split("/")[0] if "/" in symbol else symbol
+    _suffix = settings.TICKER_SUFFIX
+    if _suffix and symbol.endswith(_suffix):
+        symbol = symbol[:-len(_suffix)]
     conn = get_connection()
     try:
         sql = _adapt_sql(
@@ -2143,6 +2149,13 @@ def save_discovered_symbols_batch(symbols: List[Dict[str, Any]]):
                     s["name"] = None
                 else:
                     s["name"] = name_val
+            # Sanitize symbol: strip /currency suffix and ticker suffix
+            sym_val = s.get("symbol", "")
+            sym_val = sym_val.split("/")[0] if "/" in sym_val else sym_val
+            _suffix = settings.TICKER_SUFFIX
+            if _suffix and sym_val.endswith(_suffix):
+                sym_val = sym_val[:-len(_suffix)]
+            s["symbol"] = sym_val
         sql = _adapt_sql(
             "INSERT INTO discovered_symbols (symbol, isin, asset_type, name, maturity, coupon, country, discovered_at) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
@@ -2158,6 +2171,21 @@ def save_discovered_symbols_batch(symbols: List[Dict[str, Any]]):
         rows = [(s["symbol"], s.get("isin"), s.get("asset_type", ""), s.get("name", ""), s.get("maturity"), s.get("coupon"), s.get("country"), now) for s in symbols]
         conn.executemany(sql, rows)
         conn.commit()
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def cleanup_malformed_discovered_symbols():
+    """Delete discovered_symbols entries where the symbol contains '/' (malformed)."""
+    conn = get_connection()
+    try:
+        sql = _adapt_sql("DELETE FROM discovered_symbols WHERE symbol LIKE '%/%'")
+        deleted = conn.execute(sql).rowcount
+        conn.commit()
+        if deleted:
+            logger.info(f"Cleaned up {deleted} malformed discovered symbols (containing '/')")
+        return deleted
     finally:
         conn.close()
 
