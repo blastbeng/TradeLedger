@@ -17,8 +17,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from src.config.settings import settings
 from src.trading.engine import TradingEngine
 from src.utils.redis_client import get_redis_client
-from src.database import set_telegram_chat_id, get_telegram_chat_id, get_news_for_symbol, get_signals
+from src.database import set_telegram_chat_id, get_telegram_chat_id, get_news_for_symbol, get_signals, get_isin_map_from_db
 from src.llm.prompts import _format_news_for_prompt, get_cached_news_summary
+from src.utils.symbol_utils import is_btp_isin
 
 logger = logging.getLogger(__name__)
 
@@ -285,11 +286,29 @@ class TelegramBot:
             except asyncio.TimeoutError:
                 logger.warning("get_stock_name timed out for tracked tickers")
                 names = [entry["symbol"] for entry in symbols]
+
+            # Fetch ISINs for non-BTP symbols
+            base_symbols = [entry["symbol"].split("/")[0] for entry in symbols]
+            try:
+                isin_map = await asyncio.wait_for(
+                    asyncio.to_thread(get_isin_map_from_db, base_symbols),
+                    timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("get_isin_map_from_db timed out for tracked tickers")
+                isin_map = {}
+
             for i, entry in enumerate(symbols):
                 symbol = entry["symbol"]
                 tf = entry["timeframe"]
                 display = self.engine._format_symbol_display(symbol, names[i], tf)
-                msg += f"  • <code>{display}</code>\n"
+                msg += f"  • <code>{display}</code>"
+                base_sym = symbol.split("/")[0]
+                if not is_btp_isin(base_sym):
+                    isin = isin_map.get(base_sym)
+                    if isin:
+                        msg += f" (<code>{isin}</code>)"
+                msg += "\n"
         else:
             msg += "  None\n"
         msg += "\n"

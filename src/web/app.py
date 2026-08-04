@@ -16,8 +16,9 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
-from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics, get_all_blacklisted_models, update_manual_isin, clear_all_blacklisted_models, reset_llm_decision_quality
+from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics, get_all_blacklisted_models, update_manual_isin, clear_all_blacklisted_models, reset_llm_decision_quality, get_isin_map_from_db
 from src.llm.cache import get_model_failure_stats
+from src.utils.symbol_utils import is_btp_isin
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -292,9 +293,14 @@ async def status():
     market_open = await engine._is_market_open()
 
     current_symbols = []
+    base_symbols = [entry["symbol"].split("/")[0] for entry in engine.current_symbols]
+    isin_map = await run_in_threadpool(get_isin_map_from_db, base_symbols)
     for entry in engine.current_symbols:
         entry_copy = dict(entry)
         entry_copy["display"] = await _get_display_symbol(engine, entry["symbol"], entry.get("timeframe"))
+        base_sym = entry["symbol"].split("/")[0]
+        if not is_btp_isin(base_sym):
+            entry_copy["isin"] = isin_map.get(base_sym)
         current_symbols.append(entry_copy)
 
     # Fetch batch quotes for position symbols
@@ -890,6 +896,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     current_symbols = await asyncio.gather(
                         *[_build_symbol_entry(entry) for entry in engine.current_symbols]
                     ) if engine.current_symbols else []
+
+                    # Fetch and append ISINs for non-BTP symbols
+                    if current_symbols:
+                        base_symbols = [entry["symbol"].split("/")[0] for entry in current_symbols]
+                        isin_map = await run_in_threadpool(get_isin_map_from_db, base_symbols)
+                        for entry in current_symbols:
+                            base_sym = entry["symbol"].split("/")[0]
+                            if not is_btp_isin(base_sym):
+                                entry["isin"] = isin_map.get(base_sym)
 
                     # --- Fetch batch quotes for position symbols ---
                     pos_symbols = {sym.split("/")[0] for sym in engine.positions.keys()}
