@@ -990,7 +990,7 @@ class Settings(BaseSettings):
     # required to trigger the "mind" model. Lower values = more frequent use
     # of the "mind" model (higher cost/quality); higher values = more frequent
     # use of the "actuator" model (lower cost/faster).
-    LLM_MIND_MODEL_THRESHOLD: float = 0.55
+    LLM_MIND_MODEL_THRESHOLD: float = 0.75
 
     @field_validator("LLM_MIND_MODEL_THRESHOLD")
     @classmethod
