@@ -654,6 +654,12 @@ def init_db():
         
     _migrate_db()
     cleanup_malformed_discovered_symbols()
+    # Invalidate the tradable_assets Redis cache so it's rebuilt with clean data
+    try:
+        redis_client = get_redis_client()
+        redis_client.delete(f"tradable_assets:{settings.TARGET_COUNTRY}")
+    except Exception:
+        pass
     backfill_latest_close_prices()
 
 
