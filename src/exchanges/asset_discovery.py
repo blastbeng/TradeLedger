@@ -513,7 +513,11 @@ def get_tradable_assets() -> List[str]:
                                 cached_list.append(db_sym)
                                 existing_set.add(db_sym)
                         else:
-                            candidate = f"{db_sym}{suffix}" if suffix and not db_sym.endswith(suffix) else db_sym
+                            # Sanitize db_sym: strip /currency suffix, then strip ticker suffix if present
+                            clean_sym = db_sym.split("/")[0] if "/" in db_sym else db_sym
+                            if suffix and clean_sym.endswith(suffix):
+                                clean_sym = clean_sym[:-len(suffix)]
+                            candidate = f"{clean_sym}{suffix}" if suffix else clean_sym
                             if candidate not in existing_set:
                                 cached_list.append(candidate)
                                 existing_set.add(candidate)
