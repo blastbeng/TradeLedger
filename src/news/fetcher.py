@@ -15,7 +15,7 @@ from src.config.settings import settings
 from src.database import get_aggregate_sentiment_from_db
 from src.utils.redis_client import get_redis_client
 from src.llm.llm_client import get_llm_response
-from src.llm.cache import get_cached_llm_response
+from src.llm.cache import get_cached_llm_response, get_cached_llm_response_async
 from src.exchanges.proxy_utils import _get_proxies
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,7 @@ def _is_feed_disabled(feed_url: str) -> bool:
     return True
 
 
-def _batch_analyze_sentiments(articles: List[Dict[str, Any]]) -> None:
+async def _batch_analyze_sentiments(articles: List[Dict[str, Any]]) -> None:
     """Analyze sentiment for a list of articles in batches to reduce LLM calls."""
     # Only analyze articles that don't already have a sentiment (e.g., from StockTwits)
     articles_to_analyze = [a for a in articles if "sentiment" not in a]
@@ -206,7 +206,7 @@ def _batch_analyze_sentiments(articles: List[Dict[str, Any]]) -> None:
             prompt += f"{idx + 1}. {text[:500]}\n"
         
         try:
-            llm_result = get_cached_llm_response(
+            llm_result = await get_cached_llm_response_async(
                 prompt=prompt,
                 system_prompt=system_prompt,
                 ttl=86400,
@@ -454,7 +454,7 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
     unique = unique[:settings.NEWS_MAX_ARTICLES_PER_SYMBOL]
 
     # Batch sentiment analysis to reduce LLM calls
-    _batch_analyze_sentiments(unique)
+    await _batch_analyze_sentiments(unique)
 
     # Cache
     try:
