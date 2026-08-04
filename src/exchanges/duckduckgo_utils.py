@@ -62,11 +62,13 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
     country_name = settings.TARGET_COUNTRY.capitalize()
     isin_prefix = _COUNTRY_ISIN_PREFIX.get(settings.TARGET_COUNTRY, "")
 
+    def _is_valid(isin_str: Optional[str]) -> bool:
+        return bool(isin_str and (not isin_prefix or isin_str.startswith(isin_prefix)))
+
     # First attempt: explicitly ask for an ISIN from the target country
     query = f"{name or symbol} {country_name} ISIN"
     isin = _search_isin(query)
-    
-    if isin and (not isin_prefix or isin.startswith(isin_prefix)):
+    if _is_valid(isin):
         return isin
         
     # If a non-target ISIN is found, redo the search to be sure we have the correct one
@@ -74,13 +76,14 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
         logger.info(f"Found non-{country_name} ISIN {isin} for {symbol}, redoing search to confirm.")
         retry_query = f"{name or symbol} ISIN {country_name}"
         retry_isin = _search_isin(retry_query)
-        if retry_isin:
+        if _is_valid(retry_isin):
             return retry_isin
-        return isin
-        
+            
     # If the first attempt found nothing, do a generic search
     if not isin:
         generic_query = f"{name or symbol} ISIN"
-        return _search_isin(generic_query)
+        generic_isin = _search_isin(generic_query)
+        if _is_valid(generic_isin):
+            return generic_isin
         
     return None
