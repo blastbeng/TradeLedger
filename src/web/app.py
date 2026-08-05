@@ -148,9 +148,10 @@ async def rate_limit_middleware(request: Request, call_next):
         await asyncio.to_thread(redis.zadd, global_rate_limit_key, {request_id: now})
         await asyncio.to_thread(redis.expire, global_rate_limit_key, rate_limit_window)
     except Exception as e:
-        # Fail-closed if Redis is unavailable
-        logger.error(f"Rate limiter failed, rejecting request: {e}")
-        return JSONResponse(status_code=503, content={"detail": "Rate limiter unavailable"})
+        # Fail-open if Redis is unavailable
+        logger.warning(f"Rate limiter failed, allowing request: {e}")
+        response = await call_next(request)
+        return response
 
     response = await call_next(request)
     return response
@@ -842,10 +843,8 @@ async def websocket_endpoint(websocket: WebSocket):
         await asyncio.to_thread(redis.zadd, ws_rate_limit_key, {request_id: now})
         await asyncio.to_thread(redis.expire, ws_rate_limit_key, rate_limit_window)
     except Exception as e:
-        # Fail-closed if Redis is unavailable
-        logger.error(f"WebSocket rate limiter failed, rejecting connection: {e}")
-        await websocket.close(code=1011)  # Internal Error
-        return
+        # Fail-open if Redis is unavailable
+        logger.warning(f"WebSocket rate limiter failed, allowing connection: {e}")
 
     # Verify session for WebSocket
     if settings.WEB_USERNAME and settings.WEB_PASSWORD:

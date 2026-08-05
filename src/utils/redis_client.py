@@ -76,6 +76,18 @@ class DummyRedis:
         self._warn("expire", is_write=True)
         return True
 
+    def zremrangebyscore(self, *args, **kwargs):
+        self._warn("zremrangebyscore")
+        return 0
+
+    def zcard(self, *args, **kwargs):
+        self._warn("zcard")
+        return 0
+
+    def zadd(self, *args, **kwargs):
+        self._warn("zadd", is_write=True)
+        return 1
+
     def __getattr__(self, name):
         def method(*args, **kwargs):
             self._warn(name, is_write=True)
