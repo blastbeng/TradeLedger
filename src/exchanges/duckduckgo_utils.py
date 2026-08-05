@@ -89,7 +89,8 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None, asset_type
 
     # First attempt: explicitly ask for an ISIN from the target country
     asset_keyword = "ETF" if asset_type.lower() == "etf" else "stock"
-    query = f"{name or symbol} {country_name} {asset_keyword} ISIN"
+    search_terms = f"{name} {symbol}" if name else symbol
+    query = f"{search_terms} {country_name} {asset_keyword} ISIN"
     isin = _search_isin(query)
     if _is_valid(isin):
         return isin
@@ -101,7 +102,7 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None, asset_type
             
     # If the first attempt found nothing, do a generic search
     if not isin:
-        generic_query = f"{name or symbol} {asset_keyword} ISIN"
+        generic_query = f"{search_terms} {asset_keyword} ISIN"
         generic_isin = _search_isin(generic_query)
         if _is_valid(generic_isin):
             return generic_isin
