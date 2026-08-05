@@ -19,6 +19,8 @@ from src.exchanges.borsa_italiana_utils import _get_isin_and_info_from_borsa_ita
 logger = logging.getLogger(__name__)
 
 _notifier = None
+_ddg_lookup_count = 0
+MAX_DDG_LOOKUPS = 10
 
 def set_notifier(notifier):
     global _notifier
@@ -82,7 +84,9 @@ def _fetch_info(symbol: str, max_retries: int = 2) -> tuple[Optional[str], Optio
             name = bi_name
 
     # Fallback to DuckDuckGo AI Chat API if ISIN is still missing
-    if not bi_isin:
+    global _ddg_lookup_count
+    if not bi_isin and _ddg_lookup_count < MAX_DDG_LOOKUPS:
+        _ddg_lookup_count += 1
         try:
             from src.exchanges.duckduckgo_utils import get_isin_from_duckduckgo
             ddg_isin = get_isin_from_duckduckgo(db_symbol, name)
@@ -631,6 +635,9 @@ def get_tradable_assets() -> List[str]:
             return cached_list
     except (TypeError, ValueError, RuntimeError):
         pass
+
+    global _ddg_lookup_count
+    _ddg_lookup_count = 0
 
     # Filter candidates by country using yfinance
     strict = settings.COUNTRY_FILTER_STRICT
