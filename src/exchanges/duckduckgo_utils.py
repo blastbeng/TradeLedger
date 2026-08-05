@@ -25,7 +25,7 @@ _COUNTRY_ISIN_PREFIX = {
 logging.getLogger("ddgs").setLevel(logging.WARNING)
 logging.getLogger("primp").setLevel(logging.WARNING)
 
-def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optional[str]:
+def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None, asset_type: str = "stock") -> Optional[str]:
     """Fetch ISIN for a symbol using DuckDuckGo text search as a fallback."""
     # If the symbol is already a valid ISIN, return it immediately
     if re.match(r'^[A-Z]{2}[A-Z0-9]{9}\d$', symbol):
@@ -83,12 +83,13 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
         """Save a non-target ISIN to the DB so re-evaluation skips it, then return None."""
         logger.info(f"Found non-{country_name} ISIN {non_target_isin} for {symbol}. Saving to DB to skip in future re-evaluations.")
         try:
-            save_discovered_symbol(symbol, non_target_isin, "stock", name)
+            save_discovered_symbol(symbol, non_target_isin, asset_type, name)
         except Exception as e:
             logger.warning(f"Failed to save non-target ISIN {non_target_isin} for {symbol} to DB: {e}")
 
     # First attempt: explicitly ask for an ISIN from the target country
-    query = f"{name or symbol} {country_name} stock ISIN"
+    asset_keyword = "ETF" if asset_type.lower() == "etf" else "stock"
+    query = f"{name or symbol} {country_name} {asset_keyword} ISIN"
     isin = _search_isin(query)
     if _is_valid(isin):
         return isin
@@ -100,7 +101,7 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
             
     # If the first attempt found nothing, do a generic search
     if not isin:
-        generic_query = f"{name or symbol} stock ISIN"
+        generic_query = f"{name or symbol} {asset_keyword} ISIN"
         generic_isin = _search_isin(generic_query)
         if _is_valid(generic_isin):
             return generic_isin
