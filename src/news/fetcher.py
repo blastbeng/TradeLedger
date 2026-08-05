@@ -190,7 +190,13 @@ async def _batch_analyze_sentiments(articles: List[Dict[str, Any]]) -> None:
     batch_size = 15
     for i in range(0, len(articles_to_analyze), batch_size):
         batch = articles_to_analyze[i:i + batch_size]
-        texts = [f"{a.get('title', '')} {a.get('summary', '')}" for a in batch]
+        # Sort the batch by a unique identifier to ensure deterministic order for caching
+        sorted_batch = sorted(batch, key=lambda a: a.get("url", "") or a.get("title", ""))
+        texts = [f"{a.get('title', '')} {a.get('summary', '')}" for a in sorted_batch]
+
+        # Create a deterministic hash for this specific set of articles
+        hash_parts = [a.get("url", "") or a.get("title", "") for a in sorted_batch]
+        batch_hash = hashlib.sha256("|".join(hash_parts).encode()).hexdigest()
         
         system_prompt = (
             "You are a multilingual sentiment analysis engine. "
@@ -211,26 +217,27 @@ async def _batch_analyze_sentiments(articles: List[Dict[str, Any]]) -> None:
                 system_prompt=system_prompt,
                 ttl=86400,
                 model_type="sentiment",
-                request_type="sentiment_analysis_batch"
+                request_type="sentiment_analysis_batch",
+                market_hash=batch_hash
             )
             response_text = llm_result.get("response", "")
             json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group(0))
-                if isinstance(data, list) and len(data) == len(batch):
+                if isinstance(data, list) and len(data) == len(sorted_batch):
                     for j, item in enumerate(data):
                         label = str(item.get("label", "neutral")).lower()
                         compound = float(item.get("compound", 0.0))
                         if label not in ("positive", "negative", "neutral"):
                             label = "neutral"
                         compound = max(-1.0, min(1.0, compound))
-                        batch[j]["sentiment"] = {"label": label, "compound": round(compound, 4)}
+                        sorted_batch[j]["sentiment"] = {"label": label, "compound": round(compound, 4)}
                     continue
         except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
             logger.warning(f"Batch LLM sentiment analysis failed: {type(e).__name__}: {e}")
         
         # Fallback to neutral if batch failed or response was malformed
-        for a in batch:
+        for a in sorted_batch:
             if "sentiment" not in a:
                 a["sentiment"] = {"label": "neutral", "compound": 0.0}
 
