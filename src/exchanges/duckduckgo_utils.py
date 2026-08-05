@@ -39,17 +39,30 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
             results = ddgs.text(search_query, max_results=5)
             
             isin_pattern = re.compile(r"\b[A-Z]{2}[A-Z0-9]{9}\d\b")
+            found_isins = []
             for r in results:
                 title = r.get("title", "")
                 body = r.get("body", "")
                 href = r.get("href", "")
                 
                 for text in [title, body, href]:
-                    match = isin_pattern.search(text)
-                    if match:
-                        isin = match.group(0)
-                        logger.info(f"DuckDuckGo search provided ISIN {isin} for {symbol}")
+                    matches = isin_pattern.findall(text)
+                    found_isins.extend(matches)
+            
+            if not found_isins:
+                return None
+            
+            # Prefer ISINs with the target country prefix
+            if isin_prefix:
+                for isin in found_isins:
+                    if isin.startswith(isin_prefix):
+                        logger.info(f"DuckDuckGo search provided target ISIN {isin} for {symbol}")
                         return isin
+            
+            # Return the first found ISIN if no target prefix match
+            isin = found_isins[0]
+            logger.info(f"DuckDuckGo search provided ISIN {isin} for {symbol}")
+            return isin
         except Exception as e:
             logger.warning(f"DuckDuckGo ISIN lookup failed for {symbol}: {type(e).__name__}: {e}")
         return None
@@ -75,7 +88,7 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
             logger.warning(f"Failed to save non-target ISIN {non_target_isin} for {symbol} to DB: {e}")
 
     # First attempt: explicitly ask for an ISIN from the target country
-    query = f"{name or symbol} {country_name} ISIN"
+    query = f"{name or symbol} {country_name} stock ISIN"
     isin = _search_isin(query)
     if _is_valid(isin):
         return isin
@@ -87,7 +100,7 @@ def get_isin_from_duckduckgo(symbol: str, name: Optional[str] = None) -> Optiona
             
     # If the first attempt found nothing, do a generic search
     if not isin:
-        generic_query = f"{name or symbol} ISIN"
+        generic_query = f"{name or symbol} stock ISIN"
         generic_isin = _search_isin(generic_query)
         if _is_valid(generic_isin):
             return generic_isin
