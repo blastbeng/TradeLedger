@@ -73,6 +73,7 @@ class LLMStepManager:
         analysis_result = None
         llm_provider = None
         llm_model = None
+        is_fallback = False
 
         try:
             step1a_result = await asyncio.to_thread(
