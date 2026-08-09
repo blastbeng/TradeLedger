@@ -369,6 +369,9 @@ class EngineOrchestrator:
                 
             except asyncio.CancelledError:
                 raise
+            except RuntimeError as e:
+                # Handle cases where all models are blacklisted or unavailable
+                logger.warning(f"analyze_wrong_decisions_loop skipped due to LLM availability issue: {e}")
             except Exception as e:
                 logger.error(f"Error in analyze_wrong_decisions_loop: {type(e).__name__}: {e}", exc_info=True)
                 await engine._record_unexpected_exception("analyze_wrong_decisions_loop", e)
