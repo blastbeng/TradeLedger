@@ -112,7 +112,48 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
                 
         if cooldown is not None and cooldown < 0:
             issues.append(f"negative cooldown_after_loss_seconds ({cooldown})")
-                
+
+        max_risk_per_trade = params.get("max_risk_per_trade_pct")
+        max_portfolio_risk_pct = params.get("max_portfolio_risk_pct")
+        min_profit_per_trade = params.get("min_profit_per_trade")
+        min_risk_reward_ratio = params.get("min_risk_reward_ratio")
+        min_confidence = params.get("min_confidence")
+        news_sentiment_exit_threshold = params.get("news_sentiment_exit_threshold")
+        strategy_interval_seconds = params.get("strategy_interval_seconds")
+        backtest_period_days = params.get("backtest_period_days")
+        trailing_take_profit_distance = params.get("trailing_take_profit_distance_pct")
+        partial_take_profit_pct = params.get("partial_take_profit_pct")
+        partial_take_profit_fraction = params.get("partial_take_profit_fraction")
+        position_size_multiplier = params.get("position_size_multiplier")
+        confidence_sizing_weight = params.get("confidence_sizing_weight")
+
+        if max_risk_per_trade is not None and (max_risk_per_trade <= 0 or max_risk_per_trade > 0.1):
+            issues.append(f"unreasonable max_risk_per_trade_pct ({max_risk_per_trade})")
+        if max_portfolio_risk_pct is not None and (max_portfolio_risk_pct <= 0 or max_portfolio_risk_pct > 1.0):
+            issues.append(f"unreasonable max_portfolio_risk_pct ({max_portfolio_risk_pct})")
+        if min_profit_per_trade is not None and (min_profit_per_trade < 0 or min_profit_per_trade > 1.0):
+            issues.append(f"unreasonable min_profit_per_trade ({min_profit_per_trade})")
+        if min_risk_reward_ratio is not None and (min_risk_reward_ratio < 0 or min_risk_reward_ratio > 10.0):
+            issues.append(f"unreasonable min_risk_reward_ratio ({min_risk_reward_ratio})")
+        if min_confidence is not None and (min_confidence < 0 or min_confidence > 1.0):
+            issues.append(f"unreasonable min_confidence ({min_confidence})")
+        if news_sentiment_exit_threshold is not None and (news_sentiment_exit_threshold < -1.0 or news_sentiment_exit_threshold > 0.0):
+            issues.append(f"unreasonable news_sentiment_exit_threshold ({news_sentiment_exit_threshold})")
+        if strategy_interval_seconds is not None and (strategy_interval_seconds <= 0 or strategy_interval_seconds > 30 * 24 * 3600):
+            issues.append(f"unreasonable strategy_interval_seconds ({strategy_interval_seconds})")
+        if backtest_period_days is not None and (backtest_period_days < 30 or backtest_period_days > 365 * 10):
+            issues.append(f"unreasonable backtest_period_days ({backtest_period_days})")
+        if trailing_take_profit_distance is not None and (trailing_take_profit_distance <= 0 or trailing_take_profit_distance > 0.5):
+            issues.append(f"unreasonable trailing_take_profit_distance_pct ({trailing_take_profit_distance})")
+        if partial_take_profit_pct is not None and (partial_take_profit_pct <= 0 or partial_take_profit_pct > 5.0):
+            issues.append(f"unreasonable partial_take_profit_pct ({partial_take_profit_pct})")
+        if partial_take_profit_fraction is not None and (partial_take_profit_fraction <= 0 or partial_take_profit_fraction > 1.0):
+            issues.append(f"unreasonable partial_take_profit_fraction ({partial_take_profit_fraction})")
+        if position_size_multiplier is not None and (position_size_multiplier <= 0 or position_size_multiplier > 5.0):
+            issues.append(f"unreasonable position_size_multiplier ({position_size_multiplier})")
+        if confidence_sizing_weight is not None and (confidence_sizing_weight < 0 or confidence_sizing_weight > 1.0):
+            issues.append(f"unreasonable confidence_sizing_weight ({confidence_sizing_weight})")
+
     if issues:
         new_reasoning = f"{reasoning} [Semantic validation failed: {'; '.join(issues)}. Downgraded to HOLD.]"
         return "HOLD", new_reasoning
@@ -135,6 +176,19 @@ def _clamp_parameter_ranges(params: dict) -> dict:
         "max_unrealized_loss_pct": (0.01, 0.5),
         "max_hold_time_seconds": (60, 30 * 24 * 3600),
         "cooldown_after_loss_seconds": (0, 30 * 24 * 3600),
+        "max_risk_per_trade_pct": (0.001, 0.1),
+        "max_portfolio_risk_pct": (0.01, 1.0),
+        "min_profit_per_trade": (0.0, 1.0),
+        "min_risk_reward_ratio": (0.0, 10.0),
+        "min_confidence": (0.0, 1.0),
+        "news_sentiment_exit_threshold": (-1.0, 0.0),
+        "strategy_interval_seconds": (60, 30 * 24 * 3600),
+        "backtest_period_days": (30, 365 * 10),
+        "trailing_take_profit_distance_pct": (0.01, 0.5),
+        "partial_take_profit_pct": (0.01, 5.0),
+        "partial_take_profit_fraction": (0.01, 1.0),
+        "position_size_multiplier": (0.1, 5.0),
+        "confidence_sizing_weight": (0.0, 1.0),
     }
     for key, (min_val, max_val) in limits.items():
         if key in params and params[key] is not None:
