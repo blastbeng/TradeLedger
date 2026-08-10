@@ -208,6 +208,77 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
         if take_profit_order_type is not None and take_profit_order_type not in ("market", "limit", "stop", "stop_limit", "trailing_stop"):
             issues.append(f"invalid take_profit_order_type ({take_profit_order_type})")
 
+        # Validate remaining strategy and backtest config parameters
+        max_portfolio_exposure = params.get("max_portfolio_exposure_pct")
+        if max_portfolio_exposure is not None and (not isinstance(max_portfolio_exposure, (int, float)) or max_portfolio_exposure < 0 or max_portfolio_exposure > 1.0):
+            issues.append(f"unreasonable max_portfolio_exposure_pct ({max_portfolio_exposure})")
+
+        max_portfolio_stop_risk = params.get("max_portfolio_stop_risk_pct")
+        if max_portfolio_stop_risk is not None and (not isinstance(max_portfolio_stop_risk, (int, float)) or max_portfolio_stop_risk < 0 or max_portfolio_stop_risk > 1.0):
+            issues.append(f"unreasonable max_portfolio_stop_risk_pct ({max_portfolio_stop_risk})")
+
+        direction = params.get("direction")
+        if direction is not None and direction not in ("long", "short", "both"):
+            issues.append(f"invalid direction ({direction})")
+
+        fee_model = params.get("fee_model")
+        if fee_model is not None and fee_model not in ("flat", "intesa"):
+            issues.append(f"invalid fee_model ({fee_model})")
+
+        slippage_model = params.get("slippage_model")
+        if slippage_model is not None and slippage_model not in ("fixed", "dynamic"):
+            issues.append(f"invalid slippage_model ({slippage_model})")
+
+        slippage_pct = params.get("slippage_pct")
+        if slippage_pct is not None and (not isinstance(slippage_pct, (int, float)) or slippage_pct < 0):
+            issues.append(f"unreasonable slippage_pct ({slippage_pct})")
+
+        slippage_base_pct = params.get("slippage_base_pct")
+        if slippage_base_pct is not None and (not isinstance(slippage_base_pct, (int, float)) or slippage_base_pct <= 0):
+            issues.append(f"unreasonable slippage_base_pct ({slippage_base_pct})")
+
+        slippage_max_pct = params.get("slippage_max_pct")
+        if slippage_max_pct is not None and (not isinstance(slippage_max_pct, (int, float)) or slippage_max_pct <= 0):
+            issues.append(f"unreasonable slippage_max_pct ({slippage_max_pct})")
+
+        simulate_position_sizing = params.get("simulate_position_sizing")
+        if simulate_position_sizing is not None and not isinstance(simulate_position_sizing, bool):
+            issues.append("simulate_position_sizing is not a boolean")
+
+        global_risk_multiplier = params.get("global_risk_multiplier")
+        if global_risk_multiplier is not None and (not isinstance(global_risk_multiplier, (int, float)) or global_risk_multiplier < 0):
+            issues.append(f"unreasonable global_risk_multiplier ({global_risk_multiplier})")
+
+        gap_tolerance_mult = params.get("gap_tolerance_mult")
+        if gap_tolerance_mult is not None and (not isinstance(gap_tolerance_mult, (int, float)) or gap_tolerance_mult <= 0):
+            issues.append(f"unreasonable gap_tolerance_mult ({gap_tolerance_mult})")
+
+        on_gaps = params.get("on_gaps")
+        if on_gaps is not None and on_gaps not in ("warn", "skip"):
+            issues.append(f"invalid on_gaps ({on_gaps})")
+
+        fee_rate = params.get("fee_rate")
+        if fee_rate is not None and (not isinstance(fee_rate, (int, float)) or fee_rate < 0):
+            issues.append(f"unreasonable fee_rate ({fee_rate})")
+
+        max_trades = params.get("max_trades")
+        if max_trades is not None and (not isinstance(max_trades, (int, float)) or max_trades <= 0):
+            issues.append(f"unreasonable max_trades ({max_trades})")
+
+        initial_balance = params.get("initial_balance")
+        if initial_balance is not None and (not isinstance(initial_balance, (int, float)) or initial_balance <= 0):
+            issues.append(f"unreasonable initial_balance ({initial_balance})")
+
+        trade_value = params.get("trade_value")
+        if trade_value is not None and (not isinstance(trade_value, (int, float)) or trade_value <= 0):
+            issues.append(f"unreasonable trade_value ({trade_value})")
+
+        # Ensure absolute prices and offsets are positive
+        for price_key in ["limit_price", "stop_price", "trail_offset", "stop_loss_stop_price", "stop_loss_limit_price", "stop_loss_trail_offset", "take_profit_limit_price"]:
+            val = params.get(price_key)
+            if val is not None and (not isinstance(val, (int, float)) or val <= 0):
+                issues.append(f"unreasonable {price_key} ({val})")
+
     if issues:
         new_reasoning = f"{reasoning} [Semantic validation failed: {'; '.join(issues)}. Downgraded to HOLD.]"
         return "HOLD", new_reasoning
