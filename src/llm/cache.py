@@ -40,6 +40,12 @@ def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
     return len(text) // 4
 
+def _round_to_n_sf(x: float, n: int = 6) -> float:
+    """Round a float to n significant figures."""
+    if x == 0 or math.isnan(x) or math.isinf(x):
+        return x
+    return round(x, n - 1 - int(math.floor(math.log10(abs(x)))))
+
 def _get_max_input_tokens(provider: str, model_type: str, is_fallback: bool) -> int:
     """Return the max input tokens for the given provider, model type, and fallback status."""
     if provider == "openai":
@@ -356,9 +362,9 @@ def _normalize_text_for_cache(text: str) -> str:
             val = float(match.group(0))
             if val == 0 or math.isnan(val) or math.isinf(val):
                 return match.group(0)
-            # Round to 4 decimal places to ensure small price changes (e.g., on low-priced assets)
+            # Round to 6 significant figures to ensure small price changes (e.g., on low-priced assets)
             # are detected, while still treating floating-point noise as insignificant.
-            return f"{round(val, 4)}"
+            return f"{_round_to_n_sf(val, 6)}"
         except (ValueError, OverflowError):
             return match.group(0)
     return re.sub(r'-?\d+(?:\.\d+)?[eE][+-]?\d+|-?\d+\.\d+', _round_num, text)
@@ -1668,9 +1674,9 @@ def _normalize_for_hash(obj, depth=0):
             return 0.0
         if math.isnan(obj) or math.isinf(obj):
             return obj
-        # Round to 4 decimal places to ensure small price changes (e.g., on low-priced assets)
+        # Round to 6 significant figures to ensure small price changes (e.g., on low-priced assets)
         # are detected, while still treating floating-point noise as insignificant.
-        return round(obj, 4)
+        return _round_to_n_sf(obj, 6)
     if obj is None:
         return "null"
     return obj
