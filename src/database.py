@@ -621,12 +621,47 @@ def _table_exists(conn, table_name: str) -> bool:
         cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
         return cur.fetchone() is not None
 
+# Known Redis key prefixes used by the application.
+# Used for targeted cache invalidation instead of flushdb().
+_REDIS_KEY_PREFIXES = [
+    "quote:", "ohlcv:", "ohlcv_range:", "isin_not_found:", "latest_close_prices:",
+    "tradable_assets:", "llm:", "news:", "market:", "trading:", "session:", "csrf:",
+    "logs:recent", "web:messages", "rate_limit:", "ws_rate_limit:",
+    "atr_percentile:", "sentiment:", "volume_trend:", "news_summary:",
+    "stock_name:", "yahoo_quote:", "yahoo_fundamentals:", "yahoo_dividends:",
+    "yahoo_insider_transactions:", "yahoo_analyst_ratings:", "yahoo_options_summary:",
+    "btp_details:", "btp_bonds_list", "italian_ucits_etfs",
+    "news:trending_stocks_raw", "news:discovered_tickers_raw", "news:no_articles:",
+    "metrics:unexpected_exception:", "llm:wrong_decision_analysis",
+]
+
+
 def _flush_redis_cache():
-    """Flush the entire Redis cache for the current database."""
+    """Invalidate known Redis cache keys for the current database.
+
+    Uses targeted key deletion instead of flushdb() to avoid accidentally
+    clearing data belonging to other services that might share the same
+    Redis database.
+    """
     try:
         redis_client = get_redis_client()
-        redis_client.flushdb()
-        logger.info("Redis cache invalidated due to empty or newly created database.")
+        deleted_count = 0
+        for prefix in _REDIS_KEY_PREFIXES:
+            # Use SCAN to find keys matching the prefix pattern
+            cursor = 0
+            while True:
+                cursor, keys = redis_client.scan(
+                    cursor=cursor, match=f"{prefix}*", count=200
+                )
+                if keys:
+                    redis_client.delete(*keys)
+                    deleted_count += len(keys)
+                if cursor == 0:
+                    break
+        logger.info(
+            f"Redis cache invalidated: deleted {deleted_count} keys across "
+            f"{len(_REDIS_KEY_PREFIXES)} prefix patterns."
+        )
     except Exception as e:
         logger.warning(f"Failed to flush Redis cache: {type(e).__name__}: {e}")
 

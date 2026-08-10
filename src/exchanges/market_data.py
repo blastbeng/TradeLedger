@@ -102,7 +102,7 @@ _iex_circuit_breaker = CircuitBreaker()
 
 
 def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
-    """Fetch the ISIN code for a symbol, using DB first, then yfinance as fallback."""
+    """Fetch the ISIN code for a symbol, using Redis cache → DB → yfinance as fallback."""
     from src.database import save_discovered_symbol
 
     # Strip suffix for DB lookup (DB stores base symbols without suffix)
@@ -112,15 +112,36 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
         db_symbol = db_symbol[:-len(suffix)]
 
     redis_client = get_redis_client()
+
+    # Check "not found" cache first to avoid unnecessary DB/API lookups
     try:
         if redis_client.get(f"isin_not_found:{db_symbol}"):
             return None
     except (TypeError, ValueError, RuntimeError):
         pass
 
+    # Check Redis positive cache (7-day TTL — ISINs rarely change)
+    isin_cache_key = f"isin:{db_symbol}"
+    try:
+        cached_isin = redis_client.get(isin_cache_key)
+        if cached_isin:
+            cached_isin = cached_isin.strip() if isinstance(cached_isin, str) else cached_isin.decode().strip()
+            # If strict country filter is enabled, ignore cached ISINs that don't match
+            if settings.COUNTRY_FILTER_STRICT and not cached_isin.startswith(settings.TARGET_COUNTRY):
+                logger.debug(f"Redis has non-target ISIN {cached_isin} for {db_symbol}, ignoring and re-fetching.")
+            else:
+                return cached_isin
+    except (TypeError, ValueError, RuntimeError):
+        pass
+
     # Manual ISINs take absolute precedence and bypass country filters
     manual_isin = get_manual_isin_from_db(db_symbol)
     if manual_isin:
+        # Cache manual ISIN in Redis for fast lookup
+        try:
+            redis_client.setex(isin_cache_key, 7 * 24 * 3600, manual_isin)
+        except (TypeError, ValueError, RuntimeError):
+            pass
         return manual_isin
 
     # Check DB next (auto ISIN)
@@ -130,6 +151,11 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
         if settings.COUNTRY_FILTER_STRICT and not cached.startswith(settings.TARGET_COUNTRY):
             logger.debug(f"DB has non-target ISIN {cached} for {db_symbol}, ignoring and re-fetching.")
         else:
+            # Cache in Redis for fast lookup
+            try:
+                redis_client.setex(isin_cache_key, 7 * 24 * 3600, cached)
+            except (TypeError, ValueError, RuntimeError):
+                pass
             return cached
 
     isin = None
@@ -178,6 +204,11 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
             save_country = settings.TARGET_COUNTRY if settings.COUNTRY_FILTER_STRICT else None
             save_discovered_symbol(db_symbol, isin, "stock", None, country=save_country)
         except (RuntimeError, ValueError, OSError):
+            pass
+        # Cache in Redis for fast lookup (7-day TTL)
+        try:
+            redis_client.setex(isin_cache_key, 7 * 24 * 3600, isin)
+        except (TypeError, ValueError, RuntimeError):
             pass
     else:
         try:

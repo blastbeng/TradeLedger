@@ -407,9 +407,33 @@ def _sync_blacklist_from_db():
         logger.warning(f"Failed to sync blacklist from DB: {e}", exc_info=True)
 
 def _is_model_blacklisted(redis_client, model: str) -> bool:
-    """Check if a model is currently blacklisted in Redis."""
+    """Check if a model is currently blacklisted in Redis.
+
+    If the blacklist TTL is close to expiring (within 60 seconds), proactively
+    removes the blacklist entry to allow the model to be retried sooner rather
+    than waiting for the full TTL to elapse.
+    """
     try:
-        return bool(redis_client.exists(f"llm:blacklist:{model}"))
+        key = f"llm:blacklist:{model}"
+        if not redis_client.exists(key):
+            return False
+        # Recovery probe: if TTL is about to expire, remove the blacklist
+        # early to allow a retry sooner.
+        ttl = redis_client.ttl(key)
+        if ttl is not None and 0 < ttl <= 60:
+            logger.info(
+                f"Model {model} blacklist TTL nearly expired ({ttl}s), "
+                f"removing blacklist early for retry."
+            )
+            redis_client.delete(key)
+            redis_client.delete(f"llm:fail_count:{model}")
+            redis_client.delete(f"llm:blacklist_level:{model}")
+            try:
+                remove_model_from_blacklist(model)
+            except Exception:
+                pass
+            return False
+        return True
     except Exception:
         return False
 
