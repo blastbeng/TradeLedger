@@ -143,6 +143,9 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
             issues.append(f"unreasonable strategy_interval_seconds ({strategy_interval_seconds})")
         if backtest_period_days is not None and (backtest_period_days < 30 or backtest_period_days > 365 * 10):
             issues.append(f"unreasonable backtest_period_days ({backtest_period_days})")
+        order_fill_timeout = params.get("order_fill_timeout_seconds")
+        if order_fill_timeout is not None and (order_fill_timeout <= 0 or order_fill_timeout > 3600):
+            issues.append(f"unreasonable order_fill_timeout_seconds ({order_fill_timeout})")
         if trailing_take_profit_distance is not None and (trailing_take_profit_distance <= 0 or trailing_take_profit_distance > 0.5):
             issues.append(f"unreasonable trailing_take_profit_distance_pct ({trailing_take_profit_distance})")
         if partial_take_profit_pct is not None and (partial_take_profit_pct <= 0 or partial_take_profit_pct > 5.0):
@@ -184,6 +187,7 @@ def _clamp_parameter_ranges(params: dict) -> dict:
         "news_sentiment_exit_threshold": (-1.0, 0.0),
         "strategy_interval_seconds": (60, 30 * 24 * 3600),
         "backtest_period_days": (30, 365 * 10),
+        "order_fill_timeout_seconds": (10, 3600),
         "trailing_take_profit_distance_pct": (0.01, 0.5),
         "partial_take_profit_pct": (0.01, 5.0),
         "partial_take_profit_fraction": (0.01, 1.0),
