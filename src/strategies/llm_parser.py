@@ -157,6 +157,57 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
         if confidence_sizing_weight is not None and (confidence_sizing_weight < 0 or confidence_sizing_weight > 1.0):
             issues.append(f"unreasonable confidence_sizing_weight ({confidence_sizing_weight})")
 
+        # Validate complex nested objects and enums
+        ptpl = params.get("partial_take_profit_levels")
+        if ptpl is not None:
+            if not isinstance(ptpl, list):
+                issues.append("partial_take_profit_levels is not a list")
+            else:
+                for level in ptpl:
+                    if not isinstance(level, dict):
+                        issues.append("partial_take_profit_levels contains non-dict item")
+                    else:
+                        lvl_pct = level.get("take_profit_pct")
+                        lvl_frac = level.get("fraction")
+                        if not isinstance(lvl_pct, (int, float)) or lvl_pct <= 0 or lvl_pct > 5.0:
+                            issues.append(f"unreasonable take_profit_pct in partial_take_profit_levels ({lvl_pct})")
+                        if not isinstance(lvl_frac, (int, float)) or lvl_frac <= 0 or lvl_frac > 1.0:
+                            issues.append(f"unreasonable fraction in partial_take_profit_levels ({lvl_frac})")
+
+        bec = params.get("backtest_entry_config")
+        if bec is not None:
+            if not isinstance(bec, dict):
+                issues.append("backtest_entry_config is not a dict")
+            else:
+                ema_period = bec.get("ema_period")
+                if ema_period is not None and (not isinstance(ema_period, (int, float)) or ema_period < 0 or ema_period > 500):
+                    issues.append(f"unreasonable ema_period in backtest_entry_config ({ema_period})")
+                min_adx = bec.get("min_adx")
+                if min_adx is not None and (not isinstance(min_adx, (int, float)) or min_adx < 0 or min_adx > 100):
+                    issues.append(f"unreasonable min_adx in backtest_entry_config ({min_adx})")
+                max_rsi = bec.get("max_rsi")
+                if max_rsi is not None and (not isinstance(max_rsi, (int, float)) or max_rsi < 0 or max_rsi > 100):
+                    issues.append(f"unreasonable max_rsi in backtest_entry_config ({max_rsi})")
+                min_rsi = bec.get("min_rsi")
+                if min_rsi is not None and (not isinstance(min_rsi, (int, float)) or min_rsi < 0 or min_rsi > 100):
+                    issues.append(f"unreasonable min_rsi in backtest_entry_config ({min_rsi})")
+
+        time_in_force = params.get("time_in_force")
+        if time_in_force is not None and time_in_force not in ("day", "gtc", "ioc", "fok"):
+            issues.append(f"invalid time_in_force ({time_in_force})")
+        
+        order_type = params.get("order_type")
+        if order_type is not None and order_type not in ("market", "limit", "stop", "stop_limit", "trailing_stop"):
+            issues.append(f"invalid order_type ({order_type})")
+
+        stop_loss_order_type = params.get("stop_loss_order_type")
+        if stop_loss_order_type is not None and stop_loss_order_type not in ("market", "limit", "stop", "stop_limit", "trailing_stop"):
+            issues.append(f"invalid stop_loss_order_type ({stop_loss_order_type})")
+
+        take_profit_order_type = params.get("take_profit_order_type")
+        if take_profit_order_type is not None and take_profit_order_type not in ("market", "limit", "stop", "stop_limit", "trailing_stop"):
+            issues.append(f"invalid take_profit_order_type ({take_profit_order_type})")
+
     if issues:
         new_reasoning = f"{reasoning} [Semantic validation failed: {'; '.join(issues)}. Downgraded to HOLD.]"
         return "HOLD", new_reasoning
