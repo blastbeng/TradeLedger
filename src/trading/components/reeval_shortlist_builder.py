@@ -283,6 +283,9 @@ class ReevalShortlistBuilder:
                 if not available_tfs:
                     continue
                 tf = default_tf if default_tf in available_tfs else available_tfs[0]
+                # Explicitly ensure the chosen timeframe has valid OHLCV data
+                if not sym_data.get(tf):
+                    continue
 
                 # Check if we can afford the minimum trade cost
                 min_cost = market_limits.get(sym, {}).get("min_cost", 0)
