@@ -157,7 +157,9 @@ class ReevalShortlistBuilder:
         """
         if not deduped:
             return
-            
+
+        engine = self.engine
+
         target_etf_pct = 0.20
         target_btp_pct = 0.20
         
@@ -174,6 +176,8 @@ class ReevalShortlistBuilder:
         if len(current_etfs) < min_etfs:
             for etf in etf_pairs:
                 if etf not in existing_syms:
+                    if engine._is_excluded(etf, default_tf):
+                        continue
                     sym_data = ohlcv_data.get(etf, {})
                     available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
                     if available_tfs:
@@ -195,6 +199,8 @@ class ReevalShortlistBuilder:
         if len(current_btps) < min_btps:
             for btp in btp_pairs:
                 if btp not in existing_syms:
+                    if engine._is_excluded(btp, default_tf):
+                        continue
                     sym_data = ohlcv_data.get(btp, {})
                     available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
                     if available_tfs:
@@ -213,7 +219,6 @@ class ReevalShortlistBuilder:
                                 break
 
         # Update effective_max_symbols to accommodate newly appended symbols
-        engine = self.engine
         if len(deduped) > engine.effective_max_symbols:
             engine.effective_max_symbols = len(deduped)
 
