@@ -540,9 +540,10 @@ class ModelTierManager:
             # The actuator is the default for routine decisions.
             threshold = settings.LLM_MIND_MODEL_THRESHOLD + self._get_dynamic_threshold_adjustment()
             # Long-term positions benefit from deeper analysis, so lower
-            # the threshold slightly (10% reduction) for those timeframes.
+            # the threshold by 15% for those timeframes to encourage more
+            # decisive BUY/SELL decisions rather than defaulting to HOLD.
             if timeframe and timeframe in ("1M", "3M", "6M", "1Y", "3Y", "5Y", "10Y"):
-                threshold = settings.LLM_MIND_MODEL_THRESHOLD * 0.9
+                threshold = settings.LLM_MIND_MODEL_THRESHOLD * 0.85
             strategy_model_type = "mind" if strategy_complexity >= threshold else "actuator"
 
         effective_temp = self._get_effective_temperature(

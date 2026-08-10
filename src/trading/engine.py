@@ -1774,6 +1774,15 @@ class TradingEngine:
                     if not price_data or price_data.get("last") is None:
                         continue
 
+                    # Skip decisions that haven't reached their timeframe-scaled
+                    # evaluation window yet. This prevents judging a 1Y HOLD
+                    # after just 1 hour.
+                    tf_seconds = self._timeframe_to_seconds(decision.get("timeframe") or "1d")
+                    eval_window = max(3600, min(tf_seconds * 0.1, 604800))
+                    decision_age = (time.time() * 1000 - decision["timestamp"]) / 1000
+                    if decision_age < eval_window:
+                        continue
+
                     outcome_price = price_data["last"]
                     entry_price = decision["entry_price"]
                     action = decision["action"]
@@ -1781,26 +1790,34 @@ class TradingEngine:
                     if entry_price is None or entry_price <= 0:
                         continue
 
-                    # Determine if the decision was profitable
-                    # BUY: profitable if price went up
-                    # SELL: profitable if price went down
-                    # HOLD: profitable if price didn't go up (opportunity cost avoided)
+                    # Determine if the decision was profitable using
+                    # timeframe-aware thresholds to filter out noise.
+                    tf_seconds = self._timeframe_to_seconds(decision.get("timeframe") or "1d")
+                    # Minimum meaningful price movement (1% or 0.5% for long TFs)
+                    min_move_pct = 0.005 if tf_seconds >= 2592000 else 0.01
+
+                    price_change_pct = ((outcome_price - entry_price) / entry_price) if entry_price else 0.0
+
                     if action == "BUY":
-                        profitable = outcome_price > entry_price
+                        # BUY is profitable if price went up by at least min_move_pct
+                        profitable = price_change_pct >= min_move_pct
                     elif action == "SELL":
-                        profitable = outcome_price < entry_price
+                        # SELL is profitable if price went down by at least min_move_pct
+                        profitable = price_change_pct <= -min_move_pct
                     elif action == "HOLD":
-                        profitable = outcome_price <= entry_price
+                        # HOLD is profitable if price did NOT rise significantly
+                        # (avoided a bad buy) OR if it fell (avoided a loss)
+                        profitable = price_change_pct < min_move_pct
                     else:
                         profitable = False
 
                     # Generate a heuristic analysis of why the decision was right or wrong
-                    price_change_pct = ((outcome_price - entry_price) / entry_price) * 100 if entry_price else 0.0
+                    price_change_display = abs(price_change_pct * 100)
                     analysis_parts = []
                     if profitable:
-                        analysis_parts.append(f"Price moved {abs(price_change_pct):.2f}% in favor of the {action} decision.")
+                        analysis_parts.append(f"Price moved {price_change_display:.2f}% in favor of the {action} decision (threshold: {min_move_pct*100:.1f}%).")
                     else:
-                        analysis_parts.append(f"Price moved {abs(price_change_pct):.2f}% against the {action} decision.")
+                        analysis_parts.append(f"Price moved {price_change_display:.2f}% against the {action} decision (threshold: {min_move_pct*100:.1f}%).")
                     
                     ctx = decision.get("market_context")
                     if isinstance(ctx, dict):

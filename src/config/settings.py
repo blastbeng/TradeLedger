@@ -995,8 +995,8 @@ class Settings(BaseSettings):
     @field_validator("LLM_MIND_MODEL_THRESHOLD")
     @classmethod
     def validate_llm_mind_model_threshold(cls, v: float) -> float:
-        if v < 0.20 or v > 0.95:
-            raise ValueError("LLM_MIND_MODEL_THRESHOLD must be between 0.20 and 0.95")
+        if v < 0.10 or v > 0.95:
+            raise ValueError("LLM_MIND_MODEL_THRESHOLD must be between 0.10 and 0.95")
         return v
 
     @field_validator("LLM_PROMPT_CACHING_ENABLED")
