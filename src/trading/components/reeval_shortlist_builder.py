@@ -349,6 +349,12 @@ class ReevalShortlistBuilder:
                 if engine._is_excluded(sym, default_tf):
                     continue
 
+                # Check if the symbol has a valid current quote
+                quote = tickers.get(sym, {})
+                current_price = quote.get('close') or quote.get('last')
+                if not current_price or current_price <= 0:
+                    continue
+
                 # Check if OHLCV data is available for the symbol
                 sym_data = ohlcv_data.get(sym, {})
                 available_tfs = [t for t in settings.OHLCV_TIMEFRAMES if sym_data.get(t)]
