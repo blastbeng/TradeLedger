@@ -338,7 +338,9 @@ class RiskManager:
         # the total daily loss (including fees) doesn't exceed the threshold.
         adjusted_max_daily_loss = max(0.0, max_daily_loss - daily_buy_fees)
 
-        # Include unrealized P&L from open positions
+        # Compute unrealized P&L for logging/visibility only — NOT used for the
+        # threshold check.  Including unrealized P&L can trigger premature pauses
+        # during normal intraday volatility on long-term positions.
         unrealized_pnl = 0.0
         if self.shared_state.positions:
             pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
@@ -347,12 +349,12 @@ class RiskManager:
                 current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
                 unrealized_pnl += (current_price - pos.get('price', 0.0)) * pos.get('amount', 0.0)
 
-        total_daily_pnl = daily_pnl + unrealized_pnl
-
-        if total_daily_pnl < -adjusted_max_daily_loss:
+        # Only use realized P&L for the threshold check to avoid premature pauses
+        # from normal intraday price swings on open positions.
+        if daily_pnl < -adjusted_max_daily_loss:
             logger.warning(
-                f"Daily loss limit reached: total daily P&L={total_daily_pnl:.2f} "
-                f"(realized: {daily_pnl:.2f}, unrealized: {unrealized_pnl:.2f}), "
+                f"Daily loss limit reached: realized daily P&L={daily_pnl:.2f} "
+                f"(unrealized: {unrealized_pnl:.2f}, not counted), "
                 f"max loss={adjusted_max_daily_loss:.2f} ({settings.MAX_DAILY_LOSS_PCT:.2%} of initial balance"
                 f" - {daily_buy_fees:.2f} buy fees). "
                 f"Pausing trading until tomorrow."
@@ -362,13 +364,13 @@ class RiskManager:
                 set_trading_pause,
                 engine.redis,
                 "daily_loss_limit",
-                reason=f"Daily loss limit reached ({total_daily_pnl:.2f})",
+                reason=f"Daily loss limit reached ({daily_pnl:.2f})",
             )
 
             if engine.notifier:
                 await engine.notifier.send_notification(
-                    f"🛑 Daily loss limit reached: {total_daily_pnl:.2f} {engine.base_currency} "
-                    f"(realized: {daily_pnl:.2f}, unrealized: {unrealized_pnl:.2f}, "
+                    f"🛑 Daily loss limit reached: {daily_pnl:.2f} {engine.base_currency} "
+                    f"(realized only, unrealized: {unrealized_pnl:.2f} not counted, "
                     f"max: -{adjusted_max_daily_loss:.2f}, incl. {daily_buy_fees:.2f} fees). Trading paused until tomorrow.",
                     summary={"action": "PAUSE", "reason": "Daily loss limit reached"}
                 )
