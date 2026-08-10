@@ -57,6 +57,8 @@ class ReevalShortlistBuilder:
         trade_pattern_analysis: Dict[str, Any],
         etf_pairs: List[str],
         btp_pairs: List[str],
+        incremental_offset: int = 0,
+        incremental_batch_size: Optional[int] = None,
     ) -> Tuple[Dict[str, float], List[str]]:
         """Compute composite opportunity scores and build the LLM shortlist.
 
@@ -81,11 +83,26 @@ class ReevalShortlistBuilder:
         # Build a shortlist for the LLM: all symbols sorted by composite score,
         # plus any currently held symbols and historically best symbols.
         sorted_by_composite = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
-        # Limit the base shortlist to avoid token explosion for large universes
-        max_candidates = engine.max_symbols * 3
-        if len(sorted_by_composite) > max_candidates:
-            sorted_by_composite = sorted_by_composite[:max_candidates]
-        shortlist = sorted_by_composite
+
+        if incremental_batch_size is not None and incremental_batch_size > 0 and len(sorted_by_composite) > incremental_batch_size:
+            # Incremental mode: take a rotating batch starting at the offset,
+            # wrapping around if the offset exceeds the list length.
+            total = len(sorted_by_composite)
+            offset = incremental_offset % total
+            batch = sorted_by_composite[offset:offset + incremental_batch_size]
+            if len(batch) < incremental_batch_size:
+                batch = batch + sorted_by_composite[:incremental_batch_size - len(batch)]
+            logger.info(
+                f"Incremental re-evaluation: evaluating batch of {len(batch)} symbols "
+                f"(offset={offset}, total universe={total})"
+            )
+            shortlist = batch
+        else:
+            # Non-incremental: limit the base shortlist to avoid token explosion
+            max_candidates = engine.max_symbols * 3
+            if len(sorted_by_composite) > max_candidates:
+                sorted_by_composite = sorted_by_composite[:max_candidates]
+            shortlist = sorted_by_composite
 
         # Always include currently held symbols (they must be managed)
         for entry in self.shared_state.current_symbols:

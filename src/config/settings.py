@@ -93,6 +93,20 @@ class Settings(BaseSettings):
             raise ValueError("MIN_SYMBOL_REEVALUATION_INTERVAL must be >= 300")
         return v
 
+    # Incremental re-evaluation: evaluate a rotating subset of the candidate
+    # universe each cycle instead of the entire list. Reduces LLM token usage
+    # and latency for large symbol universes. Currently held symbols are always
+    # included regardless of the rotating batch.
+    INCREMENTAL_REEVALUATION_ENABLED: bool = False
+    INCREMENTAL_REEVALUATION_BATCH_SIZE: int = 30
+
+    @field_validator("INCREMENTAL_REEVALUATION_BATCH_SIZE")
+    @classmethod
+    def validate_incremental_reevaluation_batch_size(cls, v: int) -> int:
+        if v < 5:
+            raise ValueError("INCREMENTAL_REEVALUATION_BATCH_SIZE must be >= 5")
+        return v
+
     # Maximum number of trades to keep in memory (prevents unbounded growth)
     MAX_TRADES_IN_MEMORY: int = 1000
 

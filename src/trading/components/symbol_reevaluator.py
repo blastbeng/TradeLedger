@@ -399,13 +399,32 @@ class SymbolReevaluator:
             perf = await engine.event_bus.request("compute_performance_metrics")
             trade_pattern_analysis = await engine.event_bus.request("compute_trade_pattern_analysis")
 
+            # --- Incremental re-evaluation: read rotating batch offset ---
+            incremental_offset = 0
+            incremental_batch_size = None
+            if settings.INCREMENTAL_REEVALUATION_ENABLED:
+                incremental_batch_size = settings.INCREMENTAL_REEVALUATION_BATCH_SIZE
+                offset_raw = await asyncio.to_thread(engine.redis.get, "reeval:incremental_offset")
+                if offset_raw:
+                    try:
+                        incremental_offset = int(offset_raw)
+                    except (ValueError, TypeError):
+                        incremental_offset = 0
+
             # --- Composite opportunity score and shortlist building ---
             composite_scores, shortlist = self.shortlist_builder.compute_composite_scores_and_shortlist(
-                sample_pairs, symbol_trend_scores, news_sentiment, trade_pattern_analysis, etf_pairs, btp_pairs
+                sample_pairs, symbol_trend_scores, news_sentiment, trade_pattern_analysis, etf_pairs, btp_pairs,
+                incremental_offset=incremental_offset,
+                incremental_batch_size=incremental_batch_size,
             )
             sorted_by_composite = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
             sample_pairs = shortlist
             logger.info(f"LLM candidate list: {len(sample_pairs)} symbols (will be evaluated in chunks)")
+
+            # --- Incremental re-evaluation: advance the rotating batch offset ---
+            if settings.INCREMENTAL_REEVALUATION_ENABLED:
+                new_offset = incremental_offset + settings.INCREMENTAL_REEVALUATION_BATCH_SIZE
+                await asyncio.to_thread(engine.redis.set, "reeval:incremental_offset", str(new_offset))
 
             symbol_events, session_info, market_breadth, full_market_breadth, vix = await self.data_fetcher.fetch_shortlist_context(
                 sample_pairs, tickers, market_trend

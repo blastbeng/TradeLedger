@@ -226,6 +226,7 @@ class TradingEngine:
         keys_to_clear = [
             "trading:last_triggered_reeval",
             "market:breadth:full",
+            "reeval:incremental_offset",
         ]
         try:
             for key in keys_to_clear:
