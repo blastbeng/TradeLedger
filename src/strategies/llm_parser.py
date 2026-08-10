@@ -279,6 +279,15 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
             if val is not None and (not isinstance(val, (int, float)) or val <= 0):
                 issues.append(f"unreasonable {price_key} ({val})")
 
+        # Validate remaining enums and booleans
+        stop_loss_method = params.get("stop_loss_method")
+        if stop_loss_method is not None and stop_loss_method not in ("fixed", "atr_multiple"):
+            issues.append(f"invalid stop_loss_method ({stop_loss_method})")
+
+        trailing_take_profit = params.get("trailing_take_profit")
+        if trailing_take_profit is not None and not isinstance(trailing_take_profit, bool):
+            issues.append("trailing_take_profit is not a boolean")
+
     if issues:
         new_reasoning = f"{reasoning} [Semantic validation failed: {'; '.join(issues)}. Downgraded to HOLD.]"
         return "HOLD", new_reasoning
