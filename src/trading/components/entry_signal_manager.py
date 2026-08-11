@@ -348,9 +348,14 @@ class EntrySignalManager:
                 "atr": "atr",
             }
             for cond in conditions:
-                indicator_name = cond["indicator"]
-                thresh = cond["threshold"]
-                direction = cond["direction"]
+                indicator_name = cond.get("indicator")
+                thresh = cond.get("threshold")
+                direction = cond.get("direction")
+                if indicator_name is None or thresh is None or direction is None:
+                    logger.warning(
+                        f"Malformed indicator_combo condition for {symbol}: {cond}"
+                    )
+                    return False
                 db_key = _INDICATOR_KEYS.get(indicator_name)
                 if db_key is None:
                     logger.warning(
