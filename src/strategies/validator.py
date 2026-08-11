@@ -332,11 +332,14 @@ def _validate_optional_params(
                 actual_ratio = tp / sl
             
             if mrr > 0 and actual_ratio < mrr:
-                return Signal(
-                    action="HOLD",
-                    confidence=0.0,
-                    reasoning=f"Risk/reward ratio {actual_ratio:.2f} is below minimum {mrr:.2f}"
-                )
+                # Adjust take_profit to meet the minimum risk/reward ratio instead of downgrading to HOLD
+                if tp_atr is not None and stop_method == "atr_multiple":
+                    params["take_profit_atr_multiple"] = atr_mult * mrr
+                    logger.info(f"Validator: adjusted take_profit_atr_multiple to {params['take_profit_atr_multiple']} (min_risk_reward_ratio={mrr}) for {symbol}")
+                else:
+                    tp = sl * mrr
+                    params["take_profit_pct"] = tp
+                    logger.info(f"Validator: adjusted take_profit_pct to {tp:.4f} (min_risk_reward_ratio={mrr}) for {symbol}")
     if "min_confidence" in params:
         mc = params["min_confidence"]
         if not isinstance(mc, (int, float)) or not (0.0 <= mc <= 1.0):

@@ -46,6 +46,9 @@ class ReevalConfigManager:
 
         min_rr = parsed.get("min_risk_reward_ratio")
         if min_rr is not None and isinstance(min_rr, (int, float)) and min_rr >= 1.0:
+            if min_rr > 2.0:
+                logger.warning(f"min_risk_reward_ratio {min_rr} is too high, capping at 2.0")
+                min_rr = 2.0
             await engine.config_service.set_llm_config("min_risk_reward_ratio", float(min_rr))
         else:
             await engine.config_service.clear_llm_config("min_risk_reward_ratio")
