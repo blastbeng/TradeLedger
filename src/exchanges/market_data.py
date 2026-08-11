@@ -5,6 +5,7 @@ import re
 import time
 import warnings
 from datetime import datetime, timezone, timedelta
+from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
 import pandas as pd
@@ -71,6 +72,33 @@ from src.exchanges.asset_discovery import (
 
 logger = logging.getLogger(__name__)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
+
+@dataclass
+class QuoteContext:
+    symbols: List[str]
+    result: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    missing_symbols: List[str] = field(default_factory=list)
+    redis_client: Any = None
+
+
+class QuoteHandler:
+    """Abstract base class for the quote fetching chain of responsibility."""
+    def __init__(self):
+        self._next_handler: Optional[QuoteHandler] = None
+
+    def set_next(self, handler: "QuoteHandler") -> "QuoteHandler":
+        self._next_handler = handler
+        return handler
+
+    def handle(self, context: QuoteContext) -> QuoteContext:
+        result = self.process(context)
+        if self._next_handler and context.missing_symbols:
+            return self._next_handler.handle(context)
+        return result
+
+    def process(self, context: QuoteContext) -> QuoteContext:
+        raise NotImplementedError
 
 
 class CircuitBreaker:
