@@ -1634,6 +1634,10 @@ class SignalProcessor:
         if is_critical:
             return False
 
+        # Significant news sentiment shift — breaking news could affect the position
+        if sentiment_trend_val is not None and abs(sentiment_trend_val) > settings.SENTIMENT_SHIFT_THRESHOLD:
+            return False
+
         # ATR is used for price-change comparison but is not strictly required.
         # When ATR is None (common for long timeframes like 1Y/3Y/5Y), we fall
         # back to a fixed percentage threshold so the skip logic still works
