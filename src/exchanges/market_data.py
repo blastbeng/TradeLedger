@@ -214,6 +214,172 @@ class BorsaItalianaQuoteHandler(QuoteHandler):
         return context
 
 
+class YFinanceQuoteHandler(QuoteHandler):
+    """Fetches quotes from yfinance batch download."""
+    def process(self, context: QuoteContext) -> QuoteContext:
+        if not context.missing_symbols:
+            return context
+
+        # Initialize result with None for all still-missing symbols that don't have a DB quote yet
+        for sym in context.missing_symbols:
+            if sym not in context.result or context.result[sym].get("last") is None:
+                context.result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
+
+        # Symbols still missing a valid price after Borsa Italiana — try yfinance
+        stock_symbols = [s for s in context.missing_symbols if not BTPPolicy.is_btp(s) and context.result.get(s, {}).get("last") is None]
+        # Only use yfinance for symbols with a valid Italian ISIN to avoid wrong-country data
+        stock_symbols = [s for s in stock_symbols if _get_isin_from_yfinance(s) is not None]
+
+        if stock_symbols and not _check_yf_circuit():
+            try:
+                if settings.HTTP_PROXY_ENABLED:
+                    if settings.HTTP_PROXIES:
+                        logger.debug(f"get_quotes: HTTP_PROXY_ENABLED with {len(settings.HTTP_PROXIES)} static proxies")
+                    else:
+                        logger.debug("get_quotes: HTTP_PROXY_ENABLED with dynamic proxy rotator")
+                else:
+                    logger.debug("get_quotes: HTTP_PROXY not enabled")
+                batch_hist = _yf_download_with_timeout(
+                    stock_symbols,
+                    period="2d",
+                    interval="1d",
+                    auto_adjust=False,
+                    actions=False,
+                    group_by="ticker",
+                    session=_get_yf_session(),
+                )
+                if batch_hist is None or batch_hist.empty:
+                    logger.warning(
+                        f"get_quotes: yf.download returned empty data for {len(stock_symbols)} symbols. "
+                        f"Yahoo Finance may be rate-limiting or blocking requests."
+                    )
+                for sym in stock_symbols:
+                    try:
+                        if len(stock_symbols) > 1:
+                            if batch_hist is None or batch_hist.empty or sym not in batch_hist.columns.levels[0]:
+                                continue
+                            sym_data = batch_hist[sym]
+                        else:
+                            sym_data = batch_hist
+
+                        if len(sym_data) >= 1:
+                            last = sym_data["Close"].iloc[-1]
+                            if last is not None and not pd.isna(last) and last > 0:
+                                existing_last = context.result[sym].get("last")
+                                if existing_last and existing_last > 0:
+                                    deviation = abs(float(last) - existing_last) / existing_last
+                                    if deviation > settings.QUOTE_DEVIATION_THRESHOLD:
+                                        logger.warning(f"Cross-source price inconsistency for {sym}: yfinance={float(last)}, existing={existing_last}. Keeping existing.")
+                                    else:
+                                        context.result[sym]["last"] = float(last)
+                                        context.result[sym]["last_update"] = int(time.time() * 1000)
+                                        context.result[sym]["source"] = "yfinance"
+                                else:
+                                    context.result[sym]["last"] = float(last)
+                                    context.result[sym]["last_update"] = int(time.time() * 1000)
+                                    context.result[sym]["source"] = "yfinance"
+                            vol = sym_data["Volume"].iloc[-1] if "Volume" in sym_data.columns else None
+                            if vol is not None and not pd.isna(vol):
+                                context.result[sym]["volume"] = float(vol)
+                                context.result[sym]["quoteVolume"] = float(vol)
+                        if len(sym_data) >= 2:
+                            prev_close = sym_data["Close"].iloc[-2]
+                            if prev_close is not None and not pd.isna(prev_close) and prev_close > 0:
+                                last_val = context.result[sym].get("last")
+                                if last_val is not None:
+                                    context.result[sym]["change_24h"] = last_val - prev_close
+                                    context.result[sym]["percentage"] = ((last_val - prev_close) / prev_close) * 100
+                    except (KeyError, ValueError, AttributeError, IndexError):
+                        pass
+            except Exception as e:
+                logger.warning(f"Batch download failed: {type(e).__name__}: {e}")
+        elif stock_symbols and _check_yf_circuit():
+            logger.warning(
+                f"get_quotes: yfinance circuit breaker is OPEN — skipping quote fetch for {len(stock_symbols)} symbols. "
+                f"Quotes will be served from Redis cache or database if available."
+            )
+
+        return context
+
+
+class AlphaVantageQuoteHandler(QuoteHandler):
+    """Fetches quotes from Alpha Vantage."""
+    def process(self, context: QuoteContext) -> QuoteContext:
+        if not context.missing_symbols:
+            return context
+
+        missing_after_yf = [
+            sym for sym in context.missing_symbols
+            if context.result.get(sym, {}).get("last") is None
+        ]
+        if missing_after_yf and not _av_circuit_breaker.is_open():
+            for sym in missing_after_yf[:10]:
+                try:
+                    av_quote = get_alphavantage_quote(sym)
+                    if av_quote and av_quote.get("last") is not None:
+                        existing_last = context.result[sym].get("last")
+                        av_last = av_quote.get("last")
+                        if existing_last and existing_last > 0:
+                            deviation = abs(av_last - existing_last) / existing_last
+                            if deviation > settings.QUOTE_DEVIATION_THRESHOLD:
+                                logger.warning(f"Cross-source price inconsistency for {sym}: alphavantage={av_last}, existing={existing_last}. Keeping existing.")
+                            else:
+                                context.result[sym].update(av_quote)
+                                context.result[sym]["last_update"] = int(time.time() * 1000)
+                                context.result[sym]["source"] = "alphavantage"
+                        else:
+                            context.result[sym].update(av_quote)
+                            context.result[sym]["last_update"] = int(time.time() * 1000)
+                            context.result[sym]["source"] = "alphavantage"
+                        _av_circuit_breaker.record_success()
+                    else:
+                        _av_circuit_breaker.record_failure()
+                except Exception as e:
+                    logger.warning(f"get_quotes: Alpha Vantage failed for {sym}: {type(e).__name__}: {e}")
+                    _av_circuit_breaker.record_failure()
+
+        return context
+
+
+class IEXQuoteHandler(QuoteHandler):
+    """Fetches quotes from IEX Cloud."""
+    def process(self, context: QuoteContext) -> QuoteContext:
+        if not context.missing_symbols:
+            return context
+
+        missing_after_av = [
+            sym for sym in context.missing_symbols
+            if context.result.get(sym, {}).get("last") is None
+        ]
+        if missing_after_av and not _iex_circuit_breaker.is_open():
+            for sym in missing_after_av[:10]:
+                try:
+                    iex_quote = get_iex_quote(sym)
+                    if iex_quote and iex_quote.get("last") is not None:
+                        existing_last = context.result[sym].get("last")
+                        iex_last = iex_quote.get("last")
+                        if existing_last and existing_last > 0:
+                            deviation = abs(iex_last - existing_last) / existing_last
+                            if deviation > settings.QUOTE_DEVIATION_THRESHOLD:
+                                logger.warning(f"Cross-source price inconsistency for {sym}: iex={iex_last}, existing={existing_last}. Keeping existing.")
+                            else:
+                                context.result[sym].update(iex_quote)
+                                context.result[sym]["last_update"] = int(time.time() * 1000)
+                                context.result[sym]["source"] = "iex"
+                        else:
+                            context.result[sym].update(iex_quote)
+                            context.result[sym]["last_update"] = int(time.time() * 1000)
+                            context.result[sym]["source"] = "iex"
+                        _iex_circuit_breaker.record_success()
+                    else:
+                        _iex_circuit_breaker.record_failure()
+                except Exception as e:
+                    logger.warning(f"get_quotes: IEX Cloud failed for {sym}: {type(e).__name__}: {e}")
+                    _iex_circuit_breaker.record_failure()
+
+        return context
+
+
 class CircuitBreaker:
     """Generic circuit breaker for market data sources."""
     def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60):
