@@ -1319,10 +1319,16 @@
                     .filter(([_, v]) => v > 0)
                     .map(([k, v]) => {
                         const baseVal = baseCur[k];
+                        let balanceStr = `💰 ${k}: ${v.toFixed(6)}`;
                         if (baseVal !== undefined && baseVal !== null) {
-                            return `💰 ${k}: ${v.toFixed(6)} (~${baseVal.toFixed(2)} ${baseCurrency})`;
+                            balanceStr += ` (~${baseVal.toFixed(2)} ${baseCurrency})`;
                         }
-                        return `💰 ${k}: ${v.toFixed(6)}`;
+                        
+                        if (k !== baseCurrency) {
+                            const forexSymbol = `${k}${baseCurrency}=X`;
+                            return `<span class="clickable-symbol" onclick="openChart('${forexSymbol}', '1d')">${balanceStr}</span>`;
+                        }
+                        return balanceStr;
                     })
                     .join('<br>') || 'None';
             }
