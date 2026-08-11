@@ -9,7 +9,7 @@ import random
 import time
 import concurrent.futures
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Tuple, Any
+from typing import Optional, List, Dict, Tuple, Any, Callable
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
 from src.database import save_llm_metrics, add_model_to_blacklist, get_active_blacklisted_models, remove_model_from_blacklist
@@ -777,6 +777,145 @@ def _execute_primary_call(
     raise RuntimeError("No primary models configured")
 
 
+def _try_fallback_models(
+    provider_name: str,
+    fallback_models: List[str],
+    fallback_base_url: str,
+    fallback_api_key: str,
+    model_type: str,
+    messages: Optional[List[Dict[str, str]]],
+    prompt: str,
+    system_prompt: str,
+    temperature: Optional[float],
+    effective_timeout: float,
+    api_messages: Optional[List[Dict[str, str]]],
+    add_cache_control: bool,
+    thinking_enabled: bool,
+    request_type: Optional[str],
+    reasoning_effort: str,
+    original_error: Exception,
+    call_func: Callable,
+) -> Tuple[str, dict, str, str, bool]:
+    """Try a list of fallback models for a given provider."""
+    if not fallback_models:
+        logger.warning(
+            "Fallback provider is %s but no fallback models configured. "
+            "Original error: %s", provider_name, original_error
+        )
+        raise
+
+    if provider_name == "openai" and not (fallback_api_key or fallback_base_url):
+        logger.warning(
+            "Fallback provider is openai but no API key or base URL configured. "
+            "Original error: %s", original_error
+        )
+        raise
+    if provider_name == "ollama" and not fallback_base_url:
+        logger.warning(
+            "Fallback provider is ollama but no base URL configured. "
+            "Original error: %s", original_error
+        )
+        raise
+
+    # Context window management for fallback (done once)
+    fb_max_input_tokens = _get_max_input_tokens(provider_name, model_type, True)
+    fb_effective_limit = int(fb_max_input_tokens * 0.8)
+    if messages is not None:
+        fb_total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
+        if fb_total_tokens > fb_effective_limit:
+            logger.warning("Fallback messages size (~%d tokens) exceeds limit (%d). Splitting...", fb_total_tokens, fb_effective_limit)
+            messages = [dict(msg) for msg in messages]
+            if messages and messages[-1]["role"] == "user":
+                messages[-1]["content"] = _split_and_merge_prompt(
+                    prompt=messages[-1]["content"],
+                    system_prompt=system_prompt,
+                    model_type=model_type,
+                    provider=provider_name,
+                    model=fallback_models[0],
+                    base_url=fallback_base_url,
+                    api_key=fallback_api_key,
+                    temperature=temperature,
+                    timeout=effective_timeout,
+                    max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
+                )
+                api_messages = []
+                if system_prompt:
+                    api_messages.append({"role": "system", "content": system_prompt})
+                api_messages.extend(messages)
+    else:
+        fb_prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+        if fb_prompt_tokens > fb_effective_limit:
+            prompt = _split_and_merge_prompt(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                model_type=model_type,
+                provider=provider_name,
+                model=fallback_models[0],
+                base_url=fallback_base_url,
+                api_key=fallback_api_key,
+                temperature=temperature,
+                timeout=effective_timeout,
+                max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
+            )
+
+    redis_client = get_redis_client()
+    available_fallback_models = [m for m in fallback_models if not _is_model_blacklisted(redis_client, m)]
+    
+    if not available_fallback_models:
+        logger.warning("All fallback models are blacklisted or unavailable.")
+        raise RuntimeError("All fallback models are blacklisted") from original_error
+        
+    shuffled_fallback_models = random.sample(available_fallback_models, len(available_fallback_models))
+    last_fallback_e = None
+    for fallback_model in shuffled_fallback_models:
+        logger.warning(
+            "Primary LLM call failed (%s). Falling back to %s provider "
+            "for %s role (model=%s).", original_error, provider_name, model_type, fallback_model
+        )
+        fallback_start = time.time()
+        try:
+            result = call_func(
+                prompt=prompt if messages is None else "",
+                system_prompt=system_prompt if messages is None else "",
+                model=fallback_model,
+                base_url=fallback_base_url,
+                api_key=fallback_api_key,
+                temperature=temperature,
+                timeout=settings.LLM_FALLBACK_TIMEOUT,
+                messages=api_messages,
+                add_cache_control=add_cache_control,
+                thinking_enabled=thinking_enabled,
+                reasoning_effort=reasoning_effort,
+                max_retries=3,
+            )
+            response_text = result["content"]
+            usage = result.get("usage", {})
+            _record_model_success(redis_client, fallback_model)
+            return response_text, usage, provider_name, fallback_model, True
+        except Exception as fallback_e:
+            fallback_latency = (time.time() - fallback_start) * 1000
+            _save_metric({
+                "timestamp": time.time(),
+                "provider": provider_name,
+                "model": fallback_model,
+                "model_type": model_type,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cache_hit": 0,
+                "latency_ms": fallback_latency,
+                "error": str(fallback_e)[:500],
+                "request_type": request_type,
+                "is_fallback": True,
+            })
+            logger.error("%s fallback model %s failed: %s", provider_name.capitalize(), fallback_model, fallback_e, exc_info=True)
+            _record_model_failure(redis_client, fallback_model, provider_name, str(fallback_e))
+            last_fallback_e = fallback_e
+    if last_fallback_e:
+        raise last_fallback_e
+    raise
+
+
 def _execute_fallback_call(
     e: Exception,
     model_type: str,
@@ -841,231 +980,25 @@ def _execute_fallback_call(
             fallback_base_url = settings.OPENAI_ACTUATOR_FALLBACK_BASE_URL or settings.OPENAI_FALLBACK_BASE_URL or settings.OPENAI_BASE_URL
             fallback_api_key = settings.OPENAI_ACTUATOR_FALLBACK_API_KEY or settings.OPENAI_FALLBACK_API_KEY or settings.OPENAI_API_KEY
 
-        if not fallback_models:
-            logger.warning(
-                "Fallback provider is openai but no fallback models configured. "
-                "Original error: %s", e
-            )
-            raise
-
-        # Context window management for fallback (done once)
-        fb_max_input_tokens = _get_max_input_tokens("openai", model_type, True)
-        fb_effective_limit = int(fb_max_input_tokens * 0.8)
-        if messages is not None:
-            fb_total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
-            if fb_total_tokens > fb_effective_limit:
-                logger.warning("Fallback messages size (~%d tokens) exceeds limit (%d). Splitting...", fb_total_tokens, fb_effective_limit)
-                messages = [dict(msg) for msg in messages]
-                if messages and messages[-1]["role"] == "user":
-                    messages[-1]["content"] = _split_and_merge_prompt(
-                        prompt=messages[-1]["content"],
-                        system_prompt=system_prompt,
-                        model_type=model_type,
-                        provider="openai",
-                        model=fallback_models[0],
-                        base_url=fallback_base_url,
-                        api_key=fallback_api_key,
-                        temperature=temperature,
-                        timeout=effective_timeout,
-                        max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
-                    )
-                    api_messages = []
-                    if system_prompt:
-                        api_messages.append({"role": "system", "content": system_prompt})
-                    api_messages.extend(messages)
-        else:
-            fb_prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
-            if fb_prompt_tokens > fb_effective_limit:
-                prompt = _split_and_merge_prompt(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    model_type=model_type,
-                    provider="openai",
-                    model=fallback_models[0],
-                    base_url=fallback_base_url,
-                    api_key=fallback_api_key,
-                    temperature=temperature,
-                    timeout=effective_timeout,
-                    max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
-                )
-
-        if fallback_api_key or fallback_base_url:
-            # Shuffle fallback models to try them in random order without repeating
-            redis_client = get_redis_client()
-            available_fallback_models = [m for m in fallback_models if not _is_model_blacklisted(redis_client, m)]
-            
-            if not available_fallback_models:
-                logger.warning("All fallback models are blacklisted or unavailable.")
-                raise RuntimeError("All fallback models are blacklisted") from e
-                
-            shuffled_fallback_models = random.sample(available_fallback_models, len(available_fallback_models))
-            last_fallback_e = None
-            for fallback_model in shuffled_fallback_models:
-                logger.warning(
-                    "Primary LLM call failed (%s). Falling back to OpenAI-compatible provider "
-                    "for %s role (model=%s).", e, model_type, fallback_model
-                )
-                fallback_start = time.time()
-                try:
-                    from src.llm.llm_client import _get_openai_response
-                    result = _get_openai_response(
-                        prompt=prompt if messages is None else "",
-                        system_prompt=system_prompt if messages is None else "",
-                        model=fallback_model,
-                        base_url=fallback_base_url,
-                        api_key=fallback_api_key,
-                        temperature=temperature,
-                        timeout=settings.LLM_FALLBACK_TIMEOUT,
-                        messages=api_messages,
-                        add_cache_control=fallback_add_cache_control,
-                        thinking_enabled=thinking_enabled,
-                        reasoning_effort=reasoning_effort,
-                        max_retries=3,
-                    )
-                    response_text = result["content"]
-                    usage = result.get("usage", {})
-                    _record_model_success(redis_client, fallback_model)
-                    return response_text, usage, "openai", fallback_model, True
-                except Exception as fallback_e:
-                    fallback_latency = (time.time() - fallback_start) * 1000
-                    _save_metric({
-                        "timestamp": time.time(),
-                        "provider": "openai",
-                        "model": fallback_model,
-                        "model_type": model_type,
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0,
-                        "cache_hit": 0,
-                        "latency_ms": fallback_latency,
-                        "error": str(fallback_e)[:500],
-                        "request_type": request_type,
-                        "is_fallback": True,
-                    })
-                    logger.error("OpenAI fallback model %s failed: %s", fallback_model, fallback_e, exc_info=True)
-                    _record_model_failure(redis_client, fallback_model, "openai", str(fallback_e))
-                    last_fallback_e = fallback_e
-            if last_fallback_e:
-                raise last_fallback_e
-            raise
-        else:
-            logger.warning(
-                "Fallback provider is openai but no API key or base URL configured. "
-                "Original error: %s", e
-            )
-            raise
+        from src.llm.llm_client import _get_openai_response
+        return _try_fallback_models(
+            "openai", fallback_models, fallback_base_url, fallback_api_key,
+            model_type, messages, prompt, system_prompt, temperature, effective_timeout,
+            api_messages, fallback_add_cache_control, thinking_enabled, request_type,
+            reasoning_effort, e, _get_openai_response
+        )
     elif fallback_provider == "g4f":
-        from src.llm.g4f_client import _get_g4f_models
+        from src.llm.g4f_client import _get_g4f_models, _get_g4f_response
         fallback_models = _get_g4f_models(model_type)
         fallback_base_url = None
         fallback_api_key = None
 
-        if not fallback_models:
-            logger.warning(
-                "Fallback provider is g4f but no fallback models configured. "
-                "Original error: %s", e
-            )
-            raise
-
-        # Context window management for fallback (done once)
-        fb_max_input_tokens = _get_max_input_tokens("g4f", model_type, True)
-        fb_effective_limit = int(fb_max_input_tokens * 0.8)
-        if messages is not None:
-            fb_total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
-            if fb_total_tokens > fb_effective_limit:
-                logger.warning("Fallback messages size (~%d tokens) exceeds limit (%d). Splitting...", fb_total_tokens, fb_effective_limit)
-                messages = [dict(msg) for msg in messages]
-                if messages and messages[-1]["role"] == "user":
-                    messages[-1]["content"] = _split_and_merge_prompt(
-                        prompt=messages[-1]["content"],
-                        system_prompt=system_prompt,
-                        model_type=model_type,
-                        provider="g4f",
-                        model=fallback_models[0],
-                        base_url=fallback_base_url,
-                        api_key=fallback_api_key,
-                        temperature=temperature,
-                        timeout=effective_timeout,
-                        max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
-                    )
-                    api_messages = []
-                    if system_prompt:
-                        api_messages.append({"role": "system", "content": system_prompt})
-                    api_messages.extend(messages)
-        else:
-            fb_prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
-            if fb_prompt_tokens > fb_effective_limit:
-                prompt = _split_and_merge_prompt(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    model_type=model_type,
-                    provider="g4f",
-                    model=fallback_models[0],
-                    base_url=fallback_base_url,
-                    api_key=fallback_api_key,
-                    temperature=temperature,
-                    timeout=effective_timeout,
-                    max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
-                )
-
-        # Shuffle fallback models to try them in random order without repeating
-        redis_client = get_redis_client()
-        available_fallback_models = [m for m in fallback_models if not _is_model_blacklisted(redis_client, m)]
-        
-        if not available_fallback_models:
-            logger.warning("All fallback models are blacklisted or unavailable.")
-            raise RuntimeError("All fallback models are blacklisted") from e
-            
-        shuffled_fallback_models = random.sample(available_fallback_models, len(available_fallback_models))
-        last_fallback_e = None
-        for fallback_model in shuffled_fallback_models:
-            logger.warning(
-                "Primary LLM call failed (%s). Falling back to g4f provider "
-                "for %s role (model=%s).", e, model_type, fallback_model
-            )
-            fallback_start = time.time()
-            try:
-                from src.llm.g4f_client import _get_g4f_response
-                result = _get_g4f_response(
-                    prompt=prompt if messages is None else "",
-                    system_prompt=system_prompt if messages is None else "",
-                    model=fallback_model,
-                    base_url=fallback_base_url,
-                    api_key=fallback_api_key,
-                    temperature=temperature,
-                    timeout=settings.LLM_FALLBACK_TIMEOUT,
-                    messages=api_messages,
-                    add_cache_control=fallback_add_cache_control,
-                    thinking_enabled=thinking_enabled,
-                    reasoning_effort=reasoning_effort,
-                    max_retries=3,
-                )
-                response_text = result["content"]
-                usage = result.get("usage", {})
-                _record_model_success(redis_client, fallback_model)
-                return response_text, usage, "g4f", fallback_model, True
-            except Exception as fallback_e:
-                fallback_latency = (time.time() - fallback_start) * 1000
-                _save_metric({
-                    "timestamp": time.time(),
-                    "provider": "g4f",
-                    "model": fallback_model,
-                    "model_type": model_type,
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                    "cache_hit": 0,
-                    "latency_ms": fallback_latency,
-                    "error": str(fallback_e)[:500],
-                    "request_type": request_type,
-                    "is_fallback": True,
-                })
-                logger.error("g4f fallback model %s failed: %s", fallback_model, fallback_e, exc_info=True)
-                _record_model_failure(redis_client, fallback_model, "g4f", str(fallback_e))
-                last_fallback_e = fallback_e
-        if last_fallback_e:
-            raise last_fallback_e
-        raise
+        return _try_fallback_models(
+            "g4f", fallback_models, fallback_base_url, fallback_api_key,
+            model_type, messages, prompt, system_prompt, temperature, effective_timeout,
+            api_messages, fallback_add_cache_control, thinking_enabled, request_type,
+            reasoning_effort, e, _get_g4f_response
+        )
     elif fallback_provider == "ollama":
         if model_type == "mind":
             fallback_models = settings.OLLAMA_MIND_FALLBACK_MODEL or settings.OLLAMA_FALLBACK_MODEL
@@ -1084,119 +1017,13 @@ def _execute_fallback_call(
             fallback_base_url = settings.OLLAMA_ACTUATOR_FALLBACK_BASE_URL or settings.OLLAMA_FALLBACK_BASE_URL or settings.OLLAMA_BASE_URL
             fallback_api_key = settings.OLLAMA_ACTUATOR_FALLBACK_API_KEY or settings.OLLAMA_FALLBACK_API_KEY or settings.OLLAMA_API_KEY
 
-        if not fallback_models:
-            logger.warning(
-                "Fallback provider is ollama but no fallback models configured. "
-                "Original error: %s", e
-            )
-            raise
-
-        # Context window management for fallback (done once)
-        fb_max_input_tokens = _get_max_input_tokens("ollama", model_type, True)
-        fb_effective_limit = int(fb_max_input_tokens * 0.8)
-        if messages is not None:
-            fb_total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages) + estimate_tokens(system_prompt)
-            if fb_total_tokens > fb_effective_limit:
-                logger.warning("Fallback messages size (~%d tokens) exceeds limit (%d). Splitting...", fb_total_tokens, fb_effective_limit)
-                messages = [dict(msg) for msg in messages]
-                if messages and messages[-1]["role"] == "user":
-                    messages[-1]["content"] = _split_and_merge_prompt(
-                        prompt=messages[-1]["content"],
-                        system_prompt=system_prompt,
-                        model_type=model_type,
-                        provider="ollama",
-                        model=fallback_models[0],
-                        base_url=fallback_base_url,
-                        api_key=fallback_api_key,
-                        temperature=temperature,
-                        timeout=effective_timeout,
-                        max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
-                    )
-                    api_messages = []
-                    if system_prompt:
-                        api_messages.append({"role": "system", "content": system_prompt})
-                    api_messages.extend(messages)
-        else:
-            fb_prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
-            if fb_prompt_tokens > fb_effective_limit:
-                prompt = _split_and_merge_prompt(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    model_type=model_type,
-                    provider="ollama",
-                    model=fallback_models[0],
-                    base_url=fallback_base_url,
-                    api_key=fallback_api_key,
-                    temperature=temperature,
-                    timeout=effective_timeout,
-                    max_input_tokens=fb_effective_limit - estimate_tokens(system_prompt),
-                )
-
-        if fallback_base_url:
-            # Shuffle fallback models to try them in random order without repeating
-            redis_client = get_redis_client()
-            available_fallback_models = [m for m in fallback_models if not _is_model_blacklisted(redis_client, m)]
-            
-            if not available_fallback_models:
-                logger.warning("All fallback models are blacklisted or unavailable.")
-                raise RuntimeError("All fallback models are blacklisted") from e
-                
-            shuffled_fallback_models = random.sample(available_fallback_models, len(available_fallback_models))
-            last_fallback_e = None
-            for fallback_model in shuffled_fallback_models:
-                logger.warning(
-                    "Primary LLM call failed (%s). Falling back to Ollama provider "
-                    "for %s role (model=%s).", e, model_type, fallback_model
-                )
-                fallback_start = time.time()
-                try:
-                    from src.llm.llm_client import _get_ollama_response
-                    result = _get_ollama_response(
-                        prompt=prompt if messages is None else "",
-                        system_prompt=system_prompt if messages is None else "",
-                        model=fallback_model,
-                        base_url=fallback_base_url,
-                        api_key=fallback_api_key,
-                        temperature=temperature,
-                        timeout=settings.LLM_FALLBACK_TIMEOUT,
-                        messages=api_messages,
-                        add_cache_control=fallback_add_cache_control,
-                        thinking_enabled=thinking_enabled,
-                        reasoning_effort=reasoning_effort,
-                        max_retries=3,
-                    )
-                    response_text = result["content"]
-                    usage = result.get("usage", {})
-                    _record_model_success(redis_client, fallback_model)
-                    return response_text, usage, "ollama", fallback_model, True
-                except Exception as fallback_e:
-                    fallback_latency = (time.time() - fallback_start) * 1000
-                    _save_metric({
-                        "timestamp": time.time(),
-                        "provider": "ollama",
-                        "model": fallback_model,
-                        "model_type": model_type,
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0,
-                        "cache_hit": 0,
-                        "latency_ms": fallback_latency,
-                        "error": str(fallback_e)[:500],
-                        "request_type": request_type,
-                        "is_fallback": True,
-                    })
-                    logger.error("Ollama fallback model %s failed: %s", fallback_model, fallback_e, exc_info=True)
-                    _record_model_failure(redis_client, fallback_model, "ollama", str(fallback_e))
-                    last_fallback_e = fallback_e
-            if last_fallback_e:
-                raise last_fallback_e
-            raise
-        else:
-            logger.warning(
-                "Fallback provider is ollama but no base URL configured. "
-                "Original error: %s", e
-            )
-            raise
+        from src.llm.llm_client import _get_ollama_response
+        return _try_fallback_models(
+            "ollama", fallback_models, fallback_base_url, fallback_api_key,
+            model_type, messages, prompt, system_prompt, temperature, effective_timeout,
+            api_messages, fallback_add_cache_control, thinking_enabled, request_type,
+            reasoning_effort, e, _get_ollama_response
+        )
     else:
         raise
 
