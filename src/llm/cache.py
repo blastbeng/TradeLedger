@@ -288,7 +288,10 @@ def _split_and_merge_prompt(
     # the split/merge loop from hanging indefinitely if all weak model calls hang.
     # Scale the timeout based on the number of chunks to allow sufficient time
     # for large prompts.
-    global_summary_timeout = max(30.0, len(chunks) * 15.0)
+    global_summary_timeout = max(
+        settings.LLM_SUMMARY_TIMEOUT_MIN,
+        len(chunks) * settings.LLM_SUMMARY_TIMEOUT_PER_CHUNK,
+    )
     done, not_done = concurrent.futures.wait(
         future_to_chunk, timeout=global_summary_timeout
     )

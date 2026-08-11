@@ -1099,6 +1099,26 @@ class Settings(BaseSettings):
             raise ValueError("LLM_FALLBACK_TIMEOUT must be positive")
         return v
 
+    # Split/merge chunk summarization timeout settings (seconds).
+    # The global timeout for the summarization phase is computed as
+    # max(LLM_SUMMARY_TIMEOUT_MIN, num_chunks * LLM_SUMMARY_TIMEOUT_PER_CHUNK).
+    LLM_SUMMARY_TIMEOUT_MIN: float = 30.0
+    LLM_SUMMARY_TIMEOUT_PER_CHUNK: float = 15.0
+
+    @field_validator("LLM_SUMMARY_TIMEOUT_MIN")
+    @classmethod
+    def validate_llm_summary_timeout_min(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("LLM_SUMMARY_TIMEOUT_MIN must be positive")
+        return v
+
+    @field_validator("LLM_SUMMARY_TIMEOUT_PER_CHUNK")
+    @classmethod
+    def validate_llm_summary_timeout_per_chunk(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("LLM_SUMMARY_TIMEOUT_PER_CHUNK must be positive")
+        return v
+
     # Enforce the LLM's minimum profit per trade check.
     # Set to False to allow trades with very small expected profit.
     ENFORCE_MIN_PROFIT_PER_TRADE: bool = False
