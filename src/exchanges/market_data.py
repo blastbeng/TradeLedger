@@ -143,6 +143,49 @@ class DatabaseQuoteHandler(QuoteHandler):
         return context
 
 
+class DatabaseClosePriceHandler(QuoteHandler):
+    """Fetches quotes from DB close prices (fast, no network call)."""
+    def process(self, context: QuoteContext) -> QuoteContext:
+        if not context.missing_symbols:
+            return context
+
+        try:
+            db_candles = get_latest_close_prices(context.missing_symbols)
+            for sym in list(context.missing_symbols):
+                if sym in db_candles and db_candles[sym].get("last", 0) > 0:
+                    candle_ts = db_candles[sym].get("candle_timestamp")
+                    if candle_ts and (int(time.time() * 1000) - candle_ts > settings.STALE_QUOTE_THRESHOLD_HOURS * 3600 * 1000):
+                        logger.debug(f"get_quotes: DB close price for {sym} is stale (older than {settings.STALE_QUOTE_THRESHOLD_HOURS}h), skipping.")
+                        continue
+
+                    last = db_candles[sym]["last"]
+                    prev_close = db_candles[sym].get("prev_close")
+                    volume = db_candles[sym].get("volume")
+
+                    abs_change = None
+                    pct = None
+                    if prev_close and prev_close > 0:
+                        abs_change = last - prev_close
+                        pct = round((abs_change / prev_close) * 100, 4)
+
+                    context.result[sym] = {
+                        "last": last,
+                        "bid": last,
+                        "ask": last,
+                        "volume": volume,
+                        "change_24h": abs_change,
+                        "percentage": pct,
+                        "quoteVolume": volume,
+                        "last_update": db_candles[sym].get("candle_timestamp"),
+                        "source": "db_close",
+                    }
+                    # Do not remove from missing_symbols so yfinance can still try to update it
+        except (RuntimeError, ValueError, KeyError, OSError) as e:
+            logger.warning(f"get_quotes: DB close price fallback failed: {type(e).__name__}: {e}")
+
+        return context
+
+
 class CircuitBreaker:
     """Generic circuit breaker for market data sources."""
     def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60):
