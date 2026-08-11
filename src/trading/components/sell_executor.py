@@ -585,7 +585,8 @@ class SellExecutor:
             logger.error(f"Invalid symbol format in queued sell fill: {symbol}")
             return
         base, quote = parts
-        pos = self.shared_state.positions.get(symbol)
+        async with self.shared_state._positions_lock:
+            pos = self.shared_state.positions.get(symbol)
         fee = trade_dict.get('fee', {})
         fee_cost = float(fee.get('cost', 0.0) or 0.0)
         fee_currency = fee.get('currency', '')
@@ -617,9 +618,10 @@ class SellExecutor:
             if removed:
                 if realized_pnl < 0:
                     self.shared_state.last_loss_time[symbol] = time.time()
-                    self.shared_state.cooldown_durations[symbol] = pos.get("cooldown_after_loss_seconds", 0)
-                pos.pop("_stop_loss_triggered", None)
-                pos.pop("_stop_loss_review_count", None)
+                    self.shared_state.cooldown_durations[symbol] = pos.get("cooldown_after_loss_seconds", 0) if pos else 0
+                if pos:
+                    pos.pop("_stop_loss_triggered", None)
+                    pos.pop("_stop_loss_review_count", None)
         else:
             await self.event_bus.request("cancel_exit_orders", symbol)
             net_quote = trade_dict['cost'] - (fee_cost if fee_currency == quote else 0.0)
