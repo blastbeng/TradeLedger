@@ -1399,7 +1399,7 @@ def get_cached_llm_response(
                 except Exception:
                     pass
                 logger.exception(f"All LLM providers failed for model_type={model_type}: {fallback_e}")
-                return None
+                raise fallback_e
     if response_text is None:
         logger.warning("LLM returned None response; not caching.")
         _save_metric({
