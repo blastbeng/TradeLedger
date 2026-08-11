@@ -702,20 +702,21 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     _finalize_and_persist_quotes(context.result, symbols, redis_client)
 
     # Summary log
-    valid_count = sum(1 for sym in context.missing_symbols if context.result.get(sym, {}).get("last") is not None)
-    if valid_count == 0 and context.missing_symbols:
+    valid_count = sum(1 for q in context.result.values() if q.get("last") is not None)
+    total_symbols = len(symbols)
+    if valid_count == 0 and total_symbols > 0:
         if _check_yf_circuit():
             logger.debug(
-                f"get_quotes: 0/{len(context.missing_symbols)} symbols got valid prices "
+                f"get_quotes: 0/{total_symbols} symbols got valid prices "
                 f"(circuit breaker open)."
             )
         else:
             logger.warning(
-                f"get_quotes: 0/{len(context.missing_symbols)} symbols got valid prices. "
+                f"get_quotes: 0/{total_symbols} symbols got valid prices. "
                 f"Check yfinance connectivity and proxy settings."
             )
     else:
-        logger.debug(f"get_quotes: {valid_count}/{len(context.missing_symbols)} symbols got valid prices")
+        logger.debug(f"get_quotes: {valid_count}/{total_symbols} symbols got valid prices")
 
     return context.result
 
