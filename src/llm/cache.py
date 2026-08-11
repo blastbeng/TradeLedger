@@ -1652,7 +1652,7 @@ def _normalize_for_hash(obj, depth=0):
     """
     _VOLATILE_KEY_FRAGMENTS = ("timestamp", "fetched_at", "created_at",
                                 "published_at", "last_eval", "last_auto_resume",
-                                "_last_state_save", "datetime")
+                                "_last_state_save", "datetime", "last_update", "source")
     if depth > 10:
         return None
     if isinstance(obj, dict):
