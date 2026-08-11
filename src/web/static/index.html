@@ -1313,9 +1313,17 @@
             // Balances
             const balDiv = document.getElementById('balances');
             if (data.balances) {
+                const baseCur = data.balances_base || {};
+                const baseCurrency = data.base_currency || '';
                 balDiv.innerHTML = Object.entries(data.balances)
                     .filter(([_, v]) => v > 0)
-                    .map(([k, v]) => `💰 ${k}: ${v.toFixed(6)}`)
+                    .map(([k, v]) => {
+                        const baseVal = baseCur[k];
+                        if (baseVal !== undefined && baseVal !== null) {
+                            return `💰 ${k}: ${v.toFixed(6)} (~${baseVal.toFixed(2)} ${baseCurrency})`;
+                        }
+                        return `💰 ${k}: ${v.toFixed(6)}`;
+                    })
                     .join('<br>') || 'None';
             }
 
