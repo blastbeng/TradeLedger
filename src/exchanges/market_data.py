@@ -1,19 +1,12 @@
-import asyncio
-import hashlib
 import logging
-import re
 import time
-import warnings
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
 import pandas as pd
 import json
-import requests
 import yfinance as yf
-import httpx
-from bs4 import BeautifulSoup
 
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
@@ -207,10 +200,11 @@ class BorsaItalianaQuoteHandler(QuoteHandler):
                         context.result.setdefault(sym, {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}).update(bi_quote)
                         context.result[sym]["last_update"] = int(time.time() * 1000)
                         context.result[sym]["source"] = "borsa_italiana"
+                        context.missing_symbols.remove(sym)
                         logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
                 except Exception as e:
                     logger.warning(f"get_quotes: Borsa Italiana failed for {sym}: {type(e).__name__}: {e}")
-        
+
         return context
 
 
