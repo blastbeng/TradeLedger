@@ -41,6 +41,53 @@ class BacktestManager:
         self.event_bus = event_bus
         self.event_bus.subscribe("run_backtest_and_final_decision", self.run_backtest_and_final_decision)
 
+    @staticmethod
+    def _sanitize_backtest_entry_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Sanitize and validate backtest_entry_config to prevent LLM hallucinations."""
+        if not isinstance(config, dict):
+            return {
+                "ema_period": 21,
+                "ema_direction": "above",
+                "min_adx": 20,
+                "logic": "and",
+            }
+
+        def _clamp(val, min_val, max_val, default):
+            try:
+                v = float(val)
+                if v < min_val or v > max_val:
+                    return default
+                return v
+            except (ValueError, TypeError):
+                return default
+
+        ema_period = int(_clamp(config.get("ema_period", 21), 1, 200, 21))
+        ema_direction = config.get("ema_direction", "above")
+        if ema_direction not in ("above", "below"):
+            ema_direction = "above"
+
+        min_adx = _clamp(config.get("min_adx", 20), 0, 100, 20)
+        max_rsi = _clamp(config.get("max_rsi", 100), 0, 100, 100)
+        min_rsi = _clamp(config.get("min_rsi", 0), 0, 100, 0)
+
+        macd_filter = config.get("macd_filter", "none")
+        if macd_filter not in ("none", "positive", "negative"):
+            macd_filter = "none"
+
+        logic = config.get("logic", "and")
+        if logic not in ("and", "or"):
+            logic = "and"
+
+        return {
+            "ema_period": ema_period,
+            "ema_direction": ema_direction,
+            "min_adx": min_adx,
+            "max_rsi": max_rsi,
+            "min_rsi": min_rsi,
+            "macd_filter": macd_filter,
+            "logic": logic,
+        }
+
     def _prepare_backtest_variants(
         self,
         symbol: str,
@@ -67,6 +114,7 @@ class BacktestManager:
                     # Try to copy from the preliminary signal's params first
                     _prelim_bec = (preliminary_signal.strategy_params or {}).get("backtest_entry_config")
                     v["backtest_entry_config"] = _prelim_bec if isinstance(_prelim_bec, dict) else dict(_default_entry_config)
+                v["backtest_entry_config"] = self._sanitize_backtest_entry_config(v["backtest_entry_config"])
         else:
             # Fallback: use the preliminary signal's own params as a single variant
             fallback_params = dict(preliminary_signal.strategy_params or {})
