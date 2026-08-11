@@ -343,182 +343,260 @@ class SymbolReevaluator:
         logger.info("Re-evaluation complete: %d symbols selected.", len(self.shared_state.current_symbols))
         await asyncio.to_thread(engine.redis.set, last_key, now)
 
+    async def _fetch_candidate_data(
+        self, force: bool
+    ) -> Optional[Tuple[bool, bool, float, bool, List[str], List[str], List[str], List[Dict[str, str]], str, float, float, float, Dict[str, Dict[str, Any]], List[str], List[str], Dict[str, float]]]:
+        """Phase 1: Check cooldown, fetch candidate assets, quotes, and sort."""
+        _cooldown_result = await self.check_cooldown_and_reset(force)
+        if _cooldown_result is None:
+            return None
+        is_user_forced, is_market_condition_trigger, now, is_rebalance = _cooldown_result
+        _assets_result = await self.data_fetcher.fetch_and_filter_candidate_assets(now)
+        if _assets_result is None:
+            return None
+        available_pairs, btp_pairs, etf_pairs, old_symbols, last_key = _assets_result
+        _quotes_result = await self.data_fetcher.fetch_quotes_and_sort(
+            available_pairs, btp_pairs, etf_pairs, now, last_key
+        )
+        if _quotes_result is None:
+            return None
+        balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs, btp_ytm = _quotes_result
+        return (is_user_forced, is_market_condition_trigger, now, is_rebalance,
+                available_pairs, btp_pairs, etf_pairs, old_symbols, last_key,
+                balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs, btp_ytm)
+
+    async def _fetch_market_data(
+        self,
+        sample_pairs: List[str],
+        tickers: Dict[str, Dict[str, Any]],
+        sorted_by_vol: List[str],
+    ) -> Tuple[Dict, Any, Any, Dict, Dict, Dict[str, Dict[str, List[List]]], Dict[str, List[str]], Dict[str, Dict[str, float]]]:
+        """Phase 2: Fetch news sentiment, OHLCV, indicators, and market limits."""
+        self._log_step("Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
+        news_sentiment, sentiment_trend, market_trend = await self.data_fetcher.fetch_news_sentiment_and_trends(
+            sample_pairs, tickers
+        )
+        self._log_step("Fetching OHLCV from DB for %d symbols...", len(sorted_by_vol))
+        ohlcv_data, available_timeframes_by_symbol = await self.data_fetcher.fetch_ohlcv_from_db(sorted_by_vol)
+        self._log_step("Batch-fetching indicators for %d symbols...", len(sorted_by_vol))
+        symbol_indicators, symbol_trend_scores = await self.data_fetcher.fetch_indicators_and_trend_scores(
+            sorted_by_vol, sample_pairs
+        )
+        market_limits = await self.data_fetcher.compute_market_limits(sample_pairs, tickers)
+        return news_sentiment, sentiment_trend, market_trend, symbol_indicators, symbol_trend_scores, ohlcv_data, available_timeframes_by_symbol, market_limits
+
+    async def _compute_analytics_and_shortlist(
+        self,
+        sample_pairs: List[str],
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+        sorted_by_vol: List[str],
+        symbol_trend_scores: Dict,
+        news_sentiment: Dict,
+        trade_pattern_analysis: Any,
+        etf_pairs: List[str],
+        btp_pairs: List[str],
+    ) -> Tuple[Any, Dict[str, float], List[str], int, Optional[int]]:
+        """Phase 3: Compute correlation, performance, incremental offset, and shortlist."""
+        self._log_step("Computing correlation matrix and performance metrics...")
+        correlation_matrix = await self.data_fetcher.get_or_compute_correlation_matrix(
+            ohlcv_data, sorted_by_vol
+        )
+        incremental_offset = 0
+        incremental_batch_size = None
+        if settings.INCREMENTAL_REEVALUATION_ENABLED:
+            incremental_batch_size = settings.INCREMENTAL_REEVALUATION_BATCH_SIZE
+            offset_raw = await asyncio.to_thread(self.engine.redis.get, "reeval:incremental_offset")
+            if offset_raw:
+                try:
+                    incremental_offset = int(offset_raw)
+                except (ValueError, TypeError):
+                    incremental_offset = 0
+        composite_scores, shortlist = self.shortlist_builder.compute_composite_scores_and_shortlist(
+            sample_pairs, symbol_trend_scores, news_sentiment, trade_pattern_analysis, etf_pairs, btp_pairs,
+            incremental_offset=incremental_offset,
+            incremental_batch_size=incremental_batch_size,
+        )
+        return correlation_matrix, composite_scores, shortlist, incremental_offset, incremental_batch_size
+
+    async def _run_llm_evaluation(
+        self,
+        sample_pairs: List[str],
+        tickers: Dict[str, Dict[str, Any]],
+        ohlcv_data: Dict[str, Dict[str, List[List]]],
+        symbol_indicators: Dict,
+        market_limits: Dict[str, Dict[str, float]],
+        symbol_trend_scores: Dict,
+        sentiment_trend: Any,
+        correlation_matrix: Any,
+        perf: Any,
+        market_trend: Any,
+        trade_pattern_analysis: Any,
+        min_viable_amount: float,
+        base_balance: float,
+        per_symbol_budget: float,
+        btp_ytm: Any,
+        news_sentiment: Dict,
+        is_user_forced: bool,
+        is_rebalance: bool,
+        now: float,
+        available_timeframes_by_symbol: Dict[str, List[str]],
+    ) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[float], Optional[bool]]:
+        """Phase 4: Fetch shortlist context, run chunked LLM eval, and final selection."""
+        symbol_events, session_info, market_breadth, full_market_breadth, vix = await self.data_fetcher.fetch_shortlist_context(
+            sample_pairs, tickers, market_trend
+        )
+        trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp, reasoning_effort = await self.llm_runner.prepare_reeval_prompt_context(
+            now=now,
+            sample_pairs=sample_pairs,
+            ohlcv_data=ohlcv_data,
+            sentiment_trend=sentiment_trend,
+            market_breadth=market_breadth,
+            is_rebalance=is_rebalance,
+        )
+        chunk_results = await self.llm_runner.evaluate_llm_chunks(
+            sample_pairs=sample_pairs,
+            tickers=tickers,
+            ohlcv_summary=ohlcv_summary,
+            symbol_indicators=symbol_indicators,
+            market_limits=market_limits,
+            symbol_events=symbol_events,
+            symbol_trend_scores=symbol_trend_scores,
+            sentiment_trend=sentiment_trend,
+            correlation_matrix=correlation_matrix,
+            ohlcv_data=ohlcv_data,
+            perf=perf,
+            market_trend=market_trend,
+            session_info=session_info,
+            market_breadth=market_breadth,
+            trading_paused_bool=trading_paused_bool,
+            symbol_tenure=symbol_tenure,
+            symbol_max_tenure=symbol_max_tenure,
+            vix=vix,
+            trade_pattern_analysis=trade_pattern_analysis,
+            min_viable_amount=min_viable_amount,
+            base_balance=base_balance,
+            per_symbol_budget=per_symbol_budget,
+            auto_resume_note=auto_resume_note,
+            effective_temp=effective_temp,
+            btp_ytm=btp_ytm,
+            news_sentiment=news_sentiment,
+            is_user_forced=is_user_forced,
+            reasoning_effort=reasoning_effort,
+        )
+        response, llm_provider, llm_model = await self.llm_runner.run_final_selection_llm_call(
+            chunk_results=chunk_results,
+            sample_pairs=sample_pairs,
+            base_balance=base_balance,
+            per_symbol_budget=per_symbol_budget,
+            perf=perf,
+            market_trend=market_trend,
+            session_info=session_info,
+            market_breadth=market_breadth,
+            full_market_breadth=full_market_breadth,
+            trading_paused_bool=trading_paused_bool,
+            symbol_tenure=symbol_tenure,
+            symbol_max_tenure=symbol_max_tenure,
+            trade_pattern_analysis=trade_pattern_analysis,
+            vix=vix,
+            min_viable_amount=min_viable_amount,
+            market_limits=market_limits,
+            available_timeframes_by_symbol=available_timeframes_by_symbol,
+            auto_resume_note=auto_resume_note,
+            effective_temp=effective_temp,
+            news_sentiment=news_sentiment,
+            is_user_forced=is_user_forced,
+            reasoning_effort=reasoning_effort,
+        )
+        return response, llm_provider, llm_model, effective_temp, trading_paused_bool
+
     async def reevaluate_symbols_impl(self, force: bool = False):
-        """Main re-evaluation orchestration: fetch assets, quotes, indicators,
-        run LLM chunked evaluation, final selection, and post-selection cleanup."""
+        """Main re-evaluation orchestration: delegates to phase methods."""
         self._step = 0
         self._total_steps = 12
         engine = self.engine
         try:
-            _cooldown_result = await self.check_cooldown_and_reset(force)
-            if _cooldown_result is None:
+            # Phase 1: Cooldown, assets, quotes
+            data = await self._fetch_candidate_data(force)
+            if data is None:
                 return
-            is_user_forced, is_market_condition_trigger, now, is_rebalance = _cooldown_result
-            _assets_result = await self.data_fetcher.fetch_and_filter_candidate_assets(now)
-            if _assets_result is None:
-                return
-            available_pairs, btp_pairs, etf_pairs, old_symbols, last_key = _assets_result
-            _quotes_result = await self.data_fetcher.fetch_quotes_and_sort(
-                available_pairs, btp_pairs, etf_pairs, now, last_key
-            )
-            if _quotes_result is None:
-                return
-            balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs, btp_ytm = _quotes_result
-            self._log_step("Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
-            news_sentiment, sentiment_trend, market_trend = await self.data_fetcher.fetch_news_sentiment_and_trends(
-                sample_pairs, tickers
-            )
+            is_user_forced, is_market_condition_trigger, now, is_rebalance, \
+                available_pairs, btp_pairs, etf_pairs, old_symbols, last_key, \
+                balance, base_balance, per_symbol_budget, tickers, sample_pairs, \
+                stock_pairs, btp_ytm = data
 
-
-            # Fetch OHLCV from database only for ALL candidate pairs.
-            # Background tasks (_download_all_assets_data_loop) keep the DB populated.
-            # This avoids blocking reevaluation on slow API calls.
             sorted_by_vol = sample_pairs
-            self._log_step("Fetching OHLCV from DB for %d symbols...", len(sorted_by_vol))
-            ohlcv_data, available_timeframes_by_symbol = await self.data_fetcher.fetch_ohlcv_from_db(sorted_by_vol)
 
-            self._log_step("Batch-fetching indicators for %d symbols...", len(sorted_by_vol))
-            symbol_indicators, symbol_trend_scores = await self.data_fetcher.fetch_indicators_and_trend_scores(
-                sorted_by_vol, sample_pairs
-            )
+            # Phase 2: News, OHLCV, indicators, market limits
+            news_sentiment, sentiment_trend, market_trend, symbol_indicators, \
+                symbol_trend_scores, ohlcv_data, available_timeframes_by_symbol, \
+                market_limits = await self._fetch_market_data(sample_pairs, tickers, sorted_by_vol)
 
-            # Use asset info for minimum order size constraints
-            market_limits = await self.data_fetcher.compute_market_limits(sample_pairs, tickers)
-
-            # effective_max_symbols is set by the LLM's max_stocks field.
-            # Do NOT zero it out based on per-symbol budget calculations.
-            # The LLM decides how many symbols to trade and how to allocate capital dynamically.
+            # Recompute effective_max_symbols and per_symbol_budget
             engine.effective_max_symbols = engine.max_symbols
-
-            # Recompute per-symbol budget with the effective max
             per_symbol_budget = base_balance / engine.effective_max_symbols
-
             min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
-
-            self._log_step("Computing correlation matrix and performance metrics...")
-            correlation_matrix = await self.data_fetcher.get_or_compute_correlation_matrix(
-                ohlcv_data, sorted_by_vol
-            )
 
             perf = await engine.event_bus.request("compute_performance_metrics")
             trade_pattern_analysis = await engine.event_bus.request("compute_trade_pattern_analysis")
 
-            # --- Incremental re-evaluation: read rotating batch offset ---
-            incremental_offset = 0
-            incremental_batch_size = None
-            if settings.INCREMENTAL_REEVALUATION_ENABLED:
-                incremental_batch_size = settings.INCREMENTAL_REEVALUATION_BATCH_SIZE
-                offset_raw = await asyncio.to_thread(engine.redis.get, "reeval:incremental_offset")
-                if offset_raw:
-                    try:
-                        incremental_offset = int(offset_raw)
-                    except (ValueError, TypeError):
-                        incremental_offset = 0
-
-            # --- Composite opportunity score and shortlist building ---
-            composite_scores, shortlist = self.shortlist_builder.compute_composite_scores_and_shortlist(
-                sample_pairs, symbol_trend_scores, news_sentiment, trade_pattern_analysis, etf_pairs, btp_pairs,
-                incremental_offset=incremental_offset,
-                incremental_batch_size=incremental_batch_size,
-            )
+            # Phase 3: Correlation, composite scores, shortlist
+            correlation_matrix, composite_scores, shortlist, incremental_offset, \
+                incremental_batch_size = await self._compute_analytics_and_shortlist(
+                    sample_pairs, ohlcv_data, sorted_by_vol, symbol_trend_scores,
+                    news_sentiment, trade_pattern_analysis, etf_pairs, btp_pairs
+                )
             sorted_by_composite = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
             sample_pairs = shortlist
             logger.info(f"LLM candidate list: {len(sample_pairs)} symbols (will be evaluated in chunks)")
 
-            # --- Incremental re-evaluation: advance the rotating batch offset ---
             if settings.INCREMENTAL_REEVALUATION_ENABLED:
                 new_offset = incremental_offset + settings.INCREMENTAL_REEVALUATION_BATCH_SIZE
                 await asyncio.to_thread(engine.redis.set, "reeval:incremental_offset", str(new_offset))
 
-            symbol_events, session_info, market_breadth, full_market_breadth, vix = await self.data_fetcher.fetch_shortlist_context(
-                sample_pairs, tickers, market_trend
-            )
-
-            trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp, reasoning_effort = await self.llm_runner.prepare_reeval_prompt_context(
-                now=now,
-                sample_pairs=sample_pairs,
-                ohlcv_data=ohlcv_data,
-                sentiment_trend=sentiment_trend,
-                market_breadth=market_breadth,
-                is_rebalance=is_rebalance,
-            )
-
-            # --- Chunked LLM evaluation ---
-            chunk_results = await self.llm_runner.evaluate_llm_chunks(
+            # Phase 4: LLM evaluation
+            response, llm_provider, llm_model, effective_temp, trading_paused_bool = await self._run_llm_evaluation(
                 sample_pairs=sample_pairs,
                 tickers=tickers,
-                ohlcv_summary=ohlcv_summary,
+                ohlcv_data=ohlcv_data,
                 symbol_indicators=symbol_indicators,
                 market_limits=market_limits,
-                symbol_events=symbol_events,
                 symbol_trend_scores=symbol_trend_scores,
                 sentiment_trend=sentiment_trend,
                 correlation_matrix=correlation_matrix,
-                ohlcv_data=ohlcv_data,
                 perf=perf,
                 market_trend=market_trend,
-                session_info=session_info,
-                market_breadth=market_breadth,
-                trading_paused_bool=trading_paused_bool,
-                symbol_tenure=symbol_tenure,
-                symbol_max_tenure=symbol_max_tenure,
-                vix=vix,
                 trade_pattern_analysis=trade_pattern_analysis,
                 min_viable_amount=min_viable_amount,
                 base_balance=base_balance,
                 per_symbol_budget=per_symbol_budget,
-                auto_resume_note=auto_resume_note,
-                effective_temp=effective_temp,
                 btp_ytm=btp_ytm,
                 news_sentiment=news_sentiment,
                 is_user_forced=is_user_forced,
-                reasoning_effort=reasoning_effort,
-            )
-
-            # --- Final selection call ---
-            response, llm_provider, llm_model = await self.llm_runner.run_final_selection_llm_call(
-                chunk_results=chunk_results,
-                sample_pairs=sample_pairs,
-                base_balance=base_balance,
-                per_symbol_budget=per_symbol_budget,
-                perf=perf,
-                market_trend=market_trend,
-                session_info=session_info,
-                market_breadth=market_breadth,
-                full_market_breadth=full_market_breadth,
-                trading_paused_bool=trading_paused_bool,
-                symbol_tenure=symbol_tenure,
-                symbol_max_tenure=symbol_max_tenure,
-                trade_pattern_analysis=trade_pattern_analysis,
-                vix=vix,
-                min_viable_amount=min_viable_amount,
-                market_limits=market_limits,
-                available_timeframes_by_symbol=available_timeframes_by_symbol,
-                auto_resume_note=auto_resume_note,
-                effective_temp=effective_temp,
-                news_sentiment=news_sentiment,
-                is_user_forced=is_user_forced,
-                reasoning_effort=reasoning_effort,
-            )
-
-            parsed, pause_trading, pause_reason, pause_duration, deduped, llm_provider, llm_model = await self.process_llm_response(
-                response=response,
-                llm_provider=llm_provider,
-                llm_model=llm_model,
-                effective_temp=effective_temp,
-                sample_pairs=sample_pairs,
-                ohlcv_data=ohlcv_data,
-                sorted_by_composite=sorted_by_composite,
-                market_limits=market_limits,
-                base_balance=base_balance,
-                old_symbols=old_symbols,
-                trading_paused_bool=trading_paused_bool,
-                etf_pairs=etf_pairs,
-                btp_pairs=btp_pairs,
                 is_rebalance=is_rebalance,
-                tickers=tickers,
-                is_user_forced=is_user_forced,
+                now=now,
+                available_timeframes_by_symbol=available_timeframes_by_symbol,
             )
+
+            # Phase 5: Process response and finalize
+            parsed, pause_trading, pause_reason, pause_duration, deduped, \
+                llm_provider, llm_model = await self.process_llm_response(
+                    response=response,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                    effective_temp=effective_temp,
+                    sample_pairs=sample_pairs,
+                    ohlcv_data=ohlcv_data,
+                    sorted_by_composite=sorted_by_composite,
+                    market_limits=market_limits,
+                    base_balance=base_balance,
+                    old_symbols=old_symbols,
+                    trading_paused_bool=trading_paused_bool,
+                    etf_pairs=etf_pairs,
+                    btp_pairs=btp_pairs,
+                    is_rebalance=is_rebalance,
+                    tickers=tickers,
+                    is_user_forced=is_user_forced,
+                )
 
             await self.finalize_reevaluation(
                 sample_pairs=sample_pairs,
