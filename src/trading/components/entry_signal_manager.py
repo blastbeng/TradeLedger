@@ -351,6 +351,21 @@ class EntrySignalManager:
                 indicator_name = cond.get("indicator")
                 thresh = cond.get("threshold")
                 direction = cond.get("direction")
+
+                # Handle 'ema' with 'period' parameter
+                if indicator_name == "ema":
+                    period = cond.get("period")
+                    if period == 9:
+                        indicator_name = "ema_9"
+                    elif period == 21:
+                        indicator_name = "ema_21"
+                    else:
+                        logger.warning(
+                            f"Unsupported EMA period '{period}' in indicator_combo "
+                            f"entry condition for {symbol}"
+                        )
+                        return False
+
                 if indicator_name is None or thresh is None or direction is None:
                     logger.warning(
                         f"Malformed indicator_combo condition for {symbol}: {cond}"
