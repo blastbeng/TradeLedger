@@ -186,6 +186,34 @@ class DatabaseClosePriceHandler(QuoteHandler):
         return context
 
 
+class BorsaItalianaQuoteHandler(QuoteHandler):
+    """Fetches quotes from Borsa Italiana."""
+    def process(self, context: QuoteContext) -> QuoteContext:
+        if not context.missing_symbols:
+            return context
+
+        bi_symbols = list(context.missing_symbols)
+        if bi_symbols and not _check_bi_circuit():
+            for sym in bi_symbols:
+                try:
+                    db_sym = sym
+                    suffix = settings.TICKER_SUFFIX
+                    if suffix and db_sym.endswith(suffix):
+                        db_sym = db_sym[:-len(suffix)]
+                    isin = get_isin_from_db(db_sym)
+                    bi_symbol = isin if isin else sym
+                    bi_quote = get_borsa_italiana_quote(bi_symbol)
+                    if bi_quote and bi_quote.get("last") is not None:
+                        context.result.setdefault(sym, {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}).update(bi_quote)
+                        context.result[sym]["last_update"] = int(time.time() * 1000)
+                        context.result[sym]["source"] = "borsa_italiana"
+                        logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
+                except Exception as e:
+                    logger.warning(f"get_quotes: Borsa Italiana failed for {sym}: {type(e).__name__}: {e}")
+        
+        return context
+
+
 class CircuitBreaker:
     """Generic circuit breaker for market data sources."""
     def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60):
