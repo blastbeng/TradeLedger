@@ -542,15 +542,9 @@ def _validate_required_params(
         # Cap the minimum hold time to avoid absurd values for very long timeframes (e.g., 5Y)
         min_hold = min(min_hold_time_mult * timeframe_seconds, 157_680_000)  # cap at ~5 years
         if mht < min_hold:
-            return Signal(
-                action="HOLD",
-                confidence=0.0,
-                reasoning=(
-                    f"max_hold_time_seconds ({mht}s) is too short for the "
-                    f"timeframe ({timeframe_seconds}s candles); "
-                    f"minimum is {min_hold}s"
-                )
-            )
+            mht = min_hold
+            params["max_hold_time_seconds"] = mht
+            logger.info(f"Validator: adjusted max_hold_time_seconds to {mht}s (minimum for {timeframe_seconds}s timeframe)")
     return None
 
 
