@@ -716,7 +716,7 @@ class MarketDataManager:
                 return ind
             return None
         except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
-            logger.warning(f"Failed to compute/store indicators for {symbol} {timeframe}: {type(e).__name__}: {e}")
+            logger.exception(f"Failed to compute/store indicators for {symbol} {timeframe}: {type(e).__name__}: {e}")
             return None
     async def _fill_gaps(self, symbol: str, timeframe: str):
         """Detect and fill gaps in stored OHLCV data for a symbol/timeframe."""

@@ -519,7 +519,7 @@ def get_borsa_italiana_candles(
 
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError, OSError) as e:
         _record_bi_error(e)
-        logger.warning(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
+        logger.exception(f"Borsaitaliana candle download failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
         return None
 
 

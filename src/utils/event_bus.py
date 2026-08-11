@@ -41,7 +41,7 @@ class EventBus:
                 return await callback(*args, **kwargs)
             return callback(*args, **kwargs)
         except Exception as e:
-            logger.error(f"Event handler error for '{event_name}': {type(e).__name__}: {e}", exc_info=True)
+            logger.exception(f"Event handler error for '{event_name}': {type(e).__name__}: {e}")
             return None
 
     def log_subscription_summary(self) -> None:

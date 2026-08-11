@@ -1398,7 +1398,8 @@ def get_cached_llm_response(
                     redis_client.expire("llm:consecutive_failures", 3600)
                 except Exception:
                     pass
-                raise fallback_e
+                logger.exception(f"All LLM providers failed for model_type={model_type}: {fallback_e}")
+                return None
     if response_text is None:
         logger.warning("LLM returned None response; not caching.")
         _save_metric({
