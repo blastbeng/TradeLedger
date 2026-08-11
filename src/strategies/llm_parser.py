@@ -607,6 +607,14 @@ def parse_llm_response(response_text: str) -> Signal:
         # --- Clamp parameter ranges to prevent hallucinations (BEFORE semantic validation) ---
         params = _clamp_parameter_ranges(params)
 
+        # Re-read clamped values so the Signal reflects the safe ranges
+        stop_loss = params.get("stop_loss_pct")
+        take_profit = params.get("take_profit_pct")
+        take_profit_atr_multiple = params.get("take_profit_atr_multiple")
+        position_size = params.get("position_size_fraction")
+        if position_size is not None:
+            position_size = max(0.0, min(1.0, position_size))
+
         # --- Semantic quality validation (after clamping, so clamped values don't trigger false positives) ---
         action, reasoning = _validate_semantic_quality(action, params, reasoning)
 
