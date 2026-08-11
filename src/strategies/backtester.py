@@ -966,7 +966,8 @@ def walk_forward_backtest(
     """Run walk-forward analysis by splitting candles into non-overlapping windows.
 
     Runs backtest_strategy on each window separately, then combines all trades
-    for aggregate out-of-sample stats.
+    for aggregate out-of-sample stats. Each window is validated for statistical
+    significance based on minimum candle count and minimum trade count.
     """
     if not candles or len(candles) < num_windows * 10:
         return {"insufficient_data": True, "per_window": [], "combined_stats": _empty_result()}
@@ -974,10 +975,14 @@ def walk_forward_backtest(
     if config is None or config.backtest_entry_config is None:
         return {"insufficient_data": True, "per_window": [], "combined_stats": _empty_result()}
 
+    min_candles_per_window = getattr(settings, "MIN_STATISTICALLY_SIGNIFICANT_CANDLES", 100)
+    min_trades_per_window = max(getattr(settings, "BACKTEST_MIN_TRADES", 5), 5)
+
     base_window_size = len(candles) // num_windows
     remainder = len(candles) % num_windows
     per_window_stats = []
     all_trades = []
+    significant_windows = 0
 
     for i in range(num_windows):
         # Distribute the remainder across the first `remainder` windows
@@ -985,7 +990,19 @@ def walk_forward_backtest(
         start = i * base_window_size + min(i, remainder)
         end = start + base_window_size + (1 if i < remainder else 0)
         window_candles = candles[start:end]
-        if len(window_candles) < 5:
+
+        # Validate that the window has enough candles for statistical significance
+        if len(window_candles) < min_candles_per_window:
+            per_window_stats.append({
+                "window": i + 1,
+                "start_ts": window_candles[0][0] if window_candles else 0,
+                "end_ts": window_candles[-1][0] if window_candles else 0,
+                "candle_count": len(window_candles),
+                "insufficient_data": True,
+                "statistically_significant": False,
+                "error": f"Window has {len(window_candles)} candles, need ≥{min_candles_per_window} for significance.",
+                **_empty_result(),
+            })
             continue
 
         result = backtest_strategy(
@@ -996,32 +1013,43 @@ def walk_forward_backtest(
             window_trades, window_stats = result
             all_trades.extend(window_trades)
         else:
+            window_trades = []
             window_stats = result
+
+        is_significant = window_stats.get("total_trades", 0) >= min_trades_per_window
+        if is_significant:
+            significant_windows += 1
 
         per_window_stats.append({
             "window": i + 1,
             "start_ts": window_candles[0][0],
             "end_ts": window_candles[-1][0],
             "candle_count": len(window_candles),
+            "statistically_significant": is_significant,
+            "min_trades_required": min_trades_per_window,
             **window_stats,
         })
 
     buy_and_hold_pct = 0.0
     if len(candles) >= 2 and candles[0][4] > 0:
         buy_and_hold_pct = (candles[-1][4] - candles[0][4]) / candles[0][4]
-    
+
     total_time_seconds = 0.0
     if len(candles) >= 2:
         total_time_seconds = (candles[-1][0] - candles[0][0]) / 1000.0
     total_time_years = total_time_seconds / (365.25 * 24 * 3600)
-    
+
     combined = _compute_stats(all_trades, buy_and_hold_pct=buy_and_hold_pct, total_time_years=total_time_years) if all_trades else _empty_result()
+
+    # Flag overall insufficient data if fewer than half the windows are statistically significant
+    overall_insufficient = significant_windows < (num_windows / 2)
 
     return {
         "per_window": per_window_stats,
         "combined_stats": combined,
         "num_windows": num_windows,
-        "insufficient_data": False,
+        "significant_windows": significant_windows,
+        "insufficient_data": overall_insufficient,
     }
 
 
@@ -1034,7 +1062,21 @@ def format_walk_forward_summary(wf_stats: Dict[str, Any]) -> str:
     window_errors = [w.get("error") for w in per_window if w.get("error")]
     if window_errors and len(window_errors) == len(per_window):
         return f"WF: FAIL"
-    parts = [f"W{w['window']}:{w.get('total_trades', 0)}t,WR={w.get('win_rate', 0)*100:.0f}%,PnL={w.get('total_pnl_pct', 0)*100:+.1f}%" for w in per_window]
+    parts = []
+    for w in per_window:
+        sig_flag = "" if w.get("statistically_significant", True) else "⚠"
+        parts.append(
+            f"W{w['window']}{sig_flag}:{w.get('total_trades', 0)}t,"
+            f"WR={w.get('win_rate', 0)*100:.0f}%,"
+            f"PnL={w.get('total_pnl_pct', 0)*100:+.1f}%"
+        )
     combined = wf_stats.get("combined_stats", {})
-    parts.append(f"C:{combined.get('total_trades', 0)}t,WR={combined.get('win_rate', 0)*100:.0f}%,PnL={combined.get('total_pnl_pct', 0)*100:+.1f}%")
-    return "WF|" + "|".join(parts)
+    parts.append(
+        f"C:{combined.get('total_trades', 0)}t,"
+        f"WR={combined.get('win_rate', 0)*100:.0f}%,"
+        f"PnL={combined.get('total_pnl_pct', 0)*100:+.1f}%"
+    )
+    sig_count = wf_stats.get("significant_windows", 0)
+    total = wf_stats.get("num_windows", 0)
+    sig_summary = f",Sig={sig_count}/{total}" if sig_count < total else ""
+    return "WF|" + "|".join(parts) + sig_summary
