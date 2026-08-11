@@ -178,7 +178,8 @@ class SellExecutor:
         """Execute a SELL signal."""
         engine = self.engine
         base, quote = symbol.split("/")
-        pos = self.shared_state.positions.get(symbol)
+        async with self.shared_state._positions_lock:
+            pos = self.shared_state.positions.get(symbol)
 
         # Cancel any native exit orders before selling
         if pos:

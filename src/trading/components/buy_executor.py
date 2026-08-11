@@ -372,7 +372,9 @@ class BuyExecutor:
             pos_tickers = await engine._get_cached_position_tickers()
             total_open_exposure = 0.0
             total_open_stop_risk = 0.0
-            for sym, pos in self.shared_state.positions.items():
+            async with self.shared_state._positions_lock:
+                positions_snapshot = list(self.shared_state.positions.items())
+            for sym, pos in positions_snapshot:
                 try:
                     t = pos_tickers.get(sym)
                     price = t['last'] if t and t.get('last') else 0.0
@@ -453,7 +455,9 @@ class BuyExecutor:
             correlated_exposure = 0.0
             try:
                 if corr_matrix and symbol in corr_matrix:
-                    for sym, pos in self.shared_state.positions.items():
+                    async with self.shared_state._positions_lock:
+                        positions_snapshot = list(self.shared_state.positions.items())
+                    for sym, pos in positions_snapshot:
                         if sym == symbol:
                             continue
                         corr = corr_matrix.get(symbol, {}).get(sym, 0.0)

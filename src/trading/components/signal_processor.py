@@ -1356,8 +1356,9 @@ class SignalProcessor:
         partial_tp_triggered_levels = []
         dust_sweep_triggered = False
         dust_sweep_review_count = 0
-        if symbol in self.shared_state.positions:
-            pos = self.shared_state.positions[symbol]
+        async with self.shared_state._positions_lock:
+            pos = self.shared_state.positions.get(symbol)
+        if pos:
             max_hold_expired = pos.get("_max_hold_expired", False)
             max_hold_expired_count = pos.get("_max_hold_expired_count", 1)
             stop_loss_triggered = pos.get("_stop_loss_triggered", False)

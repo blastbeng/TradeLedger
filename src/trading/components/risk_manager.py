@@ -48,7 +48,11 @@ class RiskManager:
         pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
         now_ms = int(time.time() * 1000)
 
-        target_symbols = symbols_to_check if symbols_to_check is not None else list(self.shared_state.positions.keys())
+        if symbols_to_check is not None:
+            target_symbols = symbols_to_check
+        else:
+            async with self.shared_state._positions_lock:
+                target_symbols = list(self.shared_state.positions.keys())
 
         for symbol in target_symbols:
             pos = self.shared_state.positions.get(symbol)
@@ -147,7 +151,9 @@ class RiskManager:
             unrealized_pnl = 0.0
             if self.shared_state.positions:
                 pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
-                for symbol, pos in self.shared_state.positions.items():
+                async with self.shared_state._positions_lock:
+                    positions_snapshot = list(self.shared_state.positions.items())
+                for symbol, pos in positions_snapshot:
                     t = pos_tickers.get(symbol)
                     current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
                     amount = pos.get('amount', 0.0)
@@ -384,7 +390,9 @@ class RiskManager:
         pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
         total_exposure = 0.0
         symbol_exposures = {}
-        for symbol, pos in self.shared_state.positions.items():
+        async with self.shared_state._positions_lock:
+            positions_snapshot = list(self.shared_state.positions.items())
+        for symbol, pos in positions_snapshot:
             t = pos_tickers.get(symbol)
             current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
             exposure = pos.get('amount', 0.0) * current_price

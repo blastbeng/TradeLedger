@@ -62,7 +62,9 @@ class PositionManager:
         portfolio_exposure = 0.0
         portfolio_stop_risk = 0.0
         pos_tickers = await engine._market_data_manager._get_all_position_tickers()
-        for sym, pos in self.shared_state.positions.items():
+        async with self.shared_state._positions_lock:
+            positions_snapshot = list(self.shared_state.positions.items())
+        for sym, pos in positions_snapshot:
             try:
                 t = pos_tickers.get(sym)
                 price = t['last'] if t and t.get('last') else 0.0
@@ -119,7 +121,9 @@ class PositionManager:
 
         open_value = 0.0
         pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
-        for sym, pos in self.shared_state.positions.items():
+        async with self.shared_state._positions_lock:
+            positions_snapshot = list(self.shared_state.positions.items())
+        for sym, pos in positions_snapshot:
             try:
                 t = pos_tickers.get(sym)
                 price = t['last'] if t and t.get('last') else 0.0
@@ -236,7 +240,9 @@ class PositionManager:
         position_exposures = []
         total_stop_risk = 0.0
         pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
-        for sym, pos in self.shared_state.positions.items():
+        async with self.shared_state._positions_lock:
+            positions_snapshot = list(self.shared_state.positions.items())
+        for sym, pos in positions_snapshot:
             try:
                 t = pos_tickers.get(sym)
                 price = t['last'] if t and t.get('last') else 0.0
@@ -313,7 +319,9 @@ class PositionManager:
         engine = self.engine
         open_trades = []
         pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
-        for symbol, pos in self.shared_state.positions.items():
+        async with self.shared_state._positions_lock:
+            positions_snapshot = list(self.shared_state.positions.items())
+        for symbol, pos in positions_snapshot:
             # Skip invalid positions (zero amount or zero price)
             if pos.get("amount", 0) <= 0 or pos.get("price", 0) <= 0:
                 continue
@@ -370,7 +378,8 @@ class PositionManager:
         unrealized_pnl = 0.0
         try:
             pos_tickers = engine._market_data_manager._get_all_position_tickers_sync()
-            for sym, pos in self.shared_state.positions.items():
+            positions_snapshot = list(self.shared_state.positions.items())
+            for sym, pos in positions_snapshot:
                 t = pos_tickers.get(sym)
                 if t and t.get('last'):
                     unrealized_pnl += (t['last'] - pos['price']) * pos['amount']
