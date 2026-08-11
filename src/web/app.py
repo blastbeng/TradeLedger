@@ -336,6 +336,31 @@ async def status():
         positions[sym] = pos_copy
 
     balances = await run_in_threadpool(engine.trader.fetch_balance)
+    
+    # Fetch EUR conversion rates for balances
+    forex_symbols = [f"{cur}EUR=X" for cur in balances if cur != "EUR"]
+    eur_rates = {}
+    if forex_symbols:
+        try:
+            quotes = await engine._market_data_manager._get_quotes_async(forex_symbols, timeout=15.0)
+            for sym, q in quotes.items():
+                if q and q.get("last"):
+                    cur = sym.replace("EUR=X", "")
+                    eur_rates[cur] = q["last"]
+        except Exception as e:
+            logger.warning(f"Status EUR rate fetch failed: {type(e).__name__}: {e}")
+
+    balances_eur = {}
+    for cur, amt in balances.items():
+        if cur == "EUR":
+            balances_eur[cur] = amt
+        else:
+            rate = eur_rates.get(cur)
+            if rate:
+                balances_eur[cur] = amt * rate
+            else:
+                balances_eur[cur] = None
+
     queued_orders_payload = [
         {k: v for k, v in q.items() if k != "signal"}
         for q in engine.queued_orders
@@ -344,6 +369,7 @@ async def status():
         "current_symbols": current_symbols,
         "positions": positions,
         "balances": balances,
+        "balances_eur": balances_eur,
         "paused": paused,
         "market_open": market_open,
         "queued_orders": queued_orders_payload,
@@ -942,6 +968,31 @@ async def websocket_endpoint(websocket: WebSocket):
                     positions = dict(position_results)
 
                     balances = await run_in_threadpool(engine.trader.fetch_balance)
+                    
+                    # Fetch EUR conversion rates for balances
+                    forex_symbols = [f"{cur}EUR=X" for cur in balances if cur != "EUR"]
+                    eur_rates = {}
+                    if forex_symbols:
+                        try:
+                            quotes = await engine._market_data_manager._get_quotes_async(forex_symbols, timeout=15.0)
+                            for sym, q in quotes.items():
+                                if q and q.get("last"):
+                                    cur = sym.replace("EUR=X", "")
+                                    eur_rates[cur] = q["last"]
+                        except Exception as e:
+                            logger.warning(f"WebSocket EUR rate fetch failed: {type(e).__name__}: {e}")
+
+                    balances_eur = {}
+                    for cur, amt in balances.items():
+                        if cur == "EUR":
+                            balances_eur[cur] = amt
+                        else:
+                            rate = eur_rates.get(cur)
+                            if rate:
+                                balances_eur[cur] = amt * rate
+                            else:
+                                balances_eur[cur] = None
+
                     pause_info = await engine.get_pause_status()
 
                     # Strip large/unserializable fields from queued orders before sending
@@ -976,6 +1027,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "current_symbols": current_symbols,
                         "positions": positions,
                         "balances": balances,
+                        "balances_eur": balances_eur,
                         "paused": is_paused,
                         "pause_info": pause_info,
                         "queued_orders": queued_orders_payload,

@@ -348,8 +348,32 @@ class TelegramBot:
         msg += "\n<b>💰 Balances:</b>\n"
         non_zero = {k: v for k, v in balance.items() if v > 0}
         if non_zero:
+            # Fetch EUR conversion rates for non-EUR balances
+            forex_symbols = [f"{cur}EUR=X" for cur in non_zero if cur != "EUR"]
+            eur_rates = {}
+            if forex_symbols:
+                try:
+                    quotes = await asyncio.wait_for(
+                        self.engine._market_data_manager._get_quotes_async(forex_symbols, timeout=15.0),
+                        timeout=20.0
+                    )
+                    for sym, q in quotes.items():
+                        if q and q.get("last"):
+                            cur = sym.replace("EUR=X", "")
+                            eur_rates[cur] = q["last"]
+                except Exception as e:
+                    logger.warning(f"Failed to fetch EUR rates for balances: {type(e).__name__}: {e}")
+
             for cur, amt in non_zero.items():
-                msg += f"  • {cur}: {amt:.6f}\n"
+                if cur == "EUR":
+                    msg += f"  • {cur}: {amt:.6f}\n"
+                else:
+                    rate = eur_rates.get(cur)
+                    if rate:
+                        eur_value = amt * rate
+                        msg += f"  • {cur}: {amt:.6f} (~{eur_value:.2f} EUR)\n"
+                    else:
+                        msg += f"  • {cur}: {amt:.6f}\n"
         else:
             msg += "  No balances\n"
 
