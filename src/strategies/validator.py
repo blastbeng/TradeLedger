@@ -576,7 +576,9 @@ def _validate_logical_consistency(
             return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")
         tsd = params.get("trailing_stop_distance_pct")
         if tsd is not None and sl is not None and tsd >= sl:
-            return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop_distance_pct must be less than stop_loss_pct")
+            tsd = sl * 0.5
+            params["trailing_stop_distance_pct"] = tsd
+            logger.info(f"Validator: adjusted trailing_stop_distance_pct to {tsd:.4f} (must be < stop_loss_pct={sl:.4f}) for {symbol}")
     return None
 
 

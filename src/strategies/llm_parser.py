@@ -70,10 +70,6 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
             if take_profit <= 0 or take_profit > 5.0:
                 issues.append(f"unreasonable take_profit_pct ({take_profit})")
                 
-        if stop_loss is not None and take_profit is not None:
-            if take_profit < stop_loss:
-                issues.append(f"take_profit_pct ({take_profit}) < stop_loss_pct ({stop_loss})")
-                
         if stop_loss_atr is not None:
             if stop_loss_atr <= 0 or stop_loss_atr > 10.0:
                 issues.append(f"unreasonable stop_loss_atr_multiple ({stop_loss_atr})")
@@ -608,11 +604,11 @@ def parse_llm_response(response_text: str) -> Signal:
             if isinstance(bec, dict):
                 params["backtest_entry_config"] = bec
 
-        # --- Semantic quality validation ---
-        action, reasoning = _validate_semantic_quality(action, params, reasoning)
-
-        # --- Clamp parameter ranges to prevent hallucinations ---
+        # --- Clamp parameter ranges to prevent hallucinations (BEFORE semantic validation) ---
         params = _clamp_parameter_ranges(params)
+
+        # --- Semantic quality validation (after clamping, so clamped values don't trigger false positives) ---
+        action, reasoning = _validate_semantic_quality(action, params, reasoning)
 
         return Signal(
             action=action,
