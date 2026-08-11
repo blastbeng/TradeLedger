@@ -557,6 +557,17 @@ class Settings(BaseSettings):
             raise ValueError("QUOTE_MAX_STALENESS_SECONDS must be >= 0")
         return v
 
+    # Stale quote threshold in hours for DB close price fallback in get_quotes/get_quotes_cached.
+    # DB close prices older than this are considered too stale to use.
+    STALE_QUOTE_THRESHOLD_HOURS: int = 48
+
+    @field_validator("STALE_QUOTE_THRESHOLD_HOURS")
+    @classmethod
+    def validate_stale_quote_threshold_hours(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("STALE_QUOTE_THRESHOLD_HOURS must be >= 1")
+        return v
+
     # Full asset OHLCV download interval (seconds) – how often to backfill
     # OHLCV data for ALL tradable assets (stocks, ETFs, BTPs), not just the
     # currently selected symbols.
@@ -1266,6 +1277,16 @@ class Settings(BaseSettings):
     NEWS_TICKER_DISCOVERY_ENABLED: bool = False
     NEWS_TICKER_DISCOVERY_MAX_SYMBOLS: int = 10
 
+    # Maximum number of DuckDuckGo ISIN lookups per asset discovery cycle
+    MAX_DDG_LOOKUPS: int = 10
+
+    @field_validator("MAX_DDG_LOOKUPS")
+    @classmethod
+    def validate_max_ddg_lookups(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("MAX_DDG_LOOKUPS must be >= 0")
+        return v
+
     # Facebook (Graph API)
     FACEBOOK_PAGE_ACCESS_TOKEN: Optional[str] = None
     FACEBOOK_PAGE_ID: Optional[str] = None
@@ -1343,6 +1364,27 @@ class Settings(BaseSettings):
 
     # Maximum number of symbols to include in correlation matrix computation
     MAX_CORR_SYMBOLS: int = 50
+
+    # High correlation threshold for position sizing (positions with correlation above this
+    # value are considered highly correlated and reduce available exposure)
+    CORRELATION_HIGH_THRESHOLD: float = 0.7
+
+    @field_validator("CORRELATION_HIGH_THRESHOLD")
+    @classmethod
+    def validate_correlation_high_threshold(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("CORRELATION_HIGH_THRESHOLD must be between 0.0 and 1.0")
+        return v
+
+    # Maximum single-asset exposure as a fraction of total portfolio exposure
+    MAX_SINGLE_ASSET_EXPOSURE_PCT: float = 0.30
+
+    @field_validator("MAX_SINGLE_ASSET_EXPOSURE_PCT")
+    @classmethod
+    def validate_max_single_asset_exposure_pct(cls, v: float) -> float:
+        if not (0.0 < v <= 1.0):
+            raise ValueError("MAX_SINGLE_ASSET_EXPOSURE_PCT must be between 0.0 and 1.0")
+        return v
 
     # Sentiment shift threshold to trigger immediate re-evaluation
     SENTIMENT_SHIFT_THRESHOLD: float = 0.3

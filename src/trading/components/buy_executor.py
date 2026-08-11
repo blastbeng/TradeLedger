@@ -461,7 +461,7 @@ class BuyExecutor:
                         if sym == symbol:
                             continue
                         corr = corr_matrix.get(symbol, {}).get(sym, 0.0)
-                        if corr > 0.7:  # High correlation threshold
+                        if corr > settings.CORRELATION_HIGH_THRESHOLD:  # High correlation threshold
                             t = pos_tickers.get(sym)
                             price = t['last'] if t and t.get('last') else 0.0
                             correlated_exposure += pos['amount'] * price * corr

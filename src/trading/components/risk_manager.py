@@ -402,7 +402,7 @@ class RiskManager:
         if total_exposure > 0:
             for symbol, exposure in symbol_exposures.items():
                 pct = exposure / total_exposure
-                if pct > 0.30:  # 30% hard limit on single asset exposure
+                if pct > settings.MAX_SINGLE_ASSET_EXPOSURE_PCT:  # hard limit on single asset exposure
                     logger.warning(
                         f"Correlation risk: {symbol} represents {pct:.2%} of total exposure, "
                         f"exceeding the 30% hard limit."

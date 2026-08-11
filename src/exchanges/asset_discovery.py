@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 _notifier = None
 _ddg_lookup_count = 0
-MAX_DDG_LOOKUPS = 10
+MAX_DDG_LOOKUPS = settings.MAX_DDG_LOOKUPS
 
 def set_notifier(notifier):
     global _notifier
