@@ -39,11 +39,19 @@ def test_signal_pipeline_invalid_action():
 
 
 def test_signal_pipeline_semantic_validation_failure():
-    """Test pipeline handling of a semantically invalid signal (e.g., stop loss too wide)."""
+    """Test pipeline handling of a semantically invalid signal (e.g., stop loss too wide).
+
+    After the clamping fix, invalid values are clamped to safe ranges
+    instead of downgrading the action to HOLD. This prevents the bot
+    from being stuck in HOLD mode when the LLM provides slightly
+    out-of-range values.
+    """
     llm_response = '{"action": "BUY", "confidence": 0.8, "reasoning": "Test", "stop_loss_pct": 0.8}'
     signal = parse_llm_response(llm_response)
-    # Semantic validation should fail and change action to HOLD
-    assert signal.action == "HOLD"
+    # Clamping should reduce stop_loss_pct to the maximum allowed value (0.5)
+    # Action stays BUY because clamping fixes the invalid value instead of downgrading
+    assert signal.action == "BUY"
+    assert signal.stop_loss == 0.5  # Clamped from 0.8 to 0.5
     
     validated_signal = validate_signal(signal)
     assert validated_signal.action == "HOLD"
