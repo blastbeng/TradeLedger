@@ -348,9 +348,10 @@ class TelegramBot:
         msg += "\n<b>💰 Balances:</b>\n"
         non_zero = {k: v for k, v in balance.items() if v > 0}
         if non_zero:
-            # Fetch EUR conversion rates for non-EUR balances
-            forex_symbols = [f"{cur}EUR=X" for cur in non_zero if cur != "EUR"]
-            eur_rates = {}
+            base_currency = self.engine.base_currency
+            # Fetch base currency conversion rates for non-base balances
+            forex_symbols = [f"{cur}{base_currency}=X" for cur in non_zero if cur != base_currency]
+            base_rates = {}
             if forex_symbols:
                 try:
                     quotes = await asyncio.wait_for(
@@ -359,19 +360,19 @@ class TelegramBot:
                     )
                     for sym, q in quotes.items():
                         if q and q.get("last"):
-                            cur = sym.replace("EUR=X", "")
-                            eur_rates[cur] = q["last"]
+                            cur = sym.replace(f"{base_currency}=X", "")
+                            base_rates[cur] = q["last"]
                 except Exception as e:
-                    logger.warning(f"Failed to fetch EUR rates for balances: {type(e).__name__}: {e}")
+                    logger.warning(f"Failed to fetch {base_currency} rates for balances: {type(e).__name__}: {e}")
 
             for cur, amt in non_zero.items():
-                if cur == "EUR":
+                if cur == base_currency:
                     msg += f"  • {cur}: {amt:.6f}\n"
                 else:
-                    rate = eur_rates.get(cur)
+                    rate = base_rates.get(cur)
                     if rate:
-                        eur_value = amt * rate
-                        msg += f"  • {cur}: {amt:.6f} (~{eur_value:.2f} EUR)\n"
+                        base_value = amt * rate
+                        msg += f"  • {cur}: {amt:.6f} (~{base_value:.2f} {base_currency})\n"
                     else:
                         msg += f"  • {cur}: {amt:.6f}\n"
         else:
