@@ -1196,6 +1196,18 @@ class Settings(BaseSettings):
             raise ValueError("BACKTEST_MIN_CANDLES must be positive")
         return v
 
+    # Maximum age (in seconds) of the latest candle for backtesting.
+    # If the latest candle is older than this, backtesting is skipped to avoid
+    # running on stale data when OHLCV downloads have been failing.
+    BACKTEST_MAX_DATA_AGE_SECONDS: int = 86400
+
+    @field_validator("BACKTEST_MAX_DATA_AGE_SECONDS")
+    @classmethod
+    def validate_backtest_max_data_age_seconds(cls, v: int) -> int:
+        if v < 3600:
+            raise ValueError("BACKTEST_MAX_DATA_AGE_SECONDS must be >= 3600")
+        return v
+
     # Backtest settings
     BACKTEST_SLIPPAGE_VOL_PERIOD: int = 20
     BACKTEST_SLIPPAGE_ATR_WEIGHT: float = 0.05

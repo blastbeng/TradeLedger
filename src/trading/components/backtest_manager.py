@@ -165,6 +165,22 @@ class BacktestManager:
                 f"Rely on LLM analysis, fundamentals, and multi-timeframe indicators instead."
             )
 
+        # --- Skip backtesting if the latest candle is stale ---
+        if bt_candles:
+            latest_candle_ts = bt_candles[-1][0]
+            # Handle both millisecond and second timestamps
+            if latest_candle_ts > 1e12:
+                latest_candle_age_seconds = (time.time() * 1000 - latest_candle_ts) / 1000.0
+            else:
+                latest_candle_age_seconds = time.time() - latest_candle_ts
+
+            if latest_candle_age_seconds > settings.BACKTEST_MAX_DATA_AGE_SECONDS:
+                return None, (
+                    f"Backtesting skipped for {assigned_tf}: latest candle is {int(latest_candle_age_seconds / 3600)}h old "
+                    f"(max allowed {int(settings.BACKTEST_MAX_DATA_AGE_SECONDS / 3600)}h). "
+                    f"Rely on LLM analysis, fundamentals, and multi-timeframe indicators instead."
+                )
+
         bt_position_fraction = bt_params.get("position_size_fraction", 1.0 / engine.effective_max_symbols if engine.effective_max_symbols > 0 else 1.0)
         bt_trade_value = base_balance * bt_position_fraction
         if bt_trade_value > 0:
