@@ -101,6 +101,48 @@ class QuoteHandler:
         raise NotImplementedError
 
 
+class RedisQuoteHandler(QuoteHandler):
+    """Fetches quotes from the Redis cache."""
+    def process(self, context: QuoteContext) -> QuoteContext:
+        context.missing_symbols = []
+        for sym in context.symbols:
+            cache_key = f"quote:{sym}"
+            try:
+                cached = context.redis_client.get(cache_key)
+                if cached:
+                    context.result[sym] = json.loads(cached)
+                else:
+                    context.missing_symbols.append(sym)
+            except (TypeError, ValueError, RuntimeError):
+                context.missing_symbols.append(sym)
+        return context
+
+
+class DatabaseQuoteHandler(QuoteHandler):
+    """Fetches quotes from the database (up to 24 hours old)."""
+    def process(self, context: QuoteContext) -> QuoteContext:
+        if not context.missing_symbols:
+            return context
+
+        try:
+            db_quotes = get_quotes_from_db(context.missing_symbols, max_age_seconds=86400)
+            for sym in list(context.missing_symbols):
+                if sym in db_quotes:
+                    context.result[sym] = db_quotes[sym]
+                    context.missing_symbols.remove(sym)
+                    # Refresh Redis cache from DB data
+                    try:
+                        context.redis_client.set(f"quote:{sym}", json.dumps(db_quotes[sym]), ex=300)
+                    except (TypeError, ValueError, RuntimeError, ConnectionError, TimeoutError, OSError):
+                        pass
+            if db_quotes:
+                logger.debug(f"Loaded {len(db_quotes)} quotes from database (Redis miss fallback)")
+        except (RuntimeError, ValueError, OSError) as e:
+            logger.warning(f"DB quote fetch failed: {type(e).__name__}: {e}", exc_info=True)
+
+        return context
+
+
 class CircuitBreaker:
     """Generic circuit breaker for market data sources."""
     def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60):
