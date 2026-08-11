@@ -103,7 +103,7 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
                 issues.append(f"unreasonable max_unrealized_loss_pct ({max_unrealized_loss})")
                 
         if max_hold_time is not None:
-            if max_hold_time <= 0 or max_hold_time > 30 * 24 * 3600:
+            if max_hold_time <= 0 or max_hold_time > 157_680_000:
                 issues.append(f"unreasonable max_hold_time_seconds ({max_hold_time})")
                 
         if cooldown is not None and cooldown < 0:
@@ -304,7 +304,7 @@ def _clamp_parameter_ranges(params: dict) -> dict:
         "trailing_stop_activation_pct": (0.01, 5.0),
         "breakeven_activation_pct": (0.01, 5.0),
         "max_unrealized_loss_pct": (0.01, 0.5),
-        "max_hold_time_seconds": (60, 30 * 24 * 3600),
+        "max_hold_time_seconds": (60, 157_680_000),  # 60s to ~5 years (matches validator cap)
         "cooldown_after_loss_seconds": (0, 30 * 24 * 3600),
         "max_risk_per_trade_pct": (0.001, 0.1),
         "max_portfolio_risk_pct": (0.01, 1.0),
