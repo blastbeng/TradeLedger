@@ -18,6 +18,24 @@ from src.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
+
+class BIRateLimiter:
+    """Thread-safe rate limiter for Borsa Italiana API calls."""
+    def __init__(self, min_interval: float = 1.0):
+        self._min_interval = min_interval
+        self._last_call = 0.0
+        self._lock = threading.Lock()
+
+    def acquire(self):
+        with self._lock:
+            now = time.time()
+            elapsed = now - self._last_call
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_call = time.time()
+
+_bi_rate_limiter = BIRateLimiter(min_interval=1.0)
+
 # --- Borsa Italiana Circuit Breaker ---
 _bi_error_count = 0
 _bi_last_error_time = 0.0
@@ -79,6 +97,8 @@ def _get_borsa_italiana_token(isin: str, market_code: str) -> Optional[str]:
     """Dynamically fetch the bearer token from the Borsa Italiana summary chart page, with caching."""
     if _check_bi_circuit():
         return None
+
+    _bi_rate_limiter.acquire()
 
     cache_key = f"market-{market_code}"
     now = time.time()
@@ -144,6 +164,8 @@ def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[s
     if _check_bi_circuit():
         return None, None, None
 
+    _bi_rate_limiter.acquire()
+
     url = f"https://www.borsaitaliana.it/borsa/searchengine/search.html?lang=it&q={base_symbol}&Cerca=Search"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -191,6 +213,8 @@ def get_borsa_italiana_quote(symbol: str) -> Optional[Dict[str, Any]]:
     """
     if _check_bi_circuit():
         return None
+
+    _bi_rate_limiter.acquire()
 
     base = symbol.split("/")[0] if "/" in symbol else symbol
 
@@ -292,6 +316,8 @@ def get_borsa_italiana_candles(
     """
     if _check_bi_circuit():
         return None
+
+    _bi_rate_limiter.acquire()
 
     if timeframe not in BORSA_TIMEFRAME_MAP:
         return None
@@ -507,6 +533,8 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
     if _check_bi_circuit():
         return {}
 
+    _bi_rate_limiter.acquire()
+
     # Check Redis cache first
     redis_client = get_redis_client()
     cache_key = f"btp_details:{isin}"
@@ -580,6 +608,8 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
     """Discover and parse BTP bonds from Borsa Italiana."""
     if _check_bi_circuit():
         return []
+
+    _bi_rate_limiter.acquire()
 
     redis_client = get_redis_client()
     cache_key = "btp_bonds_list"

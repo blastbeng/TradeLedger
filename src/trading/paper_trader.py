@@ -65,6 +65,7 @@ class PaperTrader:
         self._slippage_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, slippage)
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
+        self._poll_interval = 3.0
         self._poller_thread = threading.Thread(target=self._poll_open_orders, daemon=True)
         self._poller_thread.start()
         self._load_balances()
@@ -259,7 +260,7 @@ class PaperTrader:
                     self.get_order(oid)
             except Exception as e:
                 logger.warning(f"Error polling open orders: {e}")
-            time.sleep(1.0)
+            time.sleep(self._poll_interval)
 
     @staticmethod
     def _generate_order_id() -> str:

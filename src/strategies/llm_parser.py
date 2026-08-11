@@ -594,6 +594,8 @@ def parse_llm_response(response_text: str) -> Signal:
         if backtest_variants is not None:
             # Validate each variant is a dict; drop invalid entries
             backtest_variants = [v for v in backtest_variants if isinstance(v, dict)]
+            # Clamp each variant's parameters to safe ranges
+            backtest_variants = [_clamp_parameter_ranges(v) for v in backtest_variants]
             if not backtest_variants:
                 backtest_variants = None
 

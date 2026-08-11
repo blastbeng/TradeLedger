@@ -1742,14 +1742,29 @@ def compute_market_hash(data: dict) -> str:
 
 
 def _is_italian_holiday(dt) -> bool:
-    """Check if a given date is an Italian public holiday."""
-    # Fixed-date holidays
+    """Check if a given date is an Italian public holiday, including observed holidays.
+
+    Fixed-date holidays that fall on a weekend are observed on the following
+    Monday (or preceding Friday for Saturday holidays, per Italian convention).
+    """
     fixed_holidays = {
         (1, 1), (1, 6), (4, 25), (5, 1), (6, 2),
         (8, 15), (11, 1), (12, 8), (12, 25), (12, 26)
     }
     if (dt.month, dt.day) in fixed_holidays:
         return True
+
+    # Check observed holidays: if a fixed holiday falls on Saturday, observe on Friday;
+    # if on Sunday, observe on Monday.
+    weekday = dt.weekday()
+    if weekday == 0:  # Monday — check if Sunday was a fixed holiday
+        prev = dt - timedelta(days=1)
+        if (prev.month, prev.day) in fixed_holidays:
+            return True
+    elif weekday == 4:  # Friday — check if Saturday is a fixed holiday
+        nxt = dt + timedelta(days=1)
+        if (nxt.month, nxt.day) in fixed_holidays:
+            return True
 
     # Easter Monday (depends on Easter Sunday)
     # Simple Computus algorithm (Meeus/Jones/Butcher)
@@ -1768,8 +1783,7 @@ def _is_italian_holiday(dt) -> bool:
     m = (a + 11 * h + 22 * l) // 451
     month = (h + l - 7 * m + 114) // 31
     day = ((h + l - 7 * m + 114) % 31) + 1
-    
-    # Easter Monday is the day after Easter Sunday
+
     easter_monday = datetime(y, month, day) + timedelta(days=1)
     if dt.month == easter_monday.month and dt.day == easter_monday.day:
         return True

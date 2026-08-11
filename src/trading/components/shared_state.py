@@ -272,3 +272,13 @@ class SharedState:
                     if t.get("side") == "sell":
                         self._realized_pnl_offset += t.get("realized_pnl", 0.0)
                 self.trade_history = self.trade_history[-max_trades:]
+
+    def get_daily_realized_pnl(self) -> Dict[str, float]:
+        """Safely retrieve a copy of daily realized P&L."""
+        with self._trade_history_lock:
+            return dict(self._daily_realized_pnl)
+
+    def get_daily_buy_fees(self) -> Dict[str, float]:
+        """Safely retrieve a copy of daily buy fees."""
+        with self._trade_history_lock:
+            return dict(self._daily_buy_fees)
