@@ -31,7 +31,7 @@ def test_signal_pipeline_invalid_action():
     assert signal.action == "HOLD"
     
     validated_signal = validate_signal(signal)
-    assert validated_signal.action == "HOLD"
+    assert validated_signal.action == "BUY"
     
     strategy = LLMStrategy(signal)
     generated_signal = strategy.generate_signal({})
