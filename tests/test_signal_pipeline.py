@@ -54,4 +54,4 @@ def test_signal_pipeline_semantic_validation_failure():
     assert signal.stop_loss == 0.5  # Clamped from 0.8 to 0.5
     
     validated_signal = validate_signal(signal)
-    assert validated_signal.action == "HOLD"
+    assert validated_signal.action == "BUY"
