@@ -679,276 +679,51 @@ def get_quotes(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     # Sanitize symbols: remove $ prefix and /currency suffix
     symbols = [s.lstrip('$').split('/')[0] for s in symbols]
+    if not symbols:
+        return {}
 
     redis_client = get_redis_client()
-    result = {}
-    missing_symbols = []
+    context = QuoteContext(symbols=symbols, redis_client=redis_client)
 
-    # Check per-symbol Redis cache first
-    for sym in symbols:
-        cache_key = f"quote:{sym}"
-        try:
-            cached = redis_client.get(cache_key)
-            if cached:
-                result[sym] = json.loads(cached)
-            else:
-                missing_symbols.append(sym)
-        except (TypeError, ValueError, RuntimeError):
-            missing_symbols.append(sym)
+    # Set up the chain of responsibility
+    redis_handler = RedisQuoteHandler()
+    db_handler = DatabaseQuoteHandler()
+    db_close_handler = DatabaseClosePriceHandler()
+    bi_handler = BorsaItalianaQuoteHandler()
+    yf_handler = YFinanceQuoteHandler()
+    av_handler = AlphaVantageQuoteHandler()
+    iex_handler = IEXQuoteHandler()
 
-    if not missing_symbols:
-        return result
+    redis_handler.set_next(db_handler)
+    db_handler.set_next(db_close_handler)
+    db_close_handler.set_next(bi_handler)
+    bi_handler.set_next(yf_handler)
+    yf_handler.set_next(av_handler)
+    av_handler.set_next(iex_handler)
 
-    # Check database for quotes not in Redis cache (up to 24 hours old)
-    try:
-        db_quotes = get_quotes_from_db(missing_symbols, max_age_seconds=86400)
-        for sym in list(missing_symbols):
-            if sym in db_quotes:
-                result[sym] = db_quotes[sym]
-                missing_symbols.remove(sym)
-                # Refresh Redis cache from DB data
-                try:
-                    redis_client.set(f"quote:{sym}", json.dumps(db_quotes[sym]), ex=300)
-                except (TypeError, ValueError, RuntimeError, ConnectionError, TimeoutError, OSError):
-                    pass
-        if db_quotes:
-            logger.debug(f"Loaded {len(db_quotes)} quotes from database (Redis miss fallback)")
-    except (RuntimeError, ValueError, OSError) as e:
-        logger.warning(f"DB quote fetch failed: {type(e).__name__}: {e}", exc_info=True)
-
-    # --- Try DB close prices first (fast, no network call) ---
-    # This ensures quotes are available even when yfinance is rate-limited or blocked.
-    # The OHLCV data is populated by background download tasks using borsaitaliana as primary source.
-    if missing_symbols:
-        try:
-            db_candles = get_latest_close_prices(missing_symbols)
-            for sym in list(missing_symbols):
-                if sym in db_candles and db_candles[sym].get("last", 0) > 0:
-                    candle_ts = db_candles[sym].get("candle_timestamp")
-                    if candle_ts and (int(time.time() * 1000) - candle_ts > settings.STALE_QUOTE_THRESHOLD_HOURS * 3600 * 1000):
-                        logger.debug(f"get_quotes: DB close price for {sym} is stale (older than {settings.STALE_QUOTE_THRESHOLD_HOURS}h), skipping.")
-                        continue
-
-                    last = db_candles[sym]["last"]
-                    prev_close = db_candles[sym].get("prev_close")
-                    volume = db_candles[sym].get("volume")
-
-                    abs_change = None
-                    pct = None
-                    if prev_close and prev_close > 0:
-                        abs_change = last - prev_close
-                        pct = round((abs_change / prev_close) * 100, 4)
-
-                    result[sym] = {
-                        "last": last,
-                        "bid": last,
-                        "ask": last,
-                        "volume": volume,
-                        "change_24h": abs_change,
-                        "percentage": pct,
-                        "quoteVolume": volume,
-                        "last_update": db_candles[sym].get("candle_timestamp"),
-                        "source": "db_close",
-                    }
-                    # Do not remove from missing_symbols so yfinance can still try to update it
-        except (RuntimeError, ValueError, KeyError, OSError) as e:
-            logger.warning(f"get_quotes: DB close price fallback failed: {type(e).__name__}: {e}")
-
-    # --- Try Borsa Italiana first for symbols with known ISINs ---
-    # Borsa Italiana is the primary source for Italian market quotes.
-    # yfinance is only a fallback for symbols without an ISIN.
-    # Attempt Borsa Italiana for ALL symbols (it resolves ISIN on-demand, BTPs use ISIN directly)
-    bi_symbols = list(missing_symbols)
-
-    if bi_symbols and not _check_bi_circuit():
-        for sym in bi_symbols:
-            try:
-                db_sym = sym
-                suffix = settings.TICKER_SUFFIX
-                if suffix and db_sym.endswith(suffix):
-                    db_sym = db_sym[:-len(suffix)]
-                isin = get_isin_from_db(db_sym)
-                bi_symbol = isin if isin else sym
-                bi_quote = get_borsa_italiana_quote(bi_symbol)
-                if bi_quote and bi_quote.get("last") is not None:
-                    result.setdefault(sym, {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}).update(bi_quote)
-                    result[sym]["last_update"] = int(time.time() * 1000)
-                    result[sym]["source"] = "borsa_italiana"
-                    logger.debug(f"get_quotes: Borsa Italiana provided quote for {sym}")
-            except Exception as e:
-                logger.warning(f"get_quotes: Borsa Italiana failed for {sym}: {type(e).__name__}: {e}")
-
-    if not missing_symbols:
-        # All symbols got prices from cache/DB — finalize, persist, and return
-        _finalize_and_persist_quotes(result, symbols, redis_client)
-        return result
-
-    # Initialize result with None for all still-missing symbols that don't have a DB quote yet
-    for sym in missing_symbols:
-        if sym not in result or result[sym].get("last") is None:
-            result[sym] = {"last": None, "bid": None, "ask": None, "volume": None, "change_24h": None, "percentage": None, "quoteVolume": None}
-
-    # Symbols still missing a valid price after Borsa Italiana — try yfinance
-    stock_symbols = [s for s in missing_symbols if not BTPPolicy.is_btp(s) and result.get(s, {}).get("last") is None]
-    # Only use yfinance for symbols with a valid Italian ISIN to avoid wrong-country data
-    stock_symbols = [s for s in stock_symbols if _get_isin_from_yfinance(s) is not None]
-
-    # --- Batch fetch ALL price data using yf.download (single HTTP request) ---
-    # This replaces the slow sequential fast_info calls that caused timeouts.
-    # We get last price, volume, and previous close from one batch download.
-    # Bid/ask are fetched on-demand by _process_symbol via get_yahoo_quote.
-    if stock_symbols and not _check_yf_circuit():
-        try:
-            # Log proxy status for debugging
-            if settings.HTTP_PROXY_ENABLED:
-                if settings.HTTP_PROXIES:
-                    logger.debug(f"get_quotes: HTTP_PROXY_ENABLED with {len(settings.HTTP_PROXIES)} static proxies")
-                else:
-                    logger.debug("get_quotes: HTTP_PROXY_ENABLED with dynamic proxy rotator")
-            else:
-                logger.debug("get_quotes: HTTP_PROXY not enabled")
-            batch_hist = _yf_download_with_timeout(
-                stock_symbols,
-                period="2d",
-                interval="1d",
-                auto_adjust=False,
-                actions=False,
-                group_by="ticker",
-                session=_get_yf_session(),
-            )
-            if batch_hist is None or batch_hist.empty:
-                logger.warning(
-                    f"get_quotes: yf.download returned empty data for {len(stock_symbols)} symbols. "
-                    f"Yahoo Finance may be rate-limiting or blocking requests."
-                )
-            for sym in stock_symbols:
-                try:
-                    if len(stock_symbols) > 1:
-                        if batch_hist is None or batch_hist.empty or sym not in batch_hist.columns.levels[0]:
-                            continue
-                        sym_data = batch_hist[sym]
-                    else:
-                        sym_data = batch_hist
-
-                    if len(sym_data) >= 1:
-                        last = sym_data["Close"].iloc[-1]
-                        if last is not None and not pd.isna(last) and last > 0:
-                            existing_last = result[sym].get("last")
-                            if existing_last and existing_last > 0:
-                                deviation = abs(float(last) - existing_last) / existing_last
-                                if deviation > settings.QUOTE_DEVIATION_THRESHOLD:
-                                    logger.warning(f"Cross-source price inconsistency for {sym}: yfinance={float(last)}, existing={existing_last}. Keeping existing.")
-                                else:
-                                    result[sym]["last"] = float(last)
-                                    result[sym]["last_update"] = int(time.time() * 1000)
-                                    result[sym]["source"] = "yfinance"
-                            else:
-                                result[sym]["last"] = float(last)
-                                result[sym]["last_update"] = int(time.time() * 1000)
-                                result[sym]["source"] = "yfinance"
-                        vol = sym_data["Volume"].iloc[-1] if "Volume" in sym_data.columns else None
-                        if vol is not None and not pd.isna(vol):
-                            result[sym]["volume"] = float(vol)
-                            result[sym]["quoteVolume"] = float(vol)
-                    if len(sym_data) >= 2:
-                        prev_close = sym_data["Close"].iloc[-2]
-                        if prev_close is not None and not pd.isna(prev_close) and prev_close > 0:
-                            last_val = result[sym].get("last")
-                            if last_val is not None:
-                                result[sym]["change_24h"] = last_val - prev_close
-                                result[sym]["percentage"] = ((last_val - prev_close) / prev_close) * 100
-                except (KeyError, ValueError, AttributeError, IndexError):
-                    pass
-        except Exception as e:
-            logger.warning(f"Batch download failed: {type(e).__name__}: {e}")
-    elif stock_symbols and _check_yf_circuit():
-        logger.warning(
-            f"get_quotes: yfinance circuit breaker is OPEN — skipping quote fetch for {len(stock_symbols)} symbols. "
-            f"Quotes will be served from Redis cache or database if available."
-        )
-
-    # --- Try Alpha Vantage for stocks still missing valid prices ---
-    missing_after_yf = [
-        sym for sym in missing_symbols
-        if result.get(sym, {}).get("last") is None
-    ]
-    if missing_after_yf and not _av_circuit_breaker.is_open():
-        for sym in missing_after_yf[:10]:
-            try:
-                av_quote = get_alphavantage_quote(sym)
-                if av_quote and av_quote.get("last") is not None:
-                    existing_last = result[sym].get("last")
-                    av_last = av_quote.get("last")
-                    if existing_last and existing_last > 0:
-                        deviation = abs(av_last - existing_last) / existing_last
-                        if deviation > settings.QUOTE_DEVIATION_THRESHOLD:
-                            logger.warning(f"Cross-source price inconsistency for {sym}: alphavantage={av_last}, existing={existing_last}. Keeping existing.")
-                        else:
-                            result[sym].update(av_quote)
-                            result[sym]["last_update"] = int(time.time() * 1000)
-                            result[sym]["source"] = "alphavantage"
-                    else:
-                        result[sym].update(av_quote)
-                        result[sym]["last_update"] = int(time.time() * 1000)
-                        result[sym]["source"] = "alphavantage"
-                    _av_circuit_breaker.record_success()
-                else:
-                    _av_circuit_breaker.record_failure()
-            except Exception as e:
-                logger.warning(f"get_quotes: Alpha Vantage failed for {sym}: {type(e).__name__}: {e}")
-                _av_circuit_breaker.record_failure()
-
-    # --- Try IEX Cloud for stocks still missing valid prices ---
-    missing_after_av = [
-        sym for sym in missing_symbols
-        if result.get(sym, {}).get("last") is None
-    ]
-    if missing_after_av and not _iex_circuit_breaker.is_open():
-        for sym in missing_after_av[:10]:
-            try:
-                iex_quote = get_iex_quote(sym)
-                if iex_quote and iex_quote.get("last") is not None:
-                    existing_last = result[sym].get("last")
-                    iex_last = iex_quote.get("last")
-                    if existing_last and existing_last > 0:
-                        deviation = abs(iex_last - existing_last) / existing_last
-                        if deviation > settings.QUOTE_DEVIATION_THRESHOLD:
-                            logger.warning(f"Cross-source price inconsistency for {sym}: iex={iex_last}, existing={existing_last}. Keeping existing.")
-                        else:
-                            result[sym].update(iex_quote)
-                            result[sym]["last_update"] = int(time.time() * 1000)
-                            result[sym]["source"] = "iex"
-                    else:
-                        result[sym].update(iex_quote)
-                        result[sym]["last_update"] = int(time.time() * 1000)
-                        result[sym]["source"] = "iex"
-                    _iex_circuit_breaker.record_success()
-                else:
-                    _iex_circuit_breaker.record_failure()
-            except Exception as e:
-                logger.warning(f"get_quotes: IEX Cloud failed for {sym}: {type(e).__name__}: {e}")
-                _iex_circuit_breaker.record_failure()
+    # Execute the chain
+    context = redis_handler.handle(context)
 
     # Finalize, persist, and enrich quotes
-    _finalize_and_persist_quotes(result, symbols, redis_client)
+    _finalize_and_persist_quotes(context.result, symbols, redis_client)
 
     # Summary log
-    valid_count = sum(1 for sym in missing_symbols if result[sym].get("last") is not None)
-    if valid_count == 0 and missing_symbols:
+    valid_count = sum(1 for sym in context.missing_symbols if context.result.get(sym, {}).get("last") is not None)
+    if valid_count == 0 and context.missing_symbols:
         if _check_yf_circuit():
             logger.debug(
-                f"get_quotes: 0/{len(missing_symbols)} symbols got valid prices "
+                f"get_quotes: 0/{len(context.missing_symbols)} symbols got valid prices "
                 f"(circuit breaker open)."
             )
         else:
             logger.warning(
-                f"get_quotes: 0/{len(missing_symbols)} symbols got valid prices. "
+                f"get_quotes: 0/{len(context.missing_symbols)} symbols got valid prices. "
                 f"Check yfinance connectivity and proxy settings."
             )
     else:
-        logger.debug(f"get_quotes: {valid_count}/{len(missing_symbols)} symbols got valid prices")
+        logger.debug(f"get_quotes: {valid_count}/{len(context.missing_symbols)} symbols got valid prices")
 
-    return result
+    return context.result
 
 
 def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
