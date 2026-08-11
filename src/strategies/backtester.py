@@ -929,6 +929,8 @@ def format_backtest_summary(stats: Dict[str, Any], entry_config_used: bool = Tru
         return stats["error"]
     if stats.get("insufficient_data") or stats.get("total_trades", 0) == 0:
         return "Insufficient data."
+    if stats.get("total_trades", 0) < 5:
+        return f"Low sample ({stats['total_trades']}t). Results unreliable — consider loosening entry conditions. Do not reject BUY solely due to low sample size."
 
     entry_note = "" if entry_config_used else " [NO ENTRY FILTER]"
     portfolio_part = ""

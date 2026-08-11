@@ -567,7 +567,10 @@ def _validate_logical_consistency(
     # Skip the fixed percentage comparison if both stop and take-profit are ATR-based
     if not (stop_method == "atr_multiple" and tp_atr_valid):
         if sl is not None and tp <= sl:
-            return Signal(action="HOLD", confidence=0.0, reasoning="take_profit_pct must be greater than stop_loss_pct")
+            # Adjust take_profit instead of downgrading to HOLD
+            tp = sl * 1.5
+            params["take_profit_pct"] = tp
+            logger.info(f"Validator: adjusted take_profit_pct to {tp:.4f} (must be > stop_loss_pct={sl:.4f}) for {symbol}")
     if trailing:
         if symbol and not BTPPolicy.supports_trailing_stop(symbol):
             return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")

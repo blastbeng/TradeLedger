@@ -1710,8 +1710,10 @@ class SignalProcessor:
             logger.info(f"Skipping LLM eval for {symbol}: no significant market changes detected (rsi={rsi})", extra={"event": "skip_llm_no_changes", "symbol": symbol, "rsi": rsi})
             return True
 
-        # Have an open position – skip if price far from stop/tp and indicators calm
-        # (the risk management loop will handle stop/tp)
+        # Have an open position – evaluate periodically even if indicators are calm
+        if now - last_time >= effective_interval:
+            logger.info(f"Forcing LLM eval for {symbol} (position): interval elapsed ({now - last_time:.0f}s >= {effective_interval:.0f}s)", extra={"event": "force_llm_interval_position", "symbol": symbol})
+            return False
         return True
 
     async def _compute_volume_trend(self, symbol: str, current_volume: float, timeframe: Optional[str] = None) -> Optional[float]:

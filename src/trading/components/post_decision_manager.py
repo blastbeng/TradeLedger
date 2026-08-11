@@ -612,6 +612,10 @@ class PostDecisionManager:
             if conf_rejection_raw:
                 try:
                     conf_threshold = float(conf_rejection_raw)
+                    # Cap at 0.7 to avoid rejecting all BUY signals
+                    if conf_threshold > 0.7:
+                        logger.warning(f"Confidence rejection threshold {conf_threshold} is too high, capping at 0.7")
+                        conf_threshold = 0.7
                     if conf_threshold > 0 and validated.confidence < conf_threshold:
                         logger.info(f"Skipping {symbol}: confidence {validated.confidence:.2f} below global rejection threshold {conf_threshold:.2f}", extra={"event": "skip_confidence_threshold", "symbol": symbol, "confidence": validated.confidence, "threshold": conf_threshold})
                         if engine.notifier:

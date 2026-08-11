@@ -249,9 +249,10 @@ Base currency: {base_currency}
 **Local Python Backtest Results ({len(backtest_results)} variant(s) tested):**
 {all_backtests_text}
 
-Compare variants. Choose best-performing or combine insights. If all poor, output HOLD. Benchmark: buy_and_hold_pct. Only BUY if strategy beats buy-and-hold or reduces drawdown.
+Compare variants. Choose best-performing or combine insights. BUY if the strategy shows positive expectancy (profit factor > 1.0), reasonable win rate (>40%), or significantly reduces drawdown vs buy-and-hold. Even if the strategy underperforms buy-and-hold in total return, a BUY is warranted if it offers better risk-adjusted returns (lower drawdown, higher Sharpe). Only HOLD if all variants are consistently losing money.
 """
     prompt += f"\nBacktests on {preliminary_decision.get('timeframe', 'assigned')} timeframe, varying periods.\n"
+    prompt += "\n**Note:** If a variant has very few trades (<5), treat its results as unreliable — do not reject BUY solely because of low sample size.\n"
     if total_variants_proposed is not None and total_variants_proposed > len(backtest_results):
         prompt += f"\nProposed {total_variants_proposed} variants, only {len(backtest_results)} tested (max {settings.MAX_BACKTEST_VARIANTS}).\n"
     if historical_backtest_results:

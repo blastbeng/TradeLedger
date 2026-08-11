@@ -214,6 +214,10 @@ class SymbolReevaluator:
 
                 # Use the LLM's chosen number of symbols to update effective_max_symbols
                 if llm_max_stocks is not None and isinstance(llm_max_stocks, int) and 0 <= llm_max_stocks <= engine.max_symbols:
+                    # Don't allow 0 unless the LLM explicitly paused trading
+                    if llm_max_stocks == 0 and not pause_trading:
+                        llm_max_stocks = max(1, settings.MIN_SYMBOLS)
+                        logger.info(f"LLM set max_stocks=0 without pausing; clamping to {llm_max_stocks}")
                     engine.effective_max_symbols = llm_max_stocks
                 else:
                     # Fallback: use the length of the deduped list, capped at the engine's max
