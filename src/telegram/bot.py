@@ -134,6 +134,17 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("signals", self.cmd_signals))
         self.app.add_handler(CommandHandler("reset", self.cmd_reset))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_button))
+        self.app.add_error_handler(self.error_handler)
+
+    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle errors raised during update processing."""
+        error = context.error
+        if isinstance(error, (TimedOut, NetworkError)):
+            logger.warning("Telegram API timeout or network error: %s", error)
+        elif isinstance(error, TelegramError):
+            logger.error("Telegram API error: %s", error)
+        else:
+            logger.error("Unhandled exception while handling Telegram update: %s", error, exc_info=error)
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
