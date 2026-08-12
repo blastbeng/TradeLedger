@@ -27,6 +27,7 @@ class ReevalNotifier:
         parsed: Dict[str, Any],
         llm_provider: Optional[str],
         llm_model: Optional[str],
+        model_type: str = "actuator",
     ) -> None:
         """Build and send the re-evaluation completion notification."""
         engine = self.engine
@@ -115,7 +116,7 @@ class ReevalNotifier:
                         "per_symbol_budget": per_symbol_budget,
                         "pause_decision": pause_trading if isinstance(pause_trading, bool) else None,
                         "pause_reason": pause_reason,
-                        "model_type": "mind",
+                        "model_type": model_type,
                         "llm_provider": llm_provider,
                         "llm_model": llm_model,
                     }
@@ -137,7 +138,7 @@ class ReevalNotifier:
                     "stock_reasoning": stock_reasoning,
                     "pause_decision": pause_trading if isinstance(pause_trading, bool) else None,
                     "pause_reason": pause_reason,
-                    "model_type": "mind",
+                    "model_type": model_type,
                     "llm_provider": llm_provider,
                     "llm_model": llm_model,
                 }

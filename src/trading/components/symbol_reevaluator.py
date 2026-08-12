@@ -282,6 +282,7 @@ class SymbolReevaluator:
         parsed: Dict[str, Any],
         llm_provider: Optional[str],
         llm_model: Optional[str],
+        model_type: str = "actuator",
         is_market_condition_trigger: bool,
         per_symbol_budget: float,
         last_key: str,
@@ -320,6 +321,7 @@ class SymbolReevaluator:
             parsed=parsed,
             llm_provider=llm_provider,
             llm_model=llm_model,
+            model_type=model_type,
         )
 
         # If no symbols were selected, shorten the re‑evaluation interval to retry sooner.
@@ -624,6 +626,7 @@ class SymbolReevaluator:
                 last_key=last_key,
                 now=now,
                 ohlcv_data=ohlcv_data,
+                model_type=model_type,
             )
         except Exception as e:
             logger.error(f"Re-evaluation failed: {type(e).__name__}: {e}", exc_info=True)
