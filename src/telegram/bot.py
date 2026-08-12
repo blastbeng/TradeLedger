@@ -1299,7 +1299,16 @@ class TelegramBot:
 
                 if summary and summary.get("model_type"):
                     model = summary["model_type"]
-                    emoji = "🧠" if model == "mind" else "⚡"
+                    if model == "mind":
+                        emoji = "🧠"
+                    elif model == "actuator":
+                        emoji = "🤖"
+                    elif model == "weak":
+                        emoji = "⚡"
+                    elif model == "sentiment":
+                        emoji = "📰"
+                    else:
+                        emoji = "✨"
                     # Use actual provider/model if provided, otherwise fall back to settings
                     llm_provider = summary.get("llm_provider")
                     llm_model = summary.get("llm_model")
