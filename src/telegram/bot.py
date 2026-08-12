@@ -1035,32 +1035,37 @@ class TelegramBot:
         if not self._is_authorized(update):
             return
         """Sell all open positions, or a specific one by trade ID (e.g., /sell 2)."""
-        try:
-            is_open = await asyncio.wait_for(
+        # Run market status check and open trades fetch concurrently
+        async def _fetch_is_open():
+            return await asyncio.wait_for(
                 self.engine._is_market_open(),
                 timeout=10.0
             )
+
+        async def _fetch_open_trades():
+            return await asyncio.wait_for(
+                self.engine.event_bus.request("get_open_trades"),
+                timeout=15.0
+            )
+
+        try:
+            is_open, open_trades = await asyncio.gather(
+                _fetch_is_open(),
+                _fetch_open_trades()
+            )
         except asyncio.TimeoutError:
-            await update.message.reply_text("⚠️ Market status check timed out.", reply_markup=self.keyboard)
+            await update.message.reply_text("⚠️ Market status check or fetching open trades timed out.", reply_markup=self.keyboard)
             return
+        except Exception as e:
+            logger.error(f"Failed to get market status or open trades: {e}", exc_info=True)
+            await update.message.reply_text("⚠️ Could not retrieve market status or open trades.", reply_markup=self.keyboard)
+            return
+
         if not is_open:
             await update.message.reply_text(
                 "⏸️ Cannot sell: market is currently closed.",
                 reply_markup=self.keyboard
             )
-            return
-
-        try:
-            open_trades = await asyncio.wait_for(
-                self.engine.event_bus.request("get_open_trades"),
-                timeout=15.0
-            )
-        except asyncio.TimeoutError:
-            await update.message.reply_text("⚠️ Fetching open trades timed out.", reply_markup=self.keyboard)
-            return
-        except Exception as e:
-            logger.error(f"Failed to get open trades: {e}", exc_info=True)
-            await update.message.reply_text("⚠️ Could not retrieve open trades.", reply_markup=self.keyboard)
             return
 
         if not open_trades:
