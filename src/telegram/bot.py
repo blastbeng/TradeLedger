@@ -246,58 +246,94 @@ class TelegramBot:
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorized(update):
             return
-        try:
-            symbols = self.engine.current_symbols
-            positions = self.engine.positions
-            balance = await asyncio.wait_for(
-                asyncio.to_thread(self.engine.trader.fetch_balance),
+
+        symbols = self.engine.current_symbols
+        positions = self.engine.positions
+        pos_symbols = {sym.split("/")[0] for sym in positions.keys()}
+        base_symbols = [entry["symbol"].split("/")[0] for entry in symbols]
+
+        async def _fetch_balance():
+            return await asyncio.wait_for(asyncio.to_thread(self.engine.trader.fetch_balance), timeout=15.0)
+
+        async def _fetch_pos_quotes():
+            if not pos_symbols:
+                return {}
+            return await asyncio.wait_for(
+                self.engine._market_data_manager._get_quotes_async(list(pos_symbols), timeout=15.0),
+                timeout=20.0
+            )
+
+        async def _fetch_names():
+            if not symbols:
+                return []
+            return await asyncio.wait_for(
+                asyncio.gather(*[self.engine._market_data_manager.get_stock_name(entry["symbol"]) for entry in symbols]),
                 timeout=15.0
             )
-        except asyncio.TimeoutError:
-            logger.warning("fetch_balance timed out for status command")
-            await update.message.reply_text("⚠️ Balance fetch timed out.", reply_markup=self.keyboard)
-            return
-        except Exception as e:
-            logger.error(f"Failed to get status: {e}", exc_info=True)
+
+        async def _fetch_isin():
+            if not base_symbols:
+                return {}
+            return await asyncio.wait_for(
+                asyncio.to_thread(get_isin_map_from_db, base_symbols),
+                timeout=10.0
+            )
+
+        async def _fetch_pos_names():
+            if not positions:
+                return []
+            return await asyncio.wait_for(
+                asyncio.gather(*[self.engine._market_data_manager.get_stock_name(sym) for sym in positions.keys()]),
+                timeout=15.0
+            )
+
+        async def _fetch_paused():
+            return await asyncio.wait_for(asyncio.to_thread(self.redis.get, "trading:paused"), timeout=5.0)
+
+        async def _fetch_pause_status():
+            return await asyncio.wait_for(self.engine.get_pause_status(), timeout=10.0)
+
+        async def _fetch_market_status():
+            return await asyncio.wait_for(asyncio.to_thread(self.redis.get, "market:status"), timeout=5.0)
+
+        # Run all independent fetches concurrently
+        results = await asyncio.gather(
+            _fetch_balance(),
+            _fetch_pos_quotes(),
+            _fetch_names(),
+            _fetch_isin(),
+            _fetch_pos_names(),
+            _fetch_paused(),
+            _fetch_pause_status(),
+            _fetch_market_status(),
+            return_exceptions=True
+        )
+
+        def _get_result(index, default, log_msg=None):
+            res = results[index]
+            if isinstance(res, Exception):
+                if log_msg:
+                    logger.warning(f"{log_msg}: {type(res).__name__}: {res}")
+                return default
+            return res
+
+        balance = results[0]
+        if isinstance(balance, Exception):
+            logger.error(f"Failed to get status: {balance}", exc_info=True)
             await update.message.reply_text("⚠️ Could not retrieve status.", reply_markup=self.keyboard)
             return
 
-        pos_symbols = {sym.split("/")[0] for sym in positions.keys()}
-        pos_quotes = {}
-        if pos_symbols:
-            try:
-                pos_quotes = await asyncio.wait_for(
-                    self.engine._market_data_manager._get_quotes_async(list(pos_symbols), timeout=15.0),
-                    timeout=20.0
-                )
-            except asyncio.TimeoutError:
-                logger.warning("Batch quote fetch timed out for status")
-            except Exception as e:
-                logger.warning(f"Batch quote fetch failed for status: {type(e).__name__}: {e}")
+        pos_quotes = _get_result(1, {}, "Batch quote fetch failed for status")
+        names = _get_result(2, [entry["symbol"] for entry in symbols], "get_stock_name timed out for tracked tickers")
+        isin_map = _get_result(3, {}, "get_isin_map_from_db timed out for tracked tickers")
+        pos_names = _get_result(4, list(positions.keys()), "get_stock_name timed out for open positions")
+        paused = _get_result(5, None, "Redis get timed out for trading:paused")
+        pause_status = _get_result(6, {}, "get_pause_status timed out")
+        raw = _get_result(7, None, "Redis get timed out for market:status")
 
         msg = "<b>📊 Current Status</b>\n\n"
         msg += "<b>📈 Tracked Tickers:</b>\n"
         if symbols:
-            try:
-                names = await asyncio.wait_for(
-                    asyncio.gather(*[self.engine._market_data_manager.get_stock_name(entry["symbol"]) for entry in symbols]),
-                    timeout=15.0
-                )
-            except asyncio.TimeoutError:
-                logger.warning("get_stock_name timed out for tracked tickers")
-                names = [entry["symbol"] for entry in symbols]
-
-            # Fetch ISINs for non-BTP symbols
-            base_symbols = [entry["symbol"].split("/")[0] for entry in symbols]
-            try:
-                isin_map = await asyncio.wait_for(
-                    asyncio.to_thread(get_isin_map_from_db, base_symbols),
-                    timeout=10.0
-                )
-            except asyncio.TimeoutError:
-                logger.warning("get_isin_map_from_db timed out for tracked tickers")
-                isin_map = {}
-
             for i, entry in enumerate(symbols):
                 symbol = entry["symbol"]
                 tf = entry["timeframe"]
@@ -315,14 +351,6 @@ class TelegramBot:
 
         if positions:
             msg += "<b>📈 Open Positions:</b>\n"
-            try:
-                pos_names = await asyncio.wait_for(
-                    asyncio.gather(*[self.engine._market_data_manager.get_stock_name(sym) for sym in positions.keys()]),
-                    timeout=15.0
-                )
-            except asyncio.TimeoutError:
-                logger.warning("get_stock_name timed out for open positions")
-                pos_names = list(positions.keys())
             for i, (sym, pos) in enumerate(positions.items()):
                 pos_tf = pos.get("timeframe")
                 pos_name = pos_names[i]
@@ -379,25 +407,10 @@ class TelegramBot:
             msg += "  No balances\n"
 
         # Trading paused status
-        try:
-            paused = await asyncio.wait_for(asyncio.to_thread(self.redis.get, "trading:paused"), timeout=5.0)
-        except asyncio.TimeoutError:
-            logger.warning("Redis get timed out for trading:paused")
-            paused = None
         status_text = "⏸️ Paused" if paused else "▶️ Active"
         msg += f"\n<b>⚙️ Trading:</b> {status_text}\n"
 
         if paused:
-            try:
-                pause_status = await asyncio.wait_for(
-                    self.engine.get_pause_status(),
-                    timeout=10.0
-                )
-            except asyncio.TimeoutError:
-                logger.warning("get_pause_status timed out")
-                pause_status = {}
-            except Exception:
-                pause_status = {}
             pause_reason = pause_status.get("reason", "")
             countdown = pause_status.get("countdown_str", "")
             if pause_reason:
@@ -413,9 +426,8 @@ class TelegramBot:
             msg += f"\n<b>⏳ Queued Orders:</b> {queued_count}\n"
 
         # Market status
-        try:
-            raw = await asyncio.wait_for(asyncio.to_thread(self.redis.get, "market:status"), timeout=5.0)
-            if raw:
+        if raw:
+            try:
                 data = json.loads(raw)
                 msg += "\n<b>🌐 Market Status</b>\n"
                 if data.get("market_breadth"):
@@ -426,8 +438,8 @@ class TelegramBot:
                     msg += f"  🌐 Full Breadth: {fmb['positive_pct']}% positive ({fmb['positive_count']}/{fmb['total_count']})\n"
                 if data.get("spy_price") is not None:
                     msg += f"  📈 Benchmark: {data['spy_price']:.2f}\n"
-        except Exception:
-            pass
+            except Exception:
+                pass
 
         await self._send_long_reply(update, msg, parse_mode='HTML', reply_markup=self.keyboard)
 
