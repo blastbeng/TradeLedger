@@ -487,18 +487,25 @@ class TelegramBot:
             return
 
         msg = "<b>📈 Open Trades</b>\n\n" if open_trades else ""
-        try:
-            trade_names = await asyncio.wait_for(
-                asyncio.gather(*[self.engine._market_data_manager.get_stock_name(t['symbol']) for t in open_trades]),
-                timeout=15.0
-            ) if open_trades else []
-        except asyncio.TimeoutError:
-            logger.warning("get_stock_name timed out for open trades")
-            trade_names = [t['symbol'] for t in open_trades]
+        # Batch-fetch all unique stock names for open trades and queued orders
+        all_trade_symbols = list(
+            {t['symbol'] for t in open_trades} | {q['symbol'] for q in queued_orders}
+        )
+        name_map = {}
+        if all_trade_symbols:
+            try:
+                name_list = await asyncio.wait_for(
+                    asyncio.gather(*[self.engine._market_data_manager.get_stock_name(sym) for sym in all_trade_symbols]),
+                    timeout=15.0
+                )
+                name_map = {all_trade_symbols[i]: name_list[i] for i in range(len(all_trade_symbols))}
+            except asyncio.TimeoutError:
+                logger.warning("get_stock_name timed out for trades/queued orders")
+                name_map = {sym: sym for sym in all_trade_symbols}
         for idx, t in enumerate(open_trades, start=1):
             sym = t['symbol']
             trade_tf = t.get('timeframe')
-            trade_name = trade_names[idx-1]
+            trade_name = name_map.get(sym, sym)
             trade_display = self.engine._format_symbol_display(sym, trade_name, trade_tf)
             amt = t['amount']
             price = t['price']
@@ -596,21 +603,13 @@ class TelegramBot:
         # --- Queued Orders ---
         if queued_orders:
             msg += "\n<b>⏳ Queued Orders</b>\n\n"
-            try:
-                q_names = await asyncio.wait_for(
-                    asyncio.gather(*[self.engine._market_data_manager.get_stock_name(q['symbol']) for q in queued_orders]),
-                    timeout=15.0
-                )
-            except asyncio.TimeoutError:
-                logger.warning("get_stock_name timed out for queued orders")
-                q_names = [q['symbol'] for q in queued_orders]
             for idx, q in enumerate(queued_orders, start=1):
                 sym = q['symbol']
                 side = q['side']
                 side_emoji = "🟢" if side == "buy" else "🔴"
                 side_label = "BUY" if side == "buy" else "SELL"
                 q_tf = q.get('timeframe')
-                q_name = q_names[idx-1]
+                q_name = name_map.get(sym, sym)
                 q_display = self.engine._format_symbol_display(sym, q_name, q_tf)
                 original_amount = q.get('original_amount', q['amount'])
                 filled_qty = q.get('filled_qty', 0.0)
