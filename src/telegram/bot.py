@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.error import TelegramError, TimedOut, NetworkError
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from src.config.settings import settings
 from src.trading.engine import TradingEngine
@@ -77,8 +78,13 @@ class TelegramBot:
         chunks = self._split_text(text)                                                                                                                                                                                                                           
         for i, chunk in enumerate(chunks):                                                                                                                                                                                                                        
             # Only attach reply_markup to the last message                                                                                                                                                                                                        
-            markup = reply_markup if i == len(chunks) - 1 else None                                                                                                                                                                                               
-            await update.message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup)
+            markup = reply_markup if i == len(chunks) - 1 else None
+            try:
+                await update.message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup)
+            except (TimedOut, NetworkError) as e:
+                logger.warning("Telegram API timeout or network error while sending reply chunk: %s", e)
+            except TelegramError as e:
+                logger.error("Telegram API error while sending reply chunk: %s", e)
 
     @staticmethod
     def _split_text(text: str, max_len: int = 4000) -> List[str]:
