@@ -464,44 +464,52 @@ class TelegramBot:
 
         queued_orders = self.engine.queued_orders
 
-        # Batch-fetch current prices for all symbols in open trades and queued orders
+        # Batch-fetch current prices and stock names concurrently
         all_price_symbols = set()
         for t in open_trades:
             all_price_symbols.add(t['symbol'].split("/")[0])
         for q in queued_orders:
             all_price_symbols.add(q['symbol'].split("/")[0])
-        batch_quotes = {}
-        if all_price_symbols:
+
+        all_trade_symbols = list(
+            {t['symbol'] for t in open_trades} | {q['symbol'] for q in queued_orders}
+        )
+
+        async def _fetch_batch_quotes():
+            if not all_price_symbols:
+                return {}
             try:
-                batch_quotes = await asyncio.wait_for(
+                return await asyncio.wait_for(
                     self.engine._market_data_manager._get_quotes_async(list(all_price_symbols), timeout=15.0),
                     timeout=20.0
                 )
-            except asyncio.TimeoutError:
-                logger.warning("Batch quote fetch timed out for trades")
             except Exception as e:
                 logger.warning(f"Batch quote fetch failed for trades: {type(e).__name__}: {e}")
+                return {}
+
+        async def _fetch_trade_names():
+            if not all_trade_symbols:
+                return {}
+            try:
+                name_list = await asyncio.wait_for(
+                    asyncio.gather(*[self.engine._market_data_manager.get_stock_name(sym) for sym in all_trade_symbols]),
+                    timeout=15.0
+                )
+                return {all_trade_symbols[i]: name_list[i] for i in range(len(all_trade_symbols))}
+            except Exception as e:
+                logger.warning(f"get_stock_name timed out for trades/queued orders: {type(e).__name__}: {e}")
+                return {sym: sym for sym in all_trade_symbols}
+
+        batch_quotes, name_map = await asyncio.gather(
+            _fetch_batch_quotes(),
+            _fetch_trade_names()
+        )
 
         if not open_trades and not queued_orders:
             await update.message.reply_text("📈 No open trades or queued orders.", reply_markup=self.keyboard)
             return
 
         msg = "<b>📈 Open Trades</b>\n\n" if open_trades else ""
-        # Batch-fetch all unique stock names for open trades and queued orders
-        all_trade_symbols = list(
-            {t['symbol'] for t in open_trades} | {q['symbol'] for q in queued_orders}
-        )
-        name_map = {}
-        if all_trade_symbols:
-            try:
-                name_list = await asyncio.wait_for(
-                    asyncio.gather(*[self.engine._market_data_manager.get_stock_name(sym) for sym in all_trade_symbols]),
-                    timeout=15.0
-                )
-                name_map = {all_trade_symbols[i]: name_list[i] for i in range(len(all_trade_symbols))}
-            except asyncio.TimeoutError:
-                logger.warning("get_stock_name timed out for trades/queued orders")
-                name_map = {sym: sym for sym in all_trade_symbols}
         for idx, t in enumerate(open_trades, start=1):
             sym = t['symbol']
             trade_tf = t.get('timeframe')
