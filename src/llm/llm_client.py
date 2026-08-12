@@ -93,6 +93,7 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
                         thinking_enabled: bool = True,
                         reasoning_effort: str = "low",
                        max_retries: int = 3,
+                       max_tokens: Optional[int] = None,
 ) -> dict:
     """Send a prompt to the configured Ollama model and return a dict with 'content' and 'usage'."""
     url = f"{(base_url or settings.OLLAMA_BASE_URL).rstrip('/')}/api/chat"
