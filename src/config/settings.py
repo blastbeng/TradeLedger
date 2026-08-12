@@ -928,6 +928,15 @@ class Settings(BaseSettings):
             raise ValueError("LLM_SENTIMENT_CACHE_TTL must be positive")
         return v
 
+    LLM_SENTIMENT_MAX_TOKENS: int = 2048
+
+    @field_validator("LLM_SENTIMENT_MAX_TOKENS")
+    @classmethod
+    def validate_llm_sentiment_max_tokens(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("LLM_SENTIMENT_MAX_TOKENS must be positive")
+        return v
+
     # Always-Online Locally hosted weak model (last resort fallback)
     AOL_LLM_PROVIDER: str = ""
     AOL_LLM_MODEL: Annotated[list[str], NoDecode] = []

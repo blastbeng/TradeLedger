@@ -695,6 +695,7 @@ def _execute_primary_call(
     request_type: Optional[str],
     is_fallback: bool,
     reasoning_effort: str = "low",
+    max_tokens: Optional[int] = None,
 ) -> Tuple[str, dict, str, str, bool]:
     """Execute the primary LLM call and return response, usage, and model info."""
     redis_client = get_redis_client()
@@ -720,6 +721,7 @@ def _execute_primary_call(
                     thinking_enabled=thinking_enabled,
                     reasoning_effort=reasoning_effort,
                     max_retries=3,
+                    max_tokens=max_tokens,
                 )
             elif provider == "g4f":
                 from src.llm.g4f_client import _get_g4f_response
@@ -733,6 +735,7 @@ def _execute_primary_call(
                     thinking_enabled=thinking_enabled,
                     reasoning_effort=reasoning_effort,
                     max_retries=3,
+                    max_tokens=max_tokens,
                 )
             else:
                 from src.llm.llm_client import _get_ollama_response
@@ -746,6 +749,7 @@ def _execute_primary_call(
                     thinking_enabled=thinking_enabled,
                     reasoning_effort=reasoning_effort,
                     max_retries=3,
+                    max_tokens=max_tokens,
                 )
 
             response_text = result["content"]
@@ -798,6 +802,7 @@ def _try_fallback_models(
     reasoning_effort: str,
     original_error: Exception,
     call_func: Callable,
+    max_tokens: Optional[int] = None,
 ) -> Tuple[str, dict, str, str, bool]:
     """Try a list of fallback models for a given provider."""
     if not fallback_models:
@@ -890,6 +895,7 @@ def _try_fallback_models(
                 thinking_enabled=thinking_enabled,
                 reasoning_effort=reasoning_effort,
                 max_retries=3,
+                max_tokens=max_tokens,
             )
             response_text = result["content"]
             usage = result.get("usage", {})
@@ -933,6 +939,7 @@ def _execute_fallback_call(
     request_type: Optional[str],
     provider: str = None,
     reasoning_effort: str = "low",
+    max_tokens: Optional[int] = None,
 ) -> Tuple[str, dict, str, str, bool]:
     """Execute fallback LLM call if primary fails."""
     if not settings.LLM_FALLBACK_ENABLED:
@@ -988,7 +995,7 @@ def _execute_fallback_call(
             "openai", fallback_models, fallback_base_url, fallback_api_key,
             model_type, messages, prompt, system_prompt, temperature, effective_timeout,
             api_messages, fallback_add_cache_control, thinking_enabled, request_type,
-            reasoning_effort, e, _get_openai_response
+            reasoning_effort, e, _get_openai_response, max_tokens=max_tokens
         )
     elif fallback_provider == "g4f":
         from src.llm.g4f_client import _get_g4f_models, _get_g4f_response
@@ -1000,7 +1007,7 @@ def _execute_fallback_call(
             "g4f", fallback_models, fallback_base_url, fallback_api_key,
             model_type, messages, prompt, system_prompt, temperature, effective_timeout,
             api_messages, fallback_add_cache_control, thinking_enabled, request_type,
-            reasoning_effort, e, _get_g4f_response
+            reasoning_effort, e, _get_g4f_response, max_tokens=max_tokens
         )
     elif fallback_provider == "ollama":
         if model_type == "mind":
@@ -1025,7 +1032,7 @@ def _execute_fallback_call(
             "ollama", fallback_models, fallback_base_url, fallback_api_key,
             model_type, messages, prompt, system_prompt, temperature, effective_timeout,
             api_messages, fallback_add_cache_control, thinking_enabled, request_type,
-            reasoning_effort, e, _get_ollama_response
+            reasoning_effort, e, _get_ollama_response, max_tokens=max_tokens
         )
     else:
         raise
@@ -1042,6 +1049,7 @@ def _try_aol_model(
     thinking_enabled: bool,
     request_type: Optional[str] = None,
     reasoning_effort: str = "low",
+    max_tokens: Optional[int] = None,
 ) -> Optional[Tuple[str, dict, str, str]]:
     """Try the AOL (Always Online) models. Returns (response_text, usage, provider, model) or None on failure."""
     aol_provider = settings.AOL_LLM_PROVIDER
@@ -1126,6 +1134,7 @@ def _try_aol_model(
                     thinking_enabled=thinking_enabled,
                     reasoning_effort=reasoning_effort,
                     max_retries=3,
+                    max_tokens=max_tokens,
                 )
             elif aol_provider == "g4f":
                 from src.llm.g4f_client import _get_g4f_response
@@ -1139,6 +1148,7 @@ def _try_aol_model(
                     thinking_enabled=thinking_enabled,
                     reasoning_effort=reasoning_effort,
                     max_retries=3,
+                    max_tokens=max_tokens,
                 )
             else:
                 from src.llm.llm_client import _get_ollama_response
@@ -1152,6 +1162,7 @@ def _try_aol_model(
                     thinking_enabled=thinking_enabled,
                     reasoning_effort=reasoning_effort,
                     max_retries=3,
+                    max_tokens=max_tokens,
                 )
             response_text = result["content"]
             usage = result.get("usage", {})
@@ -1303,6 +1314,8 @@ def get_cached_llm_response(
     # otherwise fall back to per-role temperature, then global temperature.
     temperature = _get_effective_temperature(model_type, temperature)
 
+    max_tokens = settings.LLM_SENTIMENT_MAX_TOKENS if model_type == "sentiment" else None
+
     # Round temperature to the nearest 0.5 for cache key to improve cache hit rate
     # when temperature is dynamically computed based on complexity.
     cache_temp = round(temperature * 2) / 2 if temperature is not None else None
@@ -1375,18 +1388,21 @@ def get_cached_llm_response(
         response_text, usage, used_provider, used_model, is_fallback = _execute_primary_call(
             provider, models, base_url, api_key, temperature, effective_timeout, messages, api_messages, prompt, system_prompt, add_cache_control, thinking_enabled, model_type, request_type, is_fallback,
             reasoning_effort=reasoning_effort,
+            max_tokens=max_tokens,
         )
     except Exception as e:
         try:
             response_text, usage, used_provider, used_model, is_fallback = _execute_fallback_call(
                 e, model_type, messages, prompt, system_prompt, temperature, effective_timeout, api_messages, add_cache_control, thinking_enabled, request_type, provider,
                 reasoning_effort=reasoning_effort,
+                max_tokens=max_tokens,
             )
         except Exception as fallback_e:
             aol_result = _try_aol_model(
                 model_type, messages, prompt, system_prompt,
                 temperature, effective_timeout, add_cache_control, thinking_enabled, request_type,
                 reasoning_effort=reasoning_effort,
+                max_tokens=max_tokens,
             )
             if aol_result is not None:
                 response_text = aol_result[0]

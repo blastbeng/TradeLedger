@@ -121,6 +121,9 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
     # or the computed value when thinking is enabled.
     payload["reasoning_effort"] = "low" if not thinking_enabled else reasoning_effort
 
+    if max_tokens is not None:
+        payload["options"] = {"num_predict": max_tokens}
+
     def _parse_ollama(data: dict) -> dict:
         if "message" not in data or "content" not in data["message"]:
             logger.error(
@@ -162,6 +165,7 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
                         thinking_enabled: bool = True,
                         reasoning_effort: str = "low",
                       max_retries: int = 3,
+                      max_tokens: Optional[int] = None,
 ) -> dict:
     """Send a prompt to the configured OpenAI-compatible API and return a dict with 'content' and 'usage'."""
     url = f"{(base_url or settings.OPENAI_BASE_URL).rstrip('/')}/chat/completions"
@@ -200,6 +204,9 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
     # Always send reasoning_effort: "low" when thinking is disabled,
     # or the computed value when thinking is enabled.
     payload["reasoning_effort"] = "low" if not thinking_enabled else reasoning_effort
+
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
 
     def _parse_openai(data: dict) -> dict:
         if "choices" not in data or not data["choices"]:
