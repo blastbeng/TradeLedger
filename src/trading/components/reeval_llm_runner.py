@@ -266,7 +266,7 @@ class ReevalLLMRunner:
                                 correction_result = await asyncio.wait_for(
                                     asyncio.to_thread(
                                         get_cached_llm_response, "", "", 120,
-                                        model_type="actuator", temperature=effective_temp,
+                                        model_type=model_type, temperature=effective_temp,
                                         messages=correction_messages,
                                         request_type="symbol_reeval_chunk_retry",
                                         force_primary_model=True,
@@ -455,7 +455,7 @@ class ReevalLLMRunner:
         sentiment_trend: Dict[str, Optional[float]],
         market_breadth: Dict[str, Any],
         is_rebalance: bool = False,
-    ) -> Tuple[bool, Dict[str, float], Dict[str, Any], str, Dict[str, Dict[str, Dict[str, Any]]], float]:
+    ) -> Tuple[bool, Dict[str, float], Dict[str, Any], str, Dict[str, Dict[str, Dict[str, Any]]], float, str, str]:
         """Prepare context variables needed for the re-evaluation LLM prompts.
 
         Returns (trading_paused_bool, symbol_tenure, symbol_max_tenure,

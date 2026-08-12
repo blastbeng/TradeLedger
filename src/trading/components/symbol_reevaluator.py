@@ -129,6 +129,7 @@ class SymbolReevaluator:
         is_rebalance: bool,
         tickers: Dict[str, Dict[str, Any]],
         is_user_forced: bool = False,
+        model_type: str = "actuator",
     ) -> Tuple[Dict[str, Any], Optional[bool], str, Optional[Any], List[Dict[str, str]], Optional[str], Optional[str]]:
         """Process the LLM response, parse symbols, and handle pause/resume logic.
 
@@ -159,7 +160,7 @@ class SymbolReevaluator:
                     summary={
                         "action": "ERROR",
                         "reason": "LLM symbol selection failed after all retries",
-                        "model_type": "mind",
+                        "model_type": model_type,
                     }
                 )
 
@@ -440,7 +441,7 @@ class SymbolReevaluator:
         is_rebalance: bool,
         now: float,
         available_timeframes_by_symbol: Dict[str, List[str]],
-    ) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[float], Optional[bool]]:
+    ) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[float], Optional[bool], str]:
         """Phase 4: Fetch shortlist context, run chunked LLM eval, and final selection."""
         symbol_events, session_info, market_breadth, full_market_breadth, vix = await self.data_fetcher.fetch_shortlist_context(
             sample_pairs, tickers, market_trend
@@ -509,7 +510,7 @@ class SymbolReevaluator:
             reasoning_effort=reasoning_effort,
             model_type=model_type,
         )
-        return response, llm_provider, llm_model, effective_temp, trading_paused_bool
+        return response, llm_provider, llm_model, effective_temp, trading_paused_bool, model_type
 
     async def reevaluate_symbols_impl(self, force: bool = False):
         """Main re-evaluation orchestration: delegates to phase methods."""
@@ -556,7 +557,7 @@ class SymbolReevaluator:
                 await asyncio.to_thread(engine.redis.set, "reeval:incremental_offset", str(new_offset))
 
             # Phase 4: LLM evaluation
-            response, llm_provider, llm_model, effective_temp, trading_paused_bool = await self._run_llm_evaluation(
+            response, llm_provider, llm_model, effective_temp, trading_paused_bool, model_type = await self._run_llm_evaluation(
                 sample_pairs=sample_pairs,
                 tickers=tickers,
                 ohlcv_data=ohlcv_data,
@@ -598,6 +599,7 @@ class SymbolReevaluator:
                     is_rebalance=is_rebalance,
                     tickers=tickers,
                     is_user_forced=is_user_forced,
+                    model_type=model_type,
                 )
 
             await self.finalize_reevaluation(
