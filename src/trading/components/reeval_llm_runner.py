@@ -221,7 +221,7 @@ class ReevalLLMRunner:
                                     get_cached_llm_response,
                                     "", "", 300,
                                     market_hash=chunk_market_hash,
-                                    model_type="mind",
+                                    model_type="actuator",
                                     temperature=effective_temp,
                                     messages=chunk_messages,
                                     request_type="symbol_reeval_chunk",
@@ -395,7 +395,7 @@ class ReevalLLMRunner:
                         asyncio.to_thread(
                             get_cached_llm_response,
                             "", "", 300,
-                            model_type="mind",
+                            model_type="actuator",
                             temperature=effective_temp,
                             messages=final_messages,
                             request_type="symbol_reeval_final",
