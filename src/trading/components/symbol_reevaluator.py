@@ -445,7 +445,7 @@ class SymbolReevaluator:
         symbol_events, session_info, market_breadth, full_market_breadth, vix = await self.data_fetcher.fetch_shortlist_context(
             sample_pairs, tickers, market_trend
         )
-        trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp, reasoning_effort = await self.llm_runner.prepare_reeval_prompt_context(
+        trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp, reasoning_effort, model_type = await self.llm_runner.prepare_reeval_prompt_context(
             now=now,
             sample_pairs=sample_pairs,
             ohlcv_data=ohlcv_data,
@@ -482,6 +482,7 @@ class SymbolReevaluator:
             news_sentiment=news_sentiment,
             is_user_forced=is_user_forced,
             reasoning_effort=reasoning_effort,
+            model_type=model_type,
         )
         response, llm_provider, llm_model = await self.llm_runner.run_final_selection_llm_call(
             chunk_results=chunk_results,
@@ -506,6 +507,7 @@ class SymbolReevaluator:
             news_sentiment=news_sentiment,
             is_user_forced=is_user_forced,
             reasoning_effort=reasoning_effort,
+            model_type=model_type,
         )
         return response, llm_provider, llm_model, effective_temp, trading_paused_bool
 
