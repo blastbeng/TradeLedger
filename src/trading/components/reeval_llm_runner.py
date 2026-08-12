@@ -71,6 +71,7 @@ class ReevalLLMRunner:
         news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
         is_user_forced: bool = False,
         reasoning_effort: str = "low",
+        model_type: str = "actuator",
     ) -> List[Dict[str, Any]]:
         """Evaluate the shortlist in chunks using the LLM.
 
@@ -221,7 +222,7 @@ class ReevalLLMRunner:
                                     get_cached_llm_response,
                                     "", "", 300,
                                     market_hash=chunk_market_hash,
-                                    model_type="actuator",
+                                    model_type=model_type,
                                     temperature=effective_temp,
                                     messages=chunk_messages,
                                     request_type="symbol_reeval_chunk",
@@ -315,6 +316,7 @@ class ReevalLLMRunner:
         news_sentiment: Dict[str, Optional[Dict[str, Any]]] = None,
         is_user_forced: bool = False,
         reasoning_effort: str = "low",
+        model_type: str = "actuator",
     ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """Run the final selection LLM call with retries and fallback merge.
 
@@ -395,7 +397,7 @@ class ReevalLLMRunner:
                         asyncio.to_thread(
                             get_cached_llm_response,
                             "", "", 300,
-                            model_type="actuator",
+                            model_type=model_type,
                             temperature=effective_temp,
                             messages=final_messages,
                             request_type="symbol_reeval_final",
@@ -513,7 +515,11 @@ class ReevalLLMRunner:
             conflicting_signals=False,
             is_critical=False,
         )
-        effective_temp = engine._signal_processor.model_tier_manager._get_effective_temperature("mind", symbol_selection_complexity)
-        reasoning_effort = engine._signal_processor.model_tier_manager._compute_reasoning_effort("mind", symbol_selection_complexity)
+        # Determine model type dynamically based on complexity
+        threshold = settings.LLM_MIND_MODEL_THRESHOLD + engine._signal_processor.model_tier_manager._get_dynamic_threshold_adjustment()
+        model_type = "mind" if symbol_selection_complexity >= threshold else "actuator"
+        
+        effective_temp = engine._signal_processor.model_tier_manager._get_effective_temperature(model_type, symbol_selection_complexity)
+        reasoning_effort = engine._signal_processor.model_tier_manager._compute_reasoning_effort(model_type, symbol_selection_complexity)
 
-        return trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp, reasoning_effort
+        return trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp, reasoning_effort, model_type
