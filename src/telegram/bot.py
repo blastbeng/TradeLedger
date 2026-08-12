@@ -263,13 +263,23 @@ class TelegramBot:
                 timeout=20.0
             )
 
-        async def _fetch_names():
-            if not symbols:
-                return []
-            return await asyncio.wait_for(
-                asyncio.gather(*[self.engine._market_data_manager.get_stock_name(entry["symbol"]) for entry in symbols]),
-                timeout=15.0
-            )
+        # Collect all unique symbols that need name resolution
+        all_name_symbols = list(
+            {entry["symbol"] for entry in symbols} | {sym for sym in positions.keys()}
+        )
+
+        async def _fetch_all_names():
+            if not all_name_symbols:
+                return {}
+            try:
+                name_list = await asyncio.wait_for(
+                    asyncio.gather(*[self.engine._market_data_manager.get_stock_name(sym) for sym in all_name_symbols]),
+                    timeout=15.0
+                )
+                return {all_name_symbols[i]: name_list[i] for i in range(len(all_name_symbols))}
+            except Exception:
+                # Fallback to symbol itself if timeout
+                return {sym: sym for sym in all_name_symbols}
 
         async def _fetch_isin():
             if not base_symbols:
@@ -277,14 +287,6 @@ class TelegramBot:
             return await asyncio.wait_for(
                 asyncio.to_thread(get_isin_map_from_db, base_symbols),
                 timeout=10.0
-            )
-
-        async def _fetch_pos_names():
-            if not positions:
-                return []
-            return await asyncio.wait_for(
-                asyncio.gather(*[self.engine._market_data_manager.get_stock_name(sym) for sym in positions.keys()]),
-                timeout=15.0
             )
 
         async def _fetch_paused():
@@ -300,9 +302,8 @@ class TelegramBot:
         results = await asyncio.gather(
             _fetch_balance(),
             _fetch_pos_quotes(),
-            _fetch_names(),
+            _fetch_all_names(),
             _fetch_isin(),
-            _fetch_pos_names(),
             _fetch_paused(),
             _fetch_pause_status(),
             _fetch_market_status(),
@@ -324,12 +325,14 @@ class TelegramBot:
             return
 
         pos_quotes = _get_result(1, {}, "Batch quote fetch failed for status")
-        names = _get_result(2, [entry["symbol"] for entry in symbols], "get_stock_name timed out for tracked tickers")
+        name_map = _get_result(2, {}, "get_stock_name timed out")
+        # Provide defaults if a symbol is missing from the map
+        names = [name_map.get(entry["symbol"], entry["symbol"]) for entry in symbols]
+        pos_names = [name_map.get(sym, sym) for sym in positions.keys()]
         isin_map = _get_result(3, {}, "get_isin_map_from_db timed out for tracked tickers")
-        pos_names = _get_result(4, list(positions.keys()), "get_stock_name timed out for open positions")
-        paused = _get_result(5, None, "Redis get timed out for trading:paused")
-        pause_status = _get_result(6, {}, "get_pause_status timed out")
-        raw = _get_result(7, None, "Redis get timed out for market:status")
+        paused = _get_result(4, None, "Redis get timed out for trading:paused")
+        pause_status = _get_result(5, {}, "get_pause_status timed out")
+        raw = _get_result(6, None, "Redis get timed out for market:status")
 
         msg = "<b>📊 Current Status</b>\n\n"
         msg += "<b>📈 Tracked Tickers:</b>\n"
