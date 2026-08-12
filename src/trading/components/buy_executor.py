@@ -613,6 +613,21 @@ class BuyExecutor:
                     )
                 return None
 
+        # --- Minimum stop-loss floor: prevent noise-triggered exits ---
+        # ATR-based stops can be extremely tight for low-volatility assets
+        # (e.g., BTPs with ATR=0.05), producing stop-loss percentages as
+        # small as 0.1%. This floor ensures the stop is never tighter than
+        # 0.5% for BTPs or 1% for stocks, preventing premature exits from
+        # normal market noise.
+        if sl_pct is not None and sl_pct > 0:
+            min_sl_pct = 0.005 if is_btp else 0.01
+            if sl_pct < min_sl_pct:
+                logger.warning(
+                    f"ATR-based stop-loss too tight for {symbol}: "
+                    f"{sl_pct:.4%} -> floored to {min_sl_pct:.4%}"
+                )
+                sl_pct = min_sl_pct
+
         # --- BTP stop-loss cap: enforce tighter stops for bonds ---
         if is_btp and sl_pct is not None and sl_pct > 0:
             max_sl = BTPPolicy.get_max_stop_loss_pct(symbol)
