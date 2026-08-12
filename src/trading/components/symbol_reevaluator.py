@@ -282,12 +282,12 @@ class SymbolReevaluator:
         parsed: Dict[str, Any],
         llm_provider: Optional[str],
         llm_model: Optional[str],
-        model_type: str = "actuator",
         is_market_condition_trigger: bool,
         per_symbol_budget: float,
         last_key: str,
         now: float,
         ohlcv_data: Dict[str, Dict[str, List[List]]],
+        model_type: str = "actuator",
     ) -> None:
         """Apply fallback selection, cleanup, send notifications, and finalize state."""
         engine = self.engine
