@@ -161,6 +161,9 @@ def _get_isin_and_info_from_borsa_italiana(base_symbol: str) -> tuple[Optional[s
 
     Returns (isin, country, name). Country is always 'Italy' if found.
     """
+    if len(base_symbol) < 2:
+        return None, None, None
+
     if _check_bi_circuit():
         return None, None, None
 
