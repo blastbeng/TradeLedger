@@ -87,8 +87,6 @@ class RiskManager:
                 )
             except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.debug(f"Failed to record P&L snapshot for {symbol}: {type(e).__name__}: {e}")
-            except Exception as e:
-                logger.debug(f"Failed to record P&L snapshot for {symbol}: {type(e).__name__}: {e}")
 
     async def check_risk_management(self, symbols_to_check: Optional[List[str]] = None):
         """Check open positions and close if stop-loss, take-profit, or trailing stop is hit."""
@@ -234,8 +232,6 @@ class RiskManager:
                         summary={"action": "RESUME", "reason": "Portfolio drawdown recovered"}
                     )
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-            logger.error(f"Failed to compute portfolio drawdown for circuit breaker: {type(e).__name__}: {e}")
-        except Exception as e:
             logger.error(f"Failed to compute portfolio drawdown for circuit breaker: {type(e).__name__}: {e}")
 
     async def _check_portfolio_loss_cooldown(self) -> None:
@@ -424,8 +420,6 @@ class RiskManager:
                         risk_tickers[sym] = raw[base]
             except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Batch quote fetch failed in risk management: {type(e).__name__}: {e}")
-            except Exception as e:
-                logger.warning(f"Batch quote fetch failed in risk management: {type(e).__name__}: {e}")
         return risk_tickers
 
     async def _check_position_risk(
@@ -548,8 +542,6 @@ class RiskManager:
                 ):
                     return
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-            logger.error(f"Risk check failed for {symbol}: {type(e).__name__}: {e}")
-        except Exception as e:
             logger.error(f"Risk check failed for {symbol}: {type(e).__name__}: {e}")
 
     async def _is_llm_circuit_breaker_active(self) -> bool:
@@ -832,8 +824,6 @@ class RiskManager:
                         return True
                 except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
                     logger.warning(f"News sentiment check failed for {symbol}: {type(e).__name__}: {e}")
-                except Exception as e:
-                    logger.warning(f"News sentiment check failed for {symbol}: {type(e).__name__}: {e}")
         return False
 
     async def _get_current_atr(self, symbol: str, pos: Dict[str, Any], tf: Optional[str]) -> Optional[float]:
@@ -876,8 +866,6 @@ class RiskManager:
                         pos["_atr_fetched_at"] = time.time()
             except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {type(e).__name__}: {e}")
-            except Exception as e:
-                logger.warning(f"Failed to fetch ATR for trailing stop on {symbol}: {e}")
 
         return pos.get("_current_atr")
 
@@ -984,8 +972,6 @@ class RiskManager:
                             async with self.shared_state._positions_lock:
                                 pos["_last_trailing_check_ts"] = now_ts
                     except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-                        logger.warning(f"Failed to fetch OHLCV for trailing stop on {symbol}: {type(e).__name__}: {e}")
-                    except Exception as e:
                         logger.warning(f"Failed to fetch OHLCV for trailing stop on {symbol}: {type(e).__name__}: {e}")
 
                 best_high = max(candidate_prices)
@@ -1501,7 +1487,7 @@ class RiskManager:
                 sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
                 if sl_order_obj is not None and sl_order_obj.status == "filled":
                     sl_filled = True
-            except Exception:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError):
                 pass
             try:
                 tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
@@ -1567,7 +1553,7 @@ class RiskManager:
                 tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
                 if tp_order_obj is not None and tp_order_obj.status == "filled":
                     tp_already_filled = True
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.debug(f"check_native_exit_triggers: failed to check TP fill status for {symbol}: {type(e).__name__}: {e}")
 
             async with self.shared_state._positions_lock:
@@ -2106,7 +2092,7 @@ class RiskManager:
                 weights.append(pos_value)
                 total_value += pos_value
 
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Failed to fetch data for VaR calculation on {symbol}: {e}")
                 continue
 
@@ -2143,7 +2129,7 @@ class RiskManager:
                 pos_value = pos.get('amount', 0.0) * current_price
                 stressed_value = pos_value * (1 + shock_pct)
                 total_loss += (pos_value - stressed_value)
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Failed to run stress test for {symbol}: {e}")
                 continue
 

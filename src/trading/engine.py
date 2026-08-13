@@ -1753,7 +1753,7 @@ class TradingEngine:
             task.result()
         except asyncio.CancelledError:
             pass
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
             logger.error(f"Background task {task.get_name()} failed: {type(e).__name__}: {e}", exc_info=True)
 
     async def _evaluate_llm_decisions_loop(self):
