@@ -1588,63 +1588,13 @@ def compute_market_hash(data: dict) -> str:
     return hashlib.sha256(serialized.encode()).hexdigest()
 
 
-def _is_italian_holiday(dt) -> bool:
-    """Check if a given date is an Italian public holiday, including observed holidays.
-
-    Fixed-date holidays that fall on a weekend are observed on the following
-    Monday (or preceding Friday for Saturday holidays, per Italian convention).
-    """
-    fixed_holidays = {
-        (1, 1), (1, 6), (4, 25), (5, 1), (6, 2),
-        (8, 15), (11, 1), (12, 8), (12, 25), (12, 26)
-    }
-    if (dt.month, dt.day) in fixed_holidays:
-        return True
-
-    # Check observed holidays: if a fixed holiday falls on Saturday, observe on Friday;
-    # if on Sunday, observe on Monday.
-    weekday = dt.weekday()
-    if weekday == 0:  # Monday — check if Sunday was a fixed holiday
-        prev = dt - timedelta(days=1)
-        if (prev.month, prev.day) in fixed_holidays:
-            return True
-    elif weekday == 4:  # Friday — check if Saturday is a fixed holiday
-        nxt = dt + timedelta(days=1)
-        if (nxt.month, nxt.day) in fixed_holidays:
-            return True
-
-    # Easter Monday (depends on Easter Sunday)
-    # Simple Computus algorithm (Meeus/Jones/Butcher)
-    y = dt.year
-    a = y % 19
-    b = y // 100
-    c = y % 100
-    d = b // 4
-    e = b % 4
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d - g + 15) % 30
-    i = c // 4
-    k = c % 4
-    l = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * l) // 451
-    month = (h + l - 7 * m + 114) // 31
-    day = ((h + l - 7 * m + 114) % 31) + 1
-
-    easter_monday = datetime(y, month, day) + timedelta(days=1)
-    if dt.month == easter_monday.month and dt.day == easter_monday.day:
-        return True
-
-    return False
-
-
 def _should_use_primary_model() -> bool:
     """Check if primary models should be used based on market status.
 
     Returns True if market is open or in pre-market session (within 60 mins of open).
     Returns False if market is closed (use fallback models only to save tokens).
-    Computes market status locally to avoid dependency on Redis background tasks.
-    Result is cached for 30 seconds to avoid repeated timezone/holiday calculations.
+    Computes market status locally using pandas_market_calendars to avoid dependency on Redis background tasks.
+    Result is cached for 30 seconds to avoid repeated calendar lookups.
     """
     global _primary_model_cache, _primary_model_cache_ts, _primary_model_cache_settings
     now = time.time()
@@ -1663,17 +1613,45 @@ def _should_use_primary_model() -> bool:
         return _primary_model_cache
 
     from zoneinfo import ZoneInfo
+    import pandas_market_calendars as mcal
+    from datetime import datetime, timedelta, timezone
     try:
-        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
-        weekday = now_rome.weekday()
-        if weekday >= 5:  # Saturday or Sunday
-            result = False
-        elif _is_italian_holiday(now_rome):
+        rome_tz = ZoneInfo(settings.MARKET_TIMEZONE)
+        now_rome = datetime.now(timezone.utc).astimezone(rome_tz)
+        today = now_rome.date()
+
+        MARKET_OPEN_HOUR = settings.MARKET_OPEN_HOUR
+        MARKET_OPEN_MINUTE = settings.MARKET_OPEN_MINUTE
+        MARKET_CLOSE_HOUR = settings.MARKET_CLOSE_HOUR
+        MARKET_CLOSE_MINUTE = settings.MARKET_CLOSE_MINUTE
+
+        market_open_today = datetime(today.year, today.month, today.day,
+                                     MARKET_OPEN_HOUR, MARKET_OPEN_MINUTE, tzinfo=rome_tz)
+        market_close_today = datetime(today.year, today.month, today.day,
+                                      MARKET_CLOSE_HOUR, MARKET_CLOSE_MINUTE, tzinfo=rome_tz)
+
+        today_is_trading_day = False
+        try:
+            cal = mcal.get_calendar('XMIL')
+            schedule = cal.schedule(start_date=today - timedelta(days=1),
+                                    end_date=today + timedelta(days=1))
+            if not schedule.empty:
+                for idx in range(len(schedule)):
+                    session_start = schedule.iloc[idx]['market_open'].tz_convert(rome_tz)
+                    if session_start.date() == today:
+                        today_is_trading_day = True
+                        break
+        except Exception as cal_e:
+            logger.warning(f"pandas_market_calendars lookup failed in _should_use_primary_model: {cal_e}")
+            # Fallback to weekday check if calendar fails
+            today_is_trading_day = today.weekday() < 5
+
+        if not today_is_trading_day:
             result = False
         else:
             rome_minutes = now_rome.hour * 60 + now_rome.minute
-            open_minutes = settings.MARKET_OPEN_HOUR * 60 + settings.MARKET_OPEN_MINUTE
-            close_minutes = settings.MARKET_CLOSE_HOUR * 60 + settings.MARKET_CLOSE_MINUTE
+            open_minutes = MARKET_OPEN_HOUR * 60 + MARKET_OPEN_MINUTE
+            close_minutes = MARKET_CLOSE_HOUR * 60 + MARKET_CLOSE_MINUTE
 
             if open_minutes <= rome_minutes < close_minutes:
                 result = True  # Market is open
