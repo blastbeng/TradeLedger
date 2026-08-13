@@ -4,6 +4,7 @@ import logging
 import re
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional
 
 import pandas as pd
@@ -642,15 +643,31 @@ def get_tradable_assets() -> List[str]:
     # Filter candidates by country using yfinance
     strict = settings.COUNTRY_FILTER_STRICT
     filtered = []
-    for symbol in candidates:
-        # BTP ISINs start with IT and are Italian bonds, skip yfinance country check
-        if is_btp_isin(symbol):
-            if target_country == "italy":
-                filtered.append(symbol)
-            continue
-
-        country, name, isin = _fetch_info(symbol)
-
+    
+    # Separate BTPs and non-BTPs
+    btp_candidates = [s for s in candidates if is_btp_isin(s)]
+    non_btp_candidates = [s for s in candidates if not is_btp_isin(s)]
+    
+    if target_country == "italy":
+        filtered.extend(btp_candidates)
+        
+    # Parallelize _fetch_info for non-BTP candidates
+    fetch_results = {}
+    max_workers = min(10, len(non_btp_candidates)) if non_btp_candidates else 1
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_symbol = {executor.submit(_fetch_info, sym): sym for sym in non_btp_candidates}
+        for future in as_completed(future_to_symbol):
+            symbol = future_to_symbol[future]
+            try:
+                country, name, isin = future.result()
+                fetch_results[symbol] = (country, name, isin)
+            except Exception as e:
+                logger.debug(f"Failed to fetch info for {symbol}: {e}")
+                fetch_results[symbol] = (None, None, None)
+                
+    for symbol in non_btp_candidates:
+        country, name, isin = fetch_results.get(symbol, (None, None, None))
+        
         # Skip symbols with a non-Italian ISIN
         if isin is not None and not is_italian_isin(isin):
             logger.debug(f"Symbol {symbol} skipped (ISIN {isin} is not Italian)")

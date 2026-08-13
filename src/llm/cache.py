@@ -164,7 +164,7 @@ def _split_and_merge_prompt(
 
     # The chunk limit must fit within the weak model's context window, leaving room for instructions.
     # Decrease the chunk limit with each recursion depth to ensure the merged prompt shrinks.
-    chunk_limit = int(weak_max_tokens * 0.6 / (depth + 1))
+    chunk_limit = max(int(weak_max_tokens * 0.6 / (depth + 1)), 500)
 
     def _split_text(text: str, limit: int) -> List[str]:
         """Recursively split text by paragraphs, lines, and words to fit within limit."""
@@ -1488,6 +1488,10 @@ def _stringify_keys(obj):
     return obj
 
 
+_VOLATILE_KEY_FRAGMENTS = ("timestamp", "fetched_at", "created_at",
+                            "published_at", "last_eval", "last_auto_resume",
+                            "_last_state_save", "datetime", "last_update", "source")
+
 def _normalize_for_hash(obj, depth=0):
     """Recursively normalize data for stable hashing.
     
@@ -1496,10 +1500,8 @@ def _normalize_for_hash(obj, depth=0):
       'published_at', 'last_eval', 'last_auto_resume' (volatile fields that
       change every cycle but don't affect trading decisions).
     - Converts None values to a string "null" for consistent serialization.
+    - Stringifies dict keys to avoid a separate recursive pass.
     """
-    _VOLATILE_KEY_FRAGMENTS = ("timestamp", "fetched_at", "created_at",
-                                "published_at", "last_eval", "last_auto_resume",
-                                "_last_state_save", "datetime", "last_update", "source")
     if depth > 10:
         return None
     if isinstance(obj, dict):
@@ -1510,7 +1512,7 @@ def _normalize_for_hash(obj, depth=0):
                 continue
             if key_str == "time" or key_str.endswith("_time") or key_str.startswith("time_"):
                 continue
-            result[k] = _normalize_for_hash(v, depth + 1)
+            result[str(k)] = _normalize_for_hash(v, depth + 1)
         return result
     if isinstance(obj, list):
         return [_normalize_for_hash(item, depth + 1) for item in obj]
@@ -1583,8 +1585,7 @@ def compute_market_hash(data: dict) -> str:
     """
     data = _strip_ohlcv_timestamps(data)
     normalized = _normalize_for_hash(data)
-    safe_data = _stringify_keys(normalized)
-    serialized = json.dumps(safe_data, sort_keys=True, default=str)
+    serialized = json.dumps(normalized, sort_keys=True, default=str)
     return hashlib.sha256(serialized.encode()).hexdigest()
 
 
