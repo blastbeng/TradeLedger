@@ -2112,7 +2112,7 @@ def get_latest_close_prices(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         redis_client = get_redis_client()
         pipe = redis_client.pipeline()
         for bs, data in result.items():
-            pipe.setex(f"latest_close_prices:{bs}", 60, json.dumps(data))
+            pipe.setex(f"latest_close_prices:{bs}", 300, json.dumps(data))
         pipe.execute()
     except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
         pass

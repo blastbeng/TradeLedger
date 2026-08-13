@@ -5,6 +5,8 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+
 from src.config.settings import settings
 from src.database import get_indicators_for_symbols, get_aggregate_sentiment_for_symbols, get_ohlcv_batch
 from src.exchanges.market_data import get_quotes_cached
@@ -568,20 +570,22 @@ class ReevalDataFetcher:
             for sym in sorted_by_vol:
                 if sym not in ohlcv_data:
                     continue
-                # Find the longest timeframe with enough data for this symbol
                 best_tf = None
                 for tf in reversed(settings.OHLCV_TIMEFRAMES):
                     if tf in ohlcv_data[sym]:
                         candles = ohlcv_data[sym][tf]
                         if len(candles) >= MIN_CANDLES:
-                            closes = [c[4] for c in candles]
-                            returns = [(closes[i] - closes[i - 1]) / closes[i - 1]
-                                       for i in range(1, len(closes)) if closes[i - 1] != 0]
+                            closes = np.array([c[4] for c in candles], dtype=np.float64)
+                            prev = closes[:-1]
+                            curr = closes[1:]
+                            safe_prev = np.where(prev != 0, prev, 1.0)
+                            returns = (curr - prev) / safe_prev
+                            valid_mask = prev != 0
+                            returns = returns[valid_mask]
                             if len(returns) >= MIN_RETURNS:
+                                sym_returns[sym] = returns.tolist()
                                 best_tf = tf
                                 break
-                if best_tf:
-                    sym_returns[sym] = returns
 
             if not sym_returns:
                 return corr_matrix

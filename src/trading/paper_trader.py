@@ -65,7 +65,10 @@ class PaperTrader:
         self._slippage_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, slippage)
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
-        self._poll_interval = 3.0
+        self._poll_interval_base = 3.0
+        self._poll_interval_max = 60.0
+        self._poll_interval = self._poll_interval_base
+        self._consecutive_idle_polls = 0
         self._poller_thread = threading.Thread(target=self._poll_open_orders, daemon=True)
         self._poller_thread.start()
         self._load_balances()
@@ -256,8 +259,22 @@ class PaperTrader:
                     open_order_ids = [
                         oid for oid, o in self._orders.items() if o.status == "open"
                     ]
+                state_changed = False
                 for oid in open_order_ids:
+                    prev_status = self._orders.get(oid).status if oid in self._orders else None
                     self.get_order(oid)
+                    new_status = self._orders.get(oid).status if oid in self._orders else None
+                    if prev_status != new_status:
+                        state_changed = True
+                if state_changed or open_order_ids:
+                    self._consecutive_idle_polls = 0
+                    self._poll_interval = self._poll_interval_base
+                else:
+                    self._consecutive_idle_polls += 1
+                    self._poll_interval = min(
+                        self._poll_interval_base * (2 ** min(self._consecutive_idle_polls, 5)),
+                        self._poll_interval_max
+                    )
             except Exception as e:
                 logger.warning(f"Error polling open orders: {e}")
             time.sleep(self._poll_interval)
