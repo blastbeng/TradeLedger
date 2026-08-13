@@ -266,7 +266,7 @@ class PaperTrader:
                     new_status = self._orders.get(oid).status if oid in self._orders else None
                     if prev_status != new_status:
                         state_changed = True
-                if state_changed or open_order_ids:
+                if state_changed:
                     self._consecutive_idle_polls = 0
                     self._poll_interval = self._poll_interval_base
                 else:
