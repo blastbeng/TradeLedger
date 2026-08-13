@@ -1449,6 +1449,51 @@ class RiskManager:
                 and current_price <= pos["stop_loss"]):
             return await self._handle_stop_trigger(symbol, pos, current_price, display_symbol, sl_order_id, tp_order_id)
 
+        # --- Both stop and take-profit triggered (price gap through both) ---
+        if (sl_order_id and tp_order_id
+                and pos.get("stop_loss") is not None
+                and pos.get("take_profit") is not None
+                and current_price <= pos["stop_loss"]
+                and current_price >= pos["take_profit"]):
+            # Price gapped through both levels — check which orders actually filled
+            sl_filled = False
+            tp_filled = False
+            sl_order_obj = None
+            tp_order_obj = None
+            try:
+                sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
+                if sl_order_obj is not None and sl_order_obj.status == "filled":
+                    sl_filled = True
+            except Exception:
+                pass
+            try:
+                tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
+                if tp_order_obj is not None and tp_order_obj.status == "filled":
+                    tp_filled = True
+            except Exception:
+                pass
+
+            if sl_filled and tp_filled:
+                # Both filled — process stop-loss (protective order takes priority)
+                async with self.shared_state._positions_lock:
+                    pos.pop("stop_loss_order_id", None)
+                    pos.pop("take_profit_order_id", None)
+                    pos.pop("stop_loss_order_type", None)
+                    pos.pop("_native_stop_price", None)
+                    pos.pop("_native_stop_trigger_ts", None)
+                async with self.shared_state._queued_orders_lock:
+                    self.shared_state.queued_orders = [
+                        q for q in self.shared_state.queued_orders
+                        if q.get("order_id") != sl_order_id and q.get("order_id") != tp_order_id
+                    ]
+                await self.event_bus.publish("process_native_exit_fill", symbol, sl_order_id, sl_order_obj, pos, "stop_loss")
+                return True
+            elif sl_filled:
+                return await self._handle_stop_trigger(symbol, pos, current_price, display_symbol, sl_order_id, tp_order_id)
+            elif tp_filled:
+                return await self._handle_take_profit_trigger(symbol, pos, current_price, display_symbol, sl_order_id, tp_order_id)
+            # If neither filled, fall through to normal stop handling (stop takes priority)
+
         # Take-profit price reached → cancel stop OCO pair
         if (sl_order_id and tp_order_id
                 and pos.get("take_profit") is not None
@@ -1474,6 +1519,10 @@ class RiskManager:
     ) -> bool:
         """Handle stop-loss trigger: cancel TP, check SL fill, or fallback to manual sell."""
         engine = self.engine
+        # Guard: check if another thread already processed this stop
+        async with self.shared_state._positions_lock:
+            if not pos.get("stop_loss_order_id"):
+                return True
         
         if tp_order_id:
             tp_already_filled = False
@@ -1617,6 +1666,10 @@ class RiskManager:
     ) -> bool:
         """Handle take-profit trigger: cancel SL, check TP fill, or fallback to manual sell."""
         engine = self.engine
+        # Guard: check if another thread already processed this take-profit
+        async with self.shared_state._positions_lock:
+            if not pos.get("take_profit_order_id"):
+                return True
         
         async with self.shared_state._positions_lock:
             if not pos.get("stop_loss_order_id"):

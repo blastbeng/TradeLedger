@@ -395,14 +395,50 @@ class BuyExecutor:
                 'total_open_exposure': total_open_exposure,
                 'total_open_stop_risk': total_open_stop_risk,
                 'corr_matrix': corr_matrix,
+                'position_symbols': set(sym for sym, _ in positions_snapshot),
             }
             self._portfolio_cache_ts = now
         else:
             cache = self._portfolio_cache
-            pos_tickers = cache['pos_tickers']
-            total_open_exposure = cache['total_open_exposure']
-            total_open_stop_risk = cache['total_open_stop_risk']
-            corr_matrix = cache['corr_matrix']
+            # Validate cache: invalidate if positions were removed externally
+            # (e.g., delisting, external sells) without explicit invalidation
+            if set(self.shared_state.positions.keys()) != cache.get('position_symbols', set()):
+                self._portfolio_cache = None
+                # Re-fetch fresh data by falling through to the cache-miss path
+                pos_tickers = await engine._get_cached_position_tickers()
+                total_open_exposure = 0.0
+                total_open_stop_risk = 0.0
+                async with self.shared_state._positions_lock:
+                    positions_snapshot = list(self.shared_state.positions.items())
+                for sym, pos in positions_snapshot:
+                    try:
+                        t = pos_tickers.get(sym)
+                        price = t['last'] if t and t.get('last') else 0.0
+                        pos_value = pos['amount'] * price
+                        total_open_exposure += pos_value
+                        stop_loss = pos.get('stop_loss')
+                        if stop_loss is not None and price > 0:
+                            loss_if_stop = pos_value * (price - stop_loss) / price
+                            total_open_stop_risk += max(0, loss_if_stop)
+                    except (KeyError, TypeError, ValueError) as e:
+                        logger.debug(f"compute_position_size: failed to process {sym}: {type(e).__name__}: {e}")
+
+                cached_corr = await asyncio.to_thread(engine.redis.get, "reeval:correlation_matrix")
+                corr_matrix = json.loads(cached_corr) if cached_corr else {}
+
+                self._portfolio_cache = {
+                    'pos_tickers': pos_tickers,
+                    'total_open_exposure': total_open_exposure,
+                    'total_open_stop_risk': total_open_stop_risk,
+                    'corr_matrix': corr_matrix,
+                    'position_symbols': set(sym for sym, _ in positions_snapshot),
+                }
+                self._portfolio_cache_ts = now
+            else:
+                pos_tickers = cache['pos_tickers']
+                total_open_exposure = cache['total_open_exposure']
+                total_open_stop_risk = cache['total_open_stop_risk']
+                corr_matrix = cache['corr_matrix']
 
         total_value = quote_balance + total_open_exposure
 

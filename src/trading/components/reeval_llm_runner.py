@@ -27,8 +27,10 @@ class _TokenBudgetSemaphore:
                 try:
                     await self._cond.wait()
                 except asyncio.CancelledError:
-                    # If cancelled while waiting, we haven't acquired anything,
-                    # so just propagate the cancellation without modifying state.
+                    # Wake up other waiters in case the cancellation left the
+                    # condition variable in an inconsistent state. No tokens
+                    # were acquired, so no budget adjustment is needed.
+                    self._cond.notify_all()
                     raise
             self._used += tokens
 
