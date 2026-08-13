@@ -41,7 +41,7 @@ class EntrySignalManager:
             get_ohlcv, symbol, timeframe, limit=50
         )
         tf_seconds = engine._timeframe_to_seconds(timeframe)
-        min_candles = 5 if tf_seconds >= 2_592_000 else 26  # Long timeframes need fewer candles
+        min_candles = settings.ENTRY_SIGNAL_MIN_CANDLES_LONG_TF if tf_seconds >= 2_592_000 else settings.ENTRY_SIGNAL_MIN_CANDLES_SHORT_TF
         if len(db_candles) < min_candles:
             return False
 

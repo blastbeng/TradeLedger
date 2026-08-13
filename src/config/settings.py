@@ -36,6 +36,26 @@ class Settings(BaseSettings):
     PAPER_INITIAL_BALANCE: float = 10000.0
     PAPER_BALANCE_CHANGED: bool = False
 
+    # Paper trader polling and slippage settings
+    PAPER_POLL_INTERVAL_BASE: float = 15.0
+    PAPER_POLL_INTERVAL_MAX: float = 120.0
+    PAPER_SLIPPAGE_BASE_PCT: float = 0.001
+    PAPER_SLIPPAGE_MAX_PCT: float = 0.01
+
+    @field_validator("PAPER_POLL_INTERVAL_BASE", "PAPER_POLL_INTERVAL_MAX")
+    @classmethod
+    def validate_paper_poll_interval(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("Paper poll interval must be positive")
+        return v
+
+    @field_validator("PAPER_SLIPPAGE_BASE_PCT", "PAPER_SLIPPAGE_MAX_PCT")
+    @classmethod
+    def validate_paper_slippage_pct(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("Slippage percentage must be >= 0")
+        return v
+
     # Dividend reinvestment
     REINVEST_DIVIDENDS: bool = False
 
@@ -531,6 +551,17 @@ class Settings(BaseSettings):
     def validate_entry_signal_cooldown_seconds(cls, v: int) -> int:
         if v < 0:
             raise ValueError("ENTRY_SIGNAL_COOLDOWN_SECONDS must be >= 0")
+        return v
+
+    # Entry signal minimum candles per timeframe category
+    ENTRY_SIGNAL_MIN_CANDLES_LONG_TF: int = 5
+    ENTRY_SIGNAL_MIN_CANDLES_SHORT_TF: int = 26
+
+    @field_validator("ENTRY_SIGNAL_MIN_CANDLES_LONG_TF", "ENTRY_SIGNAL_MIN_CANDLES_SHORT_TF")
+    @classmethod
+    def validate_entry_signal_min_candles(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Entry signal min candles must be >= 1")
         return v
 
     # OHLCV timeframes for multi-timeframe analysis
@@ -1631,6 +1662,9 @@ class Settings(BaseSettings):
             "REDIS_TLS",
             "WEB_HOST",
             "WEB_PORT",
+            "DB_EXECUTOR_WORKERS",
+            "DOWNLOAD_EXECUTOR_WORKERS",
+            "QUOTE_EXECUTOR_WORKERS",
         }
 
         # LLM-related fields that should trigger cache invalidation if changed.
@@ -1674,6 +1708,15 @@ class Settings(BaseSettings):
                 cb()
             except Exception:
                 pass
+
+        # Invalidate the primary model cache in llm/cache.py so that market-hours
+        # settings changes take effect immediately rather than waiting for the
+        # 30-second TTL to expire.
+        try:
+            from src.llm.cache import _invalidate_primary_model_cache
+            _invalidate_primary_model_cache()
+        except Exception:
+            pass
 
     class Config:
         env_file = ".env"

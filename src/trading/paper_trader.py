@@ -59,14 +59,14 @@ class PaperTrader:
         self.base_currency = settings.BASE_CURRENCY
         self._balances: Dict[str, float] = {}
         self._orders: Dict[str, PaperOrder] = {}
-        self.slippage_base_pct = 0.001  # 0.1% base slippage
-        self.slippage_max_pct = 0.01    # 1.0% max slippage
+        self.slippage_base_pct = settings.PAPER_SLIPPAGE_BASE_PCT
+        self.slippage_max_pct = settings.PAPER_SLIPPAGE_MAX_PCT
         self._balances_dirty = False
         self._slippage_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, slippage)
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
-        self._poll_interval_base = 15.0
-        self._poll_interval_max = 120.0
+        self._poll_interval_base = settings.PAPER_POLL_INTERVAL_BASE
+        self._poll_interval_max = settings.PAPER_POLL_INTERVAL_MAX
         self._poll_interval = self._poll_interval_base
         self._consecutive_idle_polls = 0
         self._poller_thread = threading.Thread(target=self._poll_open_orders, daemon=True)

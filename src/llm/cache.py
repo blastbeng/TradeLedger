@@ -36,6 +36,14 @@ _primary_model_cache_ts: float = 0.0
 _primary_model_cache_settings: Optional[tuple] = None
 _PRIMARY_MODEL_CACHE_TTL = 30.0
 
+
+def _invalidate_primary_model_cache():
+    """Clear the primary model cache so settings changes take effect immediately."""
+    global _primary_model_cache, _primary_model_cache_ts, _primary_model_cache_settings
+    _primary_model_cache = None
+    _primary_model_cache_ts = 0.0
+    _primary_model_cache_settings = None
+
 def estimate_tokens(text: str) -> int:
     """Rough estimate of token count (1 token ~ 4 chars)."""
     return len(text) // 4
