@@ -515,6 +515,7 @@ async def messages():
 @http_router.get("/logs")
 async def logs(limit: int = 200):
     """Return the most recent log entries from Redis."""
+    limit = max(1, min(limit, 500))
     redis = get_redis_client()
     try:
         raw = await asyncio.to_thread(redis.lrange, "logs:recent", 0, limit - 1)
@@ -530,6 +531,7 @@ async def logs(limit: int = 200):
 
 @http_router.get("/history")
 async def history(limit: int = 50):
+    limit = max(1, min(limit, 200))
     engine = get_engine()
     trades = engine.trade_history[-limit:]
     if trades:
@@ -642,6 +644,7 @@ async def clear_isin(req: ClearISINRequest):
 async def signals(page: int = 1, limit: int = 5):
     if page < 1:
         page = 1
+    limit = max(1, min(limit, 100))
     offset = (page - 1) * limit
     return await run_in_threadpool(get_signals, limit, offset)
 
@@ -699,6 +702,7 @@ def config():
 
 @http_router.get("/ohlcv/{symbol:path}")
 async def ohlcv(symbol: str, timeframe: str = "1h", limit: int = 24):
+    limit = max(1, min(limit, 1000))
     engine = get_engine()
     base_symbol = symbol.split("/")[0]
     try:

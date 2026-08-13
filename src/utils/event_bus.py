@@ -28,6 +28,8 @@ class EventBus:
                     await callback(*args, **kwargs)
                 else:
                     callback(*args, **kwargs)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"Event handler error for '{event_name}': {type(e).__name__}: {e}", exc_info=True)
 
@@ -40,6 +42,8 @@ class EventBus:
             if asyncio.iscoroutinefunction(callback):
                 return await callback(*args, **kwargs)
             return callback(*args, **kwargs)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.exception(f"Event handler error for '{event_name}': {type(e).__name__}: {e}")
             return None

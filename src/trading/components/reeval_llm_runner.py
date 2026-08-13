@@ -24,7 +24,12 @@ class _TokenBudgetSemaphore:
             # If a single chunk exceeds the budget, cap it to the budget to avoid deadlock
             tokens = min(tokens, self._budget)
             while self._used + tokens > self._budget:
-                await self._cond.wait()
+                try:
+                    await self._cond.wait()
+                except asyncio.CancelledError:
+                    # If cancelled while waiting, we haven't acquired anything,
+                    # so just propagate the cancellation without modifying state.
+                    raise
             self._used += tokens
 
     async def release(self, tokens: int):

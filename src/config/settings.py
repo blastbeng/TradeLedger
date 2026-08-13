@@ -1180,6 +1180,17 @@ class Settings(BaseSettings):
             raise ValueError("QUEUED_ORDER_TIMEOUT_SECONDS must be positive")
         return v
 
+    # LLM circuit breaker: number of consecutive failures before short-circuiting
+    # risk management LLM calls (force-executing without LLM review).
+    LLM_CIRCUIT_BREAKER_THRESHOLD: int = 5
+
+    @field_validator("LLM_CIRCUIT_BREAKER_THRESHOLD")
+    @classmethod
+    def validate_llm_circuit_breaker_threshold(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("LLM_CIRCUIT_BREAKER_THRESHOLD must be >= 1")
+        return v
+
     LLM_CACHE_TTL: int = 1800
 
     @field_validator("LLM_CACHE_TTL")

@@ -631,6 +631,9 @@ class TradingEngine:
                 await asyncio.sleep(300)  # Wait 5 minutes before checking again
                 continue
 
+            # Clear the trigger before starting re-evaluation so that any
+            # trigger set DURING re-evaluation is caught in the next wait.
+            self._reeval_trigger.clear()
             self._reevaluate_running = True
             try:
                 # Always run re-evaluation, even if paused, to keep generating signals
@@ -686,7 +689,9 @@ class TradingEngine:
                         task.cancel()
                     except asyncio.CancelledError:
                         pass
-            self._reeval_trigger.clear()
+            # Don't clear _reeval_trigger here — it will be cleared at the
+            # start of the next iteration, before re-evaluation begins.
+            # This prevents losing a trigger that was set during the wait.
 
     async def _clear_pause_and_resume(self, reason: str, notification_msg: str, notification_summary: dict) -> None:
         """Helper to clear pause keys, set resume cooldown, and notify."""

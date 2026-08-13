@@ -230,10 +230,9 @@ class SellExecutor:
             # Bypass the guard for risk management and manual exits to avoid
             # accumulating unprotected losses when quotes are consistently stale.
             tf = timeframe or (pos.get("timeframe") if pos else None)
-            is_risk_exit = exit_reason in {
-                "stop_loss", "take_profit", "force_close", "news_sentiment_exit",
-                "max_hold_time", "manual_sell", "manual_sell_all", "delisted"
-            }
+            # Any non-None exit_reason is a risk management or system exit
+            # that should bypass the stale quote guard to protect capital.
+            is_risk_exit = exit_reason is not None
             if not is_risk_exit and tf and await engine._is_quote_too_stale(ticker, tf):
                 age_seconds = (time.time() * 1000 - ticker.get("last_update", 0)) / 1000
                 logger.warning(

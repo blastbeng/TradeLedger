@@ -516,7 +516,7 @@ def get_model_failure_stats() -> List[Dict[str, Any]]:
     return list(stats.values())
 
 
-_LLM_CIRCUIT_BREAKER_THRESHOLD = 5
+# Circuit breaker threshold is read from settings dynamically (see is_llm_circuit_breaker_active)
 
 
 async def is_llm_circuit_breaker_active(check_primary_model: bool = False) -> bool:
@@ -534,7 +534,7 @@ async def is_llm_circuit_breaker_active(check_primary_model: bool = False) -> bo
     except Exception:
         return False
 
-    if fail_count < _LLM_CIRCUIT_BREAKER_THRESHOLD:
+    if fail_count < settings.LLM_CIRCUIT_BREAKER_THRESHOLD:
         return False
 
     if check_primary_model and not _should_use_primary_model():
