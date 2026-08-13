@@ -74,6 +74,14 @@ from src.trading.components.symbol_reevaluator import SymbolReevaluator
 from src.trading.components.shared_state import SharedState
 from src.trading.components.engine_orchestrator import EngineOrchestrator
 from src.config.config_service import UnifiedConfigService
+from src.trading.engine_utils import (
+    timeframe_to_ms,
+    timeframe_to_seconds,
+    format_symbol_display,
+    is_excluded,
+    normalize_llm_symbol,
+    get_effective_refresh_interval,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1091,7 +1099,7 @@ class TradingEngine:
                         if not pos_tf:
                             pos_tf_secs = settings.RISK_CHECK_INTERVAL_SECONDS
                         else:
-                            pos_tf_secs = self._timeframe_to_seconds(pos_tf)
+                            pos_tf_secs = timeframe_to_seconds(pos_tf)
 
                         if pos_tf_secs >= 31_536_000:  # >= 1 year
                             pos_interval = settings.RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS
@@ -1249,86 +1257,6 @@ class TradingEngine:
 
             await self._interruptible_sleep(settings.NEWS_UPDATE_INTERVAL_MINUTES * 60)
 
-    @staticmethod
-    def _timeframe_to_ms(timeframe: str) -> int:
-        """Convert a timeframe string (e.g., '1m', '5m', '1h') to milliseconds."""
-        units = {
-            'm': 60_000,
-            'h': 3_600_000,
-            'd': 86_400_000,
-            'w': 604_800_000,
-            'M': 2_592_000_000,  # approximate (30 days)
-            'Y': 31_536_000_000, # approximate (365 days)
-        }
-        match = re.match(r'^(\d+)([mhdwMY])$', timeframe)
-        if not match:
-            return 3_600_000  # default to 1h
-        amount = int(match.group(1))
-        unit = match.group(2)
-        return amount * units.get(unit, 3_600_000)
-
-    def _timeframe_to_seconds(self, timeframe: str) -> int:
-        """Convert a timeframe string (e.g., '5m', '1h') to seconds."""
-        return self._timeframe_to_ms(timeframe) // 1000
-
-    def _get_effective_refresh_interval(self, base_interval: int, loop_type: str = "data") -> int:
-        """Scale refresh interval based on the longest tracked timeframe.
-
-        For long-term timeframes (1Y+), use much longer refresh cycles to
-        avoid wasting bandwidth and API calls on data that barely changes.
-
-        loop_type: "quotes" for quote refresh, "data" for OHLCV downloads,
-                   "news" for news downloads.
-        """
-        if not self.shared_state.current_symbols:
-            return base_interval
-
-        max_tf_seconds = 0
-        for entry in self.shared_state.current_symbols:
-            tf = entry.get("timeframe", "1d")
-            tf_secs = self._timeframe_to_seconds(tf)
-            if tf_secs > max_tf_seconds:
-                max_tf_seconds = tf_secs
-
-        if loop_type == "quotes":
-            # Quotes: even for long timeframes, prices still move intraday
-            if max_tf_seconds >= 31_536_000:  # 1Y+
-                return max(base_interval, 3600)  # 1 hour
-            elif max_tf_seconds >= 2_592_000:  # 1M+
-                return max(base_interval, 1800)  # 30 minutes
-            return base_interval
-        elif loop_type == "news":
-            # News: daily is sufficient for long-term trading
-            if max_tf_seconds >= 31_536_000:  # 1Y+
-                return max(base_interval, 86400)  # daily
-            elif max_tf_seconds >= 2_592_000:  # 1M+
-                return max(base_interval, 43200)  # 12 hours
-            return base_interval
-        else:  # "data" – OHLCV downloads
-            if max_tf_seconds >= 31_536_000:  # 1Y+
-                return max(base_interval, 86400)  # daily
-            elif max_tf_seconds >= 15_552_000:  # 6M+
-                return max(base_interval, 43200)  # 12 hours
-            elif max_tf_seconds >= 7_776_000:  # 3M+
-                return max(base_interval, 21600)  # 6 hours
-            elif max_tf_seconds >= 2_592_000:  # 1M+
-                return max(base_interval, 10800)  # 3 hours
-            elif max_tf_seconds >= 604_800:  # 1w+
-                return max(base_interval, 3600)  # 1 hour
-            return base_interval
-
-    @staticmethod
-    def _format_symbol_display(symbol: str, stock_name: str, timeframe: Optional[str] = None) -> str:
-        """Return a display string like 'AAPL[Apple Inc.]' or 'AAPL[Apple Inc.] (15m)'."""
-        base = symbol.split("/")[0] if "/" in symbol else symbol
-        if stock_name and stock_name != base:
-            display = f"{base}[{stock_name}]"
-        else:
-            display = base
-        if timeframe:
-            display += f" ({timeframe})"
-        return display
-
     async def _download_market_data_loop(self):
         """Periodically download and store OHLCV data for tracked stocks, with gap detection."""
         # Initial delay to let the engine settle
@@ -1336,7 +1264,7 @@ class TradingEngine:
         while self._running:
             if self._market_data_running:
                 logger.warning("Market data download still running; skipping this cycle.")
-                await self._interruptible_sleep(self._get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, "data"))
+                await self._interruptible_sleep(get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, self.shared_state.current_symbols, "data"))
                 continue
             self._market_data_running = True
             try:
@@ -1371,7 +1299,7 @@ class TradingEngine:
             finally:
                 self._market_data_running = False
 
-            await self._interruptible_sleep(self._get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, "data"))
+            await self._interruptible_sleep(get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, self.shared_state.current_symbols, "data"))
 
     async def _download_all_assets_data_loop(self):
         """Periodically download OHLCV for ALL tradable assets (stocks, ETFs, BTPs)."""
@@ -1379,7 +1307,7 @@ class TradingEngine:
         while self._running:
             if self._full_download_running:
                 logger.info("Full download already running (likely force download); skipping this cycle.")
-                await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
+                await self._interruptible_sleep(get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, self.shared_state.current_symbols, "data"))
                 continue
             self._full_download_running = True
             try:
@@ -1423,7 +1351,7 @@ class TradingEngine:
                         if latest_ts is None:
                             stale_tfs.append(tf)
                         else:
-                            interval_ms = self._timeframe_to_ms(tf)
+                            interval_ms = timeframe_to_ms(tf)
                             if latest_ts < now_ms - interval_ms:
                                 stale_tfs.append(tf)
                     if stale_tfs:
@@ -1468,7 +1396,7 @@ class TradingEngine:
                 self._full_download_running = False
 
             # Wait before next full download
-            await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
+            await self._interruptible_sleep(get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, self.shared_state.current_symbols, "data"))
 
     async def _download_all_news_loop(self):
         """Periodically pre‑fetch news for ALL tradable assets (stocks, ETFs, BTPs)."""
@@ -1492,7 +1420,7 @@ class TradingEngine:
                 all_pairs = stock_pairs + btp_pairs
                 if not all_pairs:
                     logger.info("No tradable assets found; skipping full news download.")
-                    await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, "news"))
+                    await self._interruptible_sleep(get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, self.shared_state.current_symbols, "news"))
                     continue
 
                 # Prioritize currently tracked symbols first, then the rest.
@@ -1524,7 +1452,7 @@ class TradingEngine:
                 logger.error(f"Full asset news download loop error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("full_asset_news_download_loop", e)
 
-            await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, "news"))
+            await self._interruptible_sleep(get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, self.shared_state.current_symbols, "news"))
 
     async def _refresh_all_quotes_loop(self):
         """Periodically fetch quotes for all tradable assets and cache them in Redis."""
@@ -1532,7 +1460,7 @@ class TradingEngine:
         while self._running:
             if self._quotes_fetch_running:
                 logger.info("Quotes fetch already running (likely re-evaluation or breadth); skipping this cycle.")
-                await self._interruptible_sleep(self._get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, "quotes"))
+                await self._interruptible_sleep(get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, self.shared_state.current_symbols, "quotes"))
                 continue
             self._quotes_fetch_running = True
             try:
@@ -1562,7 +1490,7 @@ class TradingEngine:
                 await self._record_unexpected_exception("quote_refresh_loop", e)
             finally:
                 self._quotes_fetch_running = False
-            await self._interruptible_sleep(self._get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, "quotes"))
+            await self._interruptible_sleep(get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, self.shared_state.current_symbols, "quotes"))
 
     async def _refresh_ticker_discovery_loop(self):
         """Periodically discover tickers from news RSS feeds and trending stocks.
@@ -1783,7 +1711,7 @@ class TradingEngine:
                     # Skip decisions that haven't reached their timeframe-scaled
                     # evaluation window yet. This prevents judging a 1Y HOLD
                     # after just 1 hour.
-                    tf_seconds = self._timeframe_to_seconds(decision.get("timeframe") or "1d")
+                    tf_seconds = timeframe_to_seconds(decision.get("timeframe") or "1d")
                     eval_window = max(3600, min(tf_seconds * 0.1, 604800))
                     decision_age = (time.time() * 1000 - decision["timestamp"]) / 1000
                     if decision_age < eval_window:
@@ -1798,7 +1726,7 @@ class TradingEngine:
 
                     # Determine if the decision was profitable using
                     # timeframe-aware thresholds to filter out noise.
-                    tf_seconds = self._timeframe_to_seconds(decision.get("timeframe") or "1d")
+                    tf_seconds = timeframe_to_seconds(decision.get("timeframe") or "1d")
                     # Minimum meaningful price movement (1% or 0.5% for long TFs)
                     min_move_pct = 0.005 if tf_seconds >= 2592000 else 0.01
 
@@ -2123,7 +2051,7 @@ class TradingEngine:
                     tf = entry["timeframe"]
                     # Skip entry signal monitoring for very long timeframes (>= 1 month)
                     # where short-term crossovers are irrelevant.
-                    tf_seconds = self._timeframe_to_seconds(tf)
+                    tf_seconds = timeframe_to_seconds(tf)
                     # Avoid re‑triggering too often – enforce a cooldown of at least
                     # the normal strategy interval.
                     # Use a short, dedicated cooldown so the bot reacts quickly to new signals
@@ -2288,62 +2216,6 @@ class TradingEngine:
                 logger.error(f"Orphaned order cleanup error: {type(e).__name__}: {e}", exc_info=True)
                 await self._record_unexpected_exception("cleanup_orphaned_orders", e)
             await asyncio.sleep(900)  # every 15 minutes
-
-    def _is_excluded(self, symbol: str, timeframe: str) -> bool:
-        """Return True if (symbol, timeframe) is in the EXCLUDED_SYMBOLS list."""
-        for entry in settings.EXCLUDED_SYMBOLS:
-            parts = entry.split("/")
-            if len(parts) == 2:
-                # "BASE/QUOTE" → exclude all timeframes for this pair
-                if parts[0] == symbol.split("/")[0] and parts[1] == symbol.split("/")[1]:
-                    return True
-            elif len(parts) == 3:
-                # "BASE/QUOTE/TIMEFRAME" → exclude only that specific timeframe
-                if (parts[0] == symbol.split("/")[0] and
-                    parts[1] == symbol.split("/")[1] and
-                    parts[2] == timeframe):
-                    return True
-        return False
-
-    def _normalize_llm_symbol(self, sym: str, sample_pairs: list) -> Optional[str]:
-        """Normalize an LLM-returned symbol to match the format in sample_pairs.
-
-        The LLM may return symbols without the /EUR suffix (e.g., 'ENI.MI' instead
-        of 'ENI.MI/EUR'), or with/without exchange-specific suffixes (e.g., 'ENI'
-        vs 'ENI.MI'). This method tries multiple formats to find a match.
-        Returns the matched pair string, or None if no match is found.
-        """
-        if sym in sample_pairs:
-            return sym
-        # Try adding /{base_currency} suffix
-        with_suffix = f"{sym}/{self.base_currency}"
-        if with_suffix in sample_pairs:
-            return with_suffix
-        # Try matching by base symbol (strip any suffix the LLM may have added)
-        base = sym.split("/")[0]
-        for pair in sample_pairs:
-            if pair.split("/")[0] == base:
-                return pair
-        # Try matching by stripping exchange suffixes from both sides
-        # e.g., LLM returns 'ENI' but sample has 'ENI.MI', or vice versa
-        configured_suffix = getattr(settings, 'TICKER_SUFFIX', '')
-
-        def _strip_suffix(symbol_base: str) -> str:
-            # Strip the configured ticker suffix first
-            if configured_suffix and symbol_base.endswith(configured_suffix):
-                return symbol_base[:-len(configured_suffix)]
-            # Strip common exchange suffixes (e.g., .MI, .PA, .L, .N, .SW)
-            parts = symbol_base.rsplit('.', 1)
-            if len(parts) == 2 and 1 <= len(parts[1]) <= 3 and parts[1].isalpha() and parts[1].isupper():
-                return parts[0]
-            return symbol_base
-
-        stripped_base = _strip_suffix(base)
-        for pair in sample_pairs:
-            pair_base = pair.split("/")[0]
-            if stripped_base == _strip_suffix(pair_base):
-                return pair
-        return None
 
     async def _is_market_open(self) -> bool:
         """Return True if the Italian market (Borsa Italiana) is currently open."""
