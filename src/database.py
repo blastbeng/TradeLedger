@@ -272,6 +272,14 @@ def retry_on_db_lock(max_retries=2, initial_delay=0.1):
                             time.sleep(delay)
                             continue
                     raise
+                except (ConnectionError, TimeoutError, OSError) as e:
+                    # Retry on transient network/IO errors (e.g., connection timeouts)
+                    last_exc = e
+                    if attempt < max_retries:
+                        delay = min(initial_delay * (2 ** attempt), 1.0)
+                        time.sleep(delay)
+                        continue
+                    raise
             raise last_exc
         return wrapper
     return decorator
