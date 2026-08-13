@@ -1588,6 +1588,39 @@ def compute_market_hash(data: dict) -> str:
     return hashlib.sha256(serialized.encode()).hexdigest()
 
 
+def _is_italian_holiday(dt: datetime) -> bool:
+    """Check if a given date is an Italian national holiday.
+
+    Uses fixed-date holidays and computes Easter Monday dynamically.
+    """
+    fixed_holidays = {
+        (1, 1),   # New Year's Day
+        (1, 6),   # Epiphany
+        (4, 25),  # Liberation Day
+        (5, 1),   # Labour Day
+        (6, 2),   # Republic Day
+        (8, 15),  # Assumption of Mary
+        (11, 1),  # All Saints' Day
+        (12, 8),  # Immaculate Conception
+        (12, 25), # Christmas
+        (12, 26), # St. Stephen's Day
+    }
+
+    if (dt.month, dt.day) in fixed_holidays:
+        return True
+
+    # Easter Monday (Lunedì dell'Angelo)
+    try:
+        from dateutil.easter import easter as _easter
+        easter_sunday = _easter(dt.year)
+        easter_monday = easter_sunday + timedelta(days=1)
+        if dt.date() == easter_monday:
+            return True
+    except ImportError:
+        pass
+
+    return False
+
 def _should_use_primary_model() -> bool:
     """Check if primary models should be used based on market status.
 
