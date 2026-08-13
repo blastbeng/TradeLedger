@@ -160,8 +160,8 @@ class ReevalShortlistBuilder:
 
         engine = self.engine
 
-        target_etf_pct = 0.20
-        target_btp_pct = 0.20
+        target_etf_pct = settings.TARGET_ETF_ALLOCATION_PCT
+        target_btp_pct = settings.TARGET_BTP_ALLOCATION_PCT
         
         min_etfs = max(1, int(len(deduped) * target_etf_pct))
         min_btps = max(1, int(len(deduped) * target_btp_pct))

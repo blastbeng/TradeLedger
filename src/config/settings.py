@@ -1438,6 +1438,17 @@ class Settings(BaseSettings):
             raise ValueError("MAX_SINGLE_ASSET_EXPOSURE_PCT must be between 0.0 and 1.0")
         return v
 
+    # Target allocation percentages for asset class enforcement during re-evaluation
+    TARGET_ETF_ALLOCATION_PCT: float = 0.20
+    TARGET_BTP_ALLOCATION_PCT: float = 0.20
+
+    @field_validator("TARGET_ETF_ALLOCATION_PCT", "TARGET_BTP_ALLOCATION_PCT")
+    @classmethod
+    def validate_target_allocation_pct(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("Allocation percentage must be between 0.0 and 1.0")
+        return v
+
     # Sentiment shift threshold to trigger immediate re-evaluation
     SENTIMENT_SHIFT_THRESHOLD: float = 0.3
 
