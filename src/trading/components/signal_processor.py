@@ -1664,7 +1664,14 @@ class SignalProcessor:
         # but never greater than the configured MAX_SKIP_INTERVAL_SECONDS.
         # This prevents excessively long skip durations for long timeframes
         # (e.g., 5Y candles should not skip evaluation for 5 years).
-        max_skip = min(settings.MAX_SKIP_INTERVAL_SECONDS, effective_interval)
+        # For very long timeframes (>= 1 year), evaluating every 7 days is too frequent,
+        # so we use a larger cap (90 days) to avoid wasting LLM tokens.
+        if timeframe_seconds >= 31_536_000:  # >= 1 year
+            max_skip = min(90 * 24 * 3600, effective_interval)
+        elif timeframe_seconds >= 2_592_000:  # >= 1 month
+            max_skip = min(30 * 24 * 3600, effective_interval)
+        else:
+            max_skip = min(settings.MAX_SKIP_INTERVAL_SECONDS, effective_interval)
         if now - last_time > min(3 * effective_interval, max_skip):
             return False
 
