@@ -37,7 +37,7 @@ class SellExecutor:
             return 0.0, 0.0, 0.0, 0.0
         cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
         net_base = pos.get("net_base", pos["amount"])
-        prorated_cost_basis = cost_basis * (sold_amount / net_base) if net_base > 0 else 0.0
+        prorated_cost_basis = cost_basis * (sold_amount / pos["amount"]) if pos["amount"] > 0 else 0.0
         realized_pnl = net_quote - prorated_cost_basis
         return realized_pnl, prorated_cost_basis, cost_basis, net_base
 

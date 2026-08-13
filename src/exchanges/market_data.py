@@ -172,7 +172,7 @@ class DatabaseClosePriceHandler(QuoteHandler):
                         "last_update": db_candles[sym].get("candle_timestamp"),
                         "source": "db_close",
                     }
-                    # Do not remove from missing_symbols so yfinance can still try to update it
+                    context.missing_symbols.remove(sym)
         except (RuntimeError, ValueError, KeyError, OSError) as e:
             logger.warning(f"get_quotes: DB close price fallback failed: {type(e).__name__}: {e}")
 

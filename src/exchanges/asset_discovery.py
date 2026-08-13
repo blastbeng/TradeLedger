@@ -496,7 +496,7 @@ def get_tradable_assets() -> List[str]:
         logger.warning("No tickers discovered from Wikipedia, Euronext, or news feeds. Checking Redis cache and DB for previously discovered symbols...")
         # Try Redis cache first (may have symbols from a previous successful run)
         redis_client = get_redis_client()
-        cache_key = f"tradable_assets:{settings.TARGET_COUNTRY}"
+        cache_key = f"tradable_assets:{settings.TARGET_COUNTRY}:{settings.COUNTRY_FILTER_STRICT}"
         try:
             cached = redis_client.get(cache_key)
             if cached:
@@ -595,7 +595,7 @@ def get_tradable_assets() -> List[str]:
 
     # Check Redis cache
     redis_client = get_redis_client()
-    cache_key = f"tradable_assets:{settings.TARGET_COUNTRY}"
+    cache_key = f"tradable_assets:{settings.TARGET_COUNTRY}:{settings.COUNTRY_FILTER_STRICT}"
     try:
         cached = redis_client.get(cache_key)
         if cached:

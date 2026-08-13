@@ -1233,18 +1233,18 @@ class PositionManager:
                 split_ratio = None
                 if recorded_amount > 0:
                     ratio = actual_balance / recorded_amount
-                    if ratio > 1.01:
+                    if ratio > 1.01 or ratio < 0.99:
                         # Check if the ratio is close to a rational number with a small denominator
-                        # (e.g., 7-for-1, 3-for-2, 5-for-4) to handle uncommon splits.
-                        for denom in range(1, 11):
+                        # (e.g., 7-for-1, 3-for-2, 5-for-4, 1-for-2 reverse split) to handle uncommon splits.
+                        for denom in range(1, 21):
                             numer = round(ratio * denom)
-                            if numer > denom and abs(ratio - numer / denom) < 0.01:
+                            if numer > 0 and abs(ratio - numer / denom) < 0.01:
                                 split_ratio = numer / denom
                                 break
 
                 if split_ratio is not None:
                     logger.warning(
-                        f"Stock split detected for {symbol}: balance increased from {recorded_amount} to {actual_balance} "
+                        f"Stock split detected for {symbol}: balance changed from {recorded_amount} to {actual_balance} "
                         f"(ratio {split_ratio}:1). Adjusting position parameters."
                     )
                     async with self.shared_state._positions_lock:

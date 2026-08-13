@@ -2809,7 +2809,10 @@ def compute_btp_ytm(coupon: Optional[float], maturity: Optional[str], price: Opt
         coupon_payment = (coupon / 100) * 100 / 2  # BTPs pay semi-annually
         par_value = 100.0
         
-        ytm = 0.05  # Initial guess
+        # Initial guess based on approximate YTM formula
+        ytm = (coupon + (par_value - price) / years_to_maturity) / ((par_value + price) / 2)
+        if ytm <= 0:
+            ytm = 0.05
         for _ in range(100):
             price_calc = 0.0
             for i in range(1, periods + 1):
@@ -2821,7 +2824,7 @@ def compute_btp_ytm(coupon: Optional[float], maturity: Optional[str], price: Opt
                 derivative -= (i / 2) * coupon_payment / ((1 + ytm / 2) ** (i + 1))
             derivative -= (periods / 2) * par_value / ((1 + ytm / 2) ** (periods + 1))
             
-            if derivative == 0:
+            if abs(derivative) < 1e-10:
                 break
             new_ytm = ytm - (price_calc - price) / derivative
             if abs(new_ytm - ytm) < 1e-6:
