@@ -170,21 +170,7 @@ def _validate_stop_loss(
             atr_pct = atr_pct * (86400 / timeframe_seconds) ** 0.5
         min_sl = min_stop_atr_mult * atr_pct
         if sl < min_sl:
-            # Instead of rejecting, adjust the stop-loss to the minimum required
-            sl = min_sl
-            params["stop_loss_pct"] = sl
-            logger.info(f"Validator: adjusted stop_loss_pct to {sl:.4f} (minimum {min_stop_atr_mult}x ATR) for {symbol}")
-            # Re-check consistency with take_profit
-            if tp is not None and sl >= tp:
-                tp = sl * 1.5
-                params["take_profit_pct"] = tp
-                logger.info(f"Validator: adjusted take_profit_pct to {tp:.4f} (must be > adjusted stop_loss_pct={sl:.4f}) for {symbol}")
-            elif tp is None and params.get("take_profit_atr_multiple") is not None:
-                # Ensure ATR-based TP is at least 1.5x the stop ATR multiple
-                atr_mult = params.get("stop_loss_atr_multiple", 2.0)
-                if params["take_profit_atr_multiple"] < atr_mult * 1.5:
-                    params["take_profit_atr_multiple"] = atr_mult * 1.5
-                    logger.info(f"Validator: adjusted take_profit_atr_multiple to {params['take_profit_atr_multiple']} (must be > stop_loss_atr_multiple) for {symbol}")
+            return Signal(action="HOLD", confidence=0.0, reasoning=f"stop_loss_pct {sl:.4f} is below minimum {min_stop_atr_mult}x ATR ({min_sl:.4f})")
 
     return None
 
@@ -332,14 +318,7 @@ def _validate_optional_params(
                 actual_ratio = tp / sl
             
             if mrr > 0 and actual_ratio < mrr:
-                # Adjust take_profit to meet the minimum risk/reward ratio instead of downgrading to HOLD
-                if tp_atr is not None and stop_method == "atr_multiple":
-                    params["take_profit_atr_multiple"] = atr_mult * mrr
-                    logger.info(f"Validator: adjusted take_profit_atr_multiple to {params['take_profit_atr_multiple']} (min_risk_reward_ratio={mrr}) for {symbol}")
-                else:
-                    tp = sl * mrr
-                    params["take_profit_pct"] = tp
-                    logger.info(f"Validator: adjusted take_profit_pct to {tp:.4f} (min_risk_reward_ratio={mrr}) for {symbol}")
+                return Signal(action="HOLD", confidence=0.0, reasoning=f"Risk/reward ratio {actual_ratio:.2f} is below minimum {mrr}")
     if "min_confidence" in params:
         mc = params["min_confidence"]
         if not isinstance(mc, (int, float)) or not (0.0 <= mc <= 1.0):
@@ -564,18 +543,13 @@ def _validate_logical_consistency(
     # Skip the fixed percentage comparison if both stop and take-profit are ATR-based
     if not (stop_method == "atr_multiple" and tp_atr_valid):
         if sl is not None and tp <= sl:
-            # Adjust take_profit instead of downgrading to HOLD
-            tp = sl * 1.5
-            params["take_profit_pct"] = tp
-            logger.info(f"Validator: adjusted take_profit_pct to {tp:.4f} (must be > stop_loss_pct={sl:.4f}) for {symbol}")
+            return Signal(action="HOLD", confidence=0.0, reasoning=f"take_profit_pct {tp:.4f} must be > stop_loss_pct {sl:.4f}")
     if trailing:
         if symbol and not BTPPolicy.supports_trailing_stop(symbol):
             return Signal(action="HOLD", confidence=0.0, reasoning="trailing_stop is not supported for BTP symbols")
         tsd = params.get("trailing_stop_distance_pct")
         if tsd is not None and sl is not None and tsd >= sl:
-            tsd = sl * 0.5
-            params["trailing_stop_distance_pct"] = tsd
-            logger.info(f"Validator: adjusted trailing_stop_distance_pct to {tsd:.4f} (must be < stop_loss_pct={sl:.4f}) for {symbol}")
+            return Signal(action="HOLD", confidence=0.0, reasoning=f"trailing_stop_distance_pct {tsd:.4f} must be < stop_loss_pct {sl:.4f}")
     return None
 
 
