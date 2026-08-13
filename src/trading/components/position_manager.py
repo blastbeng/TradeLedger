@@ -91,6 +91,17 @@ class PositionManager:
         }
         return result
 
+    def compute_total_unrealized_pnl(self, tickers: Dict[str, Dict[str, Any]]) -> float:
+        """Compute the total unrealized P&L across all open positions."""
+        total_unrealized = 0.0
+        for symbol, pos in self.shared_state.positions.items():
+            t = tickers.get(symbol)
+            current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
+            entry_price = pos.get('price', 0.0)
+            amount = pos.get('amount', 0.0)
+            total_unrealized += (current_price - entry_price) * amount
+        return total_unrealized
+
     async def get_profit_summary(self) -> Dict[str, Any]:
         """Return profit/loss summary including queued orders."""
         engine = self.engine

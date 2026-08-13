@@ -667,7 +667,40 @@ class RiskManager:
             if est_price_drop_pct is not None:
                 _hard_max_loss = abs(est_price_drop_pct)
             else:
-                _hard_max_loss = self._get_hard_max_loss_pct(symbol, pos)
+                # Fallback: use modified duration for a conservative 50 bps yield shift
+                metrics = BTPPolicy.compute_btp_metrics(symbol, current_price)
+                if metrics and metrics.get("modified_duration") is not None:
+                    mod_dur = metrics["modified_duration"]
+                    price_drop = -mod_dur * 0.005 * current_price
+                    hard_stop_price = current_price + price_drop
+                    if current_price <= hard_stop_price:
+                        logger.warning(
+                            f"Hard max loss threshold reached for {symbol}: "
+                            f"current price {current_price:.4f} <= hard stop {hard_stop_price:.4f} (BTP duration fallback). Forcing SELL."
+                        )
+                        if engine.notifier:
+                            await engine.notifier.send_notification(
+                                f"⛔ Hard stop for {display_symbol}: current price {current_price:.4f} <= "
+                                f"hard stop {hard_stop_price:.4f} (BTP duration fallback) – force selling.",
+                                summary={
+                                    "symbol": symbol,
+                                    "action": "SELL",
+                                    "reason": "Hard maximum loss threshold (BTP duration fallback)",
+                                    "price": current_price,
+                                    "exit_reason": "hard_max_loss",
+                                }
+                            )
+                        await self.event_bus.publish(
+                            "execute_signal",
+                            symbol,
+                            Signal(action="SELL", confidence=1.0, reasoning="Hard maximum loss threshold exceeded (BTP duration fallback)"),
+                            exit_reason="hard_max_loss"
+                        )
+                        return True
+                    return False
+                else:
+                    logger.warning(f"BTP duration metrics unavailable for {symbol}; falling back to percentage-based hard stop.")
+                    _hard_max_loss = self._get_hard_max_loss_pct(symbol, pos)
         else:
             _hard_max_loss = self._get_hard_max_loss_pct(symbol, pos)
             
@@ -946,6 +979,9 @@ class RiskManager:
                         elif (now_ts - last_check_ts) >= fetch_interval:
                             since_ms = int(last_check_ts * 1000)
                             db_candles = await asyncio.to_thread(get_ohlcv, symbol, ohlcv_tf, since_ms=since_ms, limit=200)
+                            if not db_candles and ohlcv_tf != tf:
+                                logger.warning(f"No 1h candles found for {symbol}; falling back to assigned timeframe {tf}.")
+                                db_candles = await asyncio.to_thread(get_ohlcv, symbol, tf, since_ms=since_ms, limit=200)
                             if db_candles:
                                 candle_high = max(c["high"] for c in db_candles)
                                 candidate_prices.append(candle_high)
@@ -1378,7 +1414,12 @@ class RiskManager:
         to the next position), False otherwise.
         """
         engine = self.engine
-        multiplier = settings.MAX_POSITION_AGE_MULTIPLIER
+        TIMEFRAME_AGE_MULTIPLIERS = {
+            "1m": 3.0, "5m": 2.5, "15m": 2.0, "30m": 2.0, "1h": 2.0,
+            "4h": 1.8, "1d": 1.5, "1w": 1.2, "1M": 1.1
+        }
+        pos_tf = pos.get("timeframe")
+        multiplier = TIMEFRAME_AGE_MULTIPLIERS.get(pos_tf, settings.MAX_POSITION_AGE_MULTIPLIER)
         if multiplier <= 0:
             return False
 
