@@ -79,9 +79,8 @@ class StatePersistence:
         If the async save is in progress, waits up to 2 seconds for it to complete.
         """
         engine = self.engine
-        if not self._persistence_lock.acquire(blocking=True, timeout=2.0):
-            logger.info("Persistence lock held by async save; state is already being persisted.")
-            return
+        # Wait indefinitely for the lock to ensure state is saved on crash
+        self._persistence_lock.acquire(blocking=True)
         try:
             save_trading_state("current_symbols", self.shared_state.current_symbols)
             save_trading_state("positions", dict(self.shared_state.positions))
