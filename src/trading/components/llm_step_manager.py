@@ -346,10 +346,34 @@ class LLMStepManager:
                 llm_model = response2["model"]
                 is_fallback = response2.get("is_fallback", False)
             except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e2:
-                logger.error(f"LLM Step 1b response still invalid after retry for {symbol}: {type(e2).__name__}: {e2}")
-                preliminary_strategy = LLMStrategy(self._create_fallback_hold_signal(
-                    symbol, "Failed to parse LLM Step 1b response after retry", strategy_model_type
-                ))
+                logger.warning(f"LLM Step 1b response still invalid after first retry for {symbol}: {type(e2).__name__}: {e2}. Retrying with simpler prompt.")
+                simpler_prompt = (
+                    "Your previous responses were not valid JSON. "
+                    "Output ONLY a valid JSON object with the following minimal structure: "
+                    '{"action": "HOLD", "confidence": 0.0, "reasoning": "Failed to parse previous response", "strategy": {"type": "fallback", "parameters": {}}}. '
+                    "Do not include any other text, markdown fences, or explanations."
+                )
+                try:
+                    response3 = await asyncio.to_thread(
+                        get_cached_llm_response, "", "", None,
+                        model_type="actuator",
+                        temperature=0.1,
+                        market_hash=variants_market_hash,
+                        messages=[
+                            {"role": "system", "content": "You are a JSON generator. Output ONLY valid JSON."},
+                            {"role": "user", "content": simpler_prompt},
+                        ],
+                        request_type="trading_decision_step1b_retry_simple",
+                    )
+                    preliminary_strategy = create_strategy_from_llm(response3["response"])
+                    llm_provider = response3["provider"]
+                    llm_model = response3["model"]
+                    is_fallback = response3.get("is_fallback", False)
+                except Exception as e3:
+                    logger.error(f"LLM Step 1b response still invalid after simpler retry for {symbol}: {type(e3).__name__}: {e3}")
+                    preliminary_strategy = LLMStrategy(self._create_fallback_hold_signal(
+                        symbol, "Failed to parse LLM Step 1b response after simpler retry", strategy_model_type
+                    ))
 
         preliminary_signal = preliminary_strategy.generate_signal({})
         preliminary_signal.model_type = strategy_model_type

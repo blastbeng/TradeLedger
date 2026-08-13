@@ -593,8 +593,38 @@ class BacktestManager:
                     llm_model = retry_result["model"]
                     is_fallback = retry_result.get("is_fallback", False)
                 except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError):
-                    logger.error(f"Step 2 JSON parse retry failed for {symbol}. Using preliminary decision.")
-                    final_strategy = None
+                    logger.warning(f"Step 2 JSON parse retry failed for {symbol}. Retrying with simpler prompt.")
+                    simpler_prompt = (
+                        "Your previous responses were not valid JSON. "
+                        "Output ONLY a valid JSON object with the following minimal structure: "
+                        '{"action": "HOLD", "confidence": 0.0, "reasoning": "Failed to parse previous response", "strategy": {"type": "fallback", "parameters": {}}}. '
+                        "Do not include any other text, markdown fences, or explanations."
+                    )
+                    simpler_messages = [
+                        {"role": "system", "content": "You are a JSON generator. Output ONLY valid JSON."},
+                        {"role": "user", "content": simpler_prompt},
+                    ]
+                    try:
+                        simpler_result = await asyncio.wait_for(
+                            get_cached_llm_response_async(
+                                "", "", 30,
+                                model_type="actuator",
+                                temperature=0.1,
+                                symbol=symbol,
+                                market_hash=market_hash,
+                                messages=simpler_messages,
+                                request_type="trading_decision_step2_retry_simple",
+                            ),
+                            timeout=settings.LLM_TIMEOUT
+                        )
+                        final_strategy = create_strategy_from_llm(simpler_result["response"])
+                        step2_response = simpler_result["response"]
+                        llm_provider = simpler_result["provider"]
+                        llm_model = simpler_result["model"]
+                        is_fallback = simpler_result.get("is_fallback", False)
+                    except Exception:
+                        logger.error(f"Step 2 JSON parse simpler retry failed for {symbol}. Using preliminary decision.")
+                        final_strategy = None
 
             if final_strategy is not None:
                 signal = final_strategy.generate_signal({})
