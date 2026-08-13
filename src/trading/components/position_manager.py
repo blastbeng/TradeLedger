@@ -1344,5 +1344,14 @@ class PositionManager:
                         f"(attempt {attempts}/{max_attempts}); forcing re-evaluation."
                     )
 
+        # Update open positions flag in Redis for LLM model selection
+        try:
+            if self.shared_state.positions:
+                await asyncio.to_thread(self.engine.redis.set, "trading:has_open_positions", "1")
+            else:
+                await asyncio.to_thread(self.engine.redis.delete, "trading:has_open_positions")
+        except Exception:
+            pass
+
         # Persist any changes made during reconciliation
         await self.event_bus.publish("save_state", force=True)
