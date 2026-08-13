@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Callable
 
 import httpx
@@ -84,6 +85,90 @@ def _execute_llm_request(
     raise RuntimeError(f"{provider.capitalize()} request failed after all retries")
 
 
+class LLMProvider(ABC):
+    """Abstract base class for LLM providers."""
+    @abstractmethod
+    def get_response(self, prompt: str, system_prompt: str, model: str, base_url: str,
+                     api_key: str, temperature: Optional[float], timeout: Optional[float],
+                     messages: Optional[List[Dict[str, str]]], add_cache_control: bool,
+                     thinking_enabled: bool, reasoning_effort: str, max_retries: int,
+                     max_tokens: Optional[int]) -> dict:
+        pass
+
+
+class OllamaProvider(LLMProvider):
+    def get_response(self, prompt: str = "", system_prompt: str = "", model: str = None,
+                     base_url: str = None, api_key: str = None,
+                     temperature: Optional[float] = None,
+                     timeout: Optional[float] = None,
+                     messages: Optional[List[Dict[str, str]]] = None,
+                     add_cache_control: bool = False,
+                     thinking_enabled: bool = True,
+                     reasoning_effort: str = "low",
+                     max_retries: int = 3,
+                     max_tokens: Optional[int] = None) -> dict:
+        """Send a prompt to the configured Ollama model and return a dict with 'content' and 'usage'."""
+        url = f"{(base_url or settings.OLLAMA_BASE_URL).rstrip('/')}/api/chat"
+        headers = {"Content-Type": "application/json"}
+        effective_api_key = api_key or settings.OLLAMA_API_KEY
+        if effective_api_key:
+            headers["Authorization"] = f"Bearer {effective_api_key}"
+
+        if messages is not None:
+            # Use the provided message list directly (copy to avoid mutation)
+            api_messages = [dict(msg) for msg in messages]
+        else:
+            api_messages = []
+            if system_prompt:
+                api_messages.append({"role": "system", "content": system_prompt})
+            api_messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": model or (settings.OLLAMA_MODEL[0] if settings.OLLAMA_MODEL else None),
+            "messages": api_messages,
+            "stream": False,
+            "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
+        }
+
+        # Always send reasoning_effort: "low" when thinking is disabled,
+        # or the computed value when thinking is enabled.
+        payload["reasoning_effort"] = "low" if not thinking_enabled else reasoning_effort
+
+        if max_tokens is not None:
+            payload["options"] = {"num_predict": max_tokens}
+
+        def _parse_ollama(data: dict) -> dict:
+            if "message" not in data or "content" not in data["message"]:
+                logger.error(
+                    "Ollama response missing 'message.content' key. Full response: %s",
+                    json.dumps(data)[:2000]
+                )
+                raise RuntimeError(f"Ollama API returned unexpected format: missing 'message.content'. Response: {str(data)[:500]}")
+            
+            content = data["message"]["content"]
+            prompt_eval_count = data.get("prompt_eval_count")
+            eval_count = data.get("eval_count")
+            if prompt_eval_count is not None and eval_count is not None:
+                prompt_tokens = prompt_eval_count
+                completion_tokens = eval_count
+            else:
+                from src.llm.cache import estimate_tokens
+                prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+                completion_tokens = estimate_tokens(content)
+            total_tokens = prompt_tokens + completion_tokens
+            
+            return {
+                "content": content,
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                }
+            }
+
+        return _execute_llm_request("ollama", url, headers, payload, timeout, system_prompt, prompt, _parse_ollama, max_retries=max_retries)
+
+
 def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str = None,
                          base_url: str = None, api_key: str = None,
                          temperature: Optional[float] = None,
@@ -93,68 +178,89 @@ def _get_ollama_response(prompt: str = "", system_prompt: str = "", model: str =
                         thinking_enabled: bool = True,
                         reasoning_effort: str = "low",
                        max_retries: int = 3,
-                       max_tokens: Optional[int] = None,
-) -> dict:
-    """Send a prompt to the configured Ollama model and return a dict with 'content' and 'usage'."""
-    url = f"{(base_url or settings.OLLAMA_BASE_URL).rstrip('/')}/api/chat"
-    headers = {"Content-Type": "application/json"}
-    effective_api_key = api_key or settings.OLLAMA_API_KEY
-    if effective_api_key:
-        headers["Authorization"] = f"Bearer {effective_api_key}"
+                       max_tokens: Optional[int] = None) -> dict:
+    provider = OllamaProvider()
+    return provider.get_response(prompt, system_prompt, model, base_url, api_key, temperature,
+                                 timeout, messages, add_cache_control, thinking_enabled,
+                                 reasoning_effort, max_retries, max_tokens)
 
-    if messages is not None:
-        # Use the provided message list directly (copy to avoid mutation)
-        api_messages = [dict(msg) for msg in messages]
-    else:
-        api_messages = []
-        if system_prompt:
-            api_messages.append({"role": "system", "content": system_prompt})
-        api_messages.append({"role": "user", "content": prompt})
 
-    payload = {
-        "model": model or (settings.OLLAMA_MODEL[0] if settings.OLLAMA_MODEL else None),
-        "messages": api_messages,
-        "stream": False,
-        "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
-    }
+class OpenAIProvider(LLMProvider):
+    def get_response(self, prompt: str = "", system_prompt: str = "", model: str = None,
+                     base_url: str = None, api_key: str = None,
+                     temperature: Optional[float] = None,
+                     timeout: Optional[float] = None,
+                     messages: Optional[List[Dict[str, str]]] = None,
+                     add_cache_control: bool = False,
+                     thinking_enabled: bool = True,
+                     reasoning_effort: str = "low",
+                     max_retries: int = 3,
+                     max_tokens: Optional[int] = None) -> dict:
+        """Send a prompt to the configured OpenAI-compatible API and return a dict with 'content' and 'usage'."""
+        url = f"{(base_url or settings.OPENAI_BASE_URL).rstrip('/')}/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        effective_api_key = api_key or settings.OPENAI_API_KEY
+        if effective_api_key:
+            headers["Authorization"] = f"Bearer {effective_api_key}"
 
-    # Always send reasoning_effort: "low" when thinking is disabled,
-    # or the computed value when thinking is enabled.
-    payload["reasoning_effort"] = "low" if not thinking_enabled else reasoning_effort
-
-    if max_tokens is not None:
-        payload["options"] = {"num_predict": max_tokens}
-
-    def _parse_ollama(data: dict) -> dict:
-        if "message" not in data or "content" not in data["message"]:
-            logger.error(
-                "Ollama response missing 'message.content' key. Full response: %s",
-                json.dumps(data)[:2000]
-            )
-            raise RuntimeError(f"Ollama API returned unexpected format: missing 'message.content'. Response: {str(data)[:500]}")
-        
-        content = data["message"]["content"]
-        prompt_eval_count = data.get("prompt_eval_count")
-        eval_count = data.get("eval_count")
-        if prompt_eval_count is not None and eval_count is not None:
-            prompt_tokens = prompt_eval_count
-            completion_tokens = eval_count
+        if messages is not None:
+            # Use the provided message list directly (copy dicts so add_cache_control
+            # doesn't mutate the caller's message objects, important for fallback reuse)
+            api_messages = [dict(msg) for msg in messages]
         else:
-            from src.llm.cache import estimate_tokens
-            prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
-            completion_tokens = estimate_tokens(content)
-        total_tokens = prompt_tokens + completion_tokens
-        
-        return {
-            "content": content,
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-            }
+            api_messages = []
+            if system_prompt:
+                api_messages.append({"role": "system", "content": system_prompt})
+            api_messages.append({"role": "user", "content": prompt})
+
+        # Add cache_control to system message and first user message when supported
+        if add_cache_control:
+            for msg in api_messages:
+                if msg["role"] == "system":
+                    msg["cache_control"] = {"type": "ephemeral"}
+                    break
+            for msg in api_messages:
+                if msg["role"] == "user":
+                    msg["cache_control"] = {"type": "ephemeral"}
+                    break
+
+        payload = {
+            "model": model or (settings.OPENAI_MODEL[0] if settings.OPENAI_MODEL else None),
+            "messages": api_messages,
+            "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
         }
 
-    return _execute_llm_request("ollama", url, headers, payload, timeout, system_prompt, prompt, _parse_ollama, max_retries=max_retries)
+        # Always send reasoning_effort: "low" when thinking is disabled,
+        # or the computed value when thinking is enabled.
+        payload["reasoning_effort"] = "low" if not thinking_enabled else reasoning_effort
+
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+
+        def _parse_openai(data: dict) -> dict:
+            if "choices" not in data or not data["choices"]:
+                logger.error(
+                    "OpenAI response missing 'choices' key. Full response: %s",
+                    json.dumps(data)[:2000]
+                )
+                raise RuntimeError(f"OpenAI API returned unexpected format: missing 'choices'. Response: {str(data)[:500]}")
+                
+            content = data["choices"][0]["message"]["content"]
+            usage_data = data.get("usage", {})
+            prompt_tokens = usage_data.get("prompt_tokens", 0)
+            completion_tokens = usage_data.get("completion_tokens", 0)
+            total_tokens = usage_data.get("total_tokens", 0)
+            
+            return {
+                "content": content,
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                }
+            }
+
+        return _execute_llm_request("openai", url, headers, payload, timeout, system_prompt, prompt, _parse_openai, max_retries=max_retries)
 
 
 def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str = None,
@@ -166,73 +272,11 @@ def _get_openai_response(prompt: str = "", system_prompt: str = "", model: str =
                         thinking_enabled: bool = True,
                         reasoning_effort: str = "low",
                       max_retries: int = 3,
-                      max_tokens: Optional[int] = None,
-) -> dict:
-    """Send a prompt to the configured OpenAI-compatible API and return a dict with 'content' and 'usage'."""
-    url = f"{(base_url or settings.OPENAI_BASE_URL).rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    effective_api_key = api_key or settings.OPENAI_API_KEY
-    if effective_api_key:
-        headers["Authorization"] = f"Bearer {effective_api_key}"
-
-    if messages is not None:
-        # Use the provided message list directly (copy dicts so add_cache_control
-        # doesn't mutate the caller's message objects, important for fallback reuse)
-        api_messages = [dict(msg) for msg in messages]
-    else:
-        api_messages = []
-        if system_prompt:
-            api_messages.append({"role": "system", "content": system_prompt})
-        api_messages.append({"role": "user", "content": prompt})
-
-    # Add cache_control to system message and first user message when supported
-    if add_cache_control:
-        for msg in api_messages:
-            if msg["role"] == "system":
-                msg["cache_control"] = {"type": "ephemeral"}
-                break
-        for msg in api_messages:
-            if msg["role"] == "user":
-                msg["cache_control"] = {"type": "ephemeral"}
-                break
-
-    payload = {
-        "model": model or (settings.OPENAI_MODEL[0] if settings.OPENAI_MODEL else None),
-        "messages": api_messages,
-        "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
-    }
-
-    # Always send reasoning_effort: "low" when thinking is disabled,
-    # or the computed value when thinking is enabled.
-    payload["reasoning_effort"] = "low" if not thinking_enabled else reasoning_effort
-
-    if max_tokens is not None:
-        payload["max_tokens"] = max_tokens
-
-    def _parse_openai(data: dict) -> dict:
-        if "choices" not in data or not data["choices"]:
-            logger.error(
-                "OpenAI response missing 'choices' key. Full response: %s",
-                json.dumps(data)[:2000]
-            )
-            raise RuntimeError(f"OpenAI API returned unexpected format: missing 'choices'. Response: {str(data)[:500]}")
-            
-        content = data["choices"][0]["message"]["content"]
-        usage_data = data.get("usage", {})
-        prompt_tokens = usage_data.get("prompt_tokens", 0)
-        completion_tokens = usage_data.get("completion_tokens", 0)
-        total_tokens = usage_data.get("total_tokens", 0)
-        
-        return {
-            "content": content,
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-            }
-        }
-
-    return _execute_llm_request("openai", url, headers, payload, timeout, system_prompt, prompt, _parse_openai, max_retries=max_retries)
+                      max_tokens: Optional[int] = None) -> dict:
+    provider = OpenAIProvider()
+    return provider.get_response(prompt, system_prompt, model, base_url, api_key, temperature,
+                                 timeout, messages, add_cache_control, thinking_enabled,
+                                 reasoning_effort, max_retries, max_tokens)
 
 
 def get_llm_response(prompt: str, system_prompt: str = "", model_type: str = "actuator", symbol: Optional[str] = None, messages: Optional[List[Dict[str, str]]] = None, request_type: Optional[str] = None, force_primary_model: bool = False) -> str:
