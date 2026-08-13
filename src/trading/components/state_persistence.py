@@ -56,7 +56,7 @@ class StatePersistence:
             await asyncio.sleep(interval)
             try:
                 await self.save_state(force=True)
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.error(f"Periodic state save failed: {type(e).__name__}: {e}", exc_info=True)
 
     def stop_periodic_save(self) -> None:
@@ -106,7 +106,7 @@ class StatePersistence:
             save_trading_state("last_loss_time", self.shared_state.last_loss_time)
             save_trading_state("cooldown_durations", self.shared_state.cooldown_durations)
             save_trading_state("global_risk_multiplier", self.shared_state._global_risk_multiplier)
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError) as e:
             logger.critical(f"Failed to save state on exit: {e}", exc_info=True)
         finally:
             self._persistence_lock.release()
@@ -160,7 +160,7 @@ class StatePersistence:
             await asyncio.to_thread(save_trading_state, "last_loss_time", self.shared_state.last_loss_time)
             await asyncio.to_thread(save_trading_state, "cooldown_durations", self.shared_state.cooldown_durations)
             await asyncio.to_thread(save_trading_state, "global_risk_multiplier", self.shared_state._global_risk_multiplier)
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError) as e:
             logger.critical(f"Failed to save trading state: {e}", exc_info=True)
             raise RuntimeError(f"Failed to save trading state: {e}")
         finally:
@@ -169,7 +169,7 @@ class StatePersistence:
         # Store open positions count in Redis for _should_use_primary_model() check
         try:
             engine.redis.set("trading:open_positions_count", str(len(self.shared_state.positions)))
-        except Exception:
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError):
             pass
 
         logger.debug("Saved trading state: %d symbols, %d positions, %d trades",
@@ -279,7 +279,7 @@ class StatePersistence:
                     "timeframe": entry["timeframe"],
                     "condition": entry["condition"],
                 }
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Failed to restore pending entry for {symbol}: {type(e).__name__}: {e}")
 
         # Prune any pending entries whose deadline has already passed
@@ -365,7 +365,7 @@ class StatePersistence:
                                 else:
                                     countdown_str = f"{remaining_seconds}s"
                                 reason = "Market closed"
-                        except Exception as e:
+                        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError) as e:
                             logger.debug(f"get_pause_status: failed to parse next_open: {type(e).__name__}: {e}")
             else:
                 # LLM or manual pause with duration
