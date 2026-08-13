@@ -387,6 +387,15 @@ class OrderExecutor:
                     }
                 )
 
+        # Update open positions flag in Redis for LLM model selection
+        try:
+            if self.shared_state.positions:
+                await asyncio.to_thread(self.engine.redis.set, "trading:has_open_positions", "1")
+            else:
+                await asyncio.to_thread(self.engine.redis.delete, "trading:has_open_positions")
+        except Exception:
+            pass
+
     async def process_single_queued_order(self, queued: Dict[str, Any]) -> None:
         """Process a single queued order: check timeouts, fetch status, handle fills/cancellations."""
         engine = self.engine
