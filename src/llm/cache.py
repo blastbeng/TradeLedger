@@ -1529,53 +1529,6 @@ def _normalize_for_hash(obj, depth=0):
     return obj
 
 
-def _strip_ohlcv_timestamps(obj):
-    """Recursively remove timestamp values from OHLCV data for stable hashing.
-
-    OHLCV candle lists are often a list of [timestamp, open, high, low, close, volume]
-    or a list of dicts with a 'timestamp' key.  This function strips the timestamp
-    from each candle so the hash changes only when price/volume data changes,
-    not when the same candle is fetched at a different time.
-    """
-    _OHLCV_KEY_FRAGMENTS = ("ohlcv_data", "raw_candles", "candles")
-
-    if isinstance(obj, dict):
-        result = {}
-        for k, v in obj.items():
-            key_str = str(k).lower()
-            if any(frag in key_str for frag in _OHLCV_KEY_FRAGMENTS):
-                result[k] = _strip_timestamps_from_candle_list(v)
-            else:
-                result[k] = _strip_ohlcv_timestamps(v)
-        return result
-    if isinstance(obj, list):
-        return [_strip_ohlcv_timestamps(item) for item in obj]
-    return obj
-
-
-def _strip_timestamps_from_candle_list(data):
-    """Remove timestamps from OHLCV data, handling dicts of timeframes."""
-    if isinstance(data, dict):
-        # Handle dict of timeframes, e.g., {"1d": [[ts, o, h, l, c, v], ...]}
-        return {k: _strip_timestamps_from_candle_list(v) for k, v in data.items()}
-    if not isinstance(data, list):
-        return data
-    
-    # Check if it's a list of candles (list of lists) or a list of dicts
-    if data and isinstance(data[0], (list, tuple, dict)):
-        result = []
-        for candle in data:
-            if isinstance(candle, (list, tuple)):
-                # Assume first element is timestamp; keep the rest
-                result.append(list(candle[1:]))
-            elif isinstance(candle, dict):
-                result.append({k: v for k, v in candle.items() if "time" not in str(k).lower()})
-            else:
-                result.append(candle)
-        return result
-    return data
-
-
 def _normalize_and_strip_for_hash(obj, depth=0):
     """Recursively normalize data for stable hashing in a single pass.
     

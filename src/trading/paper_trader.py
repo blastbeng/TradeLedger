@@ -65,8 +65,8 @@ class PaperTrader:
         self._slippage_cache: Dict[str, tuple] = {}  # symbol -> (timestamp, slippage)
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
-        self._poll_interval_base = 3.0
-        self._poll_interval_max = 60.0
+        self._poll_interval_base = 15.0
+        self._poll_interval_max = 120.0
         self._poll_interval = self._poll_interval_base
         self._consecutive_idle_polls = 0
         self._poller_thread = threading.Thread(target=self._poll_open_orders, daemon=True)
@@ -272,7 +272,7 @@ class PaperTrader:
                 else:
                     self._consecutive_idle_polls += 1
                     self._poll_interval = min(
-                        self._poll_interval_base * (2 ** min(self._consecutive_idle_polls, 5)),
+                        self._poll_interval_base * (1.5 ** min(self._consecutive_idle_polls, 4)),
                         self._poll_interval_max
                     )
             except Exception as e:

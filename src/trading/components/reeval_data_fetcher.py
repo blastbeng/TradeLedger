@@ -598,13 +598,17 @@ class ReevalDataFetcher:
                 df = pd.DataFrame(sym_returns)
                 corr_df = df.corr(method='pearson')
                 
-                for sym_a in corr_df.columns:
+                corr_values = corr_df.values
+                columns = list(corr_df.columns)
+                n = len(columns)
+                for i, sym_a in enumerate(columns):
                     corr_matrix[sym_a] = {}
-                    for sym_b in corr_df.columns:
-                        if sym_a == sym_b:
+                    row = corr_values[i]
+                    for j, sym_b in enumerate(columns):
+                        if i == j:
                             corr_matrix[sym_a][sym_b] = 1.0
                         else:
-                            val = corr_df.loc[sym_a, sym_b]
+                            val = row[j]
                             corr_matrix[sym_a][sym_b] = round(float(val), 3) if pd.notna(val) else 0.0
             except ImportError:
                 pass
