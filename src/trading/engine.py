@@ -1890,8 +1890,8 @@ class TradingEngine:
             count = await asyncio.to_thread(self.redis.incr, key)
             await asyncio.to_thread(self.redis.expire, key, 86400)
             
-            # Alert on persistent failures (e.g., 10 occurrences)
-            if count == 10 and self.notifier:
+            # Alert on persistent failures (e.g., 3 occurrences)
+            if count == 3 and self.notifier:
                 await self.notifier.send_notification(
                     f"⚠️ Persistent error: {exc_type} in {context} occurred {count} times.",
                     summary={"action": "ALERT", "reason": f"Persistent {exc_type} in {context}"}
