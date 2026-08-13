@@ -344,23 +344,19 @@ class RiskManager:
         # the total daily loss (including fees) doesn't exceed the threshold.
         adjusted_max_daily_loss = max(0.0, max_daily_loss - daily_buy_fees)
 
-        # Compute unrealized P&L for logging/visibility only — NOT used for the
-        # threshold check.  Including unrealized P&L can trigger premature pauses
-        # during normal intraday volatility on long-term positions.
+        # Compute unrealized P&L — now included in the threshold check to
+        # catch deep drawdowns from open positions before they worsen.
         unrealized_pnl = 0.0
         if self.shared_state.positions:
             pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
-            for symbol, pos in self.shared_state.positions.items():
-                t = pos_tickers.get(symbol)
-                current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
-                unrealized_pnl += (current_price - pos.get('price', 0.0)) * pos.get('amount', 0.0)
+            unrealized_pnl = self.engine._position_manager.compute_total_unrealized_pnl(pos_tickers)
 
-        # Only use realized P&L for the threshold check to avoid premature pauses
-        # from normal intraday price swings on open positions.
-        if daily_pnl < -adjusted_max_daily_loss:
+        # Include unrealized P&L in the threshold check to catch deep drawdowns
+        # from open positions before they worsen.
+        if (daily_pnl + unrealized_pnl) < -adjusted_max_daily_loss:
             logger.warning(
                 f"Daily loss limit reached: realized daily P&L={daily_pnl:.2f} "
-                f"(unrealized: {unrealized_pnl:.2f}, not counted), "
+                f"(unrealized: {unrealized_pnl:.2f}, included), "
                 f"max loss={adjusted_max_daily_loss:.2f} ({settings.MAX_DAILY_LOSS_PCT:.2%} of initial balance"
                 f" - {daily_buy_fees:.2f} buy fees). "
                 f"Pausing trading until tomorrow."
@@ -370,13 +366,13 @@ class RiskManager:
                 set_trading_pause,
                 engine.redis,
                 "daily_loss_limit",
-                reason=f"Daily loss limit reached ({daily_pnl:.2f})",
+                reason=f"Daily loss limit reached ({daily_pnl:.2f}, unrealized {unrealized_pnl:.2f})",
             )
 
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"🛑 Daily loss limit reached: {daily_pnl:.2f} {engine.base_currency} "
-                    f"(realized only, unrealized: {unrealized_pnl:.2f} not counted, "
+                    f"(realized, unrealized: {unrealized_pnl:.2f} included, "
                     f"max: -{adjusted_max_daily_loss:.2f}, incl. {daily_buy_fees:.2f} fees). Trading paused until tomorrow.",
                     summary={"action": "PAUSE", "reason": "Daily loss limit reached"}
                 )
@@ -2074,6 +2070,84 @@ class RiskManager:
                         pos["stop_loss"] = breakeven_price
                         logger.info(f"Breakeven stop activated for {symbol}: new stop {breakeven_price:.4f}")
                 self.shared_state._portfolio_exposure_cache = None
+
+    async def compute_portfolio_var(self, positions: Dict[str, Dict[str, Any]], confidence_level: float = 0.95) -> float:
+        """Compute historical Value at Risk (VaR) for the portfolio."""
+        import numpy as np
+        import pandas as pd
+
+        if not positions:
+            return 0.0
+
+        all_returns = []
+        weights = []
+        total_value = 0.0
+
+        for symbol, pos in positions.items():
+            try:
+                # Fetch last 30 days of daily candles
+                candles = await asyncio.to_thread(get_ohlcv, symbol, "1d", limit=30)
+                if not candles or len(candles) < 2:
+                    continue
+
+                closes = [c["close"] for c in candles]
+                returns = pd.Series(closes).pct_change().dropna().values
+
+                # Get current position value
+                pos_tickers = await asyncio.to_thread(self.engine._market_data_manager._get_all_position_tickers_sync)
+                t = pos_tickers.get(symbol)
+                current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
+                pos_value = pos.get('amount', 0.0) * current_price
+
+                if pos_value <= 0:
+                    continue
+
+                all_returns.append(returns)
+                weights.append(pos_value)
+                total_value += pos_value
+
+            except Exception as e:
+                logger.warning(f"Failed to fetch data for VaR calculation on {symbol}: {e}")
+                continue
+
+        if not all_returns or total_value <= 0:
+            return 0.0
+
+        # Align returns by taking the minimum length
+        min_len = min(len(r) for r in all_returns)
+        aligned_returns = np.array([r[-min_len:] for r in all_returns])
+        weights = np.array(weights)
+        weights = weights / weights.sum()  # Normalize to sum to 1
+
+        # Calculate weighted portfolio returns
+        portfolio_returns = np.dot(weights, aligned_returns)
+
+        # Calculate historical VaR
+        var_threshold = np.percentile(portfolio_returns, (1 - confidence_level) * 100)
+        var_value = abs(var_threshold * total_value)
+
+        return var_value
+
+    async def run_stress_test(self, positions: Dict[str, Dict[str, Any]], shock_pct: float = -0.10) -> float:
+        """Run a simple stress test applying a uniform shock to all positions."""
+        if not positions:
+            return 0.0
+
+        total_loss = 0.0
+        pos_tickers = await asyncio.to_thread(self.engine._market_data_manager._get_all_position_tickers_sync)
+
+        for symbol, pos in positions.items():
+            try:
+                t = pos_tickers.get(symbol)
+                current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
+                pos_value = pos.get('amount', 0.0) * current_price
+                stressed_value = pos_value * (1 + shock_pct)
+                total_loss += (pos_value - stressed_value)
+            except Exception as e:
+                logger.warning(f"Failed to run stress test for {symbol}: {e}")
+                continue
+
+        return total_loss
 
     async def update_trailing_take_profit(
         self,
