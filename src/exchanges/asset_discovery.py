@@ -653,7 +653,7 @@ def get_tradable_assets() -> List[str]:
         
     # Parallelize _fetch_info for non-BTP candidates
     fetch_results = {}
-    max_workers = min(10, len(non_btp_candidates)) if non_btp_candidates else 1
+    max_workers = min(20, len(non_btp_candidates)) if non_btp_candidates else 1
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_symbol = {executor.submit(_fetch_info, sym): sym for sym in non_btp_candidates}
         for future in as_completed(future_to_symbol):

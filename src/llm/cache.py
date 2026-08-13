@@ -164,7 +164,7 @@ def _split_and_merge_prompt(
 
     # The chunk limit must fit within the weak model's context window, leaving room for instructions.
     # Decrease the chunk limit with each recursion depth to ensure the merged prompt shrinks.
-    chunk_limit = max(int(weak_max_tokens * 0.6 / (depth + 1)), 500)
+    chunk_limit = max(int(weak_max_tokens * 0.6 / (1 + depth * 0.5)), 1000)
 
     def _split_text(text: str, limit: int) -> List[str]:
         """Recursively split text by paragraphs, lines, and words to fit within limit."""
@@ -1576,6 +1576,45 @@ def _strip_timestamps_from_candle_list(data):
     return data
 
 
+def _normalize_and_strip_for_hash(obj, depth=0):
+    """Recursively normalize data for stable hashing in a single pass.
+    
+    Combines _strip_ohlcv_timestamps and _normalize_for_hash:
+    - Strips timestamps from OHLCV candle lists.
+    - Rounds floats to 6 significant figures.
+    - Excludes volatile keys (timestamp, fetched_at, etc.).
+    - Converts None to "null" and stringifies dict keys.
+    """
+    if depth > 10:
+        return None
+    if isinstance(obj, dict):
+        result = {}
+        for k, v in obj.items():
+            key_str = str(k).lower()
+            # Skip volatile keys
+            if any(frag in key_str for frag in _VOLATILE_KEY_FRAGMENTS):
+                continue
+            if key_str == "time" or key_str.endswith("_time") or key_str.startswith("time_"):
+                continue
+            # Strip timestamps from OHLCV candle lists
+            if any(frag in key_str for frag in ("ohlcv_data", "raw_candles", "candles")):
+                result[str(k)] = _strip_timestamps_from_candle_list(v)
+            else:
+                result[str(k)] = _normalize_and_strip_for_hash(v, depth + 1)
+        return result
+    if isinstance(obj, list):
+        return [_normalize_and_strip_for_hash(item, depth + 1) for item in obj]
+    if isinstance(obj, float):
+        if obj == 0:
+            return 0.0
+        if math.isnan(obj) or math.isinf(obj):
+            return obj
+        return _round_to_n_sf(obj, 6)
+    if obj is None:
+        return "null"
+    return obj
+
+
 def compute_market_hash(data: dict) -> str:
     """Return a SHA-256 hex digest of the JSON-serialised market data.
     
@@ -1583,8 +1622,7 @@ def compute_market_hash(data: dict) -> str:
     so that essentially-identical market states produce the same hash,
     enabling LLM response caching.
     """
-    data = _strip_ohlcv_timestamps(data)
-    normalized = _normalize_for_hash(data)
+    normalized = _normalize_and_strip_for_hash(data)
     serialized = json.dumps(normalized, sort_keys=True, default=str)
     return hashlib.sha256(serialized.encode()).hexdigest()
 
