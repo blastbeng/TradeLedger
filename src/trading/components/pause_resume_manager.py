@@ -89,6 +89,7 @@ class PauseResumeManager:
 
             # Compute total unrealized P&L of open positions
             total_unrealized_pnl = 0.0
+            unrealized_pnl_breakdown = []
             if self.shared_state.positions:
                 open_symbols = list(self.shared_state.positions.keys())
                 base_symbols = [s.split("/")[0] for s in open_symbols]
@@ -101,7 +102,9 @@ class PauseResumeManager:
                             current_price = ticker["last"]
                             entry_price = pos.get("price", 0.0)
                             amount = pos.get("amount", 0.0)
-                            total_unrealized_pnl += (current_price - entry_price) * amount
+                            pnl = (current_price - entry_price) * amount
+                            total_unrealized_pnl += pnl
+                            unrealized_pnl_breakdown.append(f"  {sym}: {pnl:+.4f}")
                 except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, KeyError):
                     pass
 
@@ -113,6 +116,8 @@ class PauseResumeManager:
             prompt_parts.append(f"Account P&L: daily={daily_pnl:.4f}, total={total_pnl:.4f}, drawdown={drawdown_pct:.2f}%")
             if self.shared_state.positions:
                 prompt_parts.append(f"Unrealized P&L of open positions: {total_unrealized_pnl:.4f}")
+                if unrealized_pnl_breakdown:
+                    prompt_parts.append("Unrealized P&L breakdown by symbol:\n" + "\n".join(unrealized_pnl_breakdown))
             if consecutive_losses > 0:
                 prompt_parts.append(f"Consecutive losing trades: {consecutive_losses}")
             if benchmark_price is not None:

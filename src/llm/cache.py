@@ -1316,9 +1316,9 @@ def get_cached_llm_response(
 
     max_tokens = settings.LLM_SENTIMENT_MAX_TOKENS if model_type == "sentiment" else None
 
-    # Round temperature to the nearest 0.5 for cache key to improve cache hit rate
-    # when temperature is dynamically computed based on complexity.
-    cache_temp = round(temperature * 2) / 2 if temperature is not None else None
+    # Round temperature to 2 decimal places for cache key to prevent incorrect cache hits
+    # while still normalizing minor floating-point noise.
+    cache_temp = round(temperature, 2) if temperature is not None else None
 
     # Determine thinking mode based on model_type
     if model_type == "mind":
@@ -1605,9 +1605,20 @@ def _should_use_primary_model() -> bool:
     Returns True if market is open or in pre-market session (within 60 mins of open).
     Returns False if market is closed (use fallback models only to save tokens).
     Result is cached for 30 seconds to avoid repeated calendar lookups.
+    If there are open positions, always returns True to ensure capable risk management.
     """
     global _primary_model_cache, _primary_model_cache_ts, _primary_model_cache_settings
     now = time.time()
+
+    # If there are open positions, always use the primary model for risk management,
+    # even if the market is closed.
+    try:
+        redis_client = get_redis_client()
+        if redis_client.exists("trading:has_open_positions"):
+            return True
+    except Exception:
+        pass
+
     current_settings = (
         settings.MARKET_TIMEZONE,
         settings.MARKET_OPEN_HOUR,

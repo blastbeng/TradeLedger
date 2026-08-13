@@ -97,7 +97,7 @@ class ReevalLLMRunner:
         token_budget = getattr(settings, 'LLM_CHUNK_TOKEN_BUDGET', 40000)
         token_limiter = _TokenBudgetSemaphore(token_budget)  # Limit concurrent token usage to avoid rate limits
 
-        async def _evaluate_chunk(chunk_idx: int, chunk_symbols: List[str]) -> Optional[Dict[str, Any]]:
+        async def _evaluate_chunk(chunk_idx: int, chunk_symbols: List[str], previous_chunk_results: List[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
             async with semaphore:
                 chunk_set = set(chunk_symbols)
 
@@ -194,6 +194,16 @@ class ReevalLLMRunner:
                     chunk_messages[-1]["content"] += "\n" + chunk_sentiment_section
                 if auto_resume_note:
                     chunk_messages[-1]["content"] += "\n" + auto_resume_note
+                if previous_chunk_results:
+                    prev_stocks = []
+                    for prev in previous_chunk_results:
+                        for stock in prev.get("stocks", []):
+                            if isinstance(stock, dict):
+                                sym = stock.get('symbol', '')
+                                reason = stock.get('reasoning', '')
+                                prev_stocks.append(f"  {sym}: {reason}")
+                    if prev_stocks:
+                        chunk_messages[-1]["content"] += "\n\nPrevious chunk selections (for consistency):\n" + "\n".join(prev_stocks)
                 # Keep prompt text for correction retries
                 chunk_prompt = chunk_messages[-1]["content"]
 
@@ -292,11 +302,11 @@ class ReevalLLMRunner:
                 finally:
                     await token_limiter.release(chunk_tokens)
 
-        tasks = [_evaluate_chunk(idx, chunk) for idx, chunk in enumerate(chunks)]
-        results = await asyncio.gather(*tasks)
-
-        # Filter out None results (failed chunks) and maintain order
-        chunk_results: List[Dict[str, Any]] = [r for r in results if r is not None]
+        chunk_results: List[Dict[str, Any]] = []
+        for idx, chunk in enumerate(chunks):
+            result = await _evaluate_chunk(idx, chunk, chunk_results)
+            if result is not None:
+                chunk_results.append(result)
         return chunk_results
 
     async def run_final_selection_llm_call(

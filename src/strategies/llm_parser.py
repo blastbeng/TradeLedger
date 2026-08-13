@@ -292,7 +292,7 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
             issues.append("trailing_take_profit is not a boolean")
 
     if issues:
-        new_reasoning = f"{reasoning} [Semantic validation failed: {'; '.join(issues)}. Downgraded to HOLD.]"
+        new_reasoning = f"{reasoning} [Semantic validation failed: one or more parameters were unreasonable. Downgraded to HOLD.]"
         return "HOLD", new_reasoning
         
     return action, reasoning

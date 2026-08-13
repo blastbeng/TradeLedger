@@ -52,6 +52,22 @@ def summarize_text(text: str, context: str = "general", max_length: int = 500, f
         return text
     except Exception as e:
         logger.error(f"Failed to summarize text using weak model: {type(e).__name__}: {e}")
+        if not force_primary_model:
+            try:
+                llm_result = get_cached_llm_response(
+                    "",
+                    "",
+                    ttl=86400,
+                    model_type="actuator",
+                    messages=messages,
+                    request_type="summarization_fallback",
+                    force_primary_model=True,
+                )
+                summary = llm_result.get("response", "")
+                if summary and summary.strip():
+                    return summary.strip()
+            except Exception as e2:
+                logger.error(f"Failed to summarize text using primary model fallback: {type(e2).__name__}: {e2}")
         return text
 
 
