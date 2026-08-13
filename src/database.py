@@ -88,7 +88,7 @@ class _PgConnectionWrapper:
             pass  # Ignore rollback errors (e.g., no transaction in progress)
         try:
             self._pool.putconn(self._conn)
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError, AttributeError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to return connection to pool: {e}")
             # Try to close the connection directly as fallback
             try:
@@ -670,7 +670,7 @@ def _flush_redis_cache():
             f"Redis cache invalidated: deleted {deleted_count} keys across "
             f"{len(_REDIS_KEY_PREFIXES)} prefix patterns."
         )
-    except Exception as e:
+    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError) as e:
         logger.warning(f"Failed to flush Redis cache: {type(e).__name__}: {e}")
 
 def init_db():
@@ -701,7 +701,7 @@ def init_db():
     try:
         redis_client = get_redis_client()
         redis_client.delete(f"tradable_assets:{settings.TARGET_COUNTRY}")
-    except Exception:
+    except (RuntimeError, ValueError, TypeError, ConnectionError, TimeoutError, OSError):
         pass
     backfill_latest_close_prices()
 

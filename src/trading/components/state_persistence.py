@@ -223,7 +223,7 @@ class StatePersistence:
         if trailing_symbols:
             try:
                 latest_prices = get_latest_close_prices(trailing_symbols)
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Failed to fetch latest close prices for trailing stops: {e}")
 
         for symbol, pos in self.shared_state.positions.items():

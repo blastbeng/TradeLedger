@@ -1217,7 +1217,7 @@ class RiskManager:
             try:
                 asset = await engine._market_data_manager.get_asset_info(symbol)
                 min_amount = float(asset.min_order_size) if asset.min_order_size else None
-            except Exception:
+            except (ValueError, TypeError, AttributeError, ConnectionError, TimeoutError, OSError):
                 min_amount = None
             is_dust = min_amount is not None and amount < min_amount
             if is_dust:
