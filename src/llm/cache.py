@@ -1593,7 +1593,6 @@ def _should_use_primary_model() -> bool:
 
     Returns True if market is open or in pre-market session (within 60 mins of open).
     Returns False if market is closed (use fallback models only to save tokens).
-    Computes market status locally using pandas_market_calendars to avoid dependency on Redis background tasks.
     Result is cached for 30 seconds to avoid repeated calendar lookups.
     """
     global _primary_model_cache, _primary_model_cache_ts, _primary_model_cache_settings
@@ -1613,8 +1612,6 @@ def _should_use_primary_model() -> bool:
         return _primary_model_cache
 
     from zoneinfo import ZoneInfo
-    import pandas_market_calendars as mcal
-    from datetime import datetime, timedelta, timezone
     try:
         rome_tz = ZoneInfo(settings.MARKET_TIMEZONE)
         now_rome = datetime.now(timezone.utc).astimezone(rome_tz)
@@ -1625,26 +1622,8 @@ def _should_use_primary_model() -> bool:
         MARKET_CLOSE_HOUR = settings.MARKET_CLOSE_HOUR
         MARKET_CLOSE_MINUTE = settings.MARKET_CLOSE_MINUTE
 
-        market_open_today = datetime(today.year, today.month, today.day,
-                                     MARKET_OPEN_HOUR, MARKET_OPEN_MINUTE, tzinfo=rome_tz)
-        market_close_today = datetime(today.year, today.month, today.day,
-                                      MARKET_CLOSE_HOUR, MARKET_CLOSE_MINUTE, tzinfo=rome_tz)
-
-        today_is_trading_day = False
-        try:
-            cal = mcal.get_calendar('XMIL')
-            schedule = cal.schedule(start_date=today - timedelta(days=1),
-                                    end_date=today + timedelta(days=1))
-            if not schedule.empty:
-                for idx in range(len(schedule)):
-                    session_start = schedule.iloc[idx]['market_open'].tz_convert(rome_tz)
-                    if session_start.date() == today:
-                        today_is_trading_day = True
-                        break
-        except Exception as cal_e:
-            logger.warning(f"pandas_market_calendars lookup failed in _should_use_primary_model: {cal_e}")
-            # Fallback to weekday check if calendar fails
-            today_is_trading_day = today.weekday() < 5
+        # Check if today is a trading day (weekday and not an Italian holiday)
+        today_is_trading_day = today.weekday() < 5 and not _is_italian_holiday(now_rome)
 
         if not today_is_trading_day:
             result = False
