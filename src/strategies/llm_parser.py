@@ -63,7 +63,14 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
         cooldown = params.get("cooldown_after_loss_seconds")
         
         if stop_loss is not None:
-            if stop_loss <= 0 or stop_loss > 0.5:
+            max_hold_time = params.get("max_hold_time_seconds")
+            if max_hold_time is not None and max_hold_time >= 31_536_000:  # >= 1 year
+                max_stop_loss = 0.80
+            elif max_hold_time is not None and max_hold_time >= 15_552_000:  # >= 6 months
+                max_stop_loss = 0.65
+            else:
+                max_stop_loss = 0.5
+            if stop_loss <= 0 or stop_loss > max_stop_loss:
                 issues.append(f"unreasonable stop_loss_pct ({stop_loss})")
         
         if take_profit is not None:
@@ -294,7 +301,7 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
 def _clamp_parameter_ranges(params: dict) -> dict:
     """Clamps LLM-provided parameters to safe, reasonable ranges to prevent hallucinations."""
     limits = {
-        "stop_loss_pct": (0.01, 0.5),
+        "stop_loss_pct": (0.01, 0.8),
         "take_profit_pct": (0.01, 5.0),
         "position_size_fraction": (0.01, 1.0),
         "stop_loss_atr_multiple": (0.1, 10.0),
