@@ -1492,43 +1492,6 @@ _VOLATILE_KEY_FRAGMENTS = ("timestamp", "fetched_at", "created_at",
                             "published_at", "last_eval", "last_auto_resume",
                             "_last_state_save", "datetime", "last_update", "source")
 
-def _normalize_for_hash(obj, depth=0):
-    """Recursively normalize data for stable hashing.
-    
-    - Rounds floats to 6 significant figures (percentage-based rounding) to treat small absolute changes on high-priced assets as insignificant while preserving precision for low-priced assets.
-    - Excludes keys containing 'timestamp', 'time', 'fetched_at', 'created_at',
-      'published_at', 'last_eval', 'last_auto_resume' (volatile fields that
-      change every cycle but don't affect trading decisions).
-    - Converts None values to a string "null" for consistent serialization.
-    - Stringifies dict keys to avoid a separate recursive pass.
-    """
-    if depth > 10:
-        return None
-    if isinstance(obj, dict):
-        result = {}
-        for k, v in obj.items():
-            key_str = str(k).lower()
-            if any(frag in key_str for frag in _VOLATILE_KEY_FRAGMENTS):
-                continue
-            if key_str == "time" or key_str.endswith("_time") or key_str.startswith("time_"):
-                continue
-            result[str(k)] = _normalize_for_hash(v, depth + 1)
-        return result
-    if isinstance(obj, list):
-        return [_normalize_for_hash(item, depth + 1) for item in obj]
-    if isinstance(obj, float):
-        if obj == 0:
-            return 0.0
-        if math.isnan(obj) or math.isinf(obj):
-            return obj
-        # Round to 6 significant figures to ensure small price changes (e.g., on low-priced assets)
-        # are detected, while still treating floating-point noise as insignificant.
-        return _round_to_n_sf(obj, 6)
-    if obj is None:
-        return "null"
-    return obj
-
-
 def _normalize_and_strip_for_hash(obj, depth=0):
     """Recursively normalize data for stable hashing in a single pass.
     
