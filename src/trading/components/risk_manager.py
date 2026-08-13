@@ -175,7 +175,7 @@ class RiskManager:
                 # Fallback to database if Redis is unavailable or key is missing
                 try:
                     peak_equity = await asyncio.to_thread(get_peak_total_equity)
-                except Exception:
+                except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError):
                     peak_equity = None
                 
                 if peak_equity is None:
@@ -192,7 +192,7 @@ class RiskManager:
                 # Persist to database to survive Redis restarts
                 try:
                     await asyncio.to_thread(save_peak_total_equity, peak_equity)
-                except Exception as e:
+                except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError) as e:
                     logger.error(f"Failed to persist peak total equity to database: {type(e).__name__}: {e}")
 
             drawdown_pct = 0.0
@@ -1493,7 +1493,7 @@ class RiskManager:
                 tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
                 if tp_order_obj is not None and tp_order_obj.status == "filled":
                     tp_filled = True
-            except Exception:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError):
                 pass
 
             if sl_filled and tp_filled:
@@ -1579,7 +1579,7 @@ class RiskManager:
             try:
                 await asyncio.to_thread(engine.trader.cancel_order, tp_order_id)
                 logger.info(f"Risk check: stop price reached for {symbol}, cancelled OCO take-profit {tp_order_id}")
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Failed to cancel OCO TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
 
             async with self.shared_state._queued_orders_lock:
@@ -1613,7 +1613,7 @@ class RiskManager:
             sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
             if sl_order_obj is not None and sl_order_obj.status == "filled":
                 sl_filled = True
-        except Exception:
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError):
             pass
 
         if sl_filled:
@@ -1662,7 +1662,7 @@ class RiskManager:
         if manual_sell:
             try:
                 await asyncio.to_thread(engine.trader.cancel_order, sl_order_id)
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.warning(f"Failed to cancel native stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
         
             async with self.shared_state._queued_orders_lock:
@@ -1707,7 +1707,7 @@ class RiskManager:
             sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
             if sl_order_obj is not None and sl_order_obj.status == "filled":
                 sl_filled = True
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
             logger.debug(f"check_native_exit_triggers: failed to check SL fill status for {symbol}: {type(e).__name__}: {e}")
 
         if sl_filled:
@@ -1725,13 +1725,13 @@ class RiskManager:
         try:
             await asyncio.to_thread(engine.trader.cancel_order, sl_order_id)
             logger.info(f"Risk check: take-profit price reached for {symbol}, cancelled OCO stop {sl_order_id}")
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to cancel OCO stop {sl_order_id} for {symbol}: {type(e).__name__}: {e}")
             try:
                 sl_order_obj = await asyncio.to_thread(engine.trader.get_order, sl_order_id)
                 if sl_order_obj is not None and sl_order_obj.status == "filled":
                     sl_filled = True
-            except Exception:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError):
                 pass
             
             if sl_filled:
@@ -1776,7 +1776,7 @@ class RiskManager:
             tp_order_obj = await asyncio.to_thread(engine.trader.get_order, tp_order_id)
             if tp_order_obj is not None and tp_order_obj.status == "filled":
                 tp_filled = True
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
             logger.debug(f"check_native_exit_triggers: failed to check TP fill for {symbol}: {type(e).__name__}: {e}")
 
         if tp_filled:
@@ -1801,7 +1801,7 @@ class RiskManager:
         if manual_sell:
             try:
                 await asyncio.to_thread(engine.trader.cancel_order, tp_order_id)
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
                 logger.debug(f"check_native_exit_triggers: failed to cancel TP {tp_order_id} for {symbol}: {type(e).__name__}: {e}")
 
             async with self.shared_state._queued_orders_lock:
