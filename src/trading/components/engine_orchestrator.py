@@ -271,6 +271,9 @@ class EngineOrchestrator:
                         engine._force_reeval = True
                         engine._pre_market_reeval = True
                         engine._reeval_trigger.set()
+                    elif remaining_seconds > 900 and engine._market_opening_soon_notified:
+                        # Reset the flag if the market opening was delayed (e.g., calendar error)
+                        engine._market_opening_soon_notified = False
                 else:
                     # Market open – resume trading only if paused due to market closure.
                     # Respect LLM-initiated and manual pauses while the market is open.
