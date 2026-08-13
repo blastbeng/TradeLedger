@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Callable
 
 from src.config.settings import settings
 from src.exchanges.proxy_utils import _get_proxies
+from src.llm.llm_client import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -144,105 +145,117 @@ def _get_g4f_models(model_type: str) -> List[str]:
     
     return categorized.get(model_type, categorized["actuator"])
 
-def _get_g4f_response(
-    prompt: str = "",
-    system_prompt: str = "",
-    model: str = None,
-    base_url: str = None,
-    api_key: str = None,
-    temperature: Optional[float] = None,
-    timeout: Optional[float] = None,
-    messages: Optional[List[Dict[str, str]]] = None,
-    add_cache_control: bool = False,
-    thinking_enabled: bool = True,
-    reasoning_effort: str = "low",
-    max_retries: int = 3,
-    max_tokens: Optional[int] = None,
-) -> dict:
-    """Send a prompt to the configured g4f model and return a dict with 'content' and 'usage'."""
-    from g4f.client import ClientFactory
+class G4FProvider(LLMProvider):
+    def get_response(self, prompt: str = "", system_prompt: str = "", model: str = None,
+                     base_url: str = None, api_key: str = None,
+                     temperature: Optional[float] = None,
+                     timeout: Optional[float] = None,
+                     messages: Optional[List[Dict[str, str]]] = None,
+                     add_cache_control: bool = False,
+                     thinking_enabled: bool = True,
+                     reasoning_effort: str = "low",
+                     max_retries: int = 3,
+                     max_tokens: Optional[int] = None) -> dict:
+        """Send a prompt to the configured g4f model and return a dict with 'content' and 'usage'."""
+        from g4f.client import ClientFactory
 
-    # Use the local g4f API server if configured, otherwise let g4f use its defaults
-    client_kwargs = {}
-    if settings.G4F_BASE_URL:
-        client_kwargs["base_url"] = settings.G4F_BASE_URL
-    if settings.G4F_API_KEY:
-        client_kwargs["api_key"] = settings.G4F_API_KEY
+        # Use the local g4f API server if configured, otherwise let g4f use its defaults
+        client_kwargs = {}
+        if settings.G4F_BASE_URL:
+            client_kwargs["base_url"] = settings.G4F_BASE_URL
+        if settings.G4F_API_KEY:
+            client_kwargs["api_key"] = settings.G4F_API_KEY
 
-    # Pass a random proxy if enabled and available
-    proxy = _get_proxies()
-    if proxy:
-        client_kwargs["proxies"] = proxy
+        # Pass a random proxy if enabled and available
+        proxy = _get_proxies()
+        if proxy:
+            client_kwargs["proxies"] = proxy
 
-    # Pass timeout to g4f Client constructor if supported
-    if timeout is not None:
-        client_kwargs["timeout"] = timeout
+        # Pass timeout to g4f Client constructor if supported
+        if timeout is not None:
+            client_kwargs["timeout"] = timeout
 
-    client = ClientFactory.create_async_client(**client_kwargs)
+        client = ClientFactory.create_async_client(**client_kwargs)
 
-    if messages is not None:
-        api_messages = [dict(msg) for msg in messages]
-    else:
-        api_messages = []
-        if system_prompt:
-            api_messages.append({"role": "system", "content": system_prompt})
-        api_messages.append({"role": "user", "content": prompt})
+        if messages is not None:
+            api_messages = [dict(msg) for msg in messages]
+        else:
+            api_messages = []
+            if system_prompt:
+                api_messages.append({"role": "system", "content": system_prompt})
+            api_messages.append({"role": "user", "content": prompt})
 
-    if not model:
-        model = "gpt-4o-mini"
+        if not model:
+            model = "gpt-4o-mini"
 
-    payload = {
-        "model": model,
-        "messages": api_messages,
-        "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
-    }
+        payload = {
+            "model": model,
+            "messages": api_messages,
+            "temperature": temperature if temperature is not None else settings.LLM_TEMPERATURE,
+        }
 
-    # Always send reasoning_effort: "low" when thinking is disabled,
-    # or the computed value when thinking is enabled.
-    payload["reasoning_effort"] = "low" if not thinking_enabled else reasoning_effort
+        # Always send reasoning_effort: "low" when thinking is disabled,
+        # or the computed value when thinking is enabled.
+        payload["reasoning_effort"] = "low" if not thinking_enabled else reasoning_effort
 
-    if max_tokens is not None:
-        payload["max_tokens"] = max_tokens
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
 
-    for attempt in range(max_retries):
-        try:
-            async def _make_request():
-                return await client.chat.completions.create(**payload)
-
+        for attempt in range(max_retries):
             try:
-                # If there's no running loop, use asyncio.run
-                asyncio.get_running_loop()
-                # If we are in a running loop, this will raise RuntimeError, handled below.
-                # Fallback for running loop (though ideally this function should be async if called from one)
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, _make_request())
-                    response = future.result()
-            except RuntimeError:
-                response = asyncio.run(_make_request())
+                async def _make_request():
+                    return await client.chat.completions.create(**payload)
 
-            content = response.choices[0].message.content
-            
-            # g4f doesn't always return usage, so we estimate it
-            from src.llm.cache import estimate_tokens
-            prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
-            completion_tokens = estimate_tokens(content)
-            total_tokens = prompt_tokens + completion_tokens
-            
-            return {
-                "content": content,
-                "usage": {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": total_tokens,
+                try:
+                    # If there's no running loop, use asyncio.run
+                    asyncio.get_running_loop()
+                    # If we are in a running loop, this will raise RuntimeError, handled below.
+                    # Fallback for running loop (though ideally this function should be async if called from one)
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(asyncio.run, _make_request())
+                        response = future.result()
+                except RuntimeError:
+                    response = asyncio.run(_make_request())
+
+                content = response.choices[0].message.content
+                
+                # g4f doesn't always return usage, so we estimate it
+                from src.llm.cache import estimate_tokens
+                prompt_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
+                completion_tokens = estimate_tokens(content)
+                total_tokens = prompt_tokens + completion_tokens
+                
+                return {
+                    "content": content,
+                    "usage": {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": total_tokens,
+                    }
                 }
-            }
-        except Exception as e:
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                logger.warning(f"g4f request failed with error: {e}. Retrying in {wait_time}s...")
-                time.sleep(wait_time)
-                continue
-            logger.error("g4f request failed with error after all retries: %s", e, exc_info=True)
-            raise RuntimeError(f"g4f request failed: {e}") from e
-    raise RuntimeError("g4f request failed after all retries")
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"g4f request failed with error: {e}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                logger.error("g4f request failed with error after all retries: %s", e, exc_info=True)
+                raise RuntimeError(f"g4f request failed: {e}") from e
+        raise RuntimeError("g4f request failed after all retries")
+
+
+def _get_g4f_response(prompt: str = "", system_prompt: str = "", model: str = None,
+                       base_url: str = None, api_key: str = None,
+                       temperature: Optional[float] = None,
+                       timeout: Optional[float] = None,
+                       messages: Optional[List[Dict[str, str]]] = None,
+                       add_cache_control: bool = False,
+                       thinking_enabled: bool = True,
+                       reasoning_effort: str = "low",
+                       max_retries: int = 3,
+                       max_tokens: Optional[int] = None) -> dict:
+    provider = G4FProvider()
+    return provider.get_response(prompt, system_prompt, model, base_url, api_key, temperature,
+                                  timeout, messages, add_cache_control, thinking_enabled,
+                                  reasoning_effort, max_retries, max_tokens)
