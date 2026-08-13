@@ -60,6 +60,8 @@ class MarketDataManager:
         self.event_bus.subscribe("backfill_new_symbol", self._backfill_new_symbol)
         self.event_bus.subscribe("get_clock", self.get_clock)
         self.event_bus.subscribe("compute_and_store_indicators", self.compute_and_store_indicators)
+        self.event_bus.subscribe("download_symbol_ohlcv", self._download_symbol_ohlcv)
+        self.event_bus.subscribe("invalidate_clock_cache", self.invalidate_clock_cache)
         self._clock_cache: Optional[Any] = None
         self._clock_cache_time: float = 0.0
         self.notifier = None

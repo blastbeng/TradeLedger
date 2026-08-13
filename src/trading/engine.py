@@ -150,7 +150,7 @@ class TradingEngine:
         self._settings_reload_event = asyncio.Event()
         def _reload_callback():
             self._settings_reload_event.set()
-            self._on_settings_reload()
+            asyncio.create_task(self._on_settings_reload())
         settings.register_reload_callback(_reload_callback)
         self._last_state_save = 0
 
@@ -390,12 +390,12 @@ class TradingEngine:
         self._full_download_running = True
         logger.info("Force download: starting immediate OHLCV download for all assets...")
         try:
-            plain_assets = await self._market_data_manager.get_tradable_assets()
+            plain_assets = await self.event_bus.request("get_tradable_assets")
             stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
-            etf_symbols = await self._market_data_manager.get_etf_symbols()
+            etf_symbols = await self.event_bus.request("get_etf_symbols")
             etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
 
-            btp_bonds = await self._market_data_manager.get_btp_bonds()
+            btp_bonds = await self.event_bus.request("get_btp_bonds")
             btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
             all_pairs = stock_pairs + etf_pairs + btp_pairs
@@ -410,7 +410,7 @@ class TradingEngine:
 
             async def _force_download_symbol(pair: str):
                 for tf in settings.OHLCV_TIMEFRAMES:
-                    await self._market_data_manager._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True, force=True)
+                    await self.event_bus.request("download_symbol_ohlcv", pair, tf, start_ms, now_ms, quiet=True, force=True)
 
             # Limit concurrent symbol downloads to 2 to avoid exhausting the
             # _download_executor thread pool, leaving threads available for
@@ -450,7 +450,7 @@ class TradingEngine:
 
             async def _force_download_symbol(pair: str):
                 for tf in settings.OHLCV_TIMEFRAMES:
-                    await self._market_data_manager._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True, force=True)
+                    await self.event_bus.request("download_symbol_ohlcv", pair, tf, start_ms, now_ms, quiet=True, force=True)
 
             download_concurrency = asyncio.Semaphore(settings.FORCE_DOWNLOAD_TRACKED_CONCURRENCY)
             async def _limited_force_download(pair: str):
@@ -496,7 +496,7 @@ class TradingEngine:
             and (now - self.shared_state._position_tickers_cache_time) < ttl
         ):
             return self.shared_state._position_tickers_cache
-        tickers = await self._market_data_manager._get_all_position_tickers()
+        tickers = await self.event_bus.request("get_all_position_tickers")
         self.shared_state._position_tickers_cache = tickers
         self.shared_state._position_tickers_cache_time = now
         return tickers
@@ -560,7 +560,7 @@ class TradingEngine:
                 except asyncio.CancelledError:
                     pass
 
-    def _on_settings_reload(self):
+    async def _on_settings_reload(self):
         """Update cached settings values when settings are reloaded."""
         self.base_currency = settings.BASE_CURRENCY
         self.max_symbols = settings.MAX_SYMBOLS
@@ -580,7 +580,7 @@ class TradingEngine:
         if self.trader is not None:
             self.trader.base_currency = settings.BASE_CURRENCY
         # Invalidate clock cache so market hours/timezone changes take effect immediately
-        self._market_data_manager.invalidate_clock_cache()
+        await self.event_bus.request("invalidate_clock_cache")
 
     async def _periodic_reconcile(self):
         """Run position reconciliation every 5 minutes (medium/long-term)."""
@@ -818,11 +818,11 @@ class TradingEngine:
             self._full_breadth_running = True
             try:
                 # Fetch all asset types for stratified sampling
-                stock_assets = await self._market_data_manager.get_tradable_assets()
+                stock_assets = await self.event_bus.request("get_tradable_assets")
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in stock_assets]
-                etf_symbols = await self._market_data_manager.get_etf_symbols()
+                etf_symbols = await self.event_bus.request("get_etf_symbols")
                 etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
-                btp_bonds = await self._market_data_manager.get_btp_bonds()
+                btp_bonds = await self.event_bus.request("get_btp_bonds")
                 btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
                 # Build strata: (pairs, label) for each asset type
@@ -1060,7 +1060,7 @@ class TradingEngine:
 
         try:
             from src.news.fetcher import fetch_news_for_symbol
-            stock_name = await self._market_data_manager.get_stock_name(symbol)
+            stock_name = await self.event_bus.request("get_stock_name", symbol)
             loop = asyncio.get_running_loop()
             articles = await fetch_news_for_symbol(symbol, stock_name)
             if articles:
@@ -1199,13 +1199,13 @@ class TradingEngine:
                 current_symbols = {entry["symbol"] for entry in self.shared_state.current_symbols}
                 symbols_to_refresh = set()
                 try:
-                    plain_assets = await self._market_data_manager.get_tradable_assets()
+                    plain_assets = await self.event_bus.request("get_tradable_assets")
                     available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
                     # Fetch tickers for a subset to determine top volume symbols
                     # (limit to 200 to avoid excessive API calls)
                     sample_for_vol = available_pairs[:200]
                     plain_sample = [s.split("/")[0] for s in sample_for_vol]
-                    raw_quotes = await self._market_data_manager._get_quotes_batched(plain_sample, timeout_per_chunk=45.0)
+                    raw_quotes = await self.event_bus.request("get_quotes_batched", plain_sample, timeout_per_chunk=45.0)
                     tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_for_vol}
                     def _vol(sym):
                         t = tickers.get(sym, {})
@@ -1217,7 +1217,7 @@ class TradingEngine:
                 for sym in symbols_to_refresh:
                     try:
                         async with self._news_semaphore:
-                            stock_name = await self._market_data_manager.get_stock_name(sym)
+                            stock_name = await self.event_bus.request("get_stock_name", sym)
                             articles = await fetch_news_for_symbol(sym, stock_name)
                             if articles:
                                 base_symbol = sym.split("/")[0] if "/" in sym else sym
@@ -1351,7 +1351,7 @@ class TradingEngine:
                         symbol = symbol_entry["symbol"]
                         tf = symbol_entry["timeframe"]
                         logger.debug(f"Downloading market data for {symbol} ({tf})")
-                        await self._market_data_manager._download_symbol_ohlcv(symbol, tf, start_ms, now_ms)
+                        await self.event_bus.request("download_symbol_ohlcv", symbol, tf, start_ms, now_ms)
 
                     shuffled_symbols = list(self.shared_state.current_symbols)
                     random.shuffle(shuffled_symbols)
@@ -1385,13 +1385,13 @@ class TradingEngine:
             try:
                 logger.info("Starting full asset OHLCV download cycle...")
                 # 1. Get all stock + ETF symbols
-                plain_assets = await self._market_data_manager.get_tradable_assets()
+                plain_assets = await self.event_bus.request("get_tradable_assets")
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
-                etf_symbols = await self._market_data_manager.get_etf_symbols()
+                etf_symbols = await self.event_bus.request("get_etf_symbols")
                 etf_pairs = [f"{sym}/{self.base_currency}" for sym in etf_symbols]
 
                 # 2. Get all BTP symbols
-                btp_bonds = await self._market_data_manager.get_btp_bonds()
+                btp_bonds = await self.event_bus.request("get_btp_bonds")
                 btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
                 all_pairs = stock_pairs + etf_pairs + btp_pairs
@@ -1437,7 +1437,7 @@ class TradingEngine:
 
                 async def _download_symbol_data(pair: str, tfs: List[str]):
                     for tf in tfs:
-                        await self._market_data_manager._download_symbol_ohlcv(pair, tf, start_ms, now_ms, quiet=True)
+                        await self.event_bus.request("download_symbol_ohlcv", pair, tf, start_ms, now_ms, quiet=True)
 
                 # Limit concurrent symbol downloads to 2 to avoid exhausting the
                 # _download_executor thread pool, leaving threads available for
@@ -1482,11 +1482,11 @@ class TradingEngine:
             try:
                 logger.info("Starting full asset news download cycle...")
                 # 1. Get all stock + ETF symbols
-                plain_assets = await self._market_data_manager.get_tradable_assets()
+                plain_assets = await self.event_bus.request("get_tradable_assets")
                 stock_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
                 # 2. Get all BTP symbols
-                btp_bonds = await self._market_data_manager.get_btp_bonds()
+                btp_bonds = await self.event_bus.request("get_btp_bonds")
                 btp_pairs = [f"{b['isin']}/{self.base_currency}" for b in btp_bonds]
 
                 all_pairs = stock_pairs + btp_pairs
@@ -1541,15 +1541,15 @@ class TradingEngine:
                 # close prices (from market_data candles).  Skipping here
                 # prevents those fallback prices from being saved to the
                 # quotes table, leaving it stale when yfinance is down.
-                plain_assets = await self._market_data_manager.get_tradable_assets()
-                etf_symbols = await self._market_data_manager.get_etf_symbols()
-                btp_bonds = await self._market_data_manager.get_btp_bonds()
+                plain_assets = await self.event_bus.request("get_tradable_assets")
+                etf_symbols = await self.event_bus.request("get_etf_symbols")
+                btp_bonds = await self.event_bus.request("get_btp_bonds")
                 btp_isins = [b["isin"] for b in btp_bonds if b.get("isin")]
 
                 all_quote_symbols = plain_assets + etf_symbols + btp_isins
                 if all_quote_symbols:
                     # Fetch quotes in batches to avoid yfinance timeouts on large symbol lists
-                    await self._market_data_manager._get_quotes_batched(all_quote_symbols, timeout_per_chunk=180.0)
+                    await self.event_bus.request("get_quotes_batched", all_quote_symbols, timeout_per_chunk=180.0)
             except asyncio.CancelledError:
                 raise
             except (ConnectionError, TimeoutError, OSError) as e:
@@ -1570,7 +1570,7 @@ class TradingEngine:
         await asyncio.sleep(120)  # initial delay
         while self._running:
             try:
-                plain_assets = await self._market_data_manager.get_tradable_assets()
+                plain_assets = await self.event_bus.request("get_tradable_assets")
                 available_pairs = [f"{sym}/{self.base_currency}" for sym in plain_assets]
 
                 if settings.NEWS_ENABLED and settings.NEWS_TICKER_DISCOVERY_ENABLED and discover_tickers_from_news is not None:
@@ -2347,7 +2347,7 @@ class TradingEngine:
 
     async def _is_market_open(self) -> bool:
         """Return True if the Italian market (Borsa Italiana) is currently open."""
-        clock = await self._market_data_manager.get_clock()
+        clock = await self.event_bus.request("get_clock")
         if clock is None:
             # Fallback: if clock unavailable, assume closed to be safe
             return False
