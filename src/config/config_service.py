@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 import time
 from typing import Any, Optional
 
@@ -14,15 +15,17 @@ class UnifiedConfigService:
         self._prefix = "trading:"
         self._cache: dict = {}  # key -> (value, timestamp)
         self._cache_ttl: float = 60.0  # 60 seconds
+        self._cache_lock = threading.Lock()
 
     async def get_config(self, key: str, default: Any = None) -> Any:
         """Get a config value from Redis, with a 60-second in-memory cache."""
         now = time.time()
-        cached = self._cache.get(key)
-        if cached is not None:
-            val, ts = cached
-            if now - ts < self._cache_ttl:
-                return val
+        with self._cache_lock:
+            cached = self._cache.get(key)
+            if cached is not None:
+                val, ts = cached
+                if now - ts < self._cache_ttl:
+                    return val
 
         redis_key = f"{self._prefix}{key}"
         try:
@@ -30,7 +33,8 @@ class UnifiedConfigService:
             if val is not None:
                 if isinstance(val, bytes):
                     val = val.decode('utf-8')
-                self._cache[key] = (val, now)
+                with self._cache_lock:
+                    self._cache[key] = (val, now)
                 return val
         except Exception as e:
             logger.debug(f"UnifiedConfigService.get_config: failed to read '{key}' from Redis: {type(e).__name__}: {e}")
@@ -41,7 +45,8 @@ class UnifiedConfigService:
         redis_key = f"{self._prefix}{key}"
         try:
             await asyncio.to_thread(self.redis.setex, redis_key, ttl, str(value))
-            self._cache.pop(key, None)  # invalidate cache
+            with self._cache_lock:
+                self._cache.pop(key, None)  # invalidate cache
         except Exception as e:
             logger.warning(f"Failed to set LLM config {key}: {type(e).__name__}: {e}")
 
@@ -50,6 +55,7 @@ class UnifiedConfigService:
         redis_key = f"{self._prefix}{key}"
         try:
             await asyncio.to_thread(self.redis.delete, redis_key)
-            self._cache.pop(key, None)  # invalidate cache
+            with self._cache_lock:
+                self._cache.pop(key, None)  # invalidate cache
         except Exception as e:
             logger.warning(f"Failed to clear LLM config {key}: {type(e).__name__}: {e}")
