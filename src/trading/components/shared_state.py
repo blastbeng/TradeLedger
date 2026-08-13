@@ -15,7 +15,19 @@ from src.config.settings import settings
 
 
 class SharedState:
-    """Holds mutable state shared across trading engine components."""
+    """Holds mutable state shared across trading engine components.
+
+    Lock Ordering:
+    To prevent deadlocks, if multiple locks must be acquired simultaneously,
+    they MUST be acquired in the following strict order:
+    1. _positions_lock
+    2. _queued_orders_lock
+    3. _cycle_spent_lock
+    4. _eval_state_lock
+    5. _pending_entries_lock
+    6. _current_symbols_lock
+    7. _state_lock
+    """
 
     def __init__(self):
         # --- Positions ---
