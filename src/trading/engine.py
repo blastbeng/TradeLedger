@@ -74,6 +74,7 @@ from src.trading.components.market_data_manager import MarketDataManager, ClockI
 from src.trading.components.symbol_reevaluator import SymbolReevaluator
 from src.trading.components.shared_state import SharedState
 from src.trading.components.engine_orchestrator import EngineOrchestrator
+from src.trading.components.background_task_manager import BackgroundTaskManager
 from src.config.config_service import UnifiedConfigService
 from src.trading.engine_utils import (
     timeframe_to_ms,
@@ -146,6 +147,7 @@ class TradingEngine:
         self._backtest_manager = BacktestManager(self, self.event_bus)
         self._market_data_manager = MarketDataManager(self, self.event_bus)
         self._orchestrator = EngineOrchestrator(self)
+        self._background_task_manager = BackgroundTaskManager(self, self.event_bus)
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._balance_cache_lock = asyncio.Lock()
@@ -603,25 +605,7 @@ class TradingEngine:
         await self.event_bus.request("invalidate_clock_cache")
 
     async def _periodic_reconcile(self):
-        """Run position reconciliation every 5 minutes (medium/long-term)."""
-        while self._running:
-            if self._reconcile_running:
-                logger.warning("Reconcile still running; skipping this cycle.")
-                await asyncio.sleep(60)
-                continue
-            self._reconcile_running = True
-            try:
-                await self.event_bus.request("reconcile_positions")
-            except asyncio.CancelledError:
-                raise
-            except (ConnectionError, TimeoutError, OSError) as e:
-                logger.warning(f"Reconcile network/IO error: {type(e).__name__}: {e}")
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
-                logger.error(f"Reconcile data/logic error: {type(e).__name__}: {e}", exc_info=True)
-                await self._record_unexpected_exception("reconcile", e)
-            finally:
-                self._reconcile_running = False
-            await asyncio.sleep(300)
+        await self._background_task_manager._periodic_reconcile()
 
     async def _periodic_reevaluate(self):
         """Re-evaluate stock selection periodically."""
