@@ -82,8 +82,15 @@ class BackgroundTaskManager:
                             is_premarket = True
             is_forced = self.engine._force_reeval or self.engine._reeval_pending_force
 
+            # Allow re-evaluation when market is closed if there are open positions
+            # (for risk management) or if no symbols are tracked (initial population).
+            # This does NOT force the re-evaluation — the normal cooldown still applies.
+            allow_closed_market = bool(
+                self.engine.shared_state.positions or not self.engine.shared_state.current_symbols
+            )
+
             # Disable automatic re-evaluation when market is closed (outside pre-market)
-            if not is_open and not is_premarket and not is_forced:
+            if not is_open and not is_premarket and not is_forced and not allow_closed_market:
                 logger.info("Market is closed; skipping automatic symbol re-evaluation.")
                 await asyncio.sleep(300)  # Wait 5 minutes before checking again
                 continue
