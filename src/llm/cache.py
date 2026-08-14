@@ -1111,7 +1111,8 @@ def _try_aol_model(
     redis_client = get_redis_client()
     available_models = [m for m in aol_models if not _is_model_blacklisted(redis_client, m)]
     if not available_models:
-        return None
+        logger.warning("All AOL models are blacklisted. Bypassing blacklist for last-resort fallback.")
+        available_models = aol_models
 
     shuffled_models = random.sample(available_models, len(available_models))
     for aol_model in shuffled_models:
