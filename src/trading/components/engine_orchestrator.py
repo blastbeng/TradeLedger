@@ -78,6 +78,17 @@ class EngineOrchestrator:
 
                 await engine._interruptible_sleep(settings.ENGINE_LOOP_INTERVAL_SECONDS)
 
+                # Update has_open_positions flag in Redis so _should_use_primary_model()
+                # uses the primary LLM model for risk management when the market is closed
+                # but there are open positions.
+                try:
+                    if engine.shared_state.positions:
+                        await asyncio.to_thread(engine.redis.setex, "trading:has_open_positions", 120, "1")
+                    else:
+                        await asyncio.to_thread(engine.redis.delete, "trading:has_open_positions")
+                except (ConnectionError, TimeoutError, OSError):
+                    pass
+
                 # Process any symbol whose evaluation interval has elapsed
                 now = time.time()
 
