@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from src.config.settings import settings
 from src.database import get_indicators, get_ohlcv
 from src.indicators import compute_all_indicators, compute_ema
-from src.trading.engine_utils import timeframe_to_seconds
+from src.trading.engine_utils import timeframe_to_seconds, format_symbol_display
 
 logger = logging.getLogger(__name__)
 
@@ -399,7 +399,7 @@ class EntrySignalManager:
                 return
             entry_tf = entry.get("timeframe")
             stock_name = await engine._market_data_manager.get_stock_name(symbol)
-            display_symbol = engine._format_symbol_display(symbol, stock_name, entry_tf)
+            display_symbol = format_symbol_display(symbol, stock_name, entry_tf)
             if now >= entry["deadline"]:
                 # Timeout – clear and notify
                 logger.info(f"Entry condition timeout for {symbol}")
