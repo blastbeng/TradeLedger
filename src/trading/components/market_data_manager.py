@@ -18,6 +18,7 @@ from src.config.settings import settings
 from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch, get_candle_count_for_symbol, update_candle_count, get_indicators
 from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session, get_bars_range, get_quotes, get_quotes_cached
 from src.indicators import compute_all_indicators
+from src.trading.engine_utils import timeframe_to_ms
 from src.utils.symbol_utils import is_italian_isin
 
 logger = logging.getLogger(__name__)
@@ -625,7 +626,7 @@ class MarketDataManager:
                 # Skip the API call entirely if the latest candle is recent enough
                 # (within one candle interval of now). No new data to fetch.
                 if not force:
-                    interval_ms = self.engine._timeframe_to_ms(timeframe)
+                    interval_ms = timeframe_to_ms(timeframe)
                     now_ms = int(time.time() * 1000)
                     if latest_ts >= now_ms - interval_ms:
                         logger.debug(f"Skipping backfill for {symbol} {timeframe}: data is up to date (latest_ts={latest_ts})")
@@ -723,7 +724,7 @@ class MarketDataManager:
     async def _fill_gaps(self, symbol: str, timeframe: str):
         """Detect and fill gaps in stored OHLCV data for a symbol/timeframe."""
         engine = self.engine
-        interval_ms = engine._timeframe_to_ms(timeframe)
+        interval_ms = timeframe_to_ms(timeframe)
         if interval_ms <= 0:
             return
 
