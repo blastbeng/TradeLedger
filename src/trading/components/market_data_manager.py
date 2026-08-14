@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 
 from src.config.settings import settings
-from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch, get_candle_count_for_symbol, update_candle_count, get_indicators
+from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch, get_candle_count_for_symbol, update_candle_count, get_indicators, get_aggregate_sentiment_from_db
 from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session, get_bars_range, get_quotes, get_quotes_cached
 from src.indicators import compute_all_indicators
 from src.trading.engine_utils import timeframe_to_ms
@@ -511,6 +511,23 @@ class MarketDataManager:
             return await asyncio.to_thread(get_yahoo_insider_transactions, symbol)
         except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to fetch insider transactions for {symbol}: {type(e).__name__}: {e}")
+            return None
+
+    async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Return aggregate news sentiment, cached for 60 seconds to reduce DB load."""
+        base = symbol.split("/")[0] if "/" in symbol else symbol
+        now = time.time()
+        cached = self.engine.shared_state._sentiment_cache.get(base)
+        if cached and (now - cached[0]) < 60:
+            return cached[1]
+        try:
+            agg = await asyncio.to_thread(
+                get_aggregate_sentiment_from_db, base, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS
+            )
+            self.engine.shared_state._sentiment_cache[base] = (now, agg)
+            return agg
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Failed to fetch sentiment for {base}: {type(e).__name__}: {e}")
             return None
 
     async def _get_quotes_async(self, symbols: List[str], timeout: float = 45.0) -> Dict[str, Dict[str, Any]]:

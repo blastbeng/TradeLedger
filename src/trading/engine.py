@@ -320,20 +320,7 @@ class TradingEngine:
 
     async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Return aggregate news sentiment, cached for 60 seconds to reduce DB load."""
-        base = symbol.split("/")[0] if "/" in symbol else symbol
-        now = time.time()
-        cached = self.shared_state._sentiment_cache.get(base)
-        if cached and (now - cached[0]) < 60:
-            return cached[1]
-        try:
-            agg = await asyncio.to_thread(
-                get_aggregate_sentiment_from_db, base, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS
-            )
-            self.shared_state._sentiment_cache[base] = (now, agg)
-            return agg
-        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
-            logger.warning(f"Failed to fetch sentiment for {base}: {type(e).__name__}: {e}")
-            return None
+        return await self._market_data_manager._get_cached_sentiment(symbol)
 
     async def stop(self):
         """Gracefully stop the engine and all background tasks."""
