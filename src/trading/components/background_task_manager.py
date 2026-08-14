@@ -10,6 +10,7 @@ from src.database import get_latest_close_prices
 from src.exchanges.market_data import get_quotes_cached
 from src.llm.cache import _should_use_primary_model
 from src.utils.health_metrics import health_metrics
+from src.trading.engine_utils import timeframe_to_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -355,3 +356,80 @@ class BackgroundTaskManager:
                 logger.error(f"Market condition check data/logic error: {type(e).__name__}: {e}", exc_info=True)
                 await self.engine._record_unexpected_exception("market_condition_check", e)
             await asyncio.sleep(1800)  # check every 30 minutes (medium/long-term)
+
+    async def _periodic_portfolio_rebalance(self):
+        """Periodically trigger portfolio rebalance for long-term trading."""
+        if not settings.PORTFOLIO_REBALANCE_ENABLED:
+            logger.info("Portfolio rebalance is disabled (PORTFOLIO_REBALANCE_ENABLED=False). Task sleeping.")
+            while self.engine._running:
+                await self.engine._interruptible_sleep(3600)
+            return
+        await asyncio.sleep(3600)  # initial delay
+        while self.engine._running:
+            try:
+                logger.info("Periodic portfolio rebalance triggered.")
+                self.engine.trigger_portfolio_rebalance()
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Periodic portfolio rebalance network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Periodic portfolio rebalance data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("periodic_portfolio_rebalance", e)
+            await self.engine._interruptible_sleep(settings.PORTFOLIO_REBALANCE_INTERVAL_SECONDS)
+
+    async def _risk_management_loop(self):
+        """Check stop-loss, take-profit, and other risk rules on every ticker update."""
+        await asyncio.sleep(5)  # initial delay
+
+        while self.engine._running:
+            try:
+                now = time.time()
+                symbols_to_check = []
+                min_interval = settings.RISK_CHECK_INTERVAL_SECONDS
+                async with self.engine._last_risk_check_lock:
+                    for symbol, pos in list(self.engine.shared_state.positions.items()):
+                        pos_tf = pos.get("timeframe")
+                        if not pos_tf:
+                            pos_tf_secs = settings.RISK_CHECK_INTERVAL_SECONDS
+                        else:
+                            pos_tf_secs = timeframe_to_seconds(pos_tf)
+
+                        if pos_tf_secs >= 31_536_000:  # >= 1 year
+                            pos_interval = settings.RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS
+                        elif pos_tf_secs >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
+                            pos_interval = max(3600, min(3600, int(pos_tf_secs * 0.01)))
+                        else:
+                            pos_interval = settings.RISK_CHECK_INTERVAL_SECONDS
+
+                        if pos_interval < min_interval:
+                            min_interval = pos_interval
+
+                        last_check = self.engine._last_risk_check.get(symbol, 0)
+                        if now - last_check >= pos_interval:
+                            symbols_to_check.append(symbol)
+                            self.engine._last_risk_check[symbol] = now
+
+                    # Clean up last_risk_check for closed positions
+                    closed_symbols = [s for s in self.engine._last_risk_check if s not in self.engine.shared_state.positions]
+                    for s in closed_symbols:
+                        del self.engine._last_risk_check[s]
+
+                if symbols_to_check:
+                    await self.engine.event_bus.request("check_risk_management", symbols_to_check)
+                    await self.engine._state_persistence.save_state()
+                    self.engine.shared_state._state_dirty = True
+
+                # Dynamically compute sleep interval based on the shortest timeframe
+                # among current positions. This ensures the interval is updated immediately
+                # when positions are closed and the shortest timeframe changes.
+                await self.engine._interruptible_sleep(min_interval)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Risk management loop network/IO error: {type(e).__name__}: {e}")
+                await self.engine._interruptible_sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Risk management loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("risk_management_loop", e)
+                await self.engine._interruptible_sleep(settings.RISK_CHECK_INTERVAL_SECONDS)

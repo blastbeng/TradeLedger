@@ -629,25 +629,7 @@ class TradingEngine:
         await self._background_task_manager._periodic_market_condition_check()
 
     async def _periodic_portfolio_rebalance(self):
-        """Periodically trigger portfolio rebalance for long-term trading."""
-        if not settings.PORTFOLIO_REBALANCE_ENABLED:
-            logger.info("Portfolio rebalance is disabled (PORTFOLIO_REBALANCE_ENABLED=False). Task sleeping.")
-            while self._running:
-                await self._interruptible_sleep(3600)
-            return
-        await asyncio.sleep(3600)  # initial delay
-        while self._running:
-            try:
-                logger.info("Periodic portfolio rebalance triggered.")
-                self.trigger_portfolio_rebalance()
-            except asyncio.CancelledError:
-                raise
-            except (ConnectionError, TimeoutError, OSError) as e:
-                logger.warning(f"Periodic portfolio rebalance network/IO error: {type(e).__name__}: {e}")
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
-                logger.error(f"Periodic portfolio rebalance data/logic error: {type(e).__name__}: {e}", exc_info=True)
-                await self._record_unexpected_exception("periodic_portfolio_rebalance", e)
-            await self._interruptible_sleep(settings.PORTFOLIO_REBALANCE_INTERVAL_SECONDS)
+        await self._background_task_manager._periodic_portfolio_rebalance()
 
     async def _is_quote_too_stale(self, ticker: Dict[str, Any], timeframe: str) -> bool:
         """Check if the quote is too stale for trading based on the configured threshold.
@@ -762,60 +744,7 @@ class TradingEngine:
             logger.warning(f"News fetch/store failed for {symbol}: {type(e).__name__}: {e}")
 
     async def _risk_management_loop(self):
-        """Check stop-loss, take-profit, and other risk rules on every ticker update."""
-        await asyncio.sleep(5)  # initial delay
-
-        while self._running:
-            try:
-                now = time.time()
-                symbols_to_check = []
-                min_interval = settings.RISK_CHECK_INTERVAL_SECONDS
-                async with self._last_risk_check_lock:
-                    for symbol, pos in list(self.shared_state.positions.items()):
-                        pos_tf = pos.get("timeframe")
-                        if not pos_tf:
-                            pos_tf_secs = settings.RISK_CHECK_INTERVAL_SECONDS
-                        else:
-                            pos_tf_secs = timeframe_to_seconds(pos_tf)
-
-                        if pos_tf_secs >= 31_536_000:  # >= 1 year
-                            pos_interval = settings.RISK_CHECK_INTERVAL_VERY_LONG_TF_SECONDS
-                        elif pos_tf_secs >= settings.LONG_TERM_TF_SECONDS:  # >= 1 month
-                            pos_interval = max(3600, min(3600, int(pos_tf_secs * 0.01)))
-                        else:
-                            pos_interval = settings.RISK_CHECK_INTERVAL_SECONDS
-
-                        if pos_interval < min_interval:
-                            min_interval = pos_interval
-
-                        last_check = self._last_risk_check.get(symbol, 0)
-                        if now - last_check >= pos_interval:
-                            symbols_to_check.append(symbol)
-                            self._last_risk_check[symbol] = now
-
-                    # Clean up last_risk_check for closed positions
-                    closed_symbols = [s for s in self._last_risk_check if s not in self.shared_state.positions]
-                    for s in closed_symbols:
-                        del self._last_risk_check[s]
-
-                if symbols_to_check:
-                    await self.event_bus.request("check_risk_management", symbols_to_check)
-                    await self._state_persistence.save_state()
-                    self.shared_state._state_dirty = True
-
-                # Dynamically compute sleep interval based on the shortest timeframe
-                # among current positions. This ensures the interval is updated immediately
-                # when positions are closed and the shortest timeframe changes.
-                await self._interruptible_sleep(min_interval)
-            except asyncio.CancelledError:
-                raise
-            except (ConnectionError, TimeoutError, OSError) as e:
-                logger.warning(f"Risk management loop network/IO error: {type(e).__name__}: {e}")
-                await self._interruptible_sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
-                logger.error(f"Risk management loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
-                await self._record_unexpected_exception("risk_management_loop", e)
-                await self._interruptible_sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
+        await self._background_task_manager._risk_management_loop()
 
     async def _refresh_current_symbols_news_fast(self):
         """Fast news refresh loop – only for the symbols currently tracked by the engine."""
