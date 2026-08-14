@@ -209,6 +209,23 @@ class TradingEngine:
         # Log the complete event subscription registry after all components are initialized
         self.event_bus.log_subscription_summary()
 
+    # --- Wrapper methods for engine_utils functions (called by components) ---
+
+    def _timeframe_to_seconds(self, timeframe: str) -> int:
+        return timeframe_to_seconds(timeframe)
+
+    def _timeframe_to_ms(self, timeframe: str) -> int:
+        return timeframe_to_ms(timeframe)
+
+    def _is_excluded(self, symbol: str, timeframe: str) -> bool:
+        return is_excluded(symbol, timeframe)
+
+    def _normalize_llm_symbol(self, sym: str, sample_pairs: list) -> Optional[str]:
+        return normalize_llm_symbol(sym, sample_pairs, self.base_currency)
+
+    def _get_effective_refresh_interval(self, base_interval: int, loop_type: str = "data") -> int:
+        return get_effective_refresh_interval(base_interval, self.shared_state.current_symbols, loop_type)
+
     @property
     def current_symbols(self):
         """Expose shared_state.current_symbols for backward compatibility."""
