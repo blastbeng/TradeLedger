@@ -469,12 +469,12 @@ class PaperTrader:
             logger.info(f"Partial fill for {symbol}: requested {base_amount}, capped to {max_vol}")
             base_amount = max_vol
 
-        costs = calculate_transaction_costs("BUY", fill_price, base_amount, symbol=symbol)
-        total_cost = costs["net_value"]
-        fee_cost = costs["total_costs"]
-        fee_currency = quote
-
         with self._lock:
+            costs = calculate_transaction_costs("BUY", fill_price, base_amount, symbol=symbol)
+            total_cost = costs["net_value"]
+            fee_cost = costs["total_costs"]
+            fee_currency = quote
+
             quote_balance = self._balances.get(quote, 0.0)
             if total_cost > quote_balance:
                 logger.warning(

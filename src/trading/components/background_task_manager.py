@@ -893,9 +893,22 @@ class BackgroundTaskManager:
 
         await self.engine._interruptible_sleep(3600)  # initial delay 1 hour
         while self.engine._running:
+            sleep_duration = 3600
             try:
                 if not await self.engine._is_market_open():
                     logger.info("Skipping dividend reinvestment: market is closed.")
+                    # Check if there are pending dividends for non-BTP positions;
+                    # if so, use a shorter sleep so they are processed shortly after market opens.
+                    has_pending_dividends = False
+                    for symbol, pos in list(self.engine.shared_state.positions.items()):
+                        if is_btp_isin(symbol.split("/")[0]):
+                            continue
+                        pending = await asyncio.to_thread(get_pending_dividends_for_symbol, symbol)
+                        if pending:
+                            has_pending_dividends = True
+                            break
+                    if has_pending_dividends:
+                        sleep_duration = 300
                 else:
                     for symbol, pos in list(self.engine.shared_state.positions.items()):
                         if is_btp_isin(symbol.split("/")[0]):
@@ -964,7 +977,7 @@ class BackgroundTaskManager:
                 logger.error(f"Dividend reinvestment loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
                 await self.engine._record_unexpected_exception("reinvest_dividends_loop", e)
 
-            await self.engine._interruptible_sleep(3600)  # check every hour
+            await self.engine._interruptible_sleep(sleep_duration)  # check every hour (or 5min if pending dividends)
 
     async def _evaluate_llm_decisions_loop(self):
         """Periodically evaluate past LLM decisions against actual market outcomes."""

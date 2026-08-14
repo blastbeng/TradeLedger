@@ -57,22 +57,30 @@ class SignalMarketDataFetcher:
                                 logger.info(
                                     f"Indicators for {symbol} {tf} are severely stale "
                                     f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
-                                    f"gap={staleness}ms > {4 * tf_ms}ms). Scheduling background recomputation."
+                                    f"gap={staleness}ms > {4 * tf_ms}ms). Recomputing synchronously."
                                 )
-                                # Schedule background recomputation — don't block the evaluation loop.
-                                asyncio.create_task(
-                                    engine._market_data_manager.compute_and_store_indicators(symbol, tf, candles)
-                                )
+                                # Recompute synchronously to ensure fresh indicators for this evaluation.
+                                await engine._market_data_manager.compute_and_store_indicators(symbol, tf, candles)
+                                # Re-fetch the freshly computed indicators from the database.
+                                fresh_batch = await asyncio.to_thread(get_indicators_for_symbols, [symbol], [tf])
+                                fresh_inds = fresh_batch.get(symbol, {})
+                                if tf in fresh_inds:
+                                    ind = fresh_inds[tf]
+                                    symbol_inds[tf] = ind
                             elif staleness > 2 * tf_ms:
                                 logger.info(
                                     f"Indicators for {symbol} {tf} are stale "
                                     f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
-                                    f"gap={staleness}ms > {2 * tf_ms}ms). Scheduling background recomputation."
+                                    f"gap={staleness}ms > {2 * tf_ms}ms). Recomputing synchronously."
                                 )
-                                # Schedule background recomputation — don't block the evaluation loop.
-                                asyncio.create_task(
-                                    engine._market_data_manager.compute_and_store_indicators(symbol, tf, candles)
-                                )
+                                # Recompute synchronously to ensure fresh indicators for this evaluation.
+                                await engine._market_data_manager.compute_and_store_indicators(symbol, tf, candles)
+                                # Re-fetch the freshly computed indicators from the database.
+                                fresh_batch = await asyncio.to_thread(get_indicators_for_symbols, [symbol], [tf])
+                                fresh_inds = fresh_batch.get(symbol, {})
+                                if tf in fresh_inds:
+                                    ind = fresh_inds[tf]
+                                    symbol_inds[tf] = ind
                     multi_tf_indicators[tf] = ind
                     if ind:
                         atr = ind.get('atr')

@@ -82,7 +82,12 @@ class ManualTradeLogger:
                     "entry_order_type": "manual",
                     "buy_confidence": 1.0,
                     "buy_reasoning": "Manual trade",
+                    "_needs_risk_params": True,
+                    "_needs_risk_params_attempts": 0,
                 }
+                # Force immediate re-evaluation so the LLM can provide risk parameters
+                self.shared_state._force_eval[symbol] = True
+                self.shared_state._last_strategy_eval.pop(symbol, None)
             self.shared_state._balance_cache = None
 
             # Update virtual cash balance
