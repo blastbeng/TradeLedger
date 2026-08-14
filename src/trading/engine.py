@@ -832,81 +832,8 @@ class TradingEngine:
 
     async def simulate_backtest(self, symbol: str) -> Dict[str, Any]:
         """Simulate Step 1a (analysis), Step 1b (variants), and run backtest without executing trades."""
-        data = await self._signal_processor.simulation_manager.prepare_simulation_data(symbol)
-        if "error" in data:
-            return data
-
-        model_type = data.get("model_type", "mind")
-        temperature = data.get("temperature", 0.2)
-        market_hash = data.get("market_hash")
-
-        _analysis, step1b_response, preliminary_signal, error = await self._signal_processor.simulation_manager.run_simulation_step1(symbol, data)
-        if error is not None:
-            return error
-
-        if preliminary_signal.action in ("BUY", "HOLD"):
-            backtest_results, combined_bt_summary = await self._backtest_manager.run_simulation_backtests(
-                symbol=symbol,
-                data=data,
-                preliminary_signal=preliminary_signal,
-            )
-
-            return {
-                "step1_response": step1b_response,
-                "action": preliminary_signal.action,
-                "backtest_summary": combined_bt_summary,
-                "backtest_results": backtest_results,
-            }
-        else:
-            return {
-                "step1_response": step1b_response,
-                "action": preliminary_signal.action,
-                "backtest_summary": "No backtest performed (action is SELL)",
-            }
+        return await self._signal_processor.simulation_manager.simulate_backtest(symbol)
 
     async def simulate_decision(self, symbol: str) -> Dict[str, Any]:
         """Simulate Step 1a (analysis), Step 1b (variants), and Step 2 (final decision) without executing trades."""
-        data = await self._signal_processor.simulation_manager.prepare_simulation_data(symbol)
-        if "error" in data:
-            return data
-
-        model_type = data.get("model_type", "mind")
-        temperature = data.get("temperature", 0.2)
-        market_hash = data.get("market_hash")
-
-        _analysis, step1b_response, preliminary_signal, error = await self._signal_processor.simulation_manager.run_simulation_step1(symbol, data)
-        if error is not None:
-            return error
-
-        if preliminary_signal.action == "SELL":
-            return {
-                "step1_response": step1b_response,
-                "step2_response": "N/A (Step 1 action is SELL)",
-                "action": preliminary_signal.action,
-                "backtest_summary": "No backtest performed (action is SELL)",
-            }
-
-        backtest_results, combined_bt_summary = await self._backtest_manager.run_simulation_backtests(
-            symbol=symbol,
-            data=data,
-            preliminary_signal=preliminary_signal,
-        )
-
-        data["step1b_response"] = step1b_response
-        step2_response, _error, final_signal, error_dict = await self._backtest_manager.run_simulation_step2(
-            symbol=symbol,
-            data=data,
-            preliminary_signal=preliminary_signal,
-            backtest_results=backtest_results,
-            combined_bt_summary=combined_bt_summary,
-        )
-        if error_dict is not None:
-            return error_dict
-
-        return {
-            "step1_response": step1b_response,
-            "step2_response": step2_response,
-            "action": final_signal.action,
-            "backtest_summary": combined_bt_summary,
-            "backtest_results": backtest_results,
-        }
+        return await self._signal_processor.simulation_manager.simulate_decision(symbol)
