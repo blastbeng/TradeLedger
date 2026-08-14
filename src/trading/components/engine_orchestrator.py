@@ -101,7 +101,8 @@ class EngineOrchestrator:
                     if symbols_to_process:
                         # Check if trading is paused (skip BUY signals)
                         paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
-                        trading_paused = paused is not None and paused == "1"
+                        paused_val = paused.decode() if isinstance(paused, bytes) else paused
+                        trading_paused = paused_val == "1"
 
                         async def _process_symbol_task(entry: Dict[str, str]):
                             async with engine._symbol_processing_semaphore:
