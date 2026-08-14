@@ -293,7 +293,7 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
 
     if issues:
         new_reasoning = f"{reasoning} [Semantic validation warning: one or more parameters were unreasonable: {', '.join(issues)}.]"
-        return action, new_reasoning
+        return "HOLD", new_reasoning
         
     return action, reasoning
 
