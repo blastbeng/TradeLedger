@@ -75,6 +75,7 @@ from src.trading.components.symbol_reevaluator import SymbolReevaluator
 from src.trading.components.shared_state import SharedState
 from src.trading.components.engine_orchestrator import EngineOrchestrator
 from src.trading.components.background_task_manager import BackgroundTaskManager
+from src.trading.components.state_initializer import StateInitializer
 from src.config.config_service import UnifiedConfigService
 from src.trading.engine_utils import (
     timeframe_to_ms,
@@ -148,6 +149,7 @@ class TradingEngine:
         self._market_data_manager = MarketDataManager(self, self.event_bus)
         self._orchestrator = EngineOrchestrator(self)
         self._background_task_manager = BackgroundTaskManager(self, self.event_bus)
+        self._state_initializer = StateInitializer(self, self.event_bus)
         self._symbol_reeval_lock = asyncio.Lock()
         self._tradable_assets_lock = asyncio.Lock()
         self._balance_cache_lock = asyncio.Lock()
@@ -263,121 +265,10 @@ class TradingEngine:
             logger.warning(f"Failed to clear time-sensitive Redis keys: {e}")
 
     async def _initialize_clients(self):
-        """Initialize clients and load persisted state (non‑blocking)."""
-        # Check if PAPER_INITIAL_BALANCE changed since last run
-        state = await asyncio.to_thread(load_trading_state)
-        persisted_balance = state.get("paper_initial_balance")
-
-        # If paper_initial_balance was never persisted, infer it from paper_balances
-        if persisted_balance is None:
-            paper_balances = state.get("paper_balances")
-            if paper_balances and isinstance(paper_balances, dict):
-                persisted_balance = paper_balances.get(self.base_currency)
-                if persisted_balance is not None:
-                    logger.info(
-                        f"paper_initial_balance not found in DB. "
-                        f"Inferred {persisted_balance} from paper_balances. "
-                        f"Current setting: {settings.PAPER_INITIAL_BALANCE}."
-                    )
-
-        if persisted_balance is not None and persisted_balance != settings.PAPER_INITIAL_BALANCE:
-            logger.info(
-                f"PAPER_INITIAL_BALANCE changed from {persisted_balance} to {settings.PAPER_INITIAL_BALANCE}. "
-                "Resetting paper trading state."
-            )
-            await self.reset_paper_trading_state()
-        else:
-            self.trader = PaperTrader()
-            logger.info(f"PaperTrader initialized for {settings.TRADING_MODE} trading mode.")
-            try:
-                self._state_persistence.load_state()
-            except ValueError as e:
-                logger.critical(f"State corruption detected during load: {e}. Resetting paper trading state.")
-                await self.reset_paper_trading_state()
-            self._position_manager.ensure_cost_basis()
-            # Initialize _cycle_spent from any queued buy orders loaded from persisted
-            # state so capital is reserved immediately at startup, before the first
-            # re-evaluation cycle runs (which would otherwise leave _cycle_spent at 0.0
-            # and allow over-allocation of capital already reserved by stale orders).
-            queued_buy_total = sum(
-                q.get('amount', 0.0) for q in self.shared_state.queued_orders
-                if q.get('side') == 'buy'
-            )
-            async with self.shared_state._cycle_spent_lock:
-                self.shared_state._cycle_spent = queued_buy_total
-            if queued_buy_total > 0:
-                logger.info(f"Initialized _cycle_spent={queued_buy_total:.2f} from {sum(1 for q in self.shared_state.queued_orders if q.get('side') == 'buy')} queued buy orders.")
-
-        # Persist the current PAPER_INITIAL_BALANCE so we can detect changes on next startup
-        await asyncio.to_thread(save_trading_state, "paper_initial_balance", settings.PAPER_INITIAL_BALANCE)
+        await self._state_initializer._initialize_clients()
 
     async def reset_paper_trading_state(self):
-        """Reset paper trading state."""
-        logger.info("Resetting paper trading state...")
-
-        # Clear in-memory state
-        self.shared_state.positions.clear()
-        self.shared_state.queued_orders.clear()
-        self.shared_state.current_symbols.clear()
-        self.shared_state._pending_entries.clear()
-        async with self.shared_state._eval_state_lock:
-            self.shared_state._last_strategy_eval.clear()
-            self.shared_state._strategy_intervals.clear()
-            self.shared_state._force_eval.clear()
-            self.shared_state._force_eval_time.clear()
-        self.shared_state._entry_signal_state.clear()
-        self.shared_state._last_decisions.clear()
-        self.shared_state._last_eval_snapshot.clear()
-        async with self.shared_state._cycle_spent_lock:
-            self.shared_state._cycle_spent = 0.0
-        self.shared_state._balance_cache = None
-        self.shared_state._balance_cache_time = 0.0
-        self.shared_state._position_tickers_cache = None
-        self.shared_state._position_tickers_cache_time = 0.0
-        self._perf_cache = None
-        self._perf_cache_time = 0.0
-        self._perf_cache_trade_count = -1
-        self._trade_pattern_cache = None
-        self._trade_pattern_cache_trade_count = -1
-        self.shared_state._trade_history_version = 0
-        self.shared_state._realized_pnl_offset = 0.0
-        self.shared_state.trade_history.clear()
-        self.shared_state.recent_signals.clear()
-        self.shared_state.last_loss_time.clear()
-        self.shared_state.cooldown_durations.clear()
-        self.shared_state._global_risk_multiplier = None
-        self.shared_state._symbol_first_seen.clear()
-        self.shared_state._sentiment_cache.clear()
-        self.shared_state._market_breadth = None
-        self.shared_state._daily_realized_pnl.clear()
-        self.shared_state._daily_buy_fees.clear()
-        self.initial_balance = settings.PAPER_INITIAL_BALANCE
-
-        # Clear the persisted peak total equity so drawdown starts fresh
-        await asyncio.to_thread(self.redis.delete, "trading:peak_total_equity")
-
-        # Reset DB data (unconditionally clear all trade data for both modes)
-        await asyncio.to_thread(reset_paper_trading_data, keep_trade_history=False)
-
-        # Re-initialize paper trader with new balance
-        self.trader = PaperTrader()
-
-        # Save the fresh state
-        self.shared_state._state_dirty = True
-        await self._state_persistence.save_state(force=True)
-
-        # Persist the new PAPER_INITIAL_BALANCE so we don't reset again on next restart
-        await asyncio.to_thread(save_trading_state, "paper_initial_balance", settings.PAPER_INITIAL_BALANCE)
-
-        # Persist the new initial_balance so profit calculations are correct after restart
-        await asyncio.to_thread(save_trading_state, "initial_balance", settings.PAPER_INITIAL_BALANCE)
-
-        if self.notifier:
-            await self.notifier.send_notification(
-                "♻️ Paper trading state has been reset.",
-                summary={"action": "RESET", "reason": "State reset"}
-            )
-        logger.info("Paper trading state reset complete.")
+        await self._state_initializer.reset_paper_trading_state()
 
     def set_notifier(self, notifier):
         """Attach a notification service (e.g., TelegramBot)."""
