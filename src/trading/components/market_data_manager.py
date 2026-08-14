@@ -530,6 +530,42 @@ class MarketDataManager:
             logger.warning(f"Failed to fetch sentiment for {base}: {type(e).__name__}: {e}")
             return None
 
+    async def _fetch_vix(self) -> Optional[float]:
+        """Fetch a volatility proxy. Uses US VIX (^VIX) as a global market proxy,
+        falling back to an internal proxy based on tracked symbols if unavailable."""
+        try:
+            # Try fetching US VIX as a global volatility proxy
+            quotes = await asyncio.to_thread(get_quotes_cached, ["^VIX"])
+            vix_quote = quotes.get("^VIX", {})
+            vix_price = vix_quote.get("last")
+            if vix_price and vix_price > 0:
+                return float(vix_price)
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError):
+            pass
+
+        # Fallback: compute a simple internal volatility proxy from tracked symbols
+        try:
+            if not self.engine.shared_state.current_symbols:
+                return None
+            
+            tracked_symbols = [entry["symbol"].split("/")[0] for entry in self.engine.shared_state.current_symbols]
+            quotes = await asyncio.to_thread(get_quotes_cached, tracked_symbols)
+            
+            changes = []
+            for sym, quote in quotes.items():
+                pct_change = quote.get("percentage")
+                if pct_change is not None:
+                    changes.append(abs(pct_change))
+            
+            if changes:
+                # Scale the average absolute percentage change to a VIX-like scale
+                avg_abs_change = sum(changes) / len(changes)
+                return round(avg_abs_change * 10, 2)
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError):
+            pass
+
+        return None
+
     async def _get_quotes_async(self, symbols: List[str], timeout: float = 45.0) -> Dict[str, Dict[str, Any]]:
         """Fetch quotes using the dedicated quote thread pool with a timeout.
         This prevents slow yfinance calls from blocking the default asyncio thread pool."""
