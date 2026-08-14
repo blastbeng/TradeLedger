@@ -31,7 +31,7 @@ COPY src/ ./src/
 # Run tests to ensure code integrity before starting the bot
 COPY tests/ ./tests/
 RUN python -m pytest tests/ -v
-RUN rm -rf ./tests ./requirements-dev.txt && pip uninstall -y -r requirements-dev.txt
+RUN pip uninstall -y -r requirements-dev.txt && rm -rf ./tests ./requirements-dev.txt
 
 # Create data directory for SQLite and set ownership
 RUN mkdir -p /app/data && chown 1000:1000 /app/data
