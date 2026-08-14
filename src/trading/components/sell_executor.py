@@ -7,40 +7,25 @@ import asyncio
 import logging
 import time
 from dataclasses import asdict
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from src.config.settings import settings
 from src.database import insert_trade
 from src.strategies.base import Signal
 from src.trading.engine_utils import format_symbol_display
+from src.trading.components.order_executor_base import OrderExecutorBase
 
 logger = logging.getLogger(__name__)
 
 
-class SellExecutor:
+class SellExecutor(OrderExecutorBase):
     """Handles SELL order execution and fill processing for the TradingEngine."""
 
     def __init__(self, engine, event_bus, order_executor):
-        self.engine = engine
-        self.shared_state = engine.shared_state
-        self.event_bus = event_bus
+        super().__init__(engine, event_bus)
         self._order_executor = order_executor
         self.event_bus.subscribe("handle_queued_sell_fill", self.handle_queued_sell_fill)
         self.event_bus.subscribe("execute_sell", self.execute_sell)
-
-    def _compute_pnl_and_proration(
-        self, pos: Optional[Dict[str, Any]], sold_amount: float, net_quote: float
-    ) -> Tuple[float, float, float, float]:
-        """Compute prorated cost basis and realized P&L for a sell.
-        Returns: (realized_pnl, prorated_cost_basis, cost_basis, net_base)
-        """
-        if not pos:
-            return 0.0, 0.0, 0.0, 0.0
-        cost_basis = pos.get("cost_basis", pos["amount"] * pos["price"])
-        net_base = pos.get("net_base", pos["amount"])
-        prorated_cost_basis = cost_basis * (sold_amount / pos["amount"]) if pos["amount"] > 0 else 0.0
-        realized_pnl = net_quote - prorated_cost_basis
-        return realized_pnl, prorated_cost_basis, cost_basis, net_base
 
     async def _update_or_remove_position(
         self, symbol: str, pos: Dict[str, Any], sold_amount: float,
@@ -326,12 +311,7 @@ class SellExecutor:
                 logger.error(f"Cannot place limit order for {symbol}: no limit price available.")
                 return
 
-        if limit_price is not None:
-            # Round to valid tick size ($0.01 for >=$1, $0.0001 for <$1)
-            if limit_price >= 1.0:
-                limit_price = round(limit_price, 2)
-            else:
-                limit_price = round(limit_price, 4)
+        limit_price = self._round_limit_price(limit_price)
 
         if limit_price is not None and limit_price <= 0:
             logger.error(f"Invalid limit_price {limit_price} for {symbol}, skipping.")
@@ -375,13 +355,7 @@ class SellExecutor:
                     return
 
         # --- Determine order type for SELL ---
-        order_type = signal.order_type
-        if order_type not in ("market", "limit", "stop", "stop_limit", "trailing_stop"):
-            # Fallback: limit if limit_price provided, else market
-            if limit_price is not None:
-                order_type = "limit"
-            else:
-                order_type = "market"
+        order_type = self._determine_order_type(signal, limit_price)
 
         try:
             if order_type == "market":
@@ -496,9 +470,7 @@ class SellExecutor:
                 async with self.shared_state._queued_orders_lock:
                     self.shared_state.queued_orders.append(_sell_queued_entry)
             # Compute realized P&L
-            fee = order.get('fee', {})
-            fee_cost = float(fee.get('cost', 0.0) or 0.0)
-            fee_currency = fee.get('currency', '')
+            fee_cost, fee_currency = self._extract_fee(order)
             net_quote = order['cost'] - (fee_cost if fee_currency == quote else 0.0)
             is_partial_sell = order.get("remaining_order_id") is not None
 
@@ -589,9 +561,7 @@ class SellExecutor:
         base, quote = parts
         async with self.shared_state._positions_lock:
             pos = self.shared_state.positions.get(symbol)
-        fee = trade_dict.get('fee', {})
-        fee_cost = float(fee.get('cost', 0.0) or 0.0)
-        fee_currency = fee.get('currency', '')
+        fee_cost, fee_currency = self._extract_fee(trade_dict)
         net_quote = trade_dict['cost'] - (fee_cost if fee_currency == quote else 0.0)
         exit_reason = queued.get('exit_reason', 'limit_order')
         trade_dict['exit_reason'] = exit_reason
@@ -724,9 +694,7 @@ class SellExecutor:
             logger.info(f"Dust sweep: sold {balance} {base} from {symbol} – order {order.get('id')}")
 
             # Record the dust sale in trade history for consistency
-            fee = order.get('fee', {})
-            fee_cost = float(fee.get('cost', 0.0) or 0.0)
-            fee_currency = fee.get('currency', '')
+            fee_cost, fee_currency = self._extract_fee(order)
             pos = self.shared_state.positions.get(symbol)
             net_quote = order['cost'] - (fee_cost if fee_currency == symbol.split('/')[1] else 0.0)
 
@@ -832,9 +800,7 @@ class SellExecutor:
             fill_price = order.get("price", current_price)
             logger.info(f"{level_label} SELL {symbol}: {filled_amount:.6f} @ {fill_price:.4f}")
 
-            fee = order.get("fee", {})
-            fee_cost = float(fee.get("cost", 0.0) or 0.0)
-            fee_currency = fee.get("currency", "")
+            fee_cost, fee_currency = self._extract_fee(order)
             net_quote = order["cost"] - (fee_cost if fee_currency == quote else 0.0)
 
             realized_pnl, prorated_cost_basis, cost_basis, net_base = self._compute_pnl_and_proration(

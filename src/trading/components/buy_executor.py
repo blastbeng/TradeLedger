@@ -16,17 +16,16 @@ from src.database import insert_trade
 from src.strategies.base import Signal
 from src.utils.btp_policy import BTPPolicy
 from src.trading.components.order_executor import OrderExecutor
+from src.trading.components.order_executor_base import OrderExecutorBase
 
 logger = logging.getLogger(__name__)
 
 
-class BuyExecutor:
+class BuyExecutor(OrderExecutorBase):
     """Handles BUY order execution for the TradingEngine."""
 
     def __init__(self, engine, event_bus):
-        self.engine = engine
-        self.shared_state = engine.shared_state
-        self.event_bus = event_bus
+        super().__init__(engine, event_bus)
         self._exit_order_manager = None
         self.event_bus.subscribe("execute_buy", self.execute_buy)
         self._portfolio_cache = None
@@ -180,13 +179,7 @@ class BuyExecutor:
         limit_price, time_in_force, need_limit = _limit_result
 
         # --- Determine order type ---
-        order_type = signal.order_type
-        if order_type not in ("market", "limit", "stop", "stop_limit", "trailing_stop"):
-            # Fallback to existing behaviour: limit if limit_price provided, else market
-            if limit_price is not None:
-                order_type = "limit"
-            else:
-                order_type = "market"
+        order_type = self._determine_order_type(signal, limit_price)
 
         # --- Reserve cycle budget before placing order to prevent race condition ---
         async with self.shared_state._cycle_spent_lock:
@@ -826,12 +819,7 @@ class BuyExecutor:
                 logger.error(f"Cannot place limit order for {symbol}: no limit price available.")
                 return None
 
-        if limit_price is not None:
-            # Round to valid tick size ($0.01 for >=$1, $0.0001 for <$1)
-            if limit_price >= 1.0:
-                limit_price = round(limit_price, 2)
-            else:
-                limit_price = round(limit_price, 4)
+        limit_price = self._round_limit_price(limit_price)
 
         if limit_price is not None and limit_price <= 0:
             logger.error(f"Invalid limit_price {limit_price} for {symbol}, skipping.")
@@ -976,9 +964,7 @@ class BuyExecutor:
     ) -> None:
         """Update an existing position or create a new one after a filled BUY order."""
         engine = self.engine
-        fee = order.get('fee', {})
-        fee_cost = float(fee.get('cost', 0.0) or 0.0)
-        fee_currency = fee.get('currency', '')
+        fee_cost, fee_currency = self._extract_fee(order)
 
         cost_basis = order['cost'] + (fee_cost if fee_currency == quote else 0.0)
         net_base = order['amount'] - (fee_cost if fee_currency == base else 0.0)
