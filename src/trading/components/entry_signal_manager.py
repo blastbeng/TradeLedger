@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from src.config.settings import settings
 from src.database import get_indicators, get_ohlcv
 from src.indicators import compute_all_indicators, compute_ema
+from src.trading.engine_utils import timeframe_to_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class EntrySignalManager:
         db_candles = await asyncio.to_thread(
             get_ohlcv, symbol, timeframe, limit=50
         )
-        tf_seconds = engine._timeframe_to_seconds(timeframe)
+        tf_seconds = timeframe_to_seconds(timeframe)
         min_candles = settings.ENTRY_SIGNAL_MIN_CANDLES_LONG_TF if tf_seconds >= 2_592_000 else settings.ENTRY_SIGNAL_MIN_CANDLES_SHORT_TF
         if len(db_candles) < min_candles:
             return False
@@ -145,7 +146,7 @@ class EntrySignalManager:
         # Use trend reversal and regime shift logic instead of short-term
         # crossovers, which fire on every candle for long timeframes because
         # indicators change dramatically between candles (e.g., RSI 20→80).
-        tf_seconds = engine._timeframe_to_seconds(timeframe)
+        tf_seconds = timeframe_to_seconds(timeframe)
         if tf_seconds >= 2_592_000:  # >= 1 month (1M, 3M, 6M, 1Y)
             # Volume confirmation: require the last complete candle's volume
             # to be above the 20-period EMA to validate long-term breakouts.
