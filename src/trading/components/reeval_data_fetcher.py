@@ -236,9 +236,9 @@ class ReevalDataFetcher:
         sample_pairs = [
             sym for sym in sample_pairs
             if not any(
+                len(entry.split("/")) == 2 and
                 entry.split("/")[0] == sym.split("/")[0] and
-                entry.split("/")[1] == sym.split("/")[1] and
-                len(entry.split("/")) == 2
+                entry.split("/")[1] == sym.split("/")[1]
                 for entry in settings.EXCLUDED_SYMBOLS
             )
         ]

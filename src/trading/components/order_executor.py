@@ -357,7 +357,7 @@ class OrderExecutor(OrderExecutorBase):
         # Update open positions flag in Redis for LLM model selection
         try:
             if self.shared_state.positions:
-                await asyncio.to_thread(self.engine.redis.set, "trading:has_open_positions", "1")
+                await asyncio.to_thread(self.engine.redis.setex, "trading:has_open_positions", 300, "1")
             else:
                 await asyncio.to_thread(self.engine.redis.delete, "trading:has_open_positions")
         except Exception:
