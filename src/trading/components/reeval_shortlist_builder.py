@@ -220,7 +220,7 @@ class ReevalShortlistBuilder:
 
         # Update effective_max_symbols to accommodate newly appended symbols
         if len(deduped) > engine.effective_max_symbols:
-            engine.effective_max_symbols = len(deduped)
+            engine.effective_max_symbols = min(len(deduped), engine.max_symbols)
 
     def enforce_min_symbols(
         self,
@@ -250,7 +250,7 @@ class ReevalShortlistBuilder:
                 f"LLM selected {engine.effective_max_symbols} symbols; "
                 f"enforcing MIN_SYMBOLS={settings.MIN_SYMBOLS}"
             )
-            engine.effective_max_symbols = settings.MIN_SYMBOLS
+            engine.effective_max_symbols = min(settings.MIN_SYMBOLS, engine.max_symbols)
 
         # --- Fallback: fill remaining slots if LLM returned fewer than MIN_SYMBOLS ---
         if (
@@ -298,7 +298,7 @@ class ReevalShortlistBuilder:
                     f"LLM returned only {len(deduped) - filled} symbols; "
                     f"filled {filled} additional slots from composite scores to reach MIN_SYMBOLS={settings.MIN_SYMBOLS}"
                 )
-                engine.effective_max_symbols = max(engine.effective_max_symbols, len(deduped))
+                engine.effective_max_symbols = max(engine.effective_max_symbols, min(len(deduped), engine.max_symbols))
 
     async def apply_fallback_selection(
         self,

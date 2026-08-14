@@ -76,19 +76,22 @@ class LLMStepManager:
         is_fallback = False
 
         try:
-            step1a_result = await asyncio.to_thread(
-                get_cached_llm_response,
-                "", "", None,
-                market_hash=market_hash,
-                model_type=strategy_model_type,
-                temperature=effective_temp,
-                symbol=symbol,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": compact_prompt(analysis_prompt)},
-                ],
-                request_type="trading_decision_step1a",
-                reasoning_effort=reasoning_effort,
+            step1a_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response,
+                    "", "", None,
+                    market_hash=market_hash,
+                    model_type=strategy_model_type,
+                    temperature=effective_temp,
+                    symbol=symbol,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": compact_prompt(analysis_prompt)},
+                    ],
+                    request_type="trading_decision_step1a",
+                    reasoning_effort=reasoning_effort,
+                ),
+                timeout=settings.LLM_TIMEOUT
             )
             step1a_response = step1a_result["response"]
             llm_provider = step1a_result["provider"]
@@ -105,17 +108,20 @@ class LLMStepManager:
                     "No markdown fences, no explanations, no extra text. "
                     "Here is the original request:\n\n" + analysis_prompt
                 )
-                retry_result = await asyncio.to_thread(
-                    get_cached_llm_response,
-                    "", "", None,
-                    model_type=strategy_model_type,
-                    temperature=effective_temp,
-                    market_hash=market_hash,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": compact_prompt(correction_prompt)},
-                    ],
-                    request_type="trading_decision_step1a_retry",
+                retry_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_cached_llm_response,
+                        "", "", None,
+                        model_type=strategy_model_type,
+                        temperature=effective_temp,
+                        market_hash=market_hash,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": compact_prompt(correction_prompt)},
+                        ],
+                        request_type="trading_decision_step1a_retry",
+                    ),
+                    timeout=settings.LLM_TIMEOUT
                 )
                 analysis_result = self.sp._parse_analysis_response(retry_result["response"])
                 llm_provider = retry_result["provider"]
@@ -132,7 +138,7 @@ class LLMStepManager:
             self._update_last_eval_snapshot(symbol, current_price, rsi, macd_hist, tf_seconds)
             async with self.shared_state._eval_state_lock:
                 self.shared_state._force_eval.pop(symbol, None)
-        except (ConnectionError, TimeoutError, OSError) as e:
+        except (ConnectionError, TimeoutError, OSError, asyncio.TimeoutError) as e:
             logger.error(f"LLM Step 1a network error for {symbol}: {type(e).__name__}: {e}")
             async with self.shared_state._eval_state_lock:
                 self.shared_state._force_eval[symbol] = True  # Force retry on next cycle
@@ -291,23 +297,26 @@ class LLMStepManager:
         })
 
         try:
-            step1b_result = await asyncio.to_thread(
-                get_cached_llm_response,
-                "", "", None,
-                market_hash=variants_market_hash,
-                model_type=strategy_model_type,
-                temperature=effective_temp,
-                symbol=symbol,
-                messages=variants_messages,
-                request_type="trading_decision_step1b",
-                reasoning_effort=reasoning_effort,
+            step1b_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_llm_response,
+                    "", "", None,
+                    market_hash=variants_market_hash,
+                    model_type=strategy_model_type,
+                    temperature=effective_temp,
+                    symbol=symbol,
+                    messages=variants_messages,
+                    request_type="trading_decision_step1b",
+                    reasoning_effort=reasoning_effort,
+                ),
+                timeout=settings.LLM_TIMEOUT
             )
             step1b_response = step1b_result["response"]
             llm_provider = step1b_result["provider"]
             llm_model = step1b_result["model"]
             is_fallback = step1b_result.get("is_fallback", False)
             logger.info(f"LLM Step 1b (variants) completed for {symbol} (provider={llm_provider}, model={llm_model})")
-        except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
+        except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError, asyncio.TimeoutError) as e:
             logger.error(f"LLM Step 1b failed for {symbol}: {type(e).__name__}: {e}. Using Step 1a analysis as fallback.")
             step1b_response = json.dumps({
                 "action": analysis_result.get("action", "HOLD"),
@@ -330,22 +339,25 @@ class LLMStepManager:
                 "Here is the original request:\n\n" + variants_prompt
             )
             try:
-                response2 = await asyncio.to_thread(
-                    get_cached_llm_response, "", "", None,
-                    model_type=strategy_model_type,
-                    temperature=effective_temp,
-                    market_hash=variants_market_hash,
-                    messages=[
-                        {"role": "system", "content": compact_prompt(build_system_prompt())},
-                        {"role": "user", "content": compact_prompt(correction_prompt)},
-                    ],
-                    request_type="trading_decision_step1b_retry",
+                response2 = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_cached_llm_response, "", "", None,
+                        model_type=strategy_model_type,
+                        temperature=effective_temp,
+                        market_hash=variants_market_hash,
+                        messages=[
+                            {"role": "system", "content": compact_prompt(build_system_prompt())},
+                            {"role": "user", "content": compact_prompt(correction_prompt)},
+                        ],
+                        request_type="trading_decision_step1b_retry",
+                    ),
+                    timeout=settings.LLM_TIMEOUT
                 )
                 preliminary_strategy = create_strategy_from_llm(response2["response"])
                 llm_provider = response2["provider"]
                 llm_model = response2["model"]
                 is_fallback = response2.get("is_fallback", False)
-            except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e2:
+            except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError, asyncio.TimeoutError) as e2:
                 logger.warning(f"LLM Step 1b response still invalid after first retry for {symbol}: {type(e2).__name__}: {e2}. Retrying with simpler prompt.")
                 simpler_prompt = (
                     "Your previous responses were not valid JSON. "
@@ -354,16 +366,19 @@ class LLMStepManager:
                     "Do not include any other text, markdown fences, or explanations."
                 )
                 try:
-                    response3 = await asyncio.to_thread(
-                        get_cached_llm_response, "", "", None,
-                        model_type="actuator",
-                        temperature=0.1,
-                        market_hash=variants_market_hash,
-                        messages=[
-                            {"role": "system", "content": "You are a JSON generator. Output ONLY valid JSON."},
-                            {"role": "user", "content": simpler_prompt},
-                        ],
-                        request_type="trading_decision_step1b_retry_simple",
+                    response3 = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            get_cached_llm_response, "", "", None,
+                            model_type="actuator",
+                            temperature=0.1,
+                            market_hash=variants_market_hash,
+                            messages=[
+                                {"role": "system", "content": "You are a JSON generator. Output ONLY valid JSON."},
+                                {"role": "user", "content": simpler_prompt},
+                            ],
+                            request_type="trading_decision_step1b_retry_simple",
+                        ),
+                        timeout=settings.LLM_TIMEOUT
                     )
                     preliminary_strategy = create_strategy_from_llm(response3["response"])
                     llm_provider = response3["provider"]

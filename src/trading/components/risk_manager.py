@@ -341,19 +341,9 @@ class RiskManager:
         # the total daily loss (including fees) doesn't exceed the threshold.
         adjusted_max_daily_loss = max(0.0, max_daily_loss - daily_buy_fees)
 
-        # Compute unrealized P&L — now included in the threshold check to
-        # catch deep drawdowns from open positions before they worsen.
-        unrealized_pnl = 0.0
-        if self.shared_state.positions:
-            pos_tickers = await asyncio.to_thread(engine._market_data_manager._get_all_position_tickers_sync)
-            unrealized_pnl = self.engine._position_manager.compute_total_unrealized_pnl(pos_tickers)
-
-        # Include unrealized P&L in the threshold check to catch deep drawdowns
-        # from open positions before they worsen.
-        if (daily_pnl + unrealized_pnl) < -adjusted_max_daily_loss:
+        if daily_pnl < -adjusted_max_daily_loss:
             logger.warning(
-                f"Daily loss limit reached: realized daily P&L={daily_pnl:.2f} "
-                f"(unrealized: {unrealized_pnl:.2f}, included), "
+                f"Daily loss limit reached: realized daily P&L={daily_pnl:.2f}, "
                 f"max loss={adjusted_max_daily_loss:.2f} ({settings.MAX_DAILY_LOSS_PCT:.2%} of initial balance"
                 f" - {daily_buy_fees:.2f} buy fees). "
                 f"Pausing trading until tomorrow."
@@ -369,8 +359,7 @@ class RiskManager:
             if engine.notifier:
                 await engine.notifier.send_notification(
                     f"🛑 Daily loss limit reached: {daily_pnl:.2f} {engine.base_currency} "
-                    f"(realized, unrealized: {unrealized_pnl:.2f} included, "
-                    f"max: -{adjusted_max_daily_loss:.2f}, incl. {daily_buy_fees:.2f} fees). Trading paused until tomorrow.",
+                    f"(realized, max: -{adjusted_max_daily_loss:.2f}, incl. {daily_buy_fees:.2f} fees). Trading paused until tomorrow.",
                     summary={"action": "PAUSE", "reason": "Daily loss limit reached"}
                 )
 
@@ -548,13 +537,11 @@ class RiskManager:
     async def _is_llm_circuit_breaker_active(self) -> bool:
         """Check if the LLM circuit breaker is currently active.
 
-        The circuit breaker short-circuit is only active during pre-market and
-        market open hours (when primary models are in use). During market closed
-        hours with fallback models, the short-circuit is disabled to allow the
-        fallback model to handle decisions — it may be temporarily rate-limited
-        but should not trigger graceful degradation without consulting the LLM.
+        The circuit breaker short-circuit is active during all market hours
+        (pre-market, open, and closed) to prevent indefinite hangs when both
+        primary and fallback models are consistently failing.
         """
-        return await is_llm_circuit_breaker_active(check_primary_model=True)
+        return await is_llm_circuit_breaker_active(check_primary_model=False)
 
     async def read_review_limits(self) -> Dict[str, int]:
         """Read LLM-decided review limits from Redis, falling back to settings defaults."""

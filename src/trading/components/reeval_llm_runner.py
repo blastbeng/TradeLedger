@@ -302,11 +302,9 @@ class ReevalLLMRunner:
                 finally:
                     await token_limiter.release(chunk_tokens)
 
-        chunk_results: List[Dict[str, Any]] = []
-        for idx, chunk in enumerate(chunks):
-            result = await _evaluate_chunk(idx, chunk, chunk_results)
-            if result is not None:
-                chunk_results.append(result)
+        tasks = [_evaluate_chunk(idx, chunk) for idx, chunk in enumerate(chunks)]
+        results = await asyncio.gather(*tasks)
+        chunk_results = [r for r in results if r is not None]
         return chunk_results
 
     async def run_final_selection_llm_call(
