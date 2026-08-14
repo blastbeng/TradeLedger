@@ -993,51 +993,10 @@ class TradingEngine:
         await asyncio.to_thread(save_trading_state, "global_risk_multiplier", value)
 
     async def _process_queued_orders(self):
-        """Periodically check queued limit orders in the simulator and process fills,
-        including partial fills.
-
-        Instead of re-executing the signal (which would place a duplicate order
-        while the original is still open), we poll the actual simulator order
-        status. When the order fills (fully or partially), we record the trade
-        and update positions exactly as a normal fill would. We never place a
-        new order here.
-        """
-        await asyncio.sleep(10)
-        # --- Notify mode: no queued order processing ---
-        if settings.TRADING_MODE == "notify":
-            logger.info("Notify mode: skipping queued order processing.")
-            return
-        while self._running:
-            try:
-                for queued in list(self.shared_state.queued_orders):
-                    await self.event_bus.request("process_single_queued_order", queued)
-            except asyncio.CancelledError:
-                raise
-            except (ConnectionError, TimeoutError, OSError) as e:
-                logger.warning(f"Queued orders processing network/IO error: {type(e).__name__}: {e}")
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
-                logger.error(f"Error processing queued orders data/logic: {type(e).__name__}: {e}", exc_info=True)
-                await self._record_unexpected_exception("process_queued_orders", e)
-            await asyncio.sleep(15)  # check every 15 seconds for faster fill detection
+        await self._background_task_manager._process_queued_orders()
 
     async def _cleanup_orphaned_orders(self):
-        """Periodically cancel any open orders that are older than 10 minutes,
-        but never cancel orders that are still being tracked as queued."""
-        await asyncio.sleep(120)  # initial delay
-        # --- Notify mode: no orphaned order cleanup ---
-        if settings.TRADING_MODE == "notify":
-            return
-        while self._running:
-            try:
-                await self.event_bus.request("cancel_orphaned_orders")
-            except asyncio.CancelledError:
-                raise
-            except (ConnectionError, TimeoutError, OSError) as e:
-                logger.warning(f"Orphaned order cleanup network/IO error: {type(e).__name__}: {e}")
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
-                logger.error(f"Orphaned order cleanup data/logic error: {type(e).__name__}: {e}", exc_info=True)
-                await self._record_unexpected_exception("cleanup_orphaned_orders", e)
-            await asyncio.sleep(900)  # every 15 minutes
+        await self._background_task_manager._cleanup_orphaned_orders()
 
     async def _is_market_open(self) -> bool:
         """Return True if the Italian market (Borsa Italiana) is currently open."""
