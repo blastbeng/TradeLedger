@@ -418,7 +418,7 @@ class SignalProcessor:
         if await self.should_skip_llm_eval(
             symbol=symbol, current_price=ctx["current_price"], atr=ctx["atr"], rsi=ctx["rsi"],
             macd_hist=ctx["macd_hist"], atr_percentile=ctx.get("atr_percentile"), market_regime=ctx["market_regime"],
-            sentiment_trend_val=ctx.get("sentiment_trend_val"), timeframe_seconds=engine._timeframe_to_seconds(ctx.get("assigned_tf", "1d")),
+            sentiment_trend_val=ctx.get("sentiment_trend_val"), timeframe_seconds=timeframe_to_seconds(ctx.get("assigned_tf", "1d")),
             has_position=has_position, is_critical=is_critical,
         ):
             logger.info(f"Skipping LLM for {symbol}: market unchanged, no strong signals.", extra={"event": "skip_llm_unchanged", "symbol": symbol})
