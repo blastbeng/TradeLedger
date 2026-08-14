@@ -375,7 +375,7 @@ class TelegramBot:
             for i, (sym, pos) in enumerate(positions.items()):
                 pos_tf = pos.get("timeframe")
                 pos_name = pos_names[i]
-                pos_display = self.engine._format_symbol_display(sym, pos_name, pos_tf)
+                pos_display = format_symbol_display(sym, pos_name, pos_tf)
                 msg += (
                     f"  • <code>{pos_display}</code>\n"
                     f"    Amount: {pos['amount']:.6f}\n"
