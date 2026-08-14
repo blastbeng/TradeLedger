@@ -384,7 +384,7 @@ class LLMStepManager:
                     llm_provider = response3["provider"]
                     llm_model = response3["model"]
                     is_fallback = response3.get("is_fallback", False)
-                except Exception as e3:
+                except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError, asyncio.TimeoutError) as e3:
                     logger.error(f"LLM Step 1b response still invalid after simpler retry for {symbol}: {type(e3).__name__}: {e3}")
                     preliminary_strategy = LLMStrategy(self._create_fallback_hold_signal(
                         symbol, "Failed to parse LLM Step 1b response after simpler retry", strategy_model_type
