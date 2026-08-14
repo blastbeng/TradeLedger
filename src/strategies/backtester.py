@@ -103,9 +103,17 @@ def _detect_gaps(candles: List[List], tolerance_mult: float = settings.BACKTEST_
 
             # If the gap is an integer multiple of the expected interval,
             # it likely represents a market closure (weekend or holiday).
-            # We skip these to avoid false positives.
+            # We skip these to avoid false positives, but only for
+            # daily or lower-frequency data where weekend closures are
+            # expected. For intraday data, integer multiples are more
+            # likely to be genuine data gaps.
             if nearest_int > 1 and abs(ratio - nearest_int) / nearest_int < 0.1:
-                continue
+                # Determine if this is daily or lower-frequency data
+                # (expected interval >= 1 day in milliseconds)
+                if expected_interval >= 86_400_000:
+                    continue
+                # For intraday data, only skip if the gap also spans
+                # a weekend (checked below), otherwise treat as a real gap
 
             # Additionally, check if the gap spans a weekend for daily/lower frequency data
             prev_dt = datetime.datetime.fromtimestamp(candles[i-1][0] / 1000, tz=datetime.timezone.utc)

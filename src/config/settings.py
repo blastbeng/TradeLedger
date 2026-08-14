@@ -1555,6 +1555,18 @@ class Settings(BaseSettings):
 
     BTP_IS_PRIMARY_ISSUANCE: bool = False
 
+    # Grace period (days) before auto-closing a BTP position when the maturity
+    # date cannot be parsed. A longer period reduces the risk of premature
+    # closure due to parsing fragility.
+    BTP_UNPARSEABLE_MATURITY_GRACE_DAYS: int = 90
+
+    @field_validator("BTP_UNPARSEABLE_MATURITY_GRACE_DAYS")
+    @classmethod
+    def validate_btp_unparseable_maturity_grace_days(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("BTP_UNPARSEABLE_MATURITY_GRACE_DAYS must be >= 1")
+        return v
+
     # Data Quality & Market Data
     QUOTE_DEVIATION_THRESHOLD: float = 0.5
     BORSA_TOKEN_CACHE_TTL: int = 300

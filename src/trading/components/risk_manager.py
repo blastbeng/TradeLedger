@@ -461,10 +461,9 @@ class RiskManager:
                         break
             if pos_tf and await engine._is_quote_too_stale(ticker, pos_tf):
                 logger.warning(
-                    f"Skipping risk management for {symbol}: quote data is too stale "
-                    f"for timeframe {pos_tf}."
+                    f"Risk management for {symbol}: quote data is stale "
+                    f"for timeframe {pos_tf}. Proceeding with last known price {current_price:.4f}."
                 )
-                return
 
             # --- Format symbol for notifications ---
             stock_name = await engine._market_data_manager.get_stock_name(symbol)
