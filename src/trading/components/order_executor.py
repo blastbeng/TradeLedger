@@ -14,17 +14,16 @@ from src.database import insert_trade
 from src.strategies.base import Signal
 from src.utils.symbol_utils import is_btp_isin
 from src.trading.engine_utils import format_symbol_display, timeframe_to_seconds
+from src.trading.components.order_executor_base import OrderExecutorBase
 
 logger = logging.getLogger(__name__)
 
 
-class OrderExecutor:
+class OrderExecutor(OrderExecutorBase):
     """Handles order execution and fill processing for the TradingEngine."""
 
     def __init__(self, engine, event_bus):
-        self.engine = engine
-        self.shared_state = engine.shared_state
-        self.event_bus = event_bus
+        super().__init__(engine, event_bus)
         self._exit_order_manager = None
         self._buy_executor = None
         from src.trading.components.sell_executor import SellExecutor
@@ -621,9 +620,7 @@ class OrderExecutor:
             logger.error(f"Invalid symbol format in queued buy fill: {symbol}")
             return
         base, quote = parts
-        fee = trade_dict.get('fee', {})
-        fee_cost = float(fee.get('cost', 0.0) or 0.0)
-        fee_currency = fee.get('currency', '')
+        fee_cost, fee_currency = self._extract_fee(trade_dict)
         cost_basis = trade_dict['cost'] + (fee_cost if fee_currency == quote else 0.0)
         net_base = trade_dict['amount'] - (fee_cost if fee_currency == base else 0.0)
 
