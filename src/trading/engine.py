@@ -414,44 +414,8 @@ class TradingEngine:
         await self._background_task_manager._periodic_portfolio_rebalance()
 
     async def _is_quote_too_stale(self, ticker: Dict[str, Any], timeframe: str) -> bool:
-        """Check if the quote is too stale for trading based on the configured threshold.
-
-        The staleness threshold is scaled by the symbol's timeframe: longer timeframes
-        tolerate staler quotes. Returns False if staleness cannot be determined or
-        if the guard is disabled.
-
-        When the market is closed, quotes cannot be refreshed, so stale quotes are
-        not considered too stale. This prevents false positives over weekends and
-        holidays where the most recent quote is necessarily from the last trading
-        session.
-        """
-        if settings.QUOTE_MAX_STALENESS_SECONDS <= 0:
-            return False
-        last_update = ticker.get("last_update")
-        if last_update is None:
-            return False
-        age_seconds = (time.time() * 1000 - last_update) / 1000
-        # Scale the threshold by the timeframe: longer timeframes allow staler quotes.
-        # Use at least the configured max staleness (1 hour), or 10% of the timeframe,
-        # whichever is greater (capped at 6 hours for very long timeframes to avoid
-        # trading on excessively stale prices).
-        tf_seconds = timeframe_to_seconds(timeframe)
-        scaled_threshold = max(settings.QUOTE_MAX_STALENESS_SECONDS, min(tf_seconds * 0.1, 21600))
-
-        if age_seconds <= scaled_threshold:
-            return False
-
-        # The quote exceeds the staleness threshold, but if the market is currently
-        # closed, we cannot obtain a fresher quote. In this case, don't flag it as
-        # stale — the most recent available quote is the best we can get.
-        try:
-            is_open = await self._is_market_open()
-            if not is_open:
-                return False
-        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError):
-            pass  # If market status can't be determined, fall back to the age-based check
-
-        return True
+        """Check if the quote is too stale for trading based on the configured threshold."""
+        return await self._market_data_manager._is_quote_too_stale(ticker, timeframe)
 
     async def _fetch_vix(self) -> Optional[float]:
         """Fetch a volatility proxy. Uses US VIX (^VIX) as a global market proxy,

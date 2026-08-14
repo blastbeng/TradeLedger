@@ -20,7 +20,7 @@ from src.config.settings import settings
 from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch, get_candle_count_for_symbol, update_candle_count, get_indicators, get_aggregate_sentiment_from_db
 from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session, get_bars_range, get_quotes, get_quotes_cached
 from src.indicators import compute_all_indicators
-from src.trading.engine_utils import timeframe_to_ms
+from src.trading.engine_utils import timeframe_to_ms, timeframe_to_seconds
 from src.utils.symbol_utils import is_italian_isin
 
 logger = logging.getLogger(__name__)
@@ -695,6 +695,46 @@ class MarketDataManager:
         self.engine.shared_state._position_tickers_cache = tickers
         self.engine.shared_state._position_tickers_cache_time = now
         return tickers
+
+    async def _is_quote_too_stale(self, ticker: Dict[str, Any], timeframe: str) -> bool:
+        """Check if the quote is too stale for trading based on the configured threshold.
+
+        The staleness threshold is scaled by the symbol's timeframe: longer timeframes
+        tolerate staler quotes. Returns False if staleness cannot be determined or
+        if the guard is disabled.
+
+        When the market is closed, quotes cannot be refreshed, so stale quotes are
+        not considered too stale. This prevents false positives over weekends and
+        holidays where the most recent quote is necessarily from the last trading
+        session.
+        """
+        if settings.QUOTE_MAX_STALENESS_SECONDS <= 0:
+            return False
+        last_update = ticker.get("last_update")
+        if last_update is None:
+            return False
+        age_seconds = (time.time() * 1000 - last_update) / 1000
+        # Scale the threshold by the timeframe: longer timeframes allow staler quotes.
+        # Use at least the configured max staleness (1 hour), or 10% of the timeframe,
+        # whichever is greater (capped at 6 hours for very long timeframes to avoid
+        # trading on excessively stale prices).
+        tf_seconds = timeframe_to_seconds(timeframe)
+        scaled_threshold = max(settings.QUOTE_MAX_STALENESS_SECONDS, min(tf_seconds * 0.1, 21600))
+
+        if age_seconds <= scaled_threshold:
+            return False
+
+        # The quote exceeds the staleness threshold, but if the market is currently
+        # closed, we cannot obtain a fresher quote. In this case, don't flag it as
+        # stale — the most recent available quote is the best we can get.
+        try:
+            is_open = await self.engine._is_market_open()
+            if not is_open:
+                return False
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError):
+            pass  # If market status can't be determined, fall back to the age-based check
+
+        return True
 
     async def _backfill_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, max_candles: int = None, ignore_existing: bool = False, force: bool = False, quiet: bool = False) -> int:
         """Fetch and store all missing OHLCV candles between start_ms and end_ms.
