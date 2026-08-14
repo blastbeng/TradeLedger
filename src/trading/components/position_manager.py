@@ -900,7 +900,8 @@ class PositionManager:
         """Helper to close a BTP position at par value (100.0) and record the trade."""
         engine = self.engine
         logger.info(f"Closing BTP {symbol} at par value. Reason: {log_reason}")
-        self.shared_state.current_symbols.remove(entry)
+        async with self.shared_state._current_symbols_lock:
+            self.shared_state.current_symbols.remove(entry)
         # Refund reserved cycle capital for any removed buy orders
         async with self.shared_state._queued_orders_lock:
             removed_buys = [q for q in self.shared_state.queued_orders if q['symbol'] == symbol and q['side'] == 'buy']

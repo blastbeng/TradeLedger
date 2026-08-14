@@ -43,7 +43,8 @@ class ReevalPostSelectionManager:
         for symbol, pos in self.shared_state.positions.items():
             if not any(entry["symbol"] == symbol for entry in self.shared_state.current_symbols):
                 tf = pos.get("timeframe") or (settings.OHLCV_TIMEFRAMES[0] if settings.OHLCV_TIMEFRAMES else "1h")
-                self.shared_state.current_symbols.append({"symbol": symbol, "timeframe": tf})
+                async with self.shared_state._current_symbols_lock:
+                    self.shared_state.current_symbols.append({"symbol": symbol, "timeframe": tf})
                 logger.info(f"Keeping {symbol} in current_symbols due to open position (timeframe={tf})")
 
         # If trading is paused, we still keep all symbols so the LLM can generate signals
@@ -105,13 +106,20 @@ class ReevalPostSelectionManager:
                 self.shared_state._last_eval_snapshot,
                 self.shared_state.last_loss_time,
                 self.shared_state.cooldown_durations,
-                self.shared_state._pending_entries,
             ):
                 stale_keys = [s for s in state_dict if s not in active_symbols]
                 for s in stale_keys:
                     state_dict.pop(s, None)
                 if stale_keys:
                     logger.debug(f"Cleaned {len(stale_keys)} stale entries from engine state dicts")
+
+        async with self.shared_state._pending_entries_lock:
+            state_dict = self.shared_state._pending_entries
+            stale_keys = [s for s in state_dict if s not in active_symbols]
+            for s in stale_keys:
+                state_dict.pop(s, None)
+            if stale_keys:
+                logger.debug(f"Cleaned {len(stale_keys)} stale entries from engine state dicts")
 
         active_bases = {s.split("/")[0] for s in active_symbols}
         for cache_dict in (

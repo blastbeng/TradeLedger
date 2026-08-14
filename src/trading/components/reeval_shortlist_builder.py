@@ -417,14 +417,17 @@ class ReevalShortlistBuilder:
                             self.shared_state.positions[sym].pop("_max_hold_expired_count", None)
                 else:
                     entry['entry_time'] = time.time()
-            self.shared_state.current_symbols = deduped[: engine.effective_max_symbols]
+            async with self.shared_state._current_symbols_lock:
+                self.shared_state.current_symbols = deduped[: engine.effective_max_symbols]
         else:
             # LLM returned no symbols – keep previously tracked symbols
             if old_symbols:
                 logger.info("LLM selected 0 symbols. Keeping previously tracked symbols for signal generation.")
-                self.shared_state.current_symbols = old_symbols
+                async with self.shared_state._current_symbols_lock:
+                    self.shared_state.current_symbols = old_symbols
                 engine.effective_max_symbols = max(len(old_symbols), 1)
             else:
-                self.shared_state.current_symbols = []
+                async with self.shared_state._current_symbols_lock:
+                    self.shared_state.current_symbols = []
                 engine.effective_max_symbols = 0
                 logger.info("LLM selected 0 symbols – pausing trading until next evaluation.")

@@ -7,6 +7,7 @@ bidirectional coupling.
 """
 import asyncio
 import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
@@ -28,6 +29,30 @@ class SharedState:
     6. _current_symbols_lock
     7. _state_lock
     """
+
+    @asynccontextmanager
+    async def ordered_locks(self, *lock_names):
+        """Acquire multiple locks in the strict order documented in the class docstring."""
+        order = {
+            "_positions_lock": 1,
+            "_queued_orders_lock": 2,
+            "_cycle_spent_lock": 3,
+            "_eval_state_lock": 4,
+            "_pending_entries_lock": 5,
+            "_current_symbols_lock": 6,
+            "_state_lock": 7,
+        }
+        sorted_locks = sorted(lock_names, key=lambda x: order[x])
+        acquired = []
+        try:
+            for name in sorted_locks:
+                lock = getattr(self, name)
+                await lock.acquire()
+                acquired.append(lock)
+            yield
+        finally:
+            for lock in reversed(acquired):
+                lock.release()
 
     def __init__(self):
         # --- Positions ---
