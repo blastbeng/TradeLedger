@@ -9,7 +9,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from src.config.settings import settings
 from src.llm.prompts import build_stock_selection_prompt, build_system_prompt, compact_prompt
