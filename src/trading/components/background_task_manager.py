@@ -1197,3 +1197,20 @@ class BackgroundTaskManager:
                 logger.error(f"Entry signal monitor data/logic error: {type(e).__name__}: {e}", exc_info=True)
                 await self.engine._record_unexpected_exception("entry_signal_monitor", e)
             await self.engine._interruptible_sleep(settings.ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS)
+
+    async def _check_pending_entries(self):
+        """Periodically check pending entry conditions and execute if met."""
+        await asyncio.sleep(10)  # short initial delay
+        while self.engine._running:
+            try:
+                now = time.time()
+                for symbol in list(self.engine.shared_state._pending_entries.keys()):
+                    await self.engine.event_bus.request("process_pending_entry", symbol, now)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Pending entries check network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Error checking pending entries data/logic: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("check_pending_entries", e)
+            await asyncio.sleep(60)  # check every 60 seconds (medium/long-term)
