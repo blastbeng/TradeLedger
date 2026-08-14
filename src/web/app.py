@@ -19,6 +19,7 @@ from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
 from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics, get_all_blacklisted_models, update_manual_isin, clear_all_blacklisted_models, reset_llm_decision_quality, get_isin_map_from_db
 from src.llm.cache import get_model_failure_stats
 from src.utils.symbol_utils import is_btp_isin
+from src.trading.engine_utils import format_symbol_display
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -34,7 +35,7 @@ async def _get_display_symbol(engine, symbol: str, timeframe: Optional[str] = No
     except Exception as e:
         logger.debug(f"_get_display_symbol: failed to get stock name for {symbol}: {type(e).__name__}: {e}")
         name = symbol.split("/")[0] if "/" in symbol else symbol
-    return engine._format_symbol_display(symbol, name, timeframe)
+    return format_symbol_display(symbol, name, timeframe)
 
 class ManualTradeRequest(BaseModel):
     ticker: str
