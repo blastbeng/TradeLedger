@@ -13,9 +13,11 @@ from src.utils.health_metrics import health_metrics
 from src.trading.engine_utils import timeframe_to_seconds, timeframe_to_ms, get_effective_refresh_interval
 
 try:
-    from src.news.fetcher import fetch_news_for_symbol
+    from src.news.fetcher import fetch_news_for_symbol, discover_trending_stocks, discover_tickers_from_news
 except ImportError:
     fetch_news_for_symbol = None
+    discover_trending_stocks = None
+    discover_tickers_from_news = None
 
 logger = logging.getLogger(__name__)
 
@@ -730,3 +732,80 @@ class BackgroundTaskManager:
                 await self.engine._record_unexpected_exception("full_asset_news_download_loop", e)
 
             await self.engine._interruptible_sleep(get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, self.engine.shared_state.current_symbols, "news"))
+
+    async def _refresh_all_quotes_loop(self):
+        """Periodically fetch quotes for all tradable assets and cache them in Redis."""
+        await asyncio.sleep(60)  # initial delay
+        while self.engine._running:
+            if self.engine._quotes_fetch_running:
+                logger.info("Quotes fetch already running (likely re-evaluation or breadth); skipping this cycle.")
+                await self.engine._interruptible_sleep(get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, self.engine.shared_state.current_symbols, "quotes"))
+                continue
+            self.engine._quotes_fetch_running = True
+            try:
+                # Do NOT skip when the circuit breaker is open — get_quotes
+                # internally checks the circuit breaker and falls back to DB
+                # close prices (from market_data candles).  Skipping here
+                # prevents those fallback prices from being saved to the
+                # quotes table, leaving it stale when yfinance is down.
+                plain_assets = await self.engine.event_bus.request("get_tradable_assets")
+                etf_symbols = await self.engine.event_bus.request("get_etf_symbols")
+                btp_bonds = await self.engine.event_bus.request("get_btp_bonds")
+                btp_isins = [b["isin"] for b in btp_bonds if b.get("isin")]
+
+                all_quote_symbols = plain_assets + etf_symbols + btp_isins
+                if all_quote_symbols:
+                    # Fetch quotes in batches to avoid yfinance timeouts on large symbol lists
+                    await self.engine.event_bus.request("get_quotes_batched", all_quote_symbols, timeout_per_chunk=180.0)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Background quote refresh network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Background quote refresh data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("quote_refresh_loop", e)
+            finally:
+                self.engine._quotes_fetch_running = False
+            await self.engine._interruptible_sleep(get_effective_refresh_interval(settings.QUOTE_REFRESH_INTERVAL_SECONDS, self.engine.shared_state.current_symbols, "quotes"))
+
+    async def _refresh_ticker_discovery_loop(self):
+        """Periodically discover tickers from news RSS feeds and trending stocks.
+        Caches results in Redis so re-evaluation never blocks on slow HTTP calls."""
+        await asyncio.sleep(120)  # initial delay
+        while self.engine._running:
+            try:
+                plain_assets = await self.engine.event_bus.request("get_tradable_assets")
+                available_pairs = [f"{sym}/{self.engine.base_currency}" for sym in plain_assets]
+
+                if settings.NEWS_ENABLED and settings.NEWS_TICKER_DISCOVERY_ENABLED and discover_tickers_from_news is not None:
+                    logger.info("Background: refreshing RSS ticker discovery...")
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        self.engine._download_executor,
+                        lambda: discover_tickers_from_news(
+                            existing_pairs=available_pairs,
+                            cache_only=False,
+                        )
+                    )
+
+                if settings.NEWS_ENABLED and settings.NEWS_SYMBOL_DISCOVERY_ENABLED and discover_trending_stocks is not None:
+                    logger.info("Background: refreshing trending stock discovery...")
+                    await loop.run_in_executor(
+                        self.engine._download_executor,
+                        lambda: discover_trending_stocks(
+                            self.engine.base_currency,
+                            available_pairs,
+                            max_symbols=settings.NEWS_SYMBOL_DISCOVERY_MAX_SYMBOLS,
+                            min_sentiment=settings.NEWS_SYMBOL_DISCOVERY_MIN_SENTIMENT,
+                            min_articles=settings.NEWS_SYMBOL_DISCOVERY_MIN_ARTICLES,
+                            cache_only=False,
+                        )
+                    )
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Ticker discovery refresh network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Ticker discovery refresh data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("ticker_discovery_loop", e)
+            await asyncio.sleep(3600)  # every 60 minutes (medium/long-term)
