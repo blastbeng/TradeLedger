@@ -301,7 +301,6 @@ def _validate_semantic_quality(action: str, params: dict, reasoning: str) -> tup
 def _clamp_parameter_ranges(params: dict) -> dict:
     """Clamps LLM-provided parameters to safe, reasonable ranges to prevent hallucinations."""
     limits = {
-        "stop_loss_pct": (0.01, 0.8),
         "take_profit_pct": (0.01, 5.0),
         "position_size_fraction": (0.01, 1.0),
         "stop_loss_atr_multiple": (0.1, 10.0),
@@ -335,6 +334,21 @@ def _clamp_parameter_ranges(params: dict) -> dict:
                 params[key] = max(min_val, min(max_val, val))
             except (ValueError, TypeError):
                 pass
+
+    # Custom clamp for stop_loss_pct based on max_hold_time_seconds
+    if "stop_loss_pct" in params and params["stop_loss_pct"] is not None:
+        try:
+            val = float(params["stop_loss_pct"])
+            max_hold_time = params.get("max_hold_time_seconds")
+            if max_hold_time is not None and max_hold_time >= 31_536_000:
+                max_val = 0.80
+            elif max_hold_time is not None and max_hold_time >= 15_552_000:
+                max_val = 0.65
+            else:
+                max_val = 0.5
+            params["stop_loss_pct"] = max(0.01, min(max_val, val))
+        except (ValueError, TypeError):
+            pass
     return params
 
 

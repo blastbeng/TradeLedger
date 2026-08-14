@@ -1522,6 +1522,8 @@ def _strip_timestamps_from_candle_list(data):
         return result
     return data
 
+_strip_ohlcv_timestamps = _strip_timestamps_from_candle_list
+
 
 def _normalize_and_strip_for_hash(obj, depth=0):
     """Recursively normalize data for stable hashing in a single pass.
@@ -1560,6 +1562,8 @@ def _normalize_and_strip_for_hash(obj, depth=0):
     if obj is None:
         return "null"
     return obj
+
+_normalize_for_hash = _normalize_and_strip_for_hash
 
 
 def compute_market_hash(data: dict) -> str:
