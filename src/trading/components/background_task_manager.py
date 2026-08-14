@@ -6,11 +6,16 @@ import time
 from typing import Optional, Tuple
 
 from src.config.settings import settings
-from src.database import get_latest_close_prices
+from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news
 from src.exchanges.market_data import get_quotes_cached
 from src.llm.cache import _should_use_primary_model
 from src.utils.health_metrics import health_metrics
 from src.trading.engine_utils import timeframe_to_seconds
+
+try:
+    from src.news.fetcher import fetch_news_for_symbol
+except ImportError:
+    fetch_news_for_symbol = None
 
 logger = logging.getLogger(__name__)
 
@@ -433,3 +438,107 @@ class BackgroundTaskManager:
                 logger.error(f"Risk management loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
                 await self.engine._record_unexpected_exception("risk_management_loop", e)
                 await self.engine._interruptible_sleep(settings.RISK_CHECK_INTERVAL_SECONDS)
+
+    async def _refresh_current_symbols_news_fast(self):
+        """Fast news refresh loop – only for the symbols currently tracked by the engine."""
+        if not settings.NEWS_ENABLED:
+            logger.info("News is disabled (NEWS_ENABLED=False). Fast news refresh task sleeping.")
+            while self.engine._running:
+                await self.engine._interruptible_sleep(3600)
+            return
+        # Fetch immediately on startup, then periodically
+        while self.engine._running:
+            if self.engine._news_fast_running:
+                logger.warning("Fast news refresh still running; skipping this cycle.")
+                await self.engine._interruptible_sleep(settings.NEWS_FAST_UPDATE_INTERVAL_MINUTES * 60)
+                continue
+            self.engine._news_fast_running = True
+            try:
+                symbols = [entry["symbol"] for entry in self.engine.shared_state.current_symbols]
+                if symbols:
+                    logger.info(f"Fast news refresh for {len(symbols)} current symbols")
+                    async def _fetch_news_with_limit(sym):
+                        async with self.engine._news_semaphore:
+                            await self.engine._fetch_and_store_news_for_symbol(sym)
+                    await asyncio.gather(
+                        *[_fetch_news_with_limit(sym) for sym in symbols]
+                    )
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Fast news refresh network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Fast news refresh data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("fast_news_refresh", e)
+            finally:
+                self.engine._news_fast_running = False
+            await self.engine._interruptible_sleep(settings.NEWS_FAST_UPDATE_INTERVAL_MINUTES * 60)
+
+    async def _refresh_news_cache(self):
+        """Periodically fetch news for tracked stocks/ETFs and top-volume stocks to keep cache warm."""
+        if not settings.NEWS_ENABLED:
+            logger.info("News is disabled (NEWS_ENABLED=False). News cache refresh task sleeping.")
+            while self.engine._running:
+                await self.engine._interruptible_sleep(3600)
+            return
+        if fetch_news_for_symbol is None:
+            logger.warning("News module not available; skipping background news refresh.")
+            return
+
+        while self.engine._running:
+            if self.engine._news_cache_running:
+                logger.warning("News cache refresh still running; skipping this cycle.")
+                await self.engine._interruptible_sleep(settings.NEWS_UPDATE_INTERVAL_MINUTES * 60)
+                continue
+            self.engine._news_cache_running = True
+            try:
+                cycle_start = time.time()
+                # Slow refresh: all available pairs EXCEPT the stocks already handled by the fast loop
+                current_symbols = {entry["symbol"] for entry in self.engine.shared_state.current_symbols}
+                symbols_to_refresh = set()
+                try:
+                    plain_assets = await self.engine.event_bus.request("get_tradable_assets")
+                    available_pairs = [f"{sym}/{self.engine.base_currency}" for sym in plain_assets]
+                    # Fetch tickers for a subset to determine top volume symbols
+                    # (limit to 200 to avoid excessive API calls)
+                    sample_for_vol = available_pairs[:200]
+                    plain_sample = [s.split("/")[0] for s in sample_for_vol]
+                    raw_quotes = await self.engine.event_bus.request("get_quotes_batched", plain_sample, timeout_per_chunk=45.0)
+                    tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_for_vol}
+                    def _vol(sym):
+                        t = tickers.get(sym, {})
+                        return t.get('quoteVolume', 0) or 0
+                    symbols_to_refresh = set(sample_for_vol) - current_symbols
+                except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+                    logger.warning(f"Could not get available pairs for news refresh: {e}")
+
+                for sym in symbols_to_refresh:
+                    try:
+                        async with self.engine._news_semaphore:
+                            stock_name = await self.engine.event_bus.request("get_stock_name", sym)
+                            articles = await fetch_news_for_symbol(sym, stock_name)
+                            if articles:
+                                base_symbol = sym.split("/")[0] if "/" in sym else sym
+                                await asyncio.to_thread(store_news_articles, base_symbol, articles)
+                    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+                        logger.info(f"News refresh failed for {sym}: {e}")
+                    await asyncio.sleep(0.2)
+
+                logger.info(f"News cache refreshed for {len(symbols_to_refresh)} symbols in {time.time() - cycle_start:.2f}s")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Background news refresh network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Background news refresh data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("news_cache_refresh", e)
+            finally:
+                self.engine._news_cache_running = False
+
+            # Clean up old news articles
+            try:
+                await asyncio.to_thread(cleanup_old_news, settings.NEWS_RETENTION_SECONDS)
+            except (ValueError, TypeError, ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"News cleanup failed: {e}")
+
+            await self.engine._interruptible_sleep(settings.NEWS_UPDATE_INTERVAL_MINUTES * 60)
