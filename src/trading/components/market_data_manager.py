@@ -4,7 +4,9 @@ Handles OHLCV downloads, gap filling, and indicator computation.
 Extracted from TradingEngine to reduce class size and improve maintainability.
 """
 import asyncio
+import json
 import logging
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -786,3 +788,82 @@ class MarketDataManager:
                     await self.compute_and_store_indicators(symbol, timeframe, raw_candles)
         except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Download failed for {symbol} {timeframe}: {type(e).__name__}: {e}")
+
+    async def force_download_all_assets(self):
+        """Immediately download OHLCV data for all tradable assets (stocks, ETFs, BTPs)."""
+        engine = self.engine
+        engine._full_download_running = True
+        logger.info("Force download: starting immediate OHLCV download for all assets...")
+        try:
+            plain_assets = await self.event_bus.request("get_tradable_assets")
+            stock_pairs = [f"{sym}/{engine.base_currency}" for sym in plain_assets]
+            etf_symbols = await self.event_bus.request("get_etf_symbols")
+            etf_pairs = [f"{sym}/{engine.base_currency}" for sym in etf_symbols]
+
+            btp_bonds = await self.event_bus.request("get_btp_bonds")
+            btp_pairs = [f"{b['isin']}/{engine.base_currency}" for b in btp_bonds]
+
+            all_pairs = stock_pairs + etf_pairs + btp_pairs
+            if not all_pairs:
+                logger.warning("Force download: no tradable assets found.")
+                return
+
+            now_ms = int(time.time() * 1000)
+            start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+
+            random.shuffle(all_pairs)
+
+            async def _force_download_symbol(pair: str):
+                for tf in settings.OHLCV_TIMEFRAMES:
+                    await self.event_bus.request("download_symbol_ohlcv", pair, tf, start_ms, now_ms, quiet=True, force=True)
+
+            download_concurrency = asyncio.Semaphore(settings.FORCE_DOWNLOAD_ALL_CONCURRENCY)
+            async def _limited_force_download(pair: str):
+                async with download_concurrency:
+                    await _force_download_symbol(pair)
+            download_tasks = [_limited_force_download(pair) for pair in all_pairs]
+            await asyncio.gather(*download_tasks)
+
+            logger.info("Force download: complete.")
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Force download network/IO error: {type(e).__name__}: {e}")
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+            logger.error(f"Force download data/logic error: {type(e).__name__}: {e}", exc_info=True)
+            await engine._record_unexpected_exception("force_download_all_assets", e)
+        finally:
+            engine._full_download_running = False
+
+    async def force_download_tracked_symbols(self):
+        """Immediately download OHLCV data for currently tracked symbols only."""
+        engine = self.engine
+        logger.info("Force download: starting immediate OHLCV download for tracked symbols...")
+        try:
+            tracked_pairs = [entry["symbol"] for entry in self.shared_state.current_symbols]
+            if not tracked_pairs:
+                logger.warning("Force download: no tracked symbols found.")
+                return
+
+            now_ms = int(time.time() * 1000)
+            start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+
+            async def _force_download_symbol(pair: str):
+                for tf in settings.OHLCV_TIMEFRAMES:
+                    await self.event_bus.request("download_symbol_ohlcv", pair, tf, start_ms, now_ms, quiet=True, force=True)
+
+            download_concurrency = asyncio.Semaphore(settings.FORCE_DOWNLOAD_TRACKED_CONCURRENCY)
+            async def _limited_force_download(pair: str):
+                async with download_concurrency:
+                    await _force_download_symbol(pair)
+            download_tasks = [_limited_force_download(pair) for pair in tracked_pairs]
+            await asyncio.gather(*download_tasks)
+
+            logger.info("Force download: complete for tracked symbols.")
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Force download tracked symbols network/IO error: {type(e).__name__}: {e}")
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+            logger.error(f"Force download tracked symbols data/logic error: {type(e).__name__}: {e}", exc_info=True)
+            await engine._record_unexpected_exception("force_download_tracked_symbols", e)
