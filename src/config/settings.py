@@ -184,6 +184,14 @@ class Settings(BaseSettings):
             raise ValueError("MIN_SYMBOLS must be >= 0")
         return v
 
+    @model_validator(mode="after")
+    def validate_min_symbols_le_max_symbols(self):
+        if self.MIN_SYMBOLS > self.MAX_SYMBOLS:
+            raise ValueError(
+                f"MIN_SYMBOLS ({self.MIN_SYMBOLS}) must not exceed MAX_SYMBOLS ({self.MAX_SYMBOLS})"
+            )
+        return self
+
     # Number of candidate symbols per LLM chunk call during symbol re-evaluation.
     # All candidates are evaluated in chunks of this size, then a final LLM call
     # aggregates the results. Lower values = smaller prompts but more LLM calls.

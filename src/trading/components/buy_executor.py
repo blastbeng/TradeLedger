@@ -979,6 +979,15 @@ class BuyExecutor:
             # Invalidate portfolio cache since a position has been created or updated
             self._portfolio_cache = None
 
+            # Update open positions flag in Redis immediately for LLM model selection
+            try:
+                if self.shared_state.positions:
+                    await asyncio.to_thread(self.engine.redis.set, "trading:has_open_positions", "1")
+                else:
+                    await asyncio.to_thread(self.engine.redis.delete, "trading:has_open_positions")
+            except Exception:
+                pass
+
     async def update_or_create_buy_position(
         self,
         symbol: str,

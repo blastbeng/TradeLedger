@@ -568,6 +568,8 @@ class SellExecutor:
                         "reason": f"Sell order failed: {e}"[:200],
                     }
                 )
+        finally:
+            # Always clear the _selling flag to prevent stuck positions
             async with self.shared_state._positions_lock:
                 pos = self.shared_state.positions.get(symbol)
                 if pos:

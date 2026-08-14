@@ -256,7 +256,7 @@ class OrderExecutor:
         )
         if self.engine.notifier:
             stock_name = await self.engine._market_data_manager.get_stock_name(symbol)
-            display_symbol = self.engine._format_symbol_display(symbol, stock_name, timeframe)
+            display_symbol = format_symbol_display(symbol, stock_name, timeframe)
             await self.engine.notifier.send_notification(
                 f"⚠️ Failed to place replacement exit orders for {display_symbol} after {max_retries} attempts. Position unprotected!",
                 summary={"symbol": symbol, "action": "ERROR", "reason": "Replacement exit orders failed"}
@@ -378,7 +378,7 @@ class OrderExecutor:
             # Notify user
             if engine.notifier:
                 stock_name = await self.engine._market_data_manager.get_stock_name(queued["symbol"])
-                display_symbol = engine._format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
+                display_symbol = format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
                 await engine.notifier.send_notification(
                     f"🔗 OCO pair {oco_pair_id} cancelled for {display_symbol} (other order filled).",
                     summary={
@@ -581,7 +581,7 @@ class OrderExecutor:
         if engine.notifier:
             stock_name = await engine._market_data_manager.get_stock_name(queued['symbol'])
             tf = queued.get('timeframe')
-            display = engine._format_symbol_display(queued['symbol'], stock_name, tf)
+            display = format_symbol_display(queued['symbol'], stock_name, tf)
             await engine.notifier.send_notification(
                 f"❌ Queued {queued['side']} order for {display} {status}.",
                 summary={
@@ -612,7 +612,7 @@ class OrderExecutor:
                 pos.pop("stop_loss_order_id", None)
                 pos.pop("take_profit_order_id", None)
             if engine.notifier:
-                display_symbol = engine._format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
+                display_symbol = format_symbol_display(queued["symbol"], stock_name, queued.get("timeframe"))
                 await engine.notifier.send_notification(
                     f"🔗 OCO pair {oco_pair_id} cancelled for {display_symbol} (main order {status}).",
                     summary={"symbol": queued["symbol"], "action": "CANCEL", "reason": f"OCO pair cancelled due to main order {status}"}

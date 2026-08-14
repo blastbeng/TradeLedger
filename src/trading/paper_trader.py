@@ -418,6 +418,9 @@ class PaperTrader:
         time_in_force: str = "day",
     ) -> Dict[str, Any]:
         """Execute a market buy. amount is in quote currency."""
+        # Reset poll interval to base so newly queued orders are checked promptly
+        self._consecutive_idle_polls = 0
+        self._poll_interval = self._poll_interval_base
         price = self._get_current_price(symbol)
         if price is None or price <= 0:
             return {
@@ -517,6 +520,9 @@ class PaperTrader:
         time_in_force: str = "day",
     ) -> Dict[str, Any]:
         """Execute a market sell. amount is in base currency."""
+        # Reset poll interval to base so newly queued orders are checked promptly
+        self._consecutive_idle_polls = 0
+        self._poll_interval = self._poll_interval_base
         price = self._get_current_price(symbol)
         if price is None or price <= 0:
             return {
@@ -612,6 +618,9 @@ class PaperTrader:
         self, symbol: str, amount: float, stop_price: float,
         time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
+        # Reset poll interval to base so newly queued orders are checked promptly
+        self._consecutive_idle_polls = 0
+        self._poll_interval = self._poll_interval_base
         with self._lock:
             order_id = self._generate_order_id()
             order = PaperOrder(
@@ -627,6 +636,9 @@ class PaperTrader:
         self, symbol: str, amount: float, stop_price: float,
         time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
+        # Reset poll interval to base so newly queued orders are checked promptly
+        self._consecutive_idle_polls = 0
+        self._poll_interval = self._poll_interval_base
         with self._lock:
             order_id = self._generate_order_id()
             order = PaperOrder(
@@ -642,6 +654,9 @@ class PaperTrader:
         self, symbol: str, amount: float, stop_price: float,
         limit_price: float, time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
+        # Reset poll interval to base so newly queued orders are checked promptly
+        self._consecutive_idle_polls = 0
+        self._poll_interval = self._poll_interval_base
         with self._lock:
             order_id = self._generate_order_id()
             order = PaperOrder(
@@ -657,6 +672,9 @@ class PaperTrader:
         self, symbol: str, amount: float, stop_price: float,
         limit_price: float, time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
+        # Reset poll interval to base so newly queued orders are checked promptly
+        self._consecutive_idle_polls = 0
+        self._poll_interval = self._poll_interval_base
         with self._lock:
             order_id = self._generate_order_id()
             order = PaperOrder(
@@ -672,6 +690,9 @@ class PaperTrader:
         self, symbol: str, amount: float, trail_offset: float,
         time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
+        # Reset poll interval to base so newly queued orders are checked promptly
+        self._consecutive_idle_polls = 0
+        self._poll_interval = self._poll_interval_base
         with self._lock:
             order_id = self._generate_order_id()
             order = PaperOrder(
@@ -687,6 +708,9 @@ class PaperTrader:
         self, symbol: str, amount: float, trail_offset: float,
         time_in_force: str = "gtc", timeout: float = 60.0,
     ) -> Dict[str, Any]:
+        # Reset poll interval to base so newly queued orders are checked promptly
+        self._consecutive_idle_polls = 0
+        self._poll_interval = self._poll_interval_base
         with self._lock:
             order_id = self._generate_order_id()
             order = PaperOrder(

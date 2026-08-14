@@ -1081,7 +1081,7 @@ class PositionManager:
                         pos["_unparseable_maturity_since"] = time.time()
                         if engine.notifier:
                             stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                            display_symbol = engine._format_symbol_display(symbol, stock_name, None)
+                            display_symbol = format_symbol_display(symbol, stock_name, None)
                             await engine.notifier.send_notification(
                                 f"⚠️ Could not parse maturity date '{maturity_str}' for BTP {display_symbol}. Manual check required. Will auto-close at par in 30 days.",
                                 summary={

@@ -14,12 +14,14 @@ class TaskSupervisor:
         max_restarts: int = 5,
         restart_delay: float = 5.0,
         cooling_off_period: float = 300.0,
+        max_backoff_delay: float = 300.0,
     ):
         self.coro_factory = coro_factory
         self.name = name
         self.max_restarts = max_restarts
         self.restart_delay = restart_delay
         self.cooling_off_period = cooling_off_period
+        self.max_backoff_delay = max_backoff_delay
         self._task: Optional[asyncio.Task] = None
         self._restart_count = 0
         self._running = True
@@ -75,8 +77,10 @@ class TaskSupervisor:
                     self.is_healthy = True
                     logger.info(f"Cooling off period ended for task {self.name}. Retrying.")
                     continue
-                logger.info(f"Restarting task {self.name} in {self.restart_delay}s (attempt {self._restart_count}/{self.max_restarts})")
-                await asyncio.sleep(self.restart_delay)
+                # Exponential backoff: delay doubles with each restart, capped at max_backoff_delay
+                backoff_delay = min(self.restart_delay * (2 ** (self._restart_count - 1)), self.max_backoff_delay)
+                logger.info(f"Restarting task {self.name} in {backoff_delay:.1f}s (attempt {self._restart_count}/{self.max_restarts})")
+                await asyncio.sleep(backoff_delay)
 
     def set_notifier(self, notifier):
         """Attach a notifier for escalation alerts."""

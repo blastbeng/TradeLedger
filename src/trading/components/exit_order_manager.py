@@ -477,7 +477,7 @@ class ExitOrderManager:
                 if attempt == max_retries:
                     if engine.notifier:
                         stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                        display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+                        display_symbol = format_symbol_display(symbol, stock_name, pos.get("timeframe"))
                         await engine.notifier.send_notification(
                             f"🚨 CRITICAL: Stop order replacement failed for {display_symbol} after {max_retries} attempts. Old stop order kept active at {old_stop_price:.4f}.",
                             summary={

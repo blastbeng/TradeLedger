@@ -1594,15 +1594,24 @@ def insert_ohlcv_batch(symbol: str, timeframe: str, candles: List[List]):
 
         # Filter out invalid candles before insertion
         valid_candles = []
+        invalid_count = 0
         for c in candles:
             if len(c) < 6:
+                invalid_count += 1
                 continue
             ts, o, h, l, cl, v = int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])
             if o <= 0 or h <= 0 or l <= 0 or cl <= 0 or v < 0:
+                invalid_count += 1
                 continue
             if h < max(o, cl, l) or l > min(o, cl, h):
+                invalid_count += 1
                 continue
             valid_candles.append((symbol, timeframe, ts, o, h, l, cl, v))
+        if invalid_count > 0:
+            logger.warning(
+                f"insert_ohlcv_batch: filtered {invalid_count}/{len(candles)} invalid candles "
+                f"for {symbol} {timeframe}"
+            )
 
         if valid_candles:
             conn.executemany(sql, valid_candles)

@@ -565,6 +565,7 @@ async def sell(symbol: str = None):
     engine = get_engine()
     if not await engine._is_market_open():
         raise HTTPException(status_code=400, detail="Cannot sell: market is currently closed")
+    invalidate_ws_payload_cache()
     if symbol:
         asyncio.create_task(engine.sell_position(symbol))
         return {"status": f"selling {symbol}"}
@@ -575,6 +576,7 @@ async def sell(symbol: str = None):
 @http_router.post("/manual-trade", dependencies=[Depends(verify_csrf)])
 async def manual_trade(req: ManualTradeRequest):
     engine = get_engine()
+    invalidate_ws_payload_cache()
     if not await engine._is_market_open():
         raise HTTPException(status_code=400, detail="Cannot log manual trade: market is currently closed")
     req.side = req.side.lower().strip()
@@ -657,6 +659,7 @@ async def reload():
 @http_router.post("/force-reeval", dependencies=[Depends(verify_csrf)])
 async def force_reeval():
     engine = get_engine()
+    invalidate_ws_payload_cache()
     engine.trigger_symbol_reevaluation(force=True)
     return {"status": "Forced re-evaluation triggered"}
 
