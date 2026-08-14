@@ -613,6 +613,36 @@ class MarketDataManager:
                 logger.warning(f"Sync batch quote fetch failed: {type(e).__name__}: {e}")
         return tickers
 
+    async def _get_cached_balance(self, ttl: float = 30.0) -> Dict[str, float]:
+        """Return cached balance, refreshing if older than ttl seconds."""
+        now = time.time()
+        if self.engine.shared_state._balance_cache is not None and (now - self.engine.shared_state._balance_cache_time) < ttl:
+            return self.engine.shared_state._balance_cache
+
+        async with self.engine._balance_cache_lock:
+            # Double-check after acquiring lock
+            now = time.time()
+            if self.engine.shared_state._balance_cache is not None and (now - self.engine.shared_state._balance_cache_time) < ttl:
+                return self.engine.shared_state._balance_cache
+
+            balance = await asyncio.to_thread(self.engine.trader.fetch_balance)
+            self.engine.shared_state._balance_cache = balance
+            self.engine.shared_state._balance_cache_time = now
+            return balance
+
+    async def _get_cached_position_tickers(self, ttl: float = 30.0) -> Dict[str, Dict[str, Any]]:
+        """Return cached position tickers, refreshing if older than ttl seconds."""
+        now = time.time()
+        if (
+            self.engine.shared_state._position_tickers_cache is not None
+            and (now - self.engine.shared_state._position_tickers_cache_time) < ttl
+        ):
+            return self.engine.shared_state._position_tickers_cache
+        tickers = await self.engine.event_bus.request("get_all_position_tickers")
+        self.engine.shared_state._position_tickers_cache = tickers
+        self.engine.shared_state._position_tickers_cache_time = now
+        return tickers
+
     async def _backfill_ohlcv(self, symbol: str, timeframe: str, start_ms: int, end_ms: int, max_candles: int = None, ignore_existing: bool = False, force: bool = False, quiet: bool = False) -> int:
         """Fetch and store all missing OHLCV candles between start_ms and end_ms.
         Returns the number of candles inserted."""

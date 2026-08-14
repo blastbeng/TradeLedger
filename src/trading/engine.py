@@ -312,33 +312,11 @@ class TradingEngine:
 
     async def _get_cached_balance(self, ttl: float = 30.0) -> Dict[str, float]:
         """Return cached balance, refreshing if older than ttl seconds."""
-        now = time.time()
-        if self.shared_state._balance_cache is not None and (now - self.shared_state._balance_cache_time) < ttl:
-            return self.shared_state._balance_cache
-        
-        async with self._balance_cache_lock:
-            # Double-check after acquiring lock
-            now = time.time()
-            if self.shared_state._balance_cache is not None and (now - self.shared_state._balance_cache_time) < ttl:
-                return self.shared_state._balance_cache
-            
-            balance = await asyncio.to_thread(self.trader.fetch_balance)
-            self.shared_state._balance_cache = balance
-            self.shared_state._balance_cache_time = now
-            return balance
+        return await self._market_data_manager._get_cached_balance(ttl)
 
     async def _get_cached_position_tickers(self, ttl: float = 30.0) -> Dict[str, Dict[str, Any]]:
         """Return cached position tickers, refreshing if older than ttl seconds."""
-        now = time.time()
-        if (
-            self.shared_state._position_tickers_cache is not None
-            and (now - self.shared_state._position_tickers_cache_time) < ttl
-        ):
-            return self.shared_state._position_tickers_cache
-        tickers = await self.event_bus.request("get_all_position_tickers")
-        self.shared_state._position_tickers_cache = tickers
-        self.shared_state._position_tickers_cache_time = now
-        return tickers
+        return await self._market_data_manager._get_cached_position_tickers(ttl)
 
     async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Return aggregate news sentiment, cached for 60 seconds to reduce DB load."""
