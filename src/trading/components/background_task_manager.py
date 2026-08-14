@@ -12,6 +12,7 @@ from src.exchanges.yahoo_finance import get_yahoo_dividends
 from src.utils.symbol_utils import is_btp_isin
 from src.llm.cache import _should_use_primary_model
 from src.utils.health_metrics import health_metrics
+from src.utils.redis_client import is_redis_available, check_redis_connection
 from src.trading.engine_utils import timeframe_to_seconds, timeframe_to_ms, get_effective_refresh_interval
 
 try:
@@ -1087,3 +1088,75 @@ class BackgroundTaskManager:
                 await self.engine._record_unexpected_exception("llm_decision_eval_loop", e)
             
             await self.engine._interruptible_sleep(600)  # check every 10 minutes
+
+    async def _redis_health_check_loop(self):
+        """Periodically check Redis connection and alert on state changes."""
+        await asyncio.sleep(30)
+        last_degraded_notify_time = 0.0
+        while self.engine._running:
+            try:
+                was_available = is_redis_available()
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(self.engine._db_executor, check_redis_connection)
+                is_available = is_redis_available()
+                if was_available and not is_available:
+                    logger.critical("Redis connection lost. Degrading to no-cache mode.")
+                    if self.engine.notifier:
+                        await self.engine.notifier.send_notification(
+                            "⚠️ Redis connection lost. The bot is now running in degraded mode (caching disabled).",
+                            summary={"action": "ERROR", "reason": "Redis connection lost"}
+                        )
+                    last_degraded_notify_time = time.time()
+                elif not was_available and is_available:
+                    logger.info("Redis connection restored. Caching resumed.")
+                    if self.engine.notifier:
+                        await self.engine.notifier.send_notification(
+                            "✅ Redis connection restored. Caching resumed.",
+                            summary={"action": "INFO", "reason": "Redis connection restored"}
+                        )
+                elif not is_available:
+                    # Periodic reminder every 6 hours if still in degraded mode
+                    if time.time() - last_degraded_notify_time >= 21600:
+                        if self.engine.notifier:
+                            await self.engine.notifier.send_notification(
+                                "⚠️ Redis is still unavailable. The bot remains in degraded mode (caching disabled).",
+                                summary={"action": "ERROR", "reason": "Redis still unavailable"}
+                            )
+                        last_degraded_notify_time = time.time()
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Redis health check loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Redis health check loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("redis_health_check_loop", e)
+            await asyncio.sleep(60)
+
+    async def _health_check_loop(self):
+        """Periodically check the health of supervised background tasks and alert on failures."""
+        await asyncio.sleep(300)  # initial delay 5 minutes
+        alerted_supervisors = set()
+        while self.engine._running:
+            try:
+                for sup in self.engine._supervisors:
+                    health = sup.get_health()
+                    if not health["is_healthy"] or not health["running"]:
+                        if sup.name not in alerted_supervisors:
+                            alerted_supervisors.add(sup.name)
+                            if self.engine.notifier:
+                                await self.engine.notifier.send_notification(
+                                    f"🚨 Critical background task '{health['name']}' is not healthy or has stopped running. "
+                                    f"Last error: {health['last_exception']}",
+                                    summary={"action": "CRITICAL", "reason": f"Task {health['name']} unhealthy"}
+                                )
+                    else:
+                        # If the task somehow becomes healthy/running again, clear the alert flag
+                        alerted_supervisors.discard(sup.name)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Health check loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Health check loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("health_check_loop", e)
+            await asyncio.sleep(300)  # check every 5 minutes
