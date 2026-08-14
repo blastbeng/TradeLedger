@@ -597,8 +597,8 @@
             <div class="card card-full" id="llm-metrics-card">
                 <h2>🤖 LLM Metrics
                     <select id="llm-model-filter" style="margin-left:12px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:0.85rem;">
-                        <option value="all">All Models</option>
-                        <option value="main" selected>Main Models</option>
+                        <option value="all" selected>All Models</option>
+                        <option value="main">Main Models</option>
                         <option value="fallback">Fallback Models</option>
                     </select>
                     <button id="btn-reset-llm-metrics" style="margin-left:12px; background:var(--red); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem;">🗑️ Reset</button></h2>
@@ -707,8 +707,8 @@
             <div class="card card-full" id="llm-decision-quality-card">
                 <h2>🎯 LLM Decision Quality
                     <select id="llm-decision-quality-filter" style="margin-left:12px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:0.85rem;">
-                        <option value="all">All Models</option>
-                        <option value="main" selected>Main Models</option>
+                        <option value="all" selected>All Models</option>
+                        <option value="main">Main Models</option>
                         <option value="fallback">Fallback Models</option>
                     </select>
                 </h2>
@@ -1384,8 +1384,8 @@
 
         let chartInstance = null;
         let llmMetricsChart = null;
-        let llmModelFilter = 'main';
-        let llmDecisionQualityFilter = 'main';
+        let llmModelFilter = 'all';
+        let llmDecisionQualityFilter = 'all';
         let chartUpdateTimer = null;
         const modal = document.getElementById('chart-modal');
         const closeBtn = document.getElementById('close-modal');

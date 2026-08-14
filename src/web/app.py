@@ -790,7 +790,7 @@ async def tickers(symbols: str = ""):
     return result
 
 @http_router.get("/llm-metrics")
-async def llm_metrics(model_filter: str = "main"):
+async def llm_metrics(model_filter: str = "all"):
     """Return aggregated LLM metrics for the dashboard."""
     try:
         data = await run_in_threadpool(get_llm_metrics_summary, model_filter)
@@ -844,7 +844,7 @@ async def llm_metrics_reset():
         raise HTTPException(status_code=500, detail=str(e))
 
 @http_router.get("/llm-metrics/timeseries")
-async def llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = None, to_date: Optional[str] = None, model_filter: str = "main"):
+async def llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] = None, to_date: Optional[str] = None, model_filter: str = "all"):
     """Return aggregated LLM metrics for charting based on period and date range."""
     try:
         return await run_in_threadpool(get_llm_metrics_timeseries, period, from_date, to_date, model_filter)
@@ -852,7 +852,7 @@ async def llm_metrics_timeseries(period: str = "hour", from_date: Optional[str] 
         raise HTTPException(status_code=500, detail=str(e))
 
 @http_router.get("/llm-decision-quality")
-async def llm_decision_quality(period_days: int = 7, model_filter: str = "main"):
+async def llm_decision_quality(period_days: int = 7, model_filter: str = "all"):
     """Return LLM decision quality metrics for the dashboard."""
     try:
         return await run_in_threadpool(get_llm_decision_quality_metrics, period_days, model_filter)
