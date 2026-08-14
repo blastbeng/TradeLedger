@@ -26,7 +26,8 @@ class PauseResumeManager:
         async with engine._symbol_reeval_lock:
             # Only run if actually paused
             paused_raw = await asyncio.to_thread(engine.redis.get, "trading:paused")
-            if not paused_raw or paused_raw != "1":
+            paused_val = paused_raw.decode() if isinstance(paused_raw, bytes) else paused_raw
+            if paused_val != "1":
                 return
 
             # Only handle LLM-initiated pauses. Manual pauses are not subject to auto-resume logic.
