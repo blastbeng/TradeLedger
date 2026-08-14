@@ -132,7 +132,6 @@ class TradingEngine:
         clear_trading_pause_keys(self.redis)
 
         # --- Extracted components ---
-        self.event_bus.subscribe("remove_symbol_if_paused", self._remove_symbol_if_paused)
         self._state_persistence = StatePersistence(self, self.event_bus)
         self._exit_order_manager = ExitOrderManager(self, self.event_bus)
         self._order_executor = OrderExecutor(self, self.event_bus)
@@ -459,9 +458,7 @@ class TradingEngine:
 
     def _daily_realized_pnl(self) -> float:
         """Return the sum of realized P&L for trades closed today (market timezone)."""
-        tz = ZoneInfo(settings.MARKET_TIMEZONE)
-        today = datetime.now(tz).date().isoformat()
-        return self.shared_state._daily_realized_pnl.get(today, 0.0)
+        return self._position_manager._daily_realized_pnl()
 
     def _daily_buy_fees(self) -> float:
         """Return the sum of buy-side fees for trades opened today (market timezone).
@@ -470,9 +467,7 @@ class TradingEngine:
         fees from closed positions), so they must be accounted for separately
         in the daily loss limit check.
         """
-        tz = ZoneInfo(settings.MARKET_TIMEZONE)
-        today = datetime.now(tz).date().isoformat()
-        return self.shared_state._daily_buy_fees.get(today, 0.0)
+        return self._position_manager._daily_buy_fees()
 
     def _log_task_exception(self, task: asyncio.Task) -> None:
         """Log exceptions from background tasks to prevent silent failures."""
@@ -588,7 +583,7 @@ class TradingEngine:
 
     async def get_performance_summary(self) -> Dict[str, Any]:
         """Return performance summary grouped by symbol and timeframe from trade_history table."""
-        return await asyncio.to_thread(get_performance)
+        return await self._position_manager.get_performance_summary()
 
     async def get_pause_status(self) -> Dict[str, Any]:
         """Return the current trading pause status, reason, remaining duration, and a formatted countdown."""
@@ -652,29 +647,11 @@ class TradingEngine:
 
     async def _get_global_risk_multiplier(self) -> Optional[float]:
         """Return the global risk multiplier, falling back to persisted value if Redis key expired."""
-        raw = await asyncio.to_thread(self.redis.get, "trading:global_risk_multiplier")
-        if raw:
-            try:
-                val = float(raw)
-                if 0.0 <= val <= 1.0:
-                    self.shared_state._global_risk_multiplier = val
-                    return val
-            except (ValueError, TypeError):
-                pass
-        # Redis key expired or invalid — fall back to last known persisted value
-        if self.shared_state._global_risk_multiplier is not None:
-            logger.warning(
-                "Global risk multiplier Redis key expired — using persisted fallback "
-                f"value {self.shared_state._global_risk_multiplier}. The LLM should set a new value."
-            )
-            return self.shared_state._global_risk_multiplier
-        return None
+        return await self._risk_manager._get_global_risk_multiplier()
 
     async def _set_global_risk_multiplier(self, value: float):
         """Set the global risk multiplier in Redis (with TTL) and persist it to the database."""
-        await asyncio.to_thread(self.redis.setex, "trading:global_risk_multiplier", 3600, str(value))
-        self.shared_state._global_risk_multiplier = value
-        await asyncio.to_thread(save_trading_state, "global_risk_multiplier", value)
+        await self._risk_manager._set_global_risk_multiplier(value)
 
     async def _process_queued_orders(self):
         await self._background_task_manager._process_queued_orders()
@@ -693,9 +670,7 @@ class TradingEngine:
     async def _remove_symbol_if_paused(self, symbol: str):
         """Clear pending entries for a symbol. Symbols are kept in current_symbols even when paused
         so the bot continues to generate and notify signals."""
-        # Always clear any pending entry for this symbol
-        self.shared_state._pending_entries.pop(symbol, None)
-        self.shared_state._state_dirty = True
+        await self._position_manager._remove_symbol_if_paused(symbol)
 
     async def simulate_backtest(self, symbol: str) -> Dict[str, Any]:
         """Simulate Step 1a (analysis), Step 1b (variants), and run backtest without executing trades."""

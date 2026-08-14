@@ -12,9 +12,10 @@ import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.database import insert_trade, get_total_dividends_for_symbol, get_total_dividends_for_symbols
+from src.database import insert_trade, get_total_dividends_for_symbol, get_total_dividends_for_symbols, get_performance
 from src.strategies.base import Signal
 from dateutil.relativedelta import relativedelta
 from src.utils.btp_policy import BTPPolicy
@@ -39,6 +40,7 @@ class PositionManager:
         self.event_bus.subscribe("get_profit_summary", self.get_profit_summary)
         self.event_bus.subscribe("get_risk_metrics", self.get_risk_metrics)
         self.event_bus.subscribe("reconcile_positions", self.reconcile_positions)
+        self.event_bus.subscribe("remove_symbol_if_paused", self._remove_symbol_if_paused)
 
     def ensure_cost_basis(self):
         """If positions lack cost_basis, compute it from amount and price (backward compat)."""
@@ -54,6 +56,34 @@ class PositionManager:
             base = sym.split("/")[0]
             if BTPPolicy.is_btp(base) and pos.get("trailing_stop") and "_ts_btp_warned" not in pos:
                 pos["_ts_btp_warned"] = True
+
+    def _daily_realized_pnl(self) -> float:
+        """Return the sum of realized P&L for trades closed today (market timezone)."""
+        tz = ZoneInfo(settings.MARKET_TIMEZONE)
+        today = datetime.now(tz).date().isoformat()
+        return self.engine.shared_state._daily_realized_pnl.get(today, 0.0)
+
+    def _daily_buy_fees(self) -> float:
+        """Return the sum of buy-side fees for trades opened today (market timezone).
+
+        These fees are not yet reflected in realized_pnl (which only includes
+        fees from closed positions), so they must be accounted for separately
+        in the daily loss limit check.
+        """
+        tz = ZoneInfo(settings.MARKET_TIMEZONE)
+        today = datetime.now(tz).date().isoformat()
+        return self.engine.shared_state._daily_buy_fees.get(today, 0.0)
+
+    async def _remove_symbol_if_paused(self, symbol: str):
+        """Clear pending entries for a symbol. Symbols are kept in current_symbols even when paused
+        so the bot continues to generate and notify signals."""
+        # Always clear any pending entry for this symbol
+        self.engine.shared_state._pending_entries.pop(symbol, None)
+        self.engine.shared_state._state_dirty = True
+
+    async def get_performance_summary(self) -> Dict[str, Any]:
+        """Return performance summary grouped by symbol and timeframe from trade_history table."""
+        return await asyncio.to_thread(get_performance)
 
     async def compute_portfolio_exposure_summary(self, base_balance: float) -> Dict[str, float]:
         """Compute portfolio exposure, stop-loss risk, and available capital for the prompt."""

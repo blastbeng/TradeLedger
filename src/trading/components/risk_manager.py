@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.database import insert_position_pnl_snapshot, get_indicators, get_latest_ohlcv_timestamp, get_ohlcv, get_peak_total_equity, save_peak_total_equity
+from src.database import insert_position_pnl_snapshot, get_indicators, get_latest_ohlcv_timestamp, get_ohlcv, get_peak_total_equity, save_peak_total_equity, save_trading_state
 from src.strategies.base import Signal
 from src.utils.btp_policy import BTPPolicy
 from src.utils.redis_client import is_redis_available
@@ -570,6 +570,32 @@ class RiskManager:
             "max_partial_tp_reviews": max_partial_tp_reviews,
             "max_dust_sweep_reviews": max_dust_sweep_reviews,
         }
+
+    async def _get_global_risk_multiplier(self) -> Optional[float]:
+        """Return the global risk multiplier, falling back to persisted value if Redis key expired."""
+        raw = await asyncio.to_thread(self.engine.redis.get, "trading:global_risk_multiplier")
+        if raw:
+            try:
+                val = float(raw)
+                if 0.0 <= val <= 1.0:
+                    self.engine.shared_state._global_risk_multiplier = val
+                    return val
+            except (ValueError, TypeError):
+                pass
+        # Redis key expired or invalid — fall back to last known persisted value
+        if self.engine.shared_state._global_risk_multiplier is not None:
+            logger.warning(
+                "Global risk multiplier Redis key expired — using persisted fallback "
+                f"value {self.engine.shared_state._global_risk_multiplier}. The LLM should set a new value."
+            )
+            return self.engine.shared_state._global_risk_multiplier
+        return None
+
+    async def _set_global_risk_multiplier(self, value: float):
+        """Set the global risk multiplier in Redis (with TTL) and persist it to the database."""
+        await asyncio.to_thread(self.engine.redis.setex, "trading:global_risk_multiplier", 3600, str(value))
+        self.engine.shared_state._global_risk_multiplier = value
+        await asyncio.to_thread(save_trading_state, "global_risk_multiplier", value)
 
     def _get_hard_max_loss_pct(self, symbol: str, pos: Dict[str, Any]) -> float:
         """Determine the hard max loss percentage based on asset type and timeframe.
