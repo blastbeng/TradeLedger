@@ -372,10 +372,12 @@ class ReevalShortlistBuilder:
                     entry['entry_time'] = existing_symbols[entry['symbol']]['entry_time']
                 else:
                     entry['entry_time'] = time.time()
-            self.shared_state.current_symbols = fallback_symbols
+            async with self.shared_state._current_symbols_lock:
+                self.shared_state.current_symbols = fallback_symbols
         elif old_symbols:
             logger.warning("Fallback found no symbols. Keeping previously tracked symbols.")
-            self.shared_state.current_symbols = old_symbols
+            async with self.shared_state._current_symbols_lock:
+                self.shared_state.current_symbols = old_symbols
             engine.effective_max_symbols = max(len(old_symbols), 1)
 
     async def update_current_symbols(

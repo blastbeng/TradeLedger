@@ -1120,7 +1120,8 @@ class PositionManager:
             symbol = entry["symbol"]
             if symbol not in available_pairs:
                 logger.warning(f"Stock {symbol} no longer available. Removing from tracking.")
-                self.shared_state.current_symbols.remove(entry)
+                async with self.shared_state._current_symbols_lock:
+                    self.shared_state.current_symbols.remove(entry)
                 # Remove any queued orders for this delisted symbol and refund reserved capital
                 async with self.shared_state._queued_orders_lock:
                     removed_buys = [q for q in self.shared_state.queued_orders if q['symbol'] == symbol and q['side'] == 'buy']
