@@ -123,15 +123,32 @@ class ReevalShortlistBuilder:
             if pair in sample_pairs and pair not in shortlist:
                 shortlist.append(pair)
 
-        # Always include ALL discovered ETFs for the LLM to consider
-        for sym in etf_pairs:
-            if sym not in shortlist:
-                shortlist.append(sym)
+        # Include discovered ETFs for the LLM to consider.
+        # In incremental mode, rotate through ETFs (same offset as stocks)
+        # so the LLM sees fresh ETF candidates each cycle instead of the
+        # same full list every time.
+        etf_candidates = [sym for sym in etf_pairs if sym not in shortlist]
+        if incremental_batch_size is not None and incremental_batch_size > 0 and len(etf_candidates) > incremental_batch_size:
+            etf_offset = incremental_offset % len(etf_candidates)
+            etf_batch = etf_candidates[etf_offset:etf_offset + incremental_batch_size]
+            if len(etf_batch) < incremental_batch_size:
+                etf_batch = etf_batch + etf_candidates[:incremental_batch_size - len(etf_batch)]
+            shortlist.extend(etf_batch)
+        else:
+            shortlist.extend(etf_candidates)
 
-        # Always include all BTPs for the LLM to consider
-        for sym in btp_pairs:
-            if sym not in shortlist:
-                shortlist.append(sym)
+        # Include BTPs for the LLM to consider.
+        # In incremental mode, rotate through BTPs (same offset as stocks)
+        # so the LLM sees fresh BTP candidates each cycle.
+        btp_candidates = [sym for sym in btp_pairs if sym not in shortlist]
+        if incremental_batch_size is not None and incremental_batch_size > 0 and len(btp_candidates) > incremental_batch_size:
+            btp_offset = incremental_offset % len(btp_candidates)
+            btp_batch = btp_candidates[btp_offset:btp_offset + incremental_batch_size]
+            if len(btp_batch) < incremental_batch_size:
+                btp_batch = btp_batch + btp_candidates[:incremental_batch_size - len(btp_batch)]
+            shortlist.extend(btp_batch)
+        else:
+            shortlist.extend(btp_candidates)
 
         # Deduplicate shortlist while preserving order
         seen = set()
