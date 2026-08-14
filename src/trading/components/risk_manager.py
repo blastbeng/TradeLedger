@@ -353,7 +353,7 @@ class RiskManager:
                 set_trading_pause,
                 engine.redis,
                 "daily_loss_limit",
-                reason=f"Daily loss limit reached ({daily_pnl:.2f}, unrealized {unrealized_pnl:.2f})",
+                reason=f"Daily loss limit reached ({daily_pnl:.2f})",
             )
 
             if engine.notifier:
