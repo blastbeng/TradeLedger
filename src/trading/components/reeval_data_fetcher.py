@@ -596,7 +596,7 @@ class ReevalDataFetcher:
                 # pandas automatically aligns by index and handles different lengths
                 # by filling with NaN, then .corr() computes pairwise correlations.
                 df = pd.DataFrame(sym_returns)
-                corr_df = df.corr(method='pearson')
+                corr_df = df.corr(method='pearson', min_periods=MIN_RETURNS)
                 
                 corr_values = corr_df.values
                 columns = list(corr_df.columns)
@@ -609,7 +609,9 @@ class ReevalDataFetcher:
                             corr_matrix[sym_a][sym_b] = 1.0
                         else:
                             val = row[j]
-                            corr_matrix[sym_a][sym_b] = round(float(val), 3) if pd.notna(val) else 0.0
+                            # Default to 1.0 (perfect correlation) if NaN to be conservative
+                            # and prevent over-allocation under false diversification assumptions.
+                            corr_matrix[sym_a][sym_b] = round(float(val), 3) if pd.notna(val) else 1.0
             except ImportError:
                 pass
 
