@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 async def _get_display_symbol(engine, symbol: str, timeframe: Optional[str] = None) -> str:
     """Return a formatted display string for the given symbol and timeframe."""
     try:
-        name = await engine._get_stock_name(symbol)
+        name = await engine._market_data_manager.get_stock_name(symbol)
     except Exception as e:
         logger.debug(f"_get_display_symbol: failed to get stock name for {symbol}: {type(e).__name__}: {e}")
         name = symbol.split("/")[0] if "/" in symbol else symbol

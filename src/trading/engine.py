@@ -1297,7 +1297,7 @@ class TradingEngine:
                 all_pairs = stock_pairs + etf_pairs + btp_pairs
                 if not all_pairs:
                     logger.info("No tradable assets found; skipping full download.")
-                    await self._interruptible_sleep(self._get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, "data"))
+                    await self._interruptible_sleep(get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, self.shared_state.current_symbols, "data"))
                     continue
 
                 now_ms = int(time.time() * 1000)
