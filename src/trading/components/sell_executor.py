@@ -305,7 +305,7 @@ class SellExecutor(OrderExecutorBase):
             time_in_force = params.get("time_in_force", "day")
             need_limit = True  # force limit order path
         elif need_limit:
-            limit_price = self._order_executor._default_limit_price(symbol, "SELL", ticker, atr=atr)
+            limit_price = self._default_limit_price(symbol, "SELL", ticker, atr=atr)
             time_in_force = params.get("time_in_force", "day")
             if limit_price is None:
                 logger.error(f"Cannot place limit order for {symbol}: no limit price available.")
@@ -677,7 +677,7 @@ class SellExecutor(OrderExecutorBase):
         limit_price = None
         time_in_force = "day"
         if need_limit:
-            limit_price = self._order_executor._default_limit_price(symbol, "SELL", ticker, atr=None)
+            limit_price = self._default_limit_price(symbol, "SELL", ticker, atr=None)
             if limit_price is None:
                 logger.error(f"Cannot place limit order for dust sweep on {symbol}: no limit price.")
                 return
@@ -783,7 +783,7 @@ class SellExecutor(OrderExecutorBase):
         limit_price = None
         time_in_force = "day"
         if need_limit:
-            limit_price = self._order_executor._default_limit_price(symbol, "SELL", ticker, atr=atr)
+            limit_price = self._default_limit_price(symbol, "SELL", ticker, atr=atr)
             if limit_price is None:
                 logger.error(f"Cannot place limit order for {level_label} on {symbol}: no limit price.")
                 return False

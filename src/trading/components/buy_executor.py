@@ -15,7 +15,6 @@ from src.config.settings import settings
 from src.database import insert_trade
 from src.strategies.base import Signal
 from src.utils.btp_policy import BTPPolicy
-from src.trading.components.order_executor import OrderExecutor
 from src.trading.components.order_executor_base import OrderExecutorBase
 
 logger = logging.getLogger(__name__)
@@ -813,7 +812,7 @@ class BuyExecutor(OrderExecutorBase):
                         )
                     return None
         elif need_limit:
-            limit_price = OrderExecutor._default_limit_price(symbol, "BUY", ticker, atr=atr)
+            limit_price = self._default_limit_price(symbol, "BUY", ticker, atr=atr)
             time_in_force = params.get("time_in_force", "day")
             if limit_price is None:
                 logger.error(f"Cannot place limit order for {symbol}: no limit price available.")
