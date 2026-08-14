@@ -3,14 +3,14 @@ import json
 import logging
 import random
 import time
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 from src.config.settings import settings
-from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news
+from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news, get_latest_ohlcv_timestamps_batch, cleanup_old_position_pnl, cleanup_old_backtest_results
 from src.exchanges.market_data import get_quotes_cached
 from src.llm.cache import _should_use_primary_model
 from src.utils.health_metrics import health_metrics
-from src.trading.engine_utils import timeframe_to_seconds
+from src.trading.engine_utils import timeframe_to_seconds, timeframe_to_ms, get_effective_refresh_interval
 
 try:
     from src.news.fetcher import fetch_news_for_symbol
@@ -542,3 +542,191 @@ class BackgroundTaskManager:
                 logger.warning(f"News cleanup failed: {e}")
 
             await self.engine._interruptible_sleep(settings.NEWS_UPDATE_INTERVAL_MINUTES * 60)
+
+    async def _download_market_data_loop(self):
+        """Periodically download and store OHLCV data for tracked stocks, with gap detection."""
+        # Initial delay to let the engine settle
+        await asyncio.sleep(30)
+        while self.engine._running:
+            if self.engine._market_data_running:
+                logger.warning("Market data download still running; skipping this cycle.")
+                await self.engine._interruptible_sleep(get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, self.engine.shared_state.current_symbols, "data"))
+                continue
+            self.engine._market_data_running = True
+            try:
+                if not self.engine.shared_state.current_symbols:
+                    logger.info("No symbols tracked; skipping market data download.")
+                else:
+                    logger.info("Starting market data download cycle...")
+                    now_ms = int(time.time() * 1000)
+                    start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+
+                    async def _download_symbol_data(symbol_entry):
+                        symbol = symbol_entry["symbol"]
+                        tf = symbol_entry["timeframe"]
+                        logger.debug(f"Downloading market data for {symbol} ({tf})")
+                        await self.engine.event_bus.request("download_symbol_ohlcv", symbol, tf, start_ms, now_ms)
+
+                    shuffled_symbols = list(self.engine.shared_state.current_symbols)
+                    random.shuffle(shuffled_symbols)
+                    download_tasks = [_download_symbol_data(entry) for entry in shuffled_symbols]
+                    await asyncio.gather(*download_tasks)
+                    logger.info("Market data download cycle complete.")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Market data download loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Market data download loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("market_data_download_loop", e)
+            finally:
+                self.engine._market_data_running = False
+
+            await self.engine._interruptible_sleep(get_effective_refresh_interval(settings.MARKET_DATA_REFRESH_SECONDS, self.engine.shared_state.current_symbols, "data"))
+
+    async def _download_all_assets_data_loop(self):
+        """Periodically download OHLCV for ALL tradable assets (stocks, ETFs, BTPs)."""
+        await asyncio.sleep(120)  # initial delay to let the engine settle
+        while self.engine._running:
+            if self.engine._full_download_running:
+                logger.info("Full download already running (likely force download); skipping this cycle.")
+                await self.engine._interruptible_sleep(get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, self.engine.shared_state.current_symbols, "data"))
+                continue
+            self.engine._full_download_running = True
+            try:
+                logger.info("Starting full asset OHLCV download cycle...")
+                # 1. Get all stock + ETF symbols
+                plain_assets = await self.engine.event_bus.request("get_tradable_assets")
+                stock_pairs = [f"{sym}/{self.engine.base_currency}" for sym in plain_assets]
+                etf_symbols = await self.engine.event_bus.request("get_etf_symbols")
+                etf_pairs = [f"{sym}/{self.engine.base_currency}" for sym in etf_symbols]
+
+                # 2. Get all BTP symbols
+                btp_bonds = await self.engine.event_bus.request("get_btp_bonds")
+                btp_pairs = [f"{b['isin']}/{self.engine.base_currency}" for b in btp_bonds]
+
+                all_pairs = stock_pairs + etf_pairs + btp_pairs
+                if not all_pairs:
+                    logger.info("No tradable assets found; skipping full download.")
+                    await self.engine._interruptible_sleep(get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, self.engine.shared_state.current_symbols, "data"))
+                    continue
+
+                now_ms = int(time.time() * 1000)
+                start_ms = now_ms - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
+
+                # Prioritize symbols with missing or stale data for configured timeframes
+                loop = asyncio.get_running_loop()
+                latest_timestamps = await loop.run_in_executor(
+                    self.engine._db_executor,
+                    get_latest_ohlcv_timestamps_batch,
+                    all_pairs,
+                    settings.OHLCV_TIMEFRAMES
+                )
+
+                pairs_with_stale_data = []
+                pairs_complete = []
+                now_ms = int(time.time() * 1000)
+
+                for pair in all_pairs:
+                    stale_tfs = []
+                    for tf in settings.OHLCV_TIMEFRAMES:
+                        latest_ts = latest_timestamps.get(pair, {}).get(tf)
+                        if latest_ts is None:
+                            stale_tfs.append(tf)
+                        else:
+                            interval_ms = timeframe_to_ms(tf)
+                            if latest_ts < now_ms - interval_ms:
+                                stale_tfs.append(tf)
+                    if stale_tfs:
+                        pairs_with_stale_data.append((pair, stale_tfs))
+                    else:
+                        pairs_complete.append(pair)
+
+                random.shuffle(pairs_with_stale_data)
+                if pairs_with_stale_data:
+                    logger.info(f"Prioritizing {len(pairs_with_stale_data)} symbols with stale/missing OHLCV data out of {len(all_pairs)} total.")
+
+                async def _download_symbol_data(pair: str, tfs: List[str]):
+                    for tf in tfs:
+                        await self.engine.event_bus.request("download_symbol_ohlcv", pair, tf, start_ms, now_ms, quiet=True)
+
+                # Limit concurrent symbol downloads to 2 to avoid exhausting the
+                # _download_executor thread pool, leaving threads available for
+                # tracked tickers.
+                download_concurrency = asyncio.Semaphore(settings.FULL_DOWNLOAD_CONCURRENCY)
+                async def _limited_download(pair: str, tfs: List[str]):
+                    async with download_concurrency:
+                        await _download_symbol_data(pair, tfs)
+                download_tasks = [_limited_download(pair, tfs) for pair, tfs in pairs_with_stale_data]
+                await asyncio.gather(*download_tasks)
+
+                # Clean up old data
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(self.engine._db_executor, cleanup_old_position_pnl, 90)
+                await loop.run_in_executor(self.engine._db_executor, cleanup_old_backtest_results, 90)
+                logger.info("Full asset OHLCV download cycle complete.")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Full asset download loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Full asset download loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("full_asset_download_loop", e)
+            finally:
+                self.engine._full_download_running = False
+
+            # Wait before next full download
+            await self.engine._interruptible_sleep(get_effective_refresh_interval(settings.FULL_ASSET_OHLCV_DOWNLOAD_INTERVAL_SECONDS, self.engine.shared_state.current_symbols, "data"))
+
+    async def _download_all_news_loop(self):
+        """Periodically pre‑fetch news for ALL tradable assets (stocks, ETFs, BTPs)."""
+        if not settings.NEWS_ENABLED:
+            logger.info("News is disabled (NEWS_ENABLED=False). Full news download task sleeping.")
+            while self.engine._running:
+                await self.engine._interruptible_sleep(3600)
+            return
+        await asyncio.sleep(180)  # initial delay to let the engine settle
+        while self.engine._running:
+            try:
+                logger.info("Starting full asset news download cycle...")
+                # 1. Get all stock + ETF symbols
+                plain_assets = await self.engine.event_bus.request("get_tradable_assets")
+                stock_pairs = [f"{sym}/{self.engine.base_currency}" for sym in plain_assets]
+
+                # 2. Get all BTP symbols
+                btp_bonds = await self.engine.event_bus.request("get_btp_bonds")
+                btp_pairs = [f"{b['isin']}/{self.engine.base_currency}" for b in btp_bonds]
+
+                all_pairs = stock_pairs + btp_pairs
+                if not all_pairs:
+                    logger.info("No tradable assets found; skipping full news download.")
+                    await self.engine._interruptible_sleep(get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, self.engine.shared_state.current_symbols, "news"))
+                    continue
+
+                # Prioritize currently tracked symbols first, then the rest.
+                current_symbol_set = {entry["symbol"] for entry in self.engine.shared_state.current_symbols}
+                priority_pairs = [p for p in all_pairs if p in current_symbol_set]
+                other_pairs = [p for p in all_pairs if p not in current_symbol_set]
+                ordered_pairs = priority_pairs + other_pairs
+
+                # Download concurrently, respecting rate limits via _news_semaphore
+                async def _download_news_for_symbol(pair: str):
+                    try:
+                        async with self.engine._news_semaphore:
+                            await self.engine._fetch_and_store_news_for_symbol(pair)
+                    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+                        logger.warning(f"Full news download failed for {pair}: {e}")
+
+                news_tasks = [_download_news_for_symbol(pair) for pair in ordered_pairs]
+                await asyncio.gather(*news_tasks)
+
+                logger.info("Full asset news download cycle complete.")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Full asset news download loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Full asset news download loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("full_asset_news_download_loop", e)
+
+            await self.engine._interruptible_sleep(get_effective_refresh_interval(settings.FULL_ASSET_NEWS_DOWNLOAD_INTERVAL_SECONDS, self.engine.shared_state.current_symbols, "news"))
