@@ -57,14 +57,12 @@ class SignalMarketDataFetcher:
                                 logger.info(
                                     f"Indicators for {symbol} {tf} are severely stale "
                                     f"(indicator ts={ind_ts}, latest candle ts={latest_candle_ts}, "
-                                    f"gap={staleness}ms > {4 * tf_ms}ms). Blocking for recomputation."
+                                    f"gap={staleness}ms > {4 * tf_ms}ms). Scheduling background recomputation."
                                 )
-                                # Block and await recomputation, then use the fresh indicators
-                                updated_ind = await engine._market_data_manager.compute_and_store_indicators(
-                                    symbol, tf, candles
+                                # Schedule background recomputation — don't block the evaluation loop.
+                                asyncio.create_task(
+                                    engine._market_data_manager.compute_and_store_indicators(symbol, tf, candles)
                                 )
-                                if updated_ind:
-                                    ind = updated_ind
                             elif staleness > 2 * tf_ms:
                                 logger.info(
                                     f"Indicators for {symbol} {tf} are stale "
