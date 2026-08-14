@@ -1016,24 +1016,4 @@ class BuyExecutor(OrderExecutorBase):
         await asyncio.to_thread(insert_trade, order)
         await self.event_bus.publish("save_state", force=True)
         self.shared_state._portfolio_exposure_cache = None
-        if engine.notifier:
-            buy_msg = f"🟢 BUY {display_symbol}: {order['amount']:.6f} @ {order['price']:.4f}"
-            buy_summary = {
-                "symbol": symbol,
-                "action": "BUY",
-                "price": order["price"],
-                "amount": order["amount"],
-                "confidence": signal.confidence,
-                "reason": signal.reasoning[:200],
-                "strategy_type": signal.strategy_type,
-            }
-            if signal.model_type:
-                buy_summary["model_type"] = signal.model_type
-            if signal.llm_provider:
-                buy_summary["llm_provider"] = signal.llm_provider
-            if signal.llm_model:
-                buy_summary["llm_model"] = signal.llm_model
-            await engine.notifier.send_notification(
-                buy_msg,
-                summary=buy_summary,
-            )
+        await self._send_buy_notification(symbol, display_symbol, order, signal)

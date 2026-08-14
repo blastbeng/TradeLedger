@@ -87,3 +87,35 @@ class OrderExecutorBase:
         prorated_cost_basis = cost_basis * (sold_amount / pos["amount"]) if pos["amount"] > 0 else 0.0
         realized_pnl = net_quote - prorated_cost_basis
         return realized_pnl, prorated_cost_basis, cost_basis, net_base
+
+    async def _send_buy_notification(
+        self,
+        symbol: str,
+        display_symbol: str,
+        order: Dict[str, Any],
+        signal: Signal,
+        atr: Optional[float] = None,
+    ) -> None:
+        """Format and send the BUY notification."""
+        engine = self.engine
+        if not engine.notifier:
+            return
+        buy_msg = f"🟢 BUY {display_symbol}: {order['amount']:.6f} @ {order['price']:.4f}"
+        buy_summary = {
+            "symbol": symbol,
+            "action": "BUY",
+            "price": order["price"],
+            "amount": order["amount"],
+            "confidence": signal.confidence,
+            "reason": (signal.reasoning or '')[:200],
+            "strategy_type": signal.strategy_type,
+        }
+        if atr is not None:
+            buy_summary["indicators"] = {"atr": atr}
+        if signal.model_type:
+            buy_summary["model_type"] = signal.model_type
+        if signal.llm_provider:
+            buy_summary["llm_provider"] = signal.llm_provider
+        if signal.llm_model:
+            buy_summary["llm_model"] = signal.llm_model
+        await engine.notifier.send_notification(buy_msg, summary=buy_summary)
