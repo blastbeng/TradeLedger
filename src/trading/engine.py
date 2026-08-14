@@ -768,36 +768,7 @@ class TradingEngine:
         await self._background_task_manager._refresh_ticker_discovery_loop()
 
     async def _fetch_dividends_loop(self):
-        """Periodically fetch and store dividends for tracked symbols."""
-        await self._interruptible_sleep(300)  # initial delay 5 minutes
-        while self._running:
-            try:
-                symbols = [entry["symbol"] for entry in self.shared_state.current_symbols]
-                if not symbols:
-                    await self._interruptible_sleep(3600)
-                    continue
-                # Only fetch for non-BTP symbols (BTPs use coupons, not dividends)
-                stock_symbols = [s for s in symbols if not is_btp_isin(s.split("/")[0])]
-                if stock_symbols:
-                    async def _fetch_dividends(symbol: str):
-                        try:
-                            divs = await asyncio.to_thread(get_yahoo_dividends, symbol)
-                            for d in divs:
-                                await asyncio.to_thread(insert_dividend, symbol, d["date"], d["amount"])
-                        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
-                            logger.debug(f"Dividend fetch failed for {symbol}: {e}")
-                    await asyncio.gather(*[_fetch_dividends(s) for s in stock_symbols])
-                # Cleanup old dividends
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(self._db_executor, cleanup_old_dividends, 365)
-            except asyncio.CancelledError:
-                raise
-            except (ConnectionError, TimeoutError, OSError) as e:
-                logger.warning(f"Dividend fetch loop network/IO error: {type(e).__name__}: {e}")
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
-                logger.error(f"Dividend fetch loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
-                await self._record_unexpected_exception("dividend_fetch_loop", e)
-            await self._interruptible_sleep(86400)  # daily
+        await self._background_task_manager._fetch_dividends_loop()
 
     async def _reinvest_dividends_loop(self):
         """Periodically check for pending dividends and reinvest them if enabled."""

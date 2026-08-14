@@ -6,8 +6,10 @@ import time
 from typing import Optional, Tuple, List
 
 from src.config.settings import settings
-from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news, get_latest_ohlcv_timestamps_batch, cleanup_old_position_pnl, cleanup_old_backtest_results
+from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news, get_latest_ohlcv_timestamps_batch, cleanup_old_position_pnl, cleanup_old_backtest_results, insert_dividend, cleanup_old_dividends
 from src.exchanges.market_data import get_quotes_cached
+from src.exchanges.yahoo_finance import get_yahoo_dividends
+from src.utils.symbol_utils import is_btp_isin
 from src.llm.cache import _should_use_primary_model
 from src.utils.health_metrics import health_metrics
 from src.trading.engine_utils import timeframe_to_seconds, timeframe_to_ms, get_effective_refresh_interval
@@ -809,3 +811,35 @@ class BackgroundTaskManager:
                 logger.error(f"Ticker discovery refresh data/logic error: {type(e).__name__}: {e}", exc_info=True)
                 await self.engine._record_unexpected_exception("ticker_discovery_loop", e)
             await asyncio.sleep(3600)  # every 60 minutes (medium/long-term)
+
+    async def _fetch_dividends_loop(self):
+        """Periodically fetch and store dividends for tracked symbols."""
+        await self.engine._interruptible_sleep(300)  # initial delay 5 minutes
+        while self.engine._running:
+            try:
+                symbols = [entry["symbol"] for entry in self.engine.shared_state.current_symbols]
+                if not symbols:
+                    await self.engine._interruptible_sleep(3600)
+                    continue
+                # Only fetch for non-BTP symbols (BTPs use coupons, not dividends)
+                stock_symbols = [s for s in symbols if not is_btp_isin(s.split("/")[0])]
+                if stock_symbols:
+                    async def _fetch_dividends(symbol: str):
+                        try:
+                            divs = await asyncio.to_thread(get_yahoo_dividends, symbol)
+                            for d in divs:
+                                await asyncio.to_thread(insert_dividend, symbol, d["date"], d["amount"])
+                        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+                            logger.debug(f"Dividend fetch failed for {symbol}: {e}")
+                    await asyncio.gather(*[_fetch_dividends(s) for s in stock_symbols])
+                # Cleanup old dividends
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(self.engine._db_executor, cleanup_old_dividends, 365)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Dividend fetch loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Dividend fetch loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("dividend_fetch_loop", e)
+            await self.engine._interruptible_sleep(86400)  # daily
