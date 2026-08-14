@@ -13,6 +13,7 @@ from src.config.settings import settings
 from src.database import insert_trade
 from src.strategies.base import Signal
 from src.utils.symbol_utils import is_btp_isin
+from src.trading.engine_utils import format_symbol_display, timeframe_to_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class OrderExecutor:
         # --- Format symbol for notifications ---
         stock_name = await engine._market_data_manager.get_stock_name(symbol)
         tf = timeframe or (self.shared_state.positions.get(symbol, {}).get("timeframe") if symbol in self.shared_state.positions else None)
-        display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
+        display_symbol = format_symbol_display(symbol, stock_name, tf)
 
         # --- Notify mode: do not execute any orders, only send notifications ---
         if settings.TRADING_MODE == "notify":
@@ -489,7 +490,7 @@ class OrderExecutor:
         queued_tf = queued.get('timeframe')
         base_timeout = settings.QUEUED_ORDER_TIMEOUT_SECONDS
         if queued_tf:
-            tf_secs = engine._timeframe_to_seconds(queued_tf)
+            tf_secs = timeframe_to_seconds(queued_tf)
             # Scale timeout by timeframe, but cap at 30 days to avoid excessively long waits
             scaled_timeout = min(max(base_timeout, int(tf_secs * 0.5)), 30 * 24 * 3600)
         else:
@@ -527,7 +528,7 @@ class OrderExecutor:
         if engine.notifier:
             stock_name = await engine._market_data_manager.get_stock_name(queued['symbol'])
             tf = queued.get('timeframe')
-            display = engine._format_symbol_display(queued['symbol'], stock_name, tf)
+            display = format_symbol_display(queued['symbol'], stock_name, tf)
             await engine.notifier.send_notification(
                 f"⏰ Queued {queued['side']} order for {display} timed out and was cancelled.",
                 summary={
@@ -624,7 +625,7 @@ class OrderExecutor:
         """Format and send the BUY notification."""
         engine = self.engine
         stock_name = await engine._market_data_manager.get_stock_name(symbol)
-        display_symbol = engine._format_symbol_display(symbol, stock_name, timeframe)
+        display_symbol = format_symbol_display(symbol, stock_name, timeframe)
         buy_msg = f"🟢 BUY {display_symbol}: {trade_dict['amount']:.6f} @ {trade_dict['price']:.4f}"
         buy_summary = {
             "symbol": symbol,
@@ -752,7 +753,7 @@ class OrderExecutor:
                 logger.error(f"Failed to setup exit orders after queued buy fill for {symbol}: {type(e).__name__}: {e}")
                 if engine.notifier:
                     stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                    display_symbol = engine._format_symbol_display(symbol, stock_name, queued.get('timeframe'))
+                    display_symbol = format_symbol_display(symbol, stock_name, queued.get('timeframe'))
                     await engine.notifier.send_notification(
                         f"⚠️ Exit order setup failed for {display_symbol} after queued fill: {e}",
                         summary={

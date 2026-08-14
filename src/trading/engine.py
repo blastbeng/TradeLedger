@@ -962,7 +962,7 @@ class TradingEngine:
         # Use at least the configured max staleness (1 hour), or 10% of the timeframe,
         # whichever is greater (capped at 6 hours for very long timeframes to avoid
         # trading on excessively stale prices).
-        tf_seconds = self._timeframe_to_seconds(timeframe)
+        tf_seconds = timeframe_to_seconds(timeframe)
         scaled_threshold = max(settings.QUOTE_MAX_STALENESS_SECONDS, min(tf_seconds * 0.1, 21600))
 
         if age_seconds <= scaled_threshold:

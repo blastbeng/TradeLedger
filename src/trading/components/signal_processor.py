@@ -31,6 +31,7 @@ from src.trading.components.llm_step_manager import LLMStepManager
 from src.trading.components.simulation_manager import SimulationManager
 from src.trading.components.post_decision_manager import PostDecisionManager
 from src.trading.components.pause_resume_manager import PauseResumeManager
+from src.trading.engine_utils import timeframe_to_seconds, timeframe_to_ms, format_symbol_display
 
 try:
     from src.news.fetcher import detect_upcoming_events, get_upcoming_earnings
@@ -162,7 +163,7 @@ class SignalProcessor:
         """Fetch initial context: display symbol, min viable amount, and position flags."""
         engine = self.engine
         stock_name = await engine._market_data_manager.get_stock_name(symbol)
-        display_symbol = engine._format_symbol_display(symbol, stock_name, symbol_entry["timeframe"])
+        display_symbol = format_symbol_display(symbol, stock_name, symbol_entry["timeframe"])
 
         min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
         try:
@@ -210,7 +211,7 @@ class SignalProcessor:
         """Gather prompt context and build the analysis prompt. Returns a context dict."""
         engine = self.engine
         assigned_tf = symbol_entry["timeframe"]
-        tf_seconds = engine._timeframe_to_seconds(assigned_tf)
+        tf_seconds = timeframe_to_seconds(assigned_tf)
 
         ticker = symbol_data["ticker"]
         current_price = symbol_data["current_price"]
@@ -540,7 +541,7 @@ class SignalProcessor:
         engine = self.engine
         symbol = symbol_entry["symbol"]
         assigned_tf = symbol_entry["timeframe"]
-        tf_seconds = engine._timeframe_to_seconds(assigned_tf)
+        tf_seconds = timeframe_to_seconds(assigned_tf)
         display_symbol = symbol  # Initialize to prevent NameError in except block
 
         try:
@@ -822,7 +823,7 @@ class SignalProcessor:
         engine = self.engine
         base_symbol = symbol.split("/")[0]
         is_btp = BTPPolicy.is_btp(base_symbol)
-        tf_seconds = engine._timeframe_to_seconds(assigned_tf)
+        tf_seconds = timeframe_to_seconds(assigned_tf)
 
         # --- Fetch ticker ---
         async with engine._exchange_semaphore:
@@ -1303,7 +1304,7 @@ class SignalProcessor:
         """
         engine = self.engine
         assigned_tf = symbol_entry["timeframe"]
-        tf_seconds = engine._timeframe_to_seconds(assigned_tf)
+        tf_seconds = timeframe_to_seconds(assigned_tf)
 
         # --- Maximum symbol tenure (per-symbol, set by LLM) ---
         max_tenure_hours = symbol_entry.get('max_tenure_hours')
@@ -1744,7 +1745,7 @@ class SignalProcessor:
         # Determine cache TTL based on timeframe
         cache_ttl = 0  # no caching by default
         if timeframe is not None:
-            tf_seconds = engine._timeframe_to_seconds(timeframe)
+            tf_seconds = timeframe_to_seconds(timeframe)
             if tf_seconds >= 2_592_000:  # >= 1 month
                 cache_ttl = 3600       # 1 hour
             elif tf_seconds >= 604_800:  # >= 1 week

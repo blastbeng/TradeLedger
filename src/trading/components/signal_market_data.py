@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from src.config.settings import settings
 from src.database import get_indicators_for_symbols
 from src.indicators import compute_vwap, compute_pivot_points
+from src.trading.engine_utils import timeframe_to_ms
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class SignalMarketDataFetcher:
                         ind_ts = ind.get("_indicator_timestamp", None)
                         latest_candle_ts = candles[-1][0] if candles else None
                         if ind_ts is not None and latest_candle_ts is not None:
-                            tf_ms = engine._timeframe_to_ms(tf)
+                            tf_ms = timeframe_to_ms(tf)
                             staleness = latest_candle_ts - ind_ts
                             if staleness > 4 * tf_ms:
                                 logger.info(

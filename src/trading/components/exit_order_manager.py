@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 
 from src.strategies.base import Signal
 from src.utils.symbol_utils import is_btp_isin
+from src.trading.engine_utils import format_symbol_display
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +297,7 @@ class ExitOrderManager:
         # Notify user
         if engine.notifier:
             stock_name = await engine._market_data_manager.get_stock_name(symbol)
-            display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+            display_symbol = format_symbol_display(symbol, stock_name, pos.get("timeframe"))
             msg = f"🛡️ Exit orders placed for {display_symbol}:\n"
             if sl_order_id:
                 sl_type = actual_sl_ot or "stop"
@@ -409,7 +410,7 @@ class ExitOrderManager:
             # Notify user
             stock_name = await engine._market_data_manager.get_stock_name(queued["symbol"])
             if engine.notifier:
-                display_symbol = engine._format_symbol_display(
+                display_symbol = format_symbol_display(
                     queued["symbol"], stock_name, queued.get("timeframe")
                 )
                 await engine.notifier.send_notification(
@@ -539,7 +540,7 @@ class ExitOrderManager:
         # Notify user
         if engine.notifier:
             stock_name = await engine._market_data_manager.get_stock_name(symbol)
-            display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+            display_symbol = format_symbol_display(symbol, stock_name, pos.get("timeframe"))
             msg = f"🔄 Stop order updated for {display_symbol}: {old_stop_price:.4f} → {new_stop_price:.4f}"
             await engine.notifier.send_notification(
                 msg,

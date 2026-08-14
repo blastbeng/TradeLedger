@@ -28,6 +28,7 @@ from src.llm.backtest_prompts import build_final_decision_messages
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary, BacktestConfig
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm
+from src.trading.engine_utils import timeframe_to_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ class BacktestManager:
         # Early skip: if the assigned timeframe cannot possibly have enough candles
         # given the data retention period, skip backtesting entirely instead of
         # falling back to a much shorter timeframe whose results would be misleading.
-        tf_seconds_bt = engine._timeframe_to_seconds(assigned_tf)
+        tf_seconds_bt = timeframe_to_seconds(assigned_tf)
         max_possible_candles = (settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds_bt
         MIN_STATISTICALLY_SIGNIFICANT_CANDLES = settings.MIN_STATISTICALLY_SIGNIFICANT_CANDLES
         MIN_BACKTEST_CANDLES = settings.MIN_BACKTEST_CANDLES

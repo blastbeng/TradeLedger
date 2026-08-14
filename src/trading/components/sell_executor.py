@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Tuple
 from src.config.settings import settings
 from src.database import insert_trade
 from src.strategies.base import Signal
+from src.trading.engine_utils import format_symbol_display
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,7 @@ class SellExecutor:
 
         stock_name = await engine._market_data_manager.get_stock_name(symbol)
         tf = order_dict.get("timeframe") or (pos.get("timeframe") if pos else None)
-        display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
+        display_symbol = format_symbol_display(symbol, stock_name, tf)
 
         partial_str = " (partial)" if is_partial else ""
         label_prefix = level_label or "SELL"
@@ -670,7 +671,7 @@ class SellExecutor:
 
         stock_name = await engine._market_data_manager.get_stock_name(symbol)
         tf = self.shared_state.positions.get(symbol, {}).get("timeframe") if symbol in self.shared_state.positions else None
-        display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
+        display_symbol = format_symbol_display(symbol, stock_name, tf)
 
         try:
             base = symbol.split("/")[0]
@@ -789,7 +790,7 @@ class SellExecutor:
 
         stock_name = await engine._market_data_manager.get_stock_name(symbol)
         tf = pos.get("timeframe")
-        display_symbol = engine._format_symbol_display(symbol, stock_name, tf)
+        display_symbol = format_symbol_display(symbol, stock_name, tf)
         base, quote = symbol.split("/")
 
         # Check minimum sell size

@@ -19,6 +19,7 @@ from src.utils.btp_policy import BTPPolicy
 from src.utils.redis_client import is_redis_available
 from src.exchanges.fees import calculate_transaction_costs
 from src.llm.cache import is_llm_circuit_breaker_active
+from src.trading.engine_utils import timeframe_to_seconds, format_symbol_display
 
 logger = logging.getLogger(__name__)
 
@@ -478,7 +479,7 @@ class RiskManager:
 
             # --- Format symbol for notifications ---
             stock_name = await engine._market_data_manager.get_stock_name(symbol)
-            display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+            display_symbol = format_symbol_display(symbol, stock_name, pos.get("timeframe"))
 
             # --- Hard stop: maximum total loss regardless of LLM decisions ---
             if await self.check_hard_stop(symbol, pos, current_price, display_symbol):
@@ -835,7 +836,7 @@ class RiskManager:
         if not tf:
             return None
             
-        tf_secs_atr = engine._timeframe_to_seconds(tf)
+        tf_secs_atr = timeframe_to_seconds(tf)
         # For very long timeframes (>= 1 month), ATR is computed from
         # too few candles (2-10) to be statistically reliable.
         if tf_secs_atr >= settings.LONG_TERM_TF_SECONDS:
@@ -937,7 +938,7 @@ class RiskManager:
                 if tf:
                     try:
                         last_check_ts = pos.get("_last_trailing_check_ts", 0)
-                        tf_secs = engine._timeframe_to_seconds(tf)
+                        tf_secs = timeframe_to_seconds(tf)
                         now_ts = time.time()
                         # For very long timeframes (>= 1 month), the assigned timeframe's
                         # OHLCV is too sparse (2-10 candles).  Instead, fetch daily candles

@@ -12,6 +12,7 @@ from src.database import get_aggregate_sentiment_from_db, insert_signal, insert_
 from src.llm.prompts import get_cached_news_summary
 from src.strategies.base import Signal
 from src.strategies.validator import validate_signal
+from src.trading.engine_utils import format_symbol_display
 
 if TYPE_CHECKING:
     from src.trading.components.signal_processor import DecisionContext
@@ -714,7 +715,7 @@ class PostDecisionManager:
             )
             if engine.notifier:
                 stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                display = engine._format_symbol_display(symbol, stock_name, assigned_tf)
+                display = format_symbol_display(symbol, stock_name, assigned_tf)
                 await engine.notifier.send_notification(
                     f"⚠️ Skipping BUY {display}: sector '{current_sector}' concentration limit reached ({sector_count}/{max_positions_per_sector})",
                     summary={

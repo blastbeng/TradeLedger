@@ -18,6 +18,7 @@ from src.database import insert_trade, get_total_dividends_for_symbol, get_total
 from src.strategies.base import Signal
 from dateutil.relativedelta import relativedelta
 from src.utils.btp_policy import BTPPolicy
+from src.trading.engine_utils import format_symbol_display
 
 logger = logging.getLogger(__name__)
 
@@ -964,7 +965,7 @@ class PositionManager:
         logger.info(f"Closed BTP {symbol}: {pos['amount']} at dirty price {dirty_price:.4f} (par {par_value} + accrued {accrued_interest:.4f}).")
         if engine.notifier:
             stock_name = await engine._market_data_manager.get_stock_name(symbol)
-            display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+            display_symbol = format_symbol_display(symbol, stock_name, pos.get("timeframe"))
             await engine.notifier.send_notification(
                 f"💰 BTP {display_symbol} closed at par value {par_value} + accrued {accrued_interest:.4f}. P&L: {realized_pnl:+.4f}",
                 summary={
@@ -1096,7 +1097,7 @@ class PositionManager:
                 else:
                     if engine.notifier:
                         stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                        display_symbol = engine._format_symbol_display(symbol, stock_name, None)
+                        display_symbol = format_symbol_display(symbol, stock_name, None)
                         await engine.notifier.send_notification(
                             f"⚠️ Could not parse maturity date '{maturity_str}' for BTP {display_symbol}. No open position found.",
                             summary={
@@ -1270,7 +1271,7 @@ class PositionManager:
 
                     if engine.notifier:
                         stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                        display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+                        display_symbol = format_symbol_display(symbol, stock_name, pos.get("timeframe"))
                         await engine.notifier.send_notification(
                             f"🔄 Stock split detected for {display_symbol}: {split_ratio}:1. Adjusted position from {recorded_amount} to {actual_balance} shares.",
                             summary={
@@ -1336,7 +1337,7 @@ class PositionManager:
                         f"re-evaluation attempts."
                     )
                     stock_name = await engine._market_data_manager.get_stock_name(symbol)
-                    display_symbol = engine._format_symbol_display(symbol, stock_name, pos.get("timeframe"))
+                    display_symbol = format_symbol_display(symbol, stock_name, pos.get("timeframe"))
                     if engine.notifier:
                         await engine.notifier.send_notification(
                             f"🔻 Closing {display_symbol} – missing LLM risk parameters after {attempts} attempts.",

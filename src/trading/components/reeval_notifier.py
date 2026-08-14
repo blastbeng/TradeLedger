@@ -2,6 +2,7 @@
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional
+from src.trading.engine_utils import format_symbol_display
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class ReevalNotifier:
         # Build formatted symbol labels with stock names (parallelized)
         async def _fetch_label(c):
             name = await engine._market_data_manager.get_stock_name(c['symbol'])
-            return engine._format_symbol_display(c['symbol'], name, c['timeframe'])
+            return format_symbol_display(c['symbol'], name, c['timeframe'])
         
         labels_or_exc = await asyncio.gather(
             *[_fetch_label(c) for c in self.shared_state.current_symbols],
@@ -45,7 +46,7 @@ class ReevalNotifier:
         for c, res in zip(self.shared_state.current_symbols, labels_or_exc):
             if isinstance(res, Exception):
                 logger.error(f"Failed to fetch stock name for {c['symbol']}: {res}", exc_info=res)
-                symbol_labels.append(engine._format_symbol_display(c['symbol'], None, c['timeframe']))
+                symbol_labels.append(format_symbol_display(c['symbol'], None, c['timeframe']))
             else:
                 symbol_labels.append(res)
         logger.info(f"Selected symbols: {symbol_labels}")

@@ -21,6 +21,7 @@ from src.utils.redis_client import get_redis_client
 from src.database import set_telegram_chat_id, get_telegram_chat_id, get_news_for_symbol, get_signals, get_isin_map_from_db
 from src.llm.prompts import _format_news_for_prompt, get_cached_news_summary
 from src.utils.symbol_utils import is_btp_isin
+from src.trading.engine_utils import format_symbol_display
 
 logger = logging.getLogger(__name__)
 
@@ -357,7 +358,7 @@ class TelegramBot:
             for i, entry in enumerate(symbols):
                 symbol = entry["symbol"]
                 tf = entry["timeframe"]
-                display = self.engine._format_symbol_display(symbol, names[i], tf)
+                display = format_symbol_display(symbol, names[i], tf)
                 msg += f"  • <code>{display}</code>"
                 base_sym = symbol.split("/")[0]
                 if not is_btp_isin(base_sym):
@@ -531,7 +532,7 @@ class TelegramBot:
             sym = t['symbol']
             trade_tf = t.get('timeframe')
             trade_name = name_map.get(sym, sym)
-            trade_display = self.engine._format_symbol_display(sym, trade_name, trade_tf)
+            trade_display = format_symbol_display(sym, trade_name, trade_tf)
             amt = t['amount']
             price = t['price']
             fee = t.get('fee', {})
@@ -635,7 +636,7 @@ class TelegramBot:
                 side_label = "BUY" if side == "buy" else "SELL"
                 q_tf = q.get('timeframe')
                 q_name = name_map.get(sym, sym)
-                q_display = self.engine._format_symbol_display(sym, q_name, q_tf)
+                q_display = format_symbol_display(sym, q_name, q_tf)
                 original_amount = q.get('original_amount', q['amount'])
                 filled_qty = q.get('filled_qty', 0.0)
                 limit_price = q.get('limit_price')
@@ -744,7 +745,7 @@ class TelegramBot:
                 symbol = r["symbol"]
                 tf = r.get("timeframe") or "—"
                 perf_name = perf_names[i]
-                perf_display = self.engine._format_symbol_display(symbol, perf_name, tf)
+                perf_display = format_symbol_display(symbol, perf_name, tf)
                 trades = r["trade_count"]
                 profit = r["profit"]
                 profit_pct = r["profit_pct"]
@@ -960,7 +961,7 @@ class TelegramBot:
                     )
                 except asyncio.TimeoutError:
                     news_name = symbol
-                news_display = self.engine._format_symbol_display(symbol, news_name, news_tf)
+                news_display = format_symbol_display(symbol, news_name, news_tf)
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                 articles = await asyncio.wait_for(
                     asyncio.to_thread(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS),
@@ -1034,7 +1035,7 @@ class TelegramBot:
                     )
                 except asyncio.TimeoutError:
                     ns_name = symbol
-                ns_display = self.engine._format_symbol_display(symbol, ns_name, ns_tf)
+                ns_display = format_symbol_display(symbol, ns_name, ns_tf)
                 base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
                 articles = await asyncio.wait_for(
                     asyncio.to_thread(get_news_for_symbol, base_symbol, max_age_seconds=settings.NEWS_CACHE_TTL_SECONDS),
@@ -1117,7 +1118,7 @@ class TelegramBot:
                 )
             except asyncio.TimeoutError:
                 sell_name = symbol
-            sell_display = self.engine._format_symbol_display(symbol, sell_name, sell_tf)
+            sell_display = format_symbol_display(symbol, sell_name, sell_tf)
             await update.message.reply_text(f"🔄 Selling {sell_display}...", reply_markup=self.keyboard)
             try:
                 await asyncio.wait_for(self.engine.sell_position(symbol), timeout=30.0)
