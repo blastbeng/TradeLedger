@@ -826,42 +826,7 @@ class TradingEngine:
 
 
     async def _periodic_pause_resume_check(self):
-        """Periodically ask the LLM whether to resume trading when paused."""
-        await asyncio.sleep(60)  # initial delay
-        while self._running:
-            try:
-                # Skip LLM pause/resume check if auto-resume cooldown is active
-                cooldown_active = await asyncio.to_thread(self.redis.get, "trading:auto_resume_cooldown")
-                if cooldown_active:
-                    logger.debug("Skipping LLM pause/resume check – auto-resume cooldown is active.")
-                    await asyncio.sleep(1800)
-                    continue
-
-                # Skip LLM pause/resume check if duration-based auto-resume is imminent
-                pause_duration_raw = await asyncio.to_thread(self.redis.get, "trading:pause_duration")
-                pause_start_raw = await asyncio.to_thread(self.redis.get, "trading:pause_start")
-                if pause_duration_raw and pause_start_raw:
-                    try:
-                        pause_start = float(pause_start_raw)
-                        pause_duration = int(pause_duration_raw)
-                        remaining = (pause_start + pause_duration) - time.time()
-                        if remaining < 120:  # less than 2 minutes until auto-resume
-                            logger.debug("Skipping LLM pause/resume check – duration-based auto-resume imminent.")
-                            await asyncio.sleep(1800)
-                            continue
-                    except (ValueError, TypeError):
-                        pass
-
-                if await self._is_market_open():
-                    await self.event_bus.request("check_pause_resume_decision")
-            except asyncio.CancelledError:
-                raise
-            except (ConnectionError, TimeoutError, OSError) as e:
-                logger.warning(f"Pause/resume check network/IO error: {type(e).__name__}: {e}")
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
-                logger.error(f"Pause/resume check data/logic error: {type(e).__name__}: {e}", exc_info=True)
-                await self._record_unexpected_exception("pause_resume_check", e)
-            await asyncio.sleep(1800)  # every 30 minutes
+        await self._background_task_manager._periodic_pause_resume_check()
 
     async def _redis_health_check_loop(self):
         """Periodically check Redis connection and alert on state changes."""
