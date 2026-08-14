@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 
 from src.config.settings import settings
-from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch, get_candle_count_for_symbol, update_candle_count, get_indicators, get_aggregate_sentiment_from_db
+from src.database import get_ohlcv, save_indicators, get_symbol_name_from_db, save_discovered_symbol, get_latest_ohlcv_timestamp, insert_ohlcv_batch, get_candle_count_for_symbol, update_candle_count, get_indicators, get_aggregate_sentiment_from_db, store_news_articles
 from src.exchanges.market_data import get_tradable_assets, discover_btp_bonds, discover_italian_ucits_etfs, _check_yf_circuit, _get_yf_session, get_bars_range, get_quotes, get_quotes_cached
 from src.indicators import compute_all_indicators
 from src.trading.engine_utils import timeframe_to_ms, timeframe_to_seconds
@@ -529,6 +529,41 @@ class MarketDataManager:
         except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to fetch sentiment for {base}: {type(e).__name__}: {e}")
             return None
+
+    async def _fetch_and_store_news_for_symbol(self, symbol: str):
+        """Fetch news for a single symbol and store it in the database."""
+        if not settings.NEWS_ENABLED:
+            return
+
+        base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
+
+        # Check if we recently fetched news and found 0 articles
+        no_news_cache_key = f"news:no_articles:{base_symbol}"
+        try:
+            cached_no_news = await asyncio.to_thread(self.engine.redis.get, no_news_cache_key)
+            if cached_no_news:
+                logger.debug(f"Skipping news fetch for {symbol}: recently found 0 articles.")
+                return
+        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
+            pass
+
+        try:
+            from src.news.fetcher import fetch_news_for_symbol
+            stock_name = await self.engine.event_bus.request("get_stock_name", symbol)
+            loop = asyncio.get_running_loop()
+            articles = await fetch_news_for_symbol(symbol, stock_name)
+            if articles:
+                await loop.run_in_executor(self.engine._db_executor, store_news_articles, base_symbol, articles)
+            else:
+                # Cache the fact that we found 0 articles to avoid re-fetching too soon
+                try:
+                    await asyncio.to_thread(
+                        self.engine.redis.setex, no_news_cache_key, 300, "1"
+                    )
+                except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
+                    pass
+        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"News fetch/store failed for {symbol}: {type(e).__name__}: {e}")
 
     async def _fetch_vix(self) -> Optional[float]:
         """Fetch a volatility proxy. Uses US VIX (^VIX) as a global market proxy,

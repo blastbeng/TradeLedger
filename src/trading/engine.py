@@ -425,38 +425,7 @@ class TradingEngine:
 
     async def _fetch_and_store_news_for_symbol(self, symbol: str):
         """Fetch news for a single symbol and store it in the database."""
-        if not settings.NEWS_ENABLED:
-            return
-        
-        base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
-        
-        # Check if we recently fetched news and found 0 articles
-        no_news_cache_key = f"news:no_articles:{base_symbol}"
-        try:
-            cached_no_news = await asyncio.to_thread(self.redis.get, no_news_cache_key)
-            if cached_no_news:
-                logger.debug(f"Skipping news fetch for {symbol}: recently found 0 articles.")
-                return
-        except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
-            pass
-
-        try:
-            from src.news.fetcher import fetch_news_for_symbol
-            stock_name = await self.event_bus.request("get_stock_name", symbol)
-            loop = asyncio.get_running_loop()
-            articles = await fetch_news_for_symbol(symbol, stock_name)
-            if articles:
-                await loop.run_in_executor(self._db_executor, store_news_articles, base_symbol, articles)
-            else:
-                # Cache the fact that we found 0 articles to avoid re-fetching too soon
-                try:
-                    await asyncio.to_thread(
-                        self.redis.setex, no_news_cache_key, 300, "1"
-                    )
-                except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
-                    pass
-        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
-            logger.warning(f"News fetch/store failed for {symbol}: {type(e).__name__}: {e}")
+        return await self._market_data_manager._fetch_and_store_news_for_symbol(symbol)
 
     async def _risk_management_loop(self):
         await self._background_task_manager._risk_management_loop()
