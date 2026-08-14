@@ -1,5 +1,6 @@
 """Model tier selection and prompt complexity computation."""
 import logging
+import time
 from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
@@ -13,9 +14,13 @@ class ModelTierManager:
 
     def __init__(self, engine):
         self.engine = engine
+        self._threshold_adjustment_cache = 0.0
+        self._threshold_adjustment_ts = 0.0
 
     def _get_dynamic_threshold_adjustment(self) -> float:
         """Adjust the mind model threshold based on recent cost/performance."""
+        if time.time() - self._threshold_adjustment_ts < 300:  # 5-minute TTL
+            return self._threshold_adjustment_cache
         try:
             metrics = get_llm_metrics_summary(model_filter="main")
             per_model = metrics.get("per_model", [])
@@ -35,7 +40,10 @@ class ModelTierManager:
             
             # Need sufficient data to make a decision
             if mind_calls < 10 or actuator_calls < 10:
-                return 0.0
+                adjustment = 0.0
+                self._threshold_adjustment_cache = adjustment
+                self._threshold_adjustment_ts = time.time()
+                return adjustment
             
             mind_avg_tokens = mind_tokens / mind_calls
             actuator_avg_tokens = actuator_tokens / actuator_calls
@@ -50,17 +58,29 @@ class ModelTierManager:
                 if accuracy < 50.0:
                     # Scale penalty based on how much more expensive mind is (max 0.2)
                     cost_ratio = mind_avg_tokens / (actuator_avg_tokens * 3)
-                    return min(0.2, 0.1 * cost_ratio)
+                    adjustment = min(0.2, 0.1 * cost_ratio)
+                    self._threshold_adjustment_cache = adjustment
+                    self._threshold_adjustment_ts = time.time()
+                    return adjustment
             
             # If mind is cheaper or comparable in cost but significantly more accurate,
             # reward mind model usage by lowering the threshold
             if mind_avg_tokens <= actuator_avg_tokens * 1.5 and accuracy > 70.0:
-                return -0.1
+                adjustment = -0.1
+                self._threshold_adjustment_cache = adjustment
+                self._threshold_adjustment_ts = time.time()
+                return adjustment
             
-            return 0.0
+            adjustment = 0.0
+            self._threshold_adjustment_cache = adjustment
+            self._threshold_adjustment_ts = time.time()
+            return adjustment
         except Exception as e:
             logger.debug(f"Failed to compute dynamic threshold adjustment: {e}")
-            return 0.0
+            adjustment = 0.0
+            self._threshold_adjustment_cache = adjustment
+            self._threshold_adjustment_ts = time.time()
+            return adjustment
 
     def choose_model_tier(
         self,

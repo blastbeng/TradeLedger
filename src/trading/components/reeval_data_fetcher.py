@@ -636,10 +636,8 @@ class ReevalDataFetcher:
             pass
 
         if correlation_matrix is None:
-            # Schedule background computation to avoid blocking the re-evaluation pipeline
-            asyncio.create_task(self._compute_and_cache_correlation_matrix(ohlcv_data, sorted_by_vol))
-            # Return empty matrix for this cycle; it will be available in the next cycle
-            correlation_matrix = {}
+            # Compute synchronously to ensure correlation data is available on the first cycle
+            correlation_matrix = await self._compute_and_cache_correlation_matrix(ohlcv_data, sorted_by_vol)
 
         return correlation_matrix
 
@@ -647,7 +645,7 @@ class ReevalDataFetcher:
         self,
         ohlcv_data: Dict[str, Dict[str, List[List]]],
         sorted_by_vol: List[str],
-    ) -> None:
+    ) -> Dict[str, Dict[str, float]]:
         """Compute the correlation matrix in a background thread and cache it in Redis."""
         engine = self.engine
         corr_cache_key = "reeval:correlation_matrix"
@@ -681,6 +679,9 @@ class ReevalDataFetcher:
                 pass
         except Exception as e:
             logger.warning(f"Background correlation matrix computation failed: {type(e).__name__}: {e}")
+            correlation_matrix = {}
+
+        return correlation_matrix
 
     async def compute_market_limits(
         self,

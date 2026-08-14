@@ -12,6 +12,27 @@ from src.utils.redis_client import get_redis_client
 logger = logging.getLogger(__name__)
 
 
+def _is_valid_italian_isin(symbol: str) -> bool:
+    """Check if symbol has a valid Italian ISIN, with Redis caching to avoid redundant lookups."""
+    redis_client = get_redis_client()
+    cache_key = f"yahoo_isin_valid:{symbol}"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached is not None:
+            return cached == "1"
+    except Exception:
+        pass
+
+    from src.exchanges.market_data import _get_isin_from_yfinance
+    isin = _get_isin_from_yfinance(symbol)
+    is_valid = isin is not None
+    try:
+        redis_client.set(cache_key, "1" if is_valid else "0", ex=3600)
+    except Exception:
+        pass
+    return is_valid
+
+
 def get_yahoo_quote(symbol: str) -> Optional[Dict[str, Any]]:
     """
     Fetch Level 1 quote (bid, ask, last) from Yahoo Finance for a US stock/ETF.
@@ -23,8 +44,7 @@ def get_yahoo_quote(symbol: str) -> Optional[Dict[str, Any]]:
         return None
 
     # Ensure we only fetch quotes if the symbol has a valid Italian ISIN
-    from src.exchanges.market_data import _get_isin_from_yfinance
-    if _get_isin_from_yfinance(symbol) is None:
+    if not _is_valid_italian_isin(symbol):
         logger.debug(f"Skipping yfinance quote for {symbol}: no valid Italian ISIN.")
         return None
 
@@ -116,8 +136,7 @@ def get_yahoo_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
         return None
 
     # Ensure we only fetch fundamentals if the symbol has a valid Italian ISIN
-    from src.exchanges.market_data import _get_isin_from_yfinance
-    if _get_isin_from_yfinance(symbol) is None:
+    if not _is_valid_italian_isin(symbol):
         logger.debug(f"Skipping yfinance fundamentals for {symbol}: no valid Italian ISIN.")
         return None
 
@@ -181,8 +200,7 @@ def get_yahoo_dividends(symbol: str) -> List[Dict[str, Any]]:
         return []
 
     # Ensure we only fetch dividends if the symbol has a valid Italian ISIN
-    from src.exchanges.market_data import _get_isin_from_yfinance
-    if _get_isin_from_yfinance(symbol) is None:
+    if not _is_valid_italian_isin(symbol):
         logger.debug(f"Skipping yfinance dividends for {symbol}: no valid Italian ISIN.")
         return []
 
@@ -221,8 +239,7 @@ def get_yahoo_insider_transactions(symbol: str) -> Optional[List[Dict[str, Any]]
     if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
         return None
 
-    from src.exchanges.market_data import _get_isin_from_yfinance
-    if _get_isin_from_yfinance(symbol) is None:
+    if not _is_valid_italian_isin(symbol):
         logger.debug(f"Skipping yfinance insider transactions for {symbol}: no valid Italian ISIN.")
         return None
 
@@ -275,8 +292,7 @@ def get_yahoo_analyst_ratings(symbol: str) -> Optional[Dict[str, Any]]:
     if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
         return None
 
-    from src.exchanges.market_data import _get_isin_from_yfinance
-    if _get_isin_from_yfinance(symbol) is None:
+    if not _is_valid_italian_isin(symbol):
         logger.debug(f"Skipping yfinance analyst ratings for {symbol}: no valid Italian ISIN.")
         return None
 
@@ -342,8 +358,7 @@ def get_yahoo_options_summary(symbol: str) -> Optional[Dict[str, Any]]:
     if not settings.YAHOO_FINANCE_ENABLED or _check_yf_circuit():
         return None
 
-    from src.exchanges.market_data import _get_isin_from_yfinance
-    if _get_isin_from_yfinance(symbol) is None:
+    if not _is_valid_italian_isin(symbol):
         logger.debug(f"Skipping yfinance options for {symbol}: no valid Italian ISIN.")
         return None
 
