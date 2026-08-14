@@ -10,7 +10,6 @@ from src.database import get_latest_close_prices, store_news_articles, cleanup_o
 from src.exchanges.market_data import get_quotes_cached
 from src.exchanges.yahoo_finance import get_yahoo_dividends
 from src.utils.symbol_utils import is_btp_isin
-from src.llm.cache import _should_use_primary_model
 from src.utils.health_metrics import health_metrics
 from src.utils.redis_client import is_redis_available, check_redis_connection
 from src.trading.engine_utils import timeframe_to_seconds, timeframe_to_ms, get_effective_refresh_interval
@@ -67,7 +66,20 @@ class BackgroundTaskManager:
 
             # Check if market is open or in pre-market (1 hour before open)
             is_open = await self.engine._is_market_open()
-            is_premarket = not is_open and _should_use_primary_model()
+            is_premarket = False
+            if not is_open:
+                clock = await self.engine._market_data_manager.get_clock()
+                if clock:
+                    now_rome = clock.timestamp
+                    if now_rome.weekday() < 5:  # Monday–Friday
+                        market_open_dt = now_rome.replace(
+                            hour=settings.MARKET_OPEN_HOUR,
+                            minute=settings.MARKET_OPEN_MINUTE,
+                            second=0, microsecond=0
+                        )
+                        minutes_to_open = (market_open_dt - now_rome).total_seconds() / 60
+                        if 0 < minutes_to_open <= 60:
+                            is_premarket = True
             is_forced = self.engine._force_reeval or self.engine._reeval_pending_force
 
             # Disable automatic re-evaluation when market is closed (outside pre-market)
