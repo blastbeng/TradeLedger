@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Callable
 from src.config.settings import settings
 from src.exchanges.proxy_utils import _get_proxies
 from src.llm.llm_client import LLMProvider
+from src.utils.health_metrics import health_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +219,7 @@ class G4FProvider(LLMProvider):
                 except RuntimeError:
                     response = asyncio.run(_make_request())
 
+                health_metrics.record_llm_call(model, True)
                 content = response.choices[0].message.content
                 
                 # g4f doesn't always return usage, so we estimate it
@@ -235,6 +237,7 @@ class G4FProvider(LLMProvider):
                     }
                 }
             except Exception as e:
+                health_metrics.record_llm_call(model, False)
                 if attempt < max_retries - 1:
                     wait_time = 2 ** attempt
                     logger.warning(f"g4f request failed with error: {e}. Retrying in {wait_time}s...")

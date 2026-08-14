@@ -3,6 +3,8 @@ import logging
 import time
 from typing import Callable, Awaitable, Optional, Dict, Any
 
+from src.utils.health_metrics import health_metrics
+
 logger = logging.getLogger(__name__)
 
 class TaskSupervisor:
@@ -34,7 +36,9 @@ class TaskSupervisor:
         while self._running:
             try:
                 self._task = asyncio.create_task(self.coro_factory(), name=self.name)
+                start_time = time.time()
                 await self._task
+                health_metrics.record_task_time(self.name, time.time() - start_time)
                 # Task completed without exception — reset restart count
                 # so that occasional failures over a long uptime don't exhaust the budget.
                 self._restart_count = 0

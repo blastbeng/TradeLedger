@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
+from src.utils.health_metrics import health_metrics
 from src.exchanges.market_data import get_tradable_assets, get_quotes, get_quotes_cached, get_multi_timeframe_bars, get_bars_range, discover_btp_bonds, discover_italian_ucits_etfs, _get_yf_session, _check_yf_circuit
 from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals, get_yahoo_dividends
 from src.exchanges.yf_session import _invalidate_yf_session
@@ -660,7 +661,9 @@ class TradingEngine:
                 self._force_reeval = False
                 self._reeval_pending_force = False
                 async with self._symbol_reeval_lock:
+                    start_time = time.time()
                     await self.event_bus.request("reevaluate_symbols_impl", force=is_forced)
+                    health_metrics.record_loop_latency("reevaluate", time.time() - start_time)
                 elapsed = time.time() - reeval_start_time
                 logger.info(f"Symbol re-evaluation complete (took {elapsed:.1f}s).")
             except asyncio.CancelledError:

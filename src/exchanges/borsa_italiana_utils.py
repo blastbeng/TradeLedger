@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 
 from src.config.settings import settings
 from src.utils.btp_policy import BTPPolicy
+from src.utils.health_metrics import health_metrics
 from src.exchanges.proxy_utils import _get_proxies
 from src.exchanges.candle_utils import _validate_and_clean_candles
 from src.utils.redis_client import get_redis_client
@@ -58,12 +59,15 @@ def _get_bi_client(timeout: float = 15.0) -> httpx.Client:
         return _bi_http_client
 
 BI_MAX_ERRORS = 20
+BI_DEGRADED_THRESHOLD = 10
 BI_CIRCUIT_COOLDOWN = 300  # 5 minutes
 
 def _check_bi_circuit() -> bool:
     """Return True if the Borsa Italiana circuit is open (calls should be skipped)."""
     with _bi_lock:
-        return time.time() < _bi_circuit_open_until
+        is_open = time.time() < _bi_circuit_open_until
+    health_metrics.record_data_source("borsa_italiana", not is_open)
+    return is_open
 
 def _record_bi_error(exc: Optional[Exception] = None):
     """Record a Borsa Italiana error and potentially trip the circuit breaker."""
@@ -74,6 +78,8 @@ def _record_bi_error(exc: Optional[Exception] = None):
             _bi_error_count = 0
         _bi_error_count += 1
         _bi_last_error_time = now
+        if _bi_error_count >= BI_DEGRADED_THRESHOLD and _bi_error_count < BI_MAX_ERRORS:
+            logger.warning(f"Borsa Italiana is in degraded state with {_bi_error_count} errors. Reducing reliance.")
         if _bi_error_count >= BI_MAX_ERRORS:
             if _bi_circuit_open_until < now:
                 exc_msg = f" Last error: {exc}" if exc else ""
@@ -593,7 +599,7 @@ def _fetch_btp_details(isin: str) -> Dict[str, Optional[Any]]:
                         details["name"] = val
 
         # Cache the result (24h for populated details, 1h for empty to allow retry)
-        cache_ttl = 86400 if details else 3600
+        cache_ttl = settings.BTP_DETAILS_CACHE_TTL if details else settings.BTP_DETAILS_EMPTY_CACHE_TTL
         try:
             redis_client.set(cache_key, json.dumps(details), ex=cache_ttl)
         except (TypeError, ValueError, RuntimeError):
@@ -706,7 +712,7 @@ def discover_btp_bonds() -> List[Dict[str, Any]]:
         # Only cache non-empty results so failed scrapes retry on next call
         if bonds:
             try:
-                redis_client.set(cache_key, json.dumps(bonds), ex=1800)
+                redis_client.set(cache_key, json.dumps(bonds), ex=settings.BTP_LIST_CACHE_TTL)
             except (TypeError, ValueError, RuntimeError) as e:
                 logger.warning(f"Failed to cache BTP bonds: {e}")
 

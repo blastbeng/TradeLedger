@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Callable
 import httpx
 
 from src.config.settings import settings
+from src.utils.health_metrics import health_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +40,15 @@ def _execute_llm_request(
                     response.raise_for_status()
                     return response.json()
 
-            data = _do_request()
-            
-            result = parse_response_fn(data)
-            logger.info("LLM response (%s): %.500s...", provider, result["content"])
-            return result
+            try:
+                data = _do_request()
+                result = parse_response_fn(data)
+                health_metrics.record_llm_call(payload.get("model"), True)
+                logger.info("LLM response (%s): %.500s...", provider, result["content"])
+                return result
+            except Exception as e:
+                health_metrics.record_llm_call(payload.get("model"), False)
+                raise
         except httpx.HTTPStatusError as e:
             if e.response.status_code not in (429, 500, 502, 503, 504):
                 logger.error(

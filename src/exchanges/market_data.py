@@ -11,6 +11,7 @@ import yfinance as yf
 from src.config.settings import settings
 from src.utils.redis_client import get_redis_client
 from src.utils.btp_policy import BTPPolicy
+from src.utils.health_metrics import health_metrics
 from src.database import save_quotes_batch, get_quotes_from_db, get_latest_close_prices, get_isin_from_db, get_manual_isin_from_db
 from src.exchanges.proxy_utils import DynamicProxyRotator, _dynamic_rotator, _get_proxies
 from src.exchanges.borsa_italiana_utils import (
@@ -118,14 +119,14 @@ class DatabaseQuoteHandler(QuoteHandler):
             return context
 
         try:
-            db_quotes = get_quotes_from_db(context.missing_symbols, max_age_seconds=86400)
+            db_quotes = get_quotes_from_db(context.missing_symbols, max_age_seconds=settings.DB_QUOTE_MAX_AGE_SECONDS)
             for sym in list(context.missing_symbols):
                 if sym in db_quotes:
                     context.result[sym] = db_quotes[sym]
                     context.missing_symbols.remove(sym)
                     # Refresh Redis cache from DB data
                     try:
-                        context.redis_client.set(f"quote:{sym}", json.dumps(db_quotes[sym]), ex=300)
+                        context.redis_client.set(f"quote:{sym}", json.dumps(db_quotes[sym]), ex=settings.QUOTE_CACHE_TTL)
                     except (TypeError, ValueError, RuntimeError, ConnectionError, TimeoutError, OSError):
                         pass
             if db_quotes:
@@ -397,7 +398,7 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
     if manual_isin:
         # Cache manual ISIN in Redis for fast lookup
         try:
-            redis_client.setex(isin_cache_key, 7 * 24 * 3600, manual_isin)
+            redis_client.setex(isin_cache_key, settings.ISIN_CACHE_TTL, manual_isin)
         except (TypeError, ValueError, RuntimeError):
             pass
         return manual_isin
@@ -411,7 +412,7 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
         else:
             # Cache in Redis for fast lookup
             try:
-                redis_client.setex(isin_cache_key, 7 * 24 * 3600, cached)
+                redis_client.setex(isin_cache_key, settings.ISIN_CACHE_TTL, cached)
             except (TypeError, ValueError, RuntimeError):
                 pass
             return cached
@@ -465,12 +466,12 @@ def _get_isin_from_yfinance(base_symbol: str) -> Optional[str]:
             pass
         # Cache in Redis for fast lookup (7-day TTL)
         try:
-            redis_client.setex(isin_cache_key, 7 * 24 * 3600, isin)
+            redis_client.setex(isin_cache_key, settings.ISIN_CACHE_TTL, isin)
         except (TypeError, ValueError, RuntimeError):
             pass
     else:
         try:
-            redis_client.set(f"isin_not_found:{db_symbol}", "1", ex=3600)
+            redis_client.set(f"isin_not_found:{db_symbol}", "1", ex=settings.ISIN_NOT_FOUND_CACHE_TTL)
         except (TypeError, ValueError, RuntimeError):
             pass
 
@@ -579,7 +580,7 @@ def _finalize_and_persist_quotes(
     # Validate quotes against existing DB data to prevent bad data overwriting good data
     if symbols_with_price:
         try:
-            existing_quotes = get_quotes_from_db(symbols_with_price, max_age_seconds=86400)
+            existing_quotes = get_quotes_from_db(symbols_with_price, max_age_seconds=settings.DB_QUOTE_MAX_AGE_SECONDS)
             for sym in symbols_with_price:
                 new_last = result[sym].get("last")
                 new_update = result[sym].get("last_update")
@@ -625,7 +626,7 @@ def _finalize_and_persist_quotes(
         for sym, q in result.items():
             if q.get("last") is not None:
                 try:
-                    redis_client.set(f"quote:{sym}", json.dumps(q), ex=300)
+                    redis_client.set(f"quote:{sym}", json.dumps(q), ex=settings.QUOTE_CACHE_TTL)
                 except (TypeError, ValueError, RuntimeError):
                     pass
                 quotes_to_save[sym] = q
@@ -659,6 +660,10 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     if not symbols:
         return {}
 
+    if _check_yf_circuit() and _check_bi_circuit():
+        logger.warning("All primary data sources (yfinance, Borsa Italiana) are unavailable. Serving stale cached data with degradation.")
+        return get_quotes_cached(symbols)
+
     redis_client = get_redis_client()
     context = QuoteContext(symbols=symbols, redis_client=redis_client)
 
@@ -675,6 +680,9 @@ def _get_quotes_impl(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     bi_handler.set_next(yf_handler)
     yf_handler.set_next(av_handler)
     av_handler.set_next(iex_handler)
+
+    health_metrics.record_data_source("yfinance", not _check_yf_circuit())
+    health_metrics.record_data_source("borsa_italiana", not _check_bi_circuit())
 
     # Execute the chain
     context = redis_handler.handle(context)
@@ -738,14 +746,14 @@ def get_quotes_cached(symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
 
     # Check database for quotes not in Redis cache (up to 24 hours old)
     try:
-        db_quotes = get_quotes_from_db(missing_symbols, max_age_seconds=86400)
+        db_quotes = get_quotes_from_db(missing_symbols, max_age_seconds=settings.DB_QUOTE_MAX_AGE_SECONDS)
         for sym in list(missing_symbols):
             if sym in db_quotes:
                 result[sym] = db_quotes[sym]
                 missing_symbols.remove(sym)
                 # Refresh Redis cache from DB data
                 try:
-                    redis_client.set(f"quote:{sym}", json.dumps(db_quotes[sym]), ex=300)
+                    redis_client.set(f"quote:{sym}", json.dumps(db_quotes[sym]), ex=settings.QUOTE_CACHE_TTL)
                 except (TypeError, ValueError, RuntimeError, ConnectionError, TimeoutError, OSError):
                     pass
     except (RuntimeError, ValueError, OSError) as e:
