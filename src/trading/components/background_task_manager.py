@@ -1,10 +1,13 @@
 import asyncio
 import json
 import logging
+import random
 import time
 from typing import Optional, Tuple
 
 from src.config.settings import settings
+from src.database import get_latest_close_prices
+from src.exchanges.market_data import get_quotes_cached
 from src.llm.cache import _should_use_primary_model
 from src.utils.health_metrics import health_metrics
 
@@ -219,3 +222,136 @@ class BackgroundTaskManager:
             finally:
                 self.engine._pause_check_running = False
             await asyncio.sleep(30)
+
+    async def _periodic_full_market_breadth(self):
+        """Periodically compute market breadth over all available pairs.
+
+        Uses cached quotes (Redis/DB only, no network calls) to avoid
+        thread pool exhaustion. Falls back to DB close prices for symbols
+        without cached quotes. Uses a random sample of up to 500 symbols
+        when the universe is larger, ensuring a representative sample.
+        """
+        await asyncio.sleep(60)  # initial delay
+        while self.engine._running:
+            if self.engine._full_breadth_running:
+                logger.warning("Full market breadth computation still running; skipping this cycle.")
+                await asyncio.sleep(300)
+                continue
+            self.engine._full_breadth_running = True
+            try:
+                # Fetch all asset types for stratified sampling
+                stock_assets = await self.engine.event_bus.request("get_tradable_assets")
+                stock_pairs = [f"{sym}/{self.engine.base_currency}" for sym in stock_assets]
+                etf_symbols = await self.engine.event_bus.request("get_etf_symbols")
+                etf_pairs = [f"{sym}/{self.engine.base_currency}" for sym in etf_symbols]
+                btp_bonds = await self.engine.event_bus.request("get_btp_bonds")
+                btp_pairs = [f"{b['isin']}/{self.engine.base_currency}" for b in btp_bonds]
+
+                # Build strata: (pairs, label) for each asset type
+                strata = [
+                    (stock_pairs, "stocks"),
+                    (etf_pairs, "etfs"),
+                    (btp_pairs, "btps"),
+                ]
+                # Filter out empty strata
+                strata = [(pairs, label) for pairs, label in strata if pairs]
+
+                available_pairs = stock_pairs + etf_pairs + btp_pairs
+                if available_pairs:
+                    MAX_BREADTH_SAMPLE = 200
+                    if len(available_pairs) <= MAX_BREADTH_SAMPLE:
+                        # Universe is small enough — use everything
+                        breadth_pairs = available_pairs
+                    else:
+                        # Proportional stratified sampling across asset types
+                        total_universe = len(available_pairs)
+                        breadth_pairs = []
+                        for pairs, label in strata:
+                            # Proportional allocation: stratum_size / total * MAX_SAMPLE
+                            stratum_sample_size = max(1, round(len(pairs) / total_universe * MAX_BREADTH_SAMPLE))
+                            # Cap at the stratum's actual size
+                            stratum_sample_size = min(stratum_sample_size, len(pairs))
+                            sampled = random.sample(pairs, stratum_sample_size)
+                            breadth_pairs.extend(sampled)
+                            logger.debug(
+                                f"Breadth stratum '{label}': {len(pairs)} total, "
+                                f"sampled {len(sampled)}"
+                            )
+                        # If rounding caused us to exceed the cap, trim randomly
+                        if len(breadth_pairs) > MAX_BREADTH_SAMPLE:
+                            breadth_pairs = random.sample(breadth_pairs, MAX_BREADTH_SAMPLE)
+                    plain_breadth = [s.split("/")[0] for s in breadth_pairs]
+
+                    # Use cached quotes (Redis/DB only, no network calls)
+                    loop = asyncio.get_running_loop()
+                    raw_breadth = await loop.run_in_executor(self.engine._quote_executor, get_quotes_cached, plain_breadth)
+                    breadth_tickers = {pair: raw_breadth.get(pair.split("/")[0], {}) for pair in breadth_pairs}
+
+                    # Fall back to DB close prices for symbols without cached quotes
+                    missing_breadth = [
+                        s.split("/")[0] for s in breadth_pairs
+                        if breadth_tickers.get(s, {}).get('percentage') is None
+                    ]
+                    if missing_breadth:
+                        try:
+                            db_candles = await loop.run_in_executor(self.engine._db_executor, get_latest_close_prices, missing_breadth)
+                            for pair in breadth_pairs:
+                                base = pair.split("/")[0]
+                                if base in db_candles and db_candles[base].get("last", 0) > 0:
+                                    last = db_candles[base]["last"]
+                                    prev_close = db_candles[base].get("prev_close")
+                                    if prev_close and prev_close > 0:
+                                        pct = ((last - prev_close) / prev_close) * 100
+                                        breadth_tickers[pair] = {
+                                            "last": last,
+                                            "percentage": round(pct, 4),
+                                        }
+                        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
+                            logger.warning(f"DB close price fallback for breadth failed: {e}")
+
+                    positive_count = sum(
+                        1 for sym in breadth_pairs
+                        if (breadth_tickers.get(sym, {}).get('percentage') or 0) > 0
+                    )
+                    total_count = len(breadth_pairs)
+                    full_market_breadth = {
+                        "positive_pct": round(positive_count / total_count * 100, 1) if total_count > 0 else 0.0,
+                        "positive_count": positive_count,
+                        "total_count": total_count,
+                        "universe_size": len(available_pairs),
+                    }
+                    await asyncio.to_thread(
+                        self.engine.redis.setex, "market:breadth:full", 600, json.dumps(full_market_breadth)
+                    )
+                    logger.info(f"Full market breadth updated: {full_market_breadth} (sampled from {len(available_pairs)} symbols)")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Full market breadth computation network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Full market breadth computation data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("full_market_breadth", e)
+            finally:
+                self.engine._full_breadth_running = False
+            await asyncio.sleep(1800)  # every 30 minutes (medium/long-term)
+
+    async def _periodic_market_condition_check(self):
+        """Check for market conditions that warrant more frequent symbol re-evaluation.
+
+        Triggers re-evaluation when:
+        - Significant news sentiment shifts are detected on tracked symbols
+        - Unusually active market (many stocks with large daily price movements)
+        - Extreme indicator values or Bollinger Band squeeze breakouts on tracked symbols
+        """
+        await asyncio.sleep(120)  # initial delay
+        while self.engine._running:
+            try:
+                await self.engine.event_bus.request("check_market_conditions")
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Market condition check network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Market condition check data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("market_condition_check", e)
+            await asyncio.sleep(1800)  # check every 30 minutes (medium/long-term)
