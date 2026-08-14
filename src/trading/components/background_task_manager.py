@@ -6,7 +6,7 @@ import time
 from typing import Optional, Tuple, List
 
 from src.config.settings import settings
-from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news, get_latest_ohlcv_timestamps_batch, cleanup_old_position_pnl, cleanup_old_backtest_results, insert_dividend, cleanup_old_dividends
+from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news, get_latest_ohlcv_timestamps_batch, cleanup_old_position_pnl, cleanup_old_backtest_results, insert_dividend, cleanup_old_dividends, get_pending_dividends_for_symbol, mark_dividend_reinvested
 from src.exchanges.market_data import get_quotes_cached
 from src.exchanges.yahoo_finance import get_yahoo_dividends
 from src.utils.symbol_utils import is_btp_isin
@@ -843,3 +843,86 @@ class BackgroundTaskManager:
                 logger.error(f"Dividend fetch loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
                 await self.engine._record_unexpected_exception("dividend_fetch_loop", e)
             await self.engine._interruptible_sleep(86400)  # daily
+
+    async def _reinvest_dividends_loop(self):
+        """Periodically check for pending dividends and reinvest them if enabled."""
+        if not settings.REINVEST_DIVIDENDS:
+            logger.info("Dividend reinvestment is disabled (REINVEST_DIVIDENDS=False). Task sleeping.")
+            while self.engine._running:
+                await self.engine._interruptible_sleep(86400)
+            return
+
+        await self.engine._interruptible_sleep(3600)  # initial delay 1 hour
+        while self.engine._running:
+            try:
+                if not await self.engine._is_market_open():
+                    logger.info("Skipping dividend reinvestment: market is closed.")
+                else:
+                    for symbol, pos in list(self.engine.shared_state.positions.items()):
+                        if is_btp_isin(symbol.split("/")[0]):
+                            continue  # BTPs use coupons, not dividends
+
+                        pending_divs = await asyncio.to_thread(get_pending_dividends_for_symbol, symbol)
+                        if not pending_divs:
+                            continue
+
+                        # Get current price
+                        base = symbol.split("/")[0]
+                        quotes = await asyncio.to_thread(get_quotes_cached, [base])
+                        price = quotes.get(base, {}).get("last")
+                        if not price or price <= 0:
+                            logger.warning(f"Cannot reinvest dividends for {symbol}: no valid price.")
+                            continue
+
+                        for div in pending_divs:
+                            div_per_share = div["amount"]
+                            current_shares = pos.get("amount", 0.0)
+                            total_div_value = div_per_share * current_shares
+                            
+                            if total_div_value <= 0:
+                                # Mark as reinvested to skip it in the future if we no longer hold shares
+                                await asyncio.to_thread(mark_dividend_reinvested, div["id"])
+                                continue
+
+                            # Execute buy order for the reinvested amount (amount is in quote currency)
+                            order = await asyncio.to_thread(
+                                self.engine.trader.create_market_buy_order, symbol, total_div_value
+                            )
+
+                            if order.get("status") == "filled":
+                                filled_qty = order["amount"]
+                                filled_price = order["price"]
+                                
+                                # Update position
+                                async with self.engine.shared_state._positions_lock:
+                                    if symbol in self.engine.shared_state.positions:
+                                        pos = self.engine.shared_state.positions[symbol]
+                                        old_amount = pos.get("amount", 0.0)
+                                        old_cost = pos.get("cost_basis", 0.0)
+                                        new_amount = old_amount + filled_qty
+                                        new_cost = old_cost + (filled_qty * filled_price)
+                                        pos["amount"] = new_amount
+                                        pos["cost_basis"] = new_cost
+                                        self.engine.shared_state._state_dirty = True
+
+                                # Mark dividend as reinvested
+                                await asyncio.to_thread(mark_dividend_reinvested, div["id"])
+
+                                if self.engine.notifier:
+                                    await self.engine.notifier.send_notification(
+                                        f"💰 Dividend Reinvested: {total_div_value:.2f} {self.engine.base_currency} for {symbol} "
+                                        f"bought {filled_qty:.6f} shares @ {filled_price:.2f}",
+                                        summary={"action": "DIVIDEND_REINVEST", "symbol": symbol, "amount": total_div_value}
+                                    )
+                                logger.info(f"Reinvested dividend of {total_div_value:.2f} for {symbol}: bought {filled_qty:.6f} shares @ {filled_price:.2f}")
+
+                await self.engine._state_persistence.save_state()
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Dividend reinvestment loop network/IO error: {type(e).__name__}: {e}")
+            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+                logger.error(f"Dividend reinvestment loop data/logic error: {type(e).__name__}: {e}", exc_info=True)
+                await self.engine._record_unexpected_exception("reinvest_dividends_loop", e)
+
+            await self.engine._interruptible_sleep(3600)  # check every hour
