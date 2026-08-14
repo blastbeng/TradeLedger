@@ -812,6 +812,23 @@ class PostDecisionManager:
                 data.atr,
             )
 
+        # Block BUY signals when trading is paused (SELL/HOLD still allowed for risk management)
+        if validated.action == "BUY" and data.trading_paused:
+            logger.info(
+                f"Blocking BUY for {data.symbol}: trading is paused.",
+                extra={"event": "skip_buy_paused", "symbol": data.symbol}
+            )
+            if engine.notifier:
+                await engine.notifier.send_notification(
+                    f"⏸️ Skipping BUY for {data.display_symbol}: trading is paused.",
+                    summary={
+                        "symbol": data.symbol,
+                        "action": "SKIP",
+                        "reason": "Trading paused",
+                    }
+                )
+            return
+
         if validated.action != "HOLD":
             # --- Sector concentration limit check (only for BUY) ---
             if validated.action == "BUY":
