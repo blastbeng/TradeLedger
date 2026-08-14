@@ -378,7 +378,7 @@ class ReevalShortlistBuilder:
             self.shared_state.current_symbols = old_symbols
             engine.effective_max_symbols = max(len(old_symbols), 1)
 
-    def update_current_symbols(
+    async def update_current_symbols(
         self,
         deduped: List[Dict[str, str]],
         old_symbols: List[Dict[str, str]],
