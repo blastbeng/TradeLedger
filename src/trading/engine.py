@@ -923,41 +923,7 @@ class TradingEngine:
         return await self.event_bus.request("log_manual_trade", ticker, side, quantity, money_spent, fee)
 
     async def _monitor_entry_signals_loop(self):
-        """Periodically check tracked symbols for favourable entry conditions.
-        When a condition is met, force an immediate LLM evaluation."""
-        await asyncio.sleep(10)  # initial delay
-        while self._running:
-            try:
-                for entry in self.shared_state.current_symbols:
-                    symbol = entry["symbol"]
-                    tf = entry["timeframe"]
-                    # Skip entry signal monitoring for very long timeframes (>= 1 month)
-                    # where short-term crossovers are irrelevant.
-                    tf_seconds = timeframe_to_seconds(tf)
-                    # Avoid re‑triggering too often – enforce a cooldown of at least
-                    # the normal strategy interval.
-                    # Use a short, dedicated cooldown so the bot reacts quickly to new signals
-                    cooldown = settings.ENTRY_SIGNAL_COOLDOWN_SECONDS
-                    async with self.shared_state._eval_state_lock:
-                        last_forced = self.shared_state._force_eval_time.get(symbol, 0)
-                    if time.time() - last_forced < cooldown:
-                        continue
-
-                    if await self.event_bus.request("detect_entry_signal", symbol, tf):
-                        logger.info(f"Entry signal detected for {symbol}, forcing LLM evaluation.")
-                        async with self.shared_state._eval_state_lock:
-                            self.shared_state._force_eval[symbol] = True
-                            self.shared_state._force_eval_time[symbol] = time.time()
-                            # Clear last evaluation timestamp so the main loop picks it up immediately
-                            self.shared_state._last_strategy_eval.pop(symbol, None)
-            except asyncio.CancelledError:
-                raise
-            except (ConnectionError, TimeoutError, OSError) as e:
-                logger.warning(f"Entry signal monitor network/IO error: {type(e).__name__}: {e}")
-            except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
-                logger.error(f"Entry signal monitor data/logic error: {type(e).__name__}: {e}", exc_info=True)
-                await self._record_unexpected_exception("entry_signal_monitor", e)
-            await self._interruptible_sleep(settings.ENTRY_SIGNAL_CHECK_INTERVAL_SECONDS)
+        await self._background_task_manager._monitor_entry_signals_loop()
 
     async def _check_pending_entries(self):
         """Periodically check pending entry conditions and execute if met."""
