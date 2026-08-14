@@ -25,12 +25,12 @@ RUN git clone https://github.com/TA-Lib/ta-lib.git /tmp/ta-lib \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir pytest pytest-asyncio
 
 COPY src/ ./src/
 
 # Run tests to ensure code integrity before starting the bot
 COPY tests/ ./tests/
-RUN pip install --no-cache-dir pytest pytest-asyncio
 RUN python -m pytest tests/ -v
 RUN rm -rf ./tests && pip uninstall -y pytest pytest-asyncio
 
