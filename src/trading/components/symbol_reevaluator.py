@@ -280,7 +280,7 @@ class SymbolReevaluator:
                     trading_paused_bool=ctx.trading_paused_bool,
                 )
 
-                self.shortlist_builder.update_current_symbols(
+                await self.shortlist_builder.update_current_symbols(
                     deduped=deduped,
                     old_symbols=ctx.old_symbols,
                 )
