@@ -1321,6 +1321,15 @@ class Settings(BaseSettings):
             raise ValueError("STALENESS_NOTIFY_THRESHOLD_SECONDS must be positive")
         return v
 
+    # Cache TTLs and intervals
+    QUOTE_CACHE_TTL: int = 300
+    ISIN_NOT_FOUND_CACHE_TTL: int = 3600
+    DB_QUOTE_MAX_AGE_SECONDS: int = 86400
+    BTP_LIST_CACHE_TTL: int = 1800
+    ISIN_CACHE_TTL: int = 7 * 24 * 3600
+    BTP_DETAILS_CACHE_TTL: int = 86400
+    BTP_DETAILS_EMPTY_CACHE_TTL: int = 3600
+
     # Redis
     REDIS_HOST: str = "redis"
     REDIS_PORT: int = 6379
