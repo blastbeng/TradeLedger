@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import settings
@@ -25,6 +26,57 @@ from src.trading.components.reeval_post_selection_manager import ReevalPostSelec
 from src.trading.components.reeval_notifier import ReevalNotifier
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ReevalContext:
+    """Context object to hold state between re-evaluation phases."""
+    force: bool = False
+    is_user_forced: bool = False
+    is_market_condition_trigger: bool = False
+    is_rebalance: bool = False
+    now: float = 0.0
+    available_pairs: List[str] = field(default_factory=list)
+    btp_pairs: List[str] = field(default_factory=list)
+    etf_pairs: List[str] = field(default_factory=list)
+    old_symbols: List[Dict[str, str]] = field(default_factory=list)
+    last_key: str = ""
+    balance: float = 0.0
+    base_balance: float = 0.0
+    per_symbol_budget: float = 0.0
+    tickers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    sample_pairs: List[str] = field(default_factory=list)
+    stock_pairs: List[str] = field(default_factory=list)
+    btp_ytm: Any = None
+    sorted_by_vol: List[str] = field(default_factory=list)
+    news_sentiment: Dict = field(default_factory=dict)
+    sentiment_trend: Any = None
+    market_trend: Any = None
+    symbol_indicators: Dict = field(default_factory=dict)
+    symbol_trend_scores: Dict = field(default_factory=dict)
+    ohlcv_data: Dict[str, Dict[str, List[List]]] = field(default_factory=dict)
+    available_timeframes_by_symbol: Dict[str, List[str]] = field(default_factory=dict)
+    market_limits: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    min_viable_amount: float = 0.0
+    perf: Any = None
+    trade_pattern_analysis: Any = None
+    correlation_matrix: Any = None
+    composite_scores: Dict[str, float] = field(default_factory=dict)
+    shortlist: List[str] = field(default_factory=list)
+    incremental_offset: int = 0
+    incremental_batch_size: Optional[int] = None
+    sorted_by_composite: List[str] = field(default_factory=list)
+    response: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_model: Optional[str] = None
+    effective_temp: Optional[float] = None
+    trading_paused_bool: Optional[bool] = None
+    model_type: str = "actuator"
+    parsed: Dict[str, Any] = field(default_factory=dict)
+    pause_trading: Optional[bool] = None
+    pause_reason: str = ""
+    pause_duration: Optional[Any] = None
+    deduped: List[Dict[str, str]] = field(default_factory=list)
 
 
 class SymbolReevaluator:
@@ -53,17 +105,14 @@ class SymbolReevaluator:
         self._step += 1
         logger.info(f"Re-evaluation step {self._step}/{self._total_steps}: {message}", *args)
 
-    async def check_cooldown_and_reset(
-        self, force: bool
-    ) -> Optional[Tuple[bool, bool, float, bool]]:
+    async def check_cooldown_and_reset(self, ctx: ReevalContext) -> bool:
         """Check re-evaluation cooldown and reset per-cycle spending.
 
         Resets _cycle_spent from queued buy orders, checks the triggered
         re-evaluation cooldown for market-condition triggers, clears
         pre-market and user-forced flags, and checks the last eval interval.
 
-        Returns None if re-evaluation should be skipped.
-        Otherwise returns (is_user_forced, is_market_condition_trigger, now).
+        Returns False if re-evaluation should be skipped.
         """
         engine = self.engine
 
@@ -83,18 +132,18 @@ class SymbolReevaluator:
         # Forced re-evaluations (explicit user or critical condition requests) always bypass
         # the cooldown since they are intentionally requested.
         # Capture whether this is a market-condition trigger before clearing flags
-        is_market_condition_trigger = force and not engine._pre_market_reeval and not engine._user_forced_reeval and not engine._rebalance_reeval
+        ctx.is_market_condition_trigger = ctx.force and not engine._pre_market_reeval and not engine._user_forced_reeval and not engine._rebalance_reeval
 
-        if is_market_condition_trigger:
+        if ctx.is_market_condition_trigger:
             last_triggered = await asyncio.to_thread(engine.redis.get, "trading:last_triggered_reeval")
             if last_triggered:
                 elapsed = time.time() - float(last_triggered)
                 if elapsed < settings.TRIGGERED_REEVALUATION_COOLDOWN:
                     logger.info(f"Forced re-evaluation skipped: triggered cooldown active ({settings.TRIGGERED_REEVALUATION_COOLDOWN - elapsed:.0f}s remaining)")
-                    return None
+                    return False
 
-        is_user_forced = engine._user_forced_reeval
-        is_rebalance = engine._rebalance_reeval
+        ctx.is_user_forced = engine._user_forced_reeval
+        ctx.is_rebalance = engine._rebalance_reeval
         # Clear the pre-market flag after reading it
         engine._pre_market_reeval = False
         # Clear the user-forced flag after reading it
@@ -104,38 +153,17 @@ class SymbolReevaluator:
         # Only re-evaluate every SYMBOL_REVALUATION_INTERVAL
         last_key = "trading:last_symbol_eval"
         last_eval = await asyncio.to_thread(engine.redis.get, last_key)
-        now = time.time()
-        if last_eval and (now - float(last_eval)) < engine._symbol_reevaluation_interval and self.shared_state.current_symbols and not force:
+        ctx.now = time.time()
+        if last_eval and (ctx.now - float(last_eval)) < engine._symbol_reevaluation_interval and self.shared_state.current_symbols and not ctx.force:
             logger.info("Skipping symbol re-evaluation: last eval was recent and symbols are already loaded.")
-            return None
+            return False
 
-        return (is_user_forced, is_market_condition_trigger, now, is_rebalance)
+        return True
 
-    async def process_llm_response(
-        self,
-        response: Optional[str],
-        llm_provider: Optional[str],
-        llm_model: Optional[str],
-        effective_temp: float,
-        sample_pairs: List[str],
-        ohlcv_data: Dict[str, Dict[str, List[List]]],
-        sorted_by_composite: List[str],
-        market_limits: Dict[str, Dict[str, float]],
-        base_balance: float,
-        old_symbols: List[Dict[str, str]],
-        trading_paused_bool: bool,
-        etf_pairs: List[str],
-        btp_pairs: List[str],
-        is_rebalance: bool,
-        tickers: Dict[str, Dict[str, Any]],
-        is_user_forced: bool = False,
-        model_type: str = "actuator",
-    ) -> Tuple[Dict[str, Any], Optional[bool], str, Optional[Any], List[Dict[str, str]], Optional[str], Optional[str]]:
-        """Process the LLM response, parse symbols, and handle pause/resume logic.
-
-        Returns (parsed, pause_trading, pause_reason, pause_duration, deduped, llm_provider, llm_model).
-        """
+    async def process_llm_response(self, ctx: ReevalContext) -> None:
+        """Process the LLM response, parse symbols, and handle pause/resume logic."""
         engine = self.engine
+        response = ctx.response
 
         logger.info("Re-evaluation: LLM response received (%d chars), parsing...", len(response) if response else 0)
         if response:
@@ -156,20 +184,19 @@ class SymbolReevaluator:
             if engine.notifier:
                 await engine.notifier.send_notification(
                     "⚠️ LLM symbol selection failed after all retries. " +
-                    ("Keeping previously tracked symbols." if old_symbols else "Will attempt fallback selection."),
+                    ("Keeping previously tracked symbols." if ctx.old_symbols else "Will attempt fallback selection."),
                     summary={
                         "action": "ERROR",
                         "reason": "LLM symbol selection failed after all retries",
-                        "model_type": model_type,
+                        "model_type": ctx.model_type,
                     }
                 )
 
         # Initialize variables that may be used later even if LLM fails
-        parsed = {}
-        pause_trading = None
-        pause_reason = ""
-        pause_duration = None
-        new_symbols: List[Dict[str, str]] = []
+        ctx.parsed = {}
+        ctx.pause_trading = None
+        ctx.pause_reason = ""
+        ctx.pause_duration = None
         deduped: List[Dict[str, str]] = []
 
         # Retry JSON parsing if the first attempt fails
@@ -177,46 +204,47 @@ class SymbolReevaluator:
             try:
                 json.loads(response)  # validate
             except json.JSONDecodeError:
-                response, llm_provider, llm_model = await self.response_processor.retry_json_parsing(
+                ctx.response, ctx.llm_provider, ctx.llm_model = await self.response_processor.retry_json_parsing(
                     response=response,
-                    effective_temp=effective_temp,
-                    is_user_forced=is_user_forced,
+                    effective_temp=ctx.effective_temp,
+                    is_user_forced=ctx.is_user_forced,
                 )
+                response = ctx.response
 
         if response is not None:
             try:
-                parsed = json.loads(response)
-                if not isinstance(parsed, dict):
+                ctx.parsed = json.loads(response)
+                if not isinstance(ctx.parsed, dict):
                     logger.warning(
                         "LLM symbol selection response is not a JSON object (got %s). "
                         "Treating as empty dict.",
-                        type(parsed).__name__
+                        type(ctx.parsed).__name__
                     )
-                    parsed = {}
-                llm_max_stocks = parsed.get("max_stocks")
+                    ctx.parsed = {}
+                llm_max_stocks = ctx.parsed.get("max_stocks")
                 deduped = self.response_processor.parse_and_validate_symbols(
                     response=response,
-                    sample_pairs=sample_pairs,
-                    ohlcv_data=ohlcv_data,
+                    sample_pairs=ctx.sample_pairs,
+                    ohlcv_data=ctx.ohlcv_data,
                 )
                 if deduped is None:
                     deduped = []
 
                 # --- Extract pause_trading early so MIN_SYMBOLS enforcement can respect it ---
-                pause_trading = parsed.get("pause_trading")
-                if isinstance(pause_trading, str):
-                    low = pause_trading.strip().lower()
+                ctx.pause_trading = ctx.parsed.get("pause_trading")
+                if isinstance(ctx.pause_trading, str):
+                    low = ctx.pause_trading.strip().lower()
                     if low in ("true", "1"):
-                        pause_trading = True
+                        ctx.pause_trading = True
                     elif low in ("false", "0"):
-                        pause_trading = False
+                        ctx.pause_trading = False
                     else:
-                        pause_trading = None
+                        ctx.pause_trading = None
 
                 # Use the LLM's chosen number of symbols to update effective_max_symbols
                 if llm_max_stocks is not None and isinstance(llm_max_stocks, int) and 0 <= llm_max_stocks <= engine.max_symbols:
                     # Don't allow 0 unless the LLM explicitly paused trading
-                    if llm_max_stocks == 0 and not pause_trading:
+                    if llm_max_stocks == 0 and not ctx.pause_trading:
                         llm_max_stocks = max(1, settings.MIN_SYMBOLS)
                         logger.info(f"LLM set max_stocks=0 without pausing; clamping to {llm_max_stocks}")
                     engine.effective_max_symbols = llm_max_stocks
@@ -226,102 +254,78 @@ class SymbolReevaluator:
 
                 self.shortlist_builder.enforce_min_symbols(
                     deduped=deduped,
-                    pause_trading=pause_trading,
-                    sorted_by_composite=sorted_by_composite,
-                    market_limits=market_limits,
-                    base_balance=base_balance,
-                    ohlcv_data=ohlcv_data,
-                    tickers=tickers,
+                    pause_trading=ctx.pause_trading,
+                    sorted_by_composite=ctx.sorted_by_composite,
+                    market_limits=ctx.market_limits,
+                    base_balance=ctx.base_balance,
+                    ohlcv_data=ctx.ohlcv_data,
+                    tickers=ctx.tickers,
                 )
 
-                if is_rebalance:
+                if ctx.is_rebalance:
                     self.shortlist_builder.enforce_asset_class_allocation(
                         deduped=deduped,
-                        etf_pairs=etf_pairs,
-                        btp_pairs=btp_pairs,
-                        ohlcv_data=ohlcv_data,
-                        base_balance=base_balance,
-                        market_limits=market_limits,
-                        tickers=tickers,
+                        etf_pairs=ctx.etf_pairs,
+                        btp_pairs=ctx.btp_pairs,
+                        ohlcv_data=ctx.ohlcv_data,
+                        base_balance=ctx.base_balance,
+                        market_limits=ctx.market_limits,
+                        tickers=ctx.tickers,
                     )
 
                 # --- Store LLM-decided parameters to Redis ---
-                await self.config_manager.store_llm_decided_parameters(parsed)
+                await self.config_manager.store_llm_decided_parameters(ctx.parsed)
 
-                pause_trading, pause_reason, pause_duration = await self.pause_resume_manager.handle_pause_resume_and_risk_multiplier(
-                    parsed=parsed,
-                    pause_trading=pause_trading,
-                    trading_paused_bool=trading_paused_bool,
+                ctx.pause_trading, ctx.pause_reason, ctx.pause_duration = await self.pause_resume_manager.handle_pause_resume_and_risk_multiplier(
+                    parsed=ctx.parsed,
+                    pause_trading=ctx.pause_trading,
+                    trading_paused_bool=ctx.trading_paused_bool,
                 )
 
                 self.shortlist_builder.update_current_symbols(
                     deduped=deduped,
-                    old_symbols=old_symbols,
+                    old_symbols=ctx.old_symbols,
                 )
 
             except json.JSONDecodeError:
                 logger.error("Failed to parse symbol selection response.")
 
-        return parsed, pause_trading, pause_reason, pause_duration, deduped, llm_provider, llm_model
+        ctx.deduped = deduped
 
-    async def finalize_reevaluation(
-        self,
-        sample_pairs: List[str],
-        composite_scores: Dict[str, float],
-        tickers: Dict[str, Dict[str, Any]],
-        market_limits: Dict[str, Dict[str, float]],
-        base_balance: float,
-        old_symbols: List[Dict[str, str]],
-        deduped: List[Dict[str, str]],
-        pause_trading: Optional[bool],
-        pause_reason: str,
-        pause_duration: Optional[Any],
-        trading_paused_bool: bool,
-        force: bool,
-        is_user_forced: bool,
-        parsed: Dict[str, Any],
-        llm_provider: Optional[str],
-        llm_model: Optional[str],
-        is_market_condition_trigger: bool,
-        per_symbol_budget: float,
-        last_key: str,
-        now: float,
-        ohlcv_data: Dict[str, Dict[str, List[List]]],
-        model_type: str = "actuator",
-    ) -> None:
+    async def finalize_reevaluation(self, ctx: ReevalContext) -> None:
         """Apply fallback selection, cleanup, send notifications, and finalize state."""
         engine = self.engine
 
         await self.shortlist_builder.apply_fallback_selection(
-            sample_pairs=sample_pairs,
-            composite_scores=composite_scores,
-            tickers=tickers,
-            market_limits=market_limits,
-            base_balance=base_balance,
-            old_symbols=old_symbols,
-            pause_trading=pause_trading,
-            ohlcv_data=ohlcv_data,
+            sample_pairs=ctx.sample_pairs,
+            composite_scores=ctx.composite_scores,
+            tickers=ctx.tickers,
+            market_limits=ctx.market_limits,
+            base_balance=ctx.base_balance,
+            old_symbols=ctx.old_symbols,
+            pause_trading=ctx.pause_trading,
+            ohlcv_data=ctx.ohlcv_data,
         )
 
         await self.post_selection_manager.post_selection_cleanup_and_backfill(
-            old_symbols=old_symbols,
-            deduped=deduped,
-            force=force,
+            old_symbols=ctx.old_symbols,
+            deduped=ctx.deduped,
+            force=ctx.force,
         )
 
         await self.notifier.build_and_send_reeval_notification(
-            base_balance=base_balance,
-            per_symbol_budget=per_symbol_budget,
-            pause_trading=pause_trading,
-            pause_reason=pause_reason,
-            pause_duration=pause_duration,
-            trading_paused_bool=trading_paused_bool,
-            force=force,
-            is_user_forced=is_user_forced,
-            parsed=parsed,
-            llm_provider=llm_provider,
-            llm_model=llm_model,
-            model_type=model_type,
+            base_balance=ctx.base_balance,
+            per_symbol_budget=ctx.per_symbol_budget,
+            pause_trading=ctx.pause_trading,
+            pause_reason=ctx.pause_reason,
+            pause_duration=ctx.pause_duration,
+            trading_paused_bool=ctx.trading_paused_bool,
+            force=ctx.force,
+            is_user_forced=ctx.is_user_forced,
+            parsed=ctx.parsed,
+            llm_provider=ctx.llm_provider,
+            llm_model=ctx.llm_model,
+            model_type=ctx.model_type,
         )
 
         # If no symbols were selected, shorten the re‑evaluation interval to retry sooner.
@@ -335,7 +339,7 @@ class SymbolReevaluator:
         # re-evaluation to prevent the market condition monitor from firing again too soon.
         # This must be set at the END, not at the trigger point, otherwise the re-evaluation
         # itself would see the cooldown as active and skip itself.
-        if is_market_condition_trigger:
+        if ctx.is_market_condition_trigger:
             await asyncio.to_thread(engine.redis.set, "trading:last_triggered_reeval", str(time.time()))
             await asyncio.to_thread(engine.redis.expire, "trading:last_triggered_reeval", 7200)
 
@@ -344,290 +348,171 @@ class SymbolReevaluator:
 
         self.shared_state._state_dirty = True
         logger.info("Re-evaluation complete: %d symbols selected.", len(self.shared_state.current_symbols))
-        await asyncio.to_thread(engine.redis.set, last_key, now)
+        await asyncio.to_thread(engine.redis.set, ctx.last_key, ctx.now)
 
-    async def _fetch_candidate_data(
-        self, force: bool
-    ) -> Optional[Tuple[bool, bool, float, bool, List[str], List[str], List[str], List[Dict[str, str]], str, float, float, float, Dict[str, Dict[str, Any]], List[str], List[str], Dict[str, float]]]:
+    async def _fetch_candidate_data(self, ctx: ReevalContext) -> bool:
         """Phase 1: Check cooldown, fetch candidate assets, quotes, and sort."""
-        _cooldown_result = await self.check_cooldown_and_reset(force)
-        if _cooldown_result is None:
-            return None
-        is_user_forced, is_market_condition_trigger, now, is_rebalance = _cooldown_result
-        _assets_result = await self.data_fetcher.fetch_and_filter_candidate_assets(now)
+        if not await self.check_cooldown_and_reset(ctx):
+            return False
+        _assets_result = await self.data_fetcher.fetch_and_filter_candidate_assets(ctx.now)
         if _assets_result is None:
-            return None
-        available_pairs, btp_pairs, etf_pairs, old_symbols, last_key = _assets_result
+            return False
+        ctx.available_pairs, ctx.btp_pairs, ctx.etf_pairs, ctx.old_symbols, ctx.last_key = _assets_result
         _quotes_result = await self.data_fetcher.fetch_quotes_and_sort(
-            available_pairs, btp_pairs, etf_pairs, now, last_key
+            ctx.available_pairs, ctx.btp_pairs, ctx.etf_pairs, ctx.now, ctx.last_key
         )
         if _quotes_result is None:
-            return None
-        balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs, btp_ytm = _quotes_result
-        return (is_user_forced, is_market_condition_trigger, now, is_rebalance,
-                available_pairs, btp_pairs, etf_pairs, old_symbols, last_key,
-                balance, base_balance, per_symbol_budget, tickers, sample_pairs, stock_pairs, btp_ytm)
+            return False
+        ctx.balance, ctx.base_balance, ctx.per_symbol_budget, ctx.tickers, ctx.sample_pairs, ctx.stock_pairs, ctx.btp_ytm = _quotes_result
+        return True
 
-    async def _fetch_market_data(
-        self,
-        sample_pairs: List[str],
-        tickers: Dict[str, Dict[str, Any]],
-        sorted_by_vol: List[str],
-    ) -> Tuple[Dict, Any, Any, Dict, Dict, Dict[str, Dict[str, List[List]]], Dict[str, List[str]], Dict[str, Dict[str, float]]]:
+    async def _fetch_market_data(self, ctx: ReevalContext) -> None:
         """Phase 2: Fetch news sentiment, OHLCV, indicators, and market limits."""
-        self._log_step("Batch-fetching news sentiment for %d symbols...", len(sample_pairs))
-        news_sentiment, sentiment_trend, market_trend = await self.data_fetcher.fetch_news_sentiment_and_trends(
-            sample_pairs, tickers
+        self._log_step("Batch-fetching news sentiment for %d symbols...", len(ctx.sample_pairs))
+        ctx.news_sentiment, ctx.sentiment_trend, ctx.market_trend = await self.data_fetcher.fetch_news_sentiment_and_trends(
+            ctx.sample_pairs, ctx.tickers
         )
-        self._log_step("Fetching OHLCV from DB for %d symbols...", len(sorted_by_vol))
-        ohlcv_data, available_timeframes_by_symbol = await self.data_fetcher.fetch_ohlcv_from_db(sorted_by_vol)
-        self._log_step("Batch-fetching indicators for %d symbols...", len(sorted_by_vol))
-        symbol_indicators, symbol_trend_scores = await self.data_fetcher.fetch_indicators_and_trend_scores(
-            sorted_by_vol, sample_pairs
+        self._log_step("Fetching OHLCV from DB for %d symbols...", len(ctx.sorted_by_vol))
+        ctx.ohlcv_data, ctx.available_timeframes_by_symbol = await self.data_fetcher.fetch_ohlcv_from_db(ctx.sorted_by_vol)
+        self._log_step("Batch-fetching indicators for %d symbols...", len(ctx.sorted_by_vol))
+        ctx.symbol_indicators, ctx.symbol_trend_scores = await self.data_fetcher.fetch_indicators_and_trend_scores(
+            ctx.sorted_by_vol, ctx.sample_pairs
         )
-        market_limits = await self.data_fetcher.compute_market_limits(sample_pairs, tickers)
-        return news_sentiment, sentiment_trend, market_trend, symbol_indicators, symbol_trend_scores, ohlcv_data, available_timeframes_by_symbol, market_limits
+        ctx.market_limits = await self.data_fetcher.compute_market_limits(ctx.sample_pairs, ctx.tickers)
 
-    async def _compute_analytics_and_shortlist(
-        self,
-        sample_pairs: List[str],
-        ohlcv_data: Dict[str, Dict[str, List[List]]],
-        sorted_by_vol: List[str],
-        symbol_trend_scores: Dict,
-        news_sentiment: Dict,
-        trade_pattern_analysis: Any,
-        etf_pairs: List[str],
-        btp_pairs: List[str],
-    ) -> Tuple[Any, Dict[str, float], List[str], int, Optional[int]]:
+    async def _compute_analytics_and_shortlist(self, ctx: ReevalContext) -> None:
         """Phase 3: Compute correlation, performance, incremental offset, and shortlist."""
         self._log_step("Computing correlation matrix and performance metrics...")
-        correlation_matrix = await self.data_fetcher.get_or_compute_correlation_matrix(
-            ohlcv_data, sorted_by_vol
+        ctx.correlation_matrix = await self.data_fetcher.get_or_compute_correlation_matrix(
+            ctx.ohlcv_data, ctx.sorted_by_vol
         )
-        incremental_offset = 0
-        incremental_batch_size = None
+        ctx.incremental_offset = 0
+        ctx.incremental_batch_size = None
         if settings.INCREMENTAL_REEVALUATION_ENABLED:
-            incremental_batch_size = settings.INCREMENTAL_REEVALUATION_BATCH_SIZE
+            ctx.incremental_batch_size = settings.INCREMENTAL_REEVALUATION_BATCH_SIZE
             offset_raw = await asyncio.to_thread(self.engine.redis.get, "reeval:incremental_offset")
             if offset_raw:
                 try:
-                    incremental_offset = int(offset_raw)
+                    ctx.incremental_offset = int(offset_raw)
                 except (ValueError, TypeError):
-                    incremental_offset = 0
-        composite_scores, shortlist = self.shortlist_builder.compute_composite_scores_and_shortlist(
-            sample_pairs, symbol_trend_scores, news_sentiment, trade_pattern_analysis, etf_pairs, btp_pairs,
-            incremental_offset=incremental_offset,
-            incremental_batch_size=incremental_batch_size,
+                    ctx.incremental_offset = 0
+        ctx.composite_scores, ctx.shortlist = self.shortlist_builder.compute_composite_scores_and_shortlist(
+            ctx.sample_pairs, ctx.symbol_trend_scores, ctx.news_sentiment, ctx.trade_pattern_analysis, ctx.etf_pairs, ctx.btp_pairs,
+            incremental_offset=ctx.incremental_offset,
+            incremental_batch_size=ctx.incremental_batch_size,
         )
-        return correlation_matrix, composite_scores, shortlist, incremental_offset, incremental_batch_size
 
-    async def _run_llm_evaluation(
-        self,
-        sample_pairs: List[str],
-        tickers: Dict[str, Dict[str, Any]],
-        ohlcv_data: Dict[str, Dict[str, List[List]]],
-        symbol_indicators: Dict,
-        market_limits: Dict[str, Dict[str, float]],
-        symbol_trend_scores: Dict,
-        sentiment_trend: Any,
-        correlation_matrix: Any,
-        perf: Any,
-        market_trend: Any,
-        trade_pattern_analysis: Any,
-        min_viable_amount: float,
-        base_balance: float,
-        per_symbol_budget: float,
-        btp_ytm: Any,
-        news_sentiment: Dict,
-        is_user_forced: bool,
-        is_rebalance: bool,
-        now: float,
-        available_timeframes_by_symbol: Dict[str, List[str]],
-    ) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[float], Optional[bool], str]:
+    async def _run_llm_evaluation(self, ctx: ReevalContext) -> None:
         """Phase 4: Fetch shortlist context, run chunked LLM eval, and final selection."""
         symbol_events, session_info, market_breadth, full_market_breadth, vix = await self.data_fetcher.fetch_shortlist_context(
-            sample_pairs, tickers, market_trend
+            ctx.sample_pairs, ctx.tickers, ctx.market_trend
         )
-        trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, effective_temp, reasoning_effort, model_type = await self.llm_runner.prepare_reeval_prompt_context(
-            now=now,
-            sample_pairs=sample_pairs,
-            ohlcv_data=ohlcv_data,
-            sentiment_trend=sentiment_trend,
+        ctx.trading_paused_bool, symbol_tenure, symbol_max_tenure, auto_resume_note, ohlcv_summary, ctx.effective_temp, reasoning_effort, ctx.model_type = await self.llm_runner.prepare_reeval_prompt_context(
+            now=ctx.now,
+            sample_pairs=ctx.sample_pairs,
+            ohlcv_data=ctx.ohlcv_data,
+            sentiment_trend=ctx.sentiment_trend,
             market_breadth=market_breadth,
-            is_rebalance=is_rebalance,
+            is_rebalance=ctx.is_rebalance,
         )
         chunk_results = await self.llm_runner.evaluate_llm_chunks(
-            sample_pairs=sample_pairs,
-            tickers=tickers,
+            sample_pairs=ctx.sample_pairs,
+            tickers=ctx.tickers,
             ohlcv_summary=ohlcv_summary,
-            symbol_indicators=symbol_indicators,
-            market_limits=market_limits,
+            symbol_indicators=ctx.symbol_indicators,
+            market_limits=ctx.market_limits,
             symbol_events=symbol_events,
-            symbol_trend_scores=symbol_trend_scores,
-            sentiment_trend=sentiment_trend,
-            correlation_matrix=correlation_matrix,
-            ohlcv_data=ohlcv_data,
-            perf=perf,
-            market_trend=market_trend,
+            symbol_trend_scores=ctx.symbol_trend_scores,
+            sentiment_trend=ctx.sentiment_trend,
+            correlation_matrix=ctx.correlation_matrix,
+            ohlcv_data=ctx.ohlcv_data,
+            perf=ctx.perf,
+            market_trend=ctx.market_trend,
             session_info=session_info,
             market_breadth=market_breadth,
-            trading_paused_bool=trading_paused_bool,
+            trading_paused_bool=ctx.trading_paused_bool,
             symbol_tenure=symbol_tenure,
             symbol_max_tenure=symbol_max_tenure,
             vix=vix,
-            trade_pattern_analysis=trade_pattern_analysis,
-            min_viable_amount=min_viable_amount,
-            base_balance=base_balance,
-            per_symbol_budget=per_symbol_budget,
+            trade_pattern_analysis=ctx.trade_pattern_analysis,
+            min_viable_amount=ctx.min_viable_amount,
+            base_balance=ctx.base_balance,
+            per_symbol_budget=ctx.per_symbol_budget,
             auto_resume_note=auto_resume_note,
-            effective_temp=effective_temp,
-            btp_ytm=btp_ytm,
-            news_sentiment=news_sentiment,
-            is_user_forced=is_user_forced,
+            effective_temp=ctx.effective_temp,
+            btp_ytm=ctx.btp_ytm,
+            news_sentiment=ctx.news_sentiment,
+            is_user_forced=ctx.is_user_forced,
             reasoning_effort=reasoning_effort,
-            model_type=model_type,
+            model_type=ctx.model_type,
         )
-        response, llm_provider, llm_model = await self.llm_runner.run_final_selection_llm_call(
+        ctx.response, ctx.llm_provider, ctx.llm_model = await self.llm_runner.run_final_selection_llm_call(
             chunk_results=chunk_results,
-            sample_pairs=sample_pairs,
-            base_balance=base_balance,
-            per_symbol_budget=per_symbol_budget,
-            perf=perf,
-            market_trend=market_trend,
+            sample_pairs=ctx.sample_pairs,
+            base_balance=ctx.base_balance,
+            per_symbol_budget=ctx.per_symbol_budget,
+            perf=ctx.perf,
+            market_trend=ctx.market_trend,
             session_info=session_info,
             market_breadth=market_breadth,
             full_market_breadth=full_market_breadth,
-            trading_paused_bool=trading_paused_bool,
+            trading_paused_bool=ctx.trading_paused_bool,
             symbol_tenure=symbol_tenure,
             symbol_max_tenure=symbol_max_tenure,
-            trade_pattern_analysis=trade_pattern_analysis,
+            trade_pattern_analysis=ctx.trade_pattern_analysis,
             vix=vix,
-            min_viable_amount=min_viable_amount,
-            market_limits=market_limits,
-            available_timeframes_by_symbol=available_timeframes_by_symbol,
+            min_viable_amount=ctx.min_viable_amount,
+            market_limits=ctx.market_limits,
+            available_timeframes_by_symbol=ctx.available_timeframes_by_symbol,
             auto_resume_note=auto_resume_note,
-            effective_temp=effective_temp,
-            news_sentiment=news_sentiment,
-            is_user_forced=is_user_forced,
+            effective_temp=ctx.effective_temp,
+            news_sentiment=ctx.news_sentiment,
+            is_user_forced=ctx.is_user_forced,
             reasoning_effort=reasoning_effort,
-            model_type=model_type,
+            model_type=ctx.model_type,
         )
-        return response, llm_provider, llm_model, effective_temp, trading_paused_bool, model_type
 
     async def reevaluate_symbols_impl(self, force: bool = False):
         """Main re-evaluation orchestration: delegates to phase methods."""
         self._step = 0
         self._total_steps = 12
         engine = self.engine
+        ctx = ReevalContext(force=force)
         try:
             # Phase 1: Cooldown, assets, quotes
-            data = await self._fetch_candidate_data(force)
-            if data is None:
+            if not await self._fetch_candidate_data(ctx):
                 return
-            is_user_forced, is_market_condition_trigger, now, is_rebalance, \
-                available_pairs, btp_pairs, etf_pairs, old_symbols, last_key, \
-                balance, base_balance, per_symbol_budget, tickers, sample_pairs, \
-                stock_pairs, btp_ytm = data
 
-            sorted_by_vol = sample_pairs
+            ctx.sorted_by_vol = ctx.sample_pairs
 
             # Phase 2: News, OHLCV, indicators, market limits
-            news_sentiment, sentiment_trend, market_trend, symbol_indicators, \
-                symbol_trend_scores, ohlcv_data, available_timeframes_by_symbol, \
-                market_limits = await self._fetch_market_data(sample_pairs, tickers, sorted_by_vol)
+            await self._fetch_market_data(ctx)
 
             # Recompute effective_max_symbols and per_symbol_budget
             engine.effective_max_symbols = engine.max_symbols
-            per_symbol_budget = base_balance / engine.effective_max_symbols
-            min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
+            ctx.per_symbol_budget = ctx.base_balance / engine.effective_max_symbols
+            ctx.min_viable_amount = settings.MIN_VIABLE_TRADE_AMOUNT
 
-            perf = await engine.event_bus.request("compute_performance_metrics")
-            trade_pattern_analysis = await engine.event_bus.request("compute_trade_pattern_analysis")
+            ctx.perf = await engine.event_bus.request("compute_performance_metrics")
+            ctx.trade_pattern_analysis = await engine.event_bus.request("compute_trade_pattern_analysis")
 
             # Phase 3: Correlation, composite scores, shortlist
-            correlation_matrix, composite_scores, shortlist, incremental_offset, \
-                incremental_batch_size = await self._compute_analytics_and_shortlist(
-                    sample_pairs, ohlcv_data, sorted_by_vol, symbol_trend_scores,
-                    news_sentiment, trade_pattern_analysis, etf_pairs, btp_pairs
-                )
-            sorted_by_composite = sorted(sample_pairs, key=lambda s: composite_scores.get(s, 0), reverse=True)
-            sample_pairs = shortlist
-            logger.info(f"LLM candidate list: {len(sample_pairs)} symbols (will be evaluated in chunks)")
+            await self._compute_analytics_and_shortlist(ctx)
+            ctx.sorted_by_composite = sorted(ctx.sample_pairs, key=lambda s: ctx.composite_scores.get(s, 0), reverse=True)
+            ctx.sample_pairs = ctx.shortlist
+            logger.info(f"LLM candidate list: {len(ctx.sample_pairs)} symbols (will be evaluated in chunks)")
 
             if settings.INCREMENTAL_REEVALUATION_ENABLED:
-                new_offset = incremental_offset + settings.INCREMENTAL_REEVALUATION_BATCH_SIZE
+                new_offset = ctx.incremental_offset + settings.INCREMENTAL_REEVALUATION_BATCH_SIZE
                 await asyncio.to_thread(engine.redis.set, "reeval:incremental_offset", str(new_offset))
 
             # Phase 4: LLM evaluation
-            response, llm_provider, llm_model, effective_temp, trading_paused_bool, model_type = await self._run_llm_evaluation(
-                sample_pairs=sample_pairs,
-                tickers=tickers,
-                ohlcv_data=ohlcv_data,
-                symbol_indicators=symbol_indicators,
-                market_limits=market_limits,
-                symbol_trend_scores=symbol_trend_scores,
-                sentiment_trend=sentiment_trend,
-                correlation_matrix=correlation_matrix,
-                perf=perf,
-                market_trend=market_trend,
-                trade_pattern_analysis=trade_pattern_analysis,
-                min_viable_amount=min_viable_amount,
-                base_balance=base_balance,
-                per_symbol_budget=per_symbol_budget,
-                btp_ytm=btp_ytm,
-                news_sentiment=news_sentiment,
-                is_user_forced=is_user_forced,
-                is_rebalance=is_rebalance,
-                now=now,
-                available_timeframes_by_symbol=available_timeframes_by_symbol,
-            )
+            await self._run_llm_evaluation(ctx)
 
             # Phase 5: Process response and finalize
-            parsed, pause_trading, pause_reason, pause_duration, deduped, \
-                llm_provider, llm_model = await self.process_llm_response(
-                    response=response,
-                    llm_provider=llm_provider,
-                    llm_model=llm_model,
-                    effective_temp=effective_temp,
-                    sample_pairs=sample_pairs,
-                    ohlcv_data=ohlcv_data,
-                    sorted_by_composite=sorted_by_composite,
-                    market_limits=market_limits,
-                    base_balance=base_balance,
-                    old_symbols=old_symbols,
-                    trading_paused_bool=trading_paused_bool,
-                    etf_pairs=etf_pairs,
-                    btp_pairs=btp_pairs,
-                    is_rebalance=is_rebalance,
-                    tickers=tickers,
-                    is_user_forced=is_user_forced,
-                    model_type=model_type,
-                )
+            await self.process_llm_response(ctx)
 
-            await self.finalize_reevaluation(
-                sample_pairs=sample_pairs,
-                composite_scores=composite_scores,
-                tickers=tickers,
-                market_limits=market_limits,
-                base_balance=base_balance,
-                old_symbols=old_symbols,
-                deduped=deduped,
-                pause_trading=pause_trading,
-                pause_reason=pause_reason,
-                pause_duration=pause_duration,
-                trading_paused_bool=trading_paused_bool,
-                force=force,
-                is_user_forced=is_user_forced,
-                parsed=parsed,
-                llm_provider=llm_provider,
-                llm_model=llm_model,
-                is_market_condition_trigger=is_market_condition_trigger,
-                per_symbol_budget=per_symbol_budget,
-                last_key=last_key,
-                now=now,
-                ohlcv_data=ohlcv_data,
-                model_type=model_type,
-            )
+            await self.finalize_reevaluation(ctx)
         except Exception as e:
             logger.error(f"Re-evaluation failed: {type(e).__name__}: {e}", exc_info=True)
             if engine.notifier:
