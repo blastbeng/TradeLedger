@@ -480,7 +480,8 @@ class ReevalLLMRunner:
 
         # Check if trading is currently paused
         trading_paused_raw = await asyncio.to_thread(engine.redis.get, "trading:paused")
-        trading_paused_bool = trading_paused_raw is not None and trading_paused_raw == "1"
+        trading_paused_val = trading_paused_raw.decode() if isinstance(trading_paused_raw, bytes) else trading_paused_raw
+        trading_paused_bool = trading_paused_val == "1"
 
         # Compute symbol tenure for the prompt
         symbol_tenure = {}

@@ -46,7 +46,8 @@ class ReevalPauseResumeManager:
                 if pause_trading:
                     # Only pause if not already manually paused
                     current_source = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
-                    if current_source and current_source == "manual":
+                    current_source_val = current_source.decode() if isinstance(current_source, bytes) else (current_source or "")
+                    if current_source_val == "manual":
                         logger.info("LLM pause request ignored because trading is manually paused.")
                     else:
                         from src.utils.pause_utils import set_trading_pause
@@ -71,7 +72,8 @@ class ReevalPauseResumeManager:
                 else:
                     # LLM requests resume – only allowed if the pause was LLM-initiated
                     current_source = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
-                    if current_source and current_source != "llm":
+                    current_source_val = current_source.decode() if isinstance(current_source, bytes) else (current_source or "")
+                    if current_source_val != "llm":
                         logger.info("LLM resume request ignored because pause was not initiated by LLM.")
                     else:
                         if trading_paused_bool:

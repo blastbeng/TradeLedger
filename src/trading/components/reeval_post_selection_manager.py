@@ -51,7 +51,8 @@ class ReevalPostSelectionManager:
         # (which will be notified but not executed in paper mode).
         # The LLM may have just set pause_trading = true, so re-read Redis.
         paused_now = await asyncio.to_thread(engine.redis.get, "trading:paused")
-        if paused_now and paused_now == "1" and not force:
+        paused_now_val = paused_now.decode() if isinstance(paused_now, bytes) else paused_now
+        if paused_now_val == "1" and not force:
             logger.info("Trading is paused. Keeping all symbols for signal generation.")
 
         # Update symbol tenure tracking

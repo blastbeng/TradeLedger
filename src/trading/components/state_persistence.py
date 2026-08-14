@@ -307,7 +307,8 @@ class StatePersistence:
         """Return the current trading pause status, reason, remaining duration, and a formatted countdown."""
         engine = self.engine
         paused_raw = await asyncio.to_thread(engine.redis.get, "trading:paused")
-        is_paused = paused_raw is not None and paused_raw == "1"
+        paused_val = paused_raw.decode() if isinstance(paused_raw, bytes) else paused_raw
+        is_paused = paused_val == "1"
 
         reason_raw = await asyncio.to_thread(engine.redis.get, "trading:pause_reason")
         reason = reason_raw.decode() if isinstance(reason_raw, bytes) else (reason_raw or "")
