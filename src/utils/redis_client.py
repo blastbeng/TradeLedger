@@ -18,13 +18,25 @@ class DummyRedis:
     data or raising exceptions.
     """
     _warned = False
+    _read_call_count = 0
+    _write_call_count = 0
+    _warn_interval = 50  # Log every N calls
 
     def _warn(self, method: str, is_write: bool = False):
         if is_write:
+            DummyRedis._write_call_count += 1
             logger.error("Redis unavailable – DummyRedis.%s called (data loss risk)", method)
-        elif not DummyRedis._warned:
-            logger.warning("Redis unavailable – DummyRedis.%s called (degraded mode)", method)
-            DummyRedis._warned = True
+        else:
+            DummyRedis._read_call_count += 1
+            if not DummyRedis._warned or DummyRedis._read_call_count % DummyRedis._warn_interval == 0:
+                logger.warning(
+                    "Redis unavailable – DummyRedis.%s called (degraded mode, "
+                    "total read calls: %d, total write calls: %d)",
+                    method,
+                    DummyRedis._read_call_count,
+                    DummyRedis._write_call_count,
+                )
+                DummyRedis._warned = True
 
     # Read operations – return safe defaults
     def get(self, *args, **kwargs):

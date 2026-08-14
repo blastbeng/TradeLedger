@@ -54,6 +54,7 @@ class TelegramBot:
         self._notification_timestamps = collections.deque()
         self._max_notifications_per_minute = 15
         self._notification_queue = asyncio.Queue()
+        self._dropped_notifications = collections.deque(maxlen=50)
         self._notification_task = None
         self._register_handlers()
         self.keyboard = ReplyKeyboardMarkup(
@@ -1309,9 +1310,15 @@ class TelegramBot:
             rate_limited = len(self._notification_timestamps) >= self._max_notifications_per_minute
             if rate_limited:
                 if is_critical:
-                    logger.critical(f"Telegram rate limit exceeded, dropping critical notification: {action}")
+                    logger.warning(f"Telegram rate limit exceeded, queueing critical notification for later: {action}")
                 else:
-                    logger.warning(f"Telegram rate limit exceeded, dropping non-critical notification: {action}")
+                    logger.info(f"Telegram rate limit exceeded, queueing non-critical notification for later: {action}")
+                self._dropped_notifications.append({
+                    "chat_id": int(chat_id),
+                    "message": message,
+                    "disable_notification": disable_notification,
+                    "is_critical": is_critical
+                })
             else:
                 self._notification_timestamps.append(now)
 
@@ -1427,38 +1434,63 @@ class TelegramBot:
         while True:
             payload = await self._notification_queue.get()
             try:
-                chat_id = payload["chat_id"]
-                message = payload["message"]
-                disable_notification = payload["disable_notification"]
-                is_critical = payload["is_critical"]
-                
-                max_retries = 3 if is_critical else 1
-                retry_delay = 2.0
-
-                for attempt in range(1, max_retries + 1):
-                    try:
-                        chunks = self._split_text(message)
-                        for chunk in chunks:
-                            await asyncio.wait_for(
-                                self.app.bot.send_message(
-                                    chat_id=chat_id,
-                                    text=chunk,
-                                    disable_notification=disable_notification,
-                                ),
-                                timeout=15.0
-                            )
-                        logger.debug(f"Notification sent successfully (silent={disable_notification}).")
-                        break
-                    except Exception as e:
-                        if attempt < max_retries:
-                            logger.warning(f"Failed to send Telegram notification (attempt {attempt}/{max_retries}): {e}. Retrying in {retry_delay}s...")
-                            await asyncio.sleep(retry_delay)
-                        else:
-                            logger.critical(f"Failed to send Telegram notification after {max_retries} attempts: {e}", exc_info=True)
+                await self._send_notification_payload(payload)
             except Exception as e:
                 logger.error(f"Error processing notification queue: {e}", exc_info=True)
             finally:
                 self._notification_queue.task_done()
+
+            # Try to drain any rate-limited notifications that were queued
+            await self._drain_dropped_notifications()
+
+    async def _drain_dropped_notifications(self):
+        """Send queued (rate-limited) notifications if the rate limit allows."""
+        while self._dropped_notifications:
+            now = time.time()
+            # Remove timestamps older than 60 seconds
+            while self._notification_timestamps and self._notification_timestamps[0] <= now - 60:
+                self._notification_timestamps.popleft()
+
+            if len(self._notification_timestamps) >= self._max_notifications_per_minute:
+                break  # Still rate limited, stop draining
+
+            payload = self._dropped_notifications.popleft()
+            self._notification_timestamps.append(now)
+            try:
+                await self._send_notification_payload(payload)
+            except Exception as e:
+                logger.error(f"Error sending queued notification: {e}", exc_info=True)
+
+    async def _send_notification_payload(self, payload):
+        """Send a single notification payload with retry logic."""
+        chat_id = payload["chat_id"]
+        message = payload["message"]
+        disable_notification = payload["disable_notification"]
+        is_critical = payload["is_critical"]
+
+        max_retries = 3 if is_critical else 1
+        retry_delay = 2.0
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                chunks = self._split_text(message)
+                for chunk in chunks:
+                    await asyncio.wait_for(
+                        self.app.bot.send_message(
+                            chat_id=chat_id,
+                            text=chunk,
+                            disable_notification=disable_notification,
+                        ),
+                        timeout=15.0
+                    )
+                logger.debug(f"Notification sent successfully (silent={disable_notification}).")
+                break
+            except Exception as e:
+                if attempt < max_retries:
+                    logger.warning(f"Failed to send Telegram notification (attempt {attempt}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.critical(f"Failed to send Telegram notification after {max_retries} attempts: {e}", exc_info=True)
 
     async def start(self):
         """Start the bot (initialize, start polling, start application)."""

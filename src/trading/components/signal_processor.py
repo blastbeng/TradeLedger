@@ -1083,35 +1083,69 @@ class SignalProcessor:
 
         # Process results with original error handling
         if isinstance(historical_backtest_results, Exception):
+            logger.warning(f"Failed to fetch historical backtest results for {symbol}: {type(historical_backtest_results).__name__}: {historical_backtest_results}", extra={"event": "backtest_fetch_failed", "symbol": symbol, "error_type": type(historical_backtest_results).__name__})
             historical_backtest_results = []
-        dividend_yield, next_ex_dividend = dividend_data if not isinstance(dividend_data, Exception) else (None, None)
+        if isinstance(dividend_data, Exception):
+            logger.warning(f"Failed to fetch dividend data for {symbol}: {type(dividend_data).__name__}: {dividend_data}", extra={"event": "dividend_fetch_failed", "symbol": symbol, "error_type": type(dividend_data).__name__})
+            dividend_yield, next_ex_dividend = None, None
+        else:
+            dividend_yield, next_ex_dividend = dividend_data
         if isinstance(aggregate_sentiment, Exception):
             logger.warning(f"Could not fetch aggregate sentiment for {symbol}: {type(aggregate_sentiment).__name__}: {aggregate_sentiment}", extra={"event": "sentiment_fetch_failed", "symbol": symbol, "error_type": type(aggregate_sentiment).__name__})
             aggregate_sentiment = None
         if isinstance(global_risk_mult, Exception):
+            logger.warning(f"Failed to fetch global risk multiplier for {symbol}: {type(global_risk_mult).__name__}: {global_risk_mult}", extra={"event": "global_risk_mult_fetch_failed", "symbol": symbol, "error_type": type(global_risk_mult).__name__})
             global_risk_mult = None
 
         full_market_breadth = None
-        if not isinstance(full_breadth_raw, Exception) and full_breadth_raw:
+        if isinstance(full_breadth_raw, Exception):
+            logger.warning(f"Failed to fetch full market breadth for {symbol}: {type(full_breadth_raw).__name__}: {full_breadth_raw}", extra={"event": "market_breadth_fetch_failed", "symbol": symbol, "error_type": type(full_breadth_raw).__name__})
+        elif full_breadth_raw:
             try:
                 full_market_breadth = json.loads(full_breadth_raw)
             except (ValueError, TypeError, json.JSONDecodeError):
                 pass
 
-        max_port_exp = float(max_port_exp_raw) if not isinstance(max_port_exp_raw, Exception) and max_port_exp_raw else None
-        max_port_risk = float(max_port_risk_raw) if not isinstance(max_port_risk_raw, Exception) and max_port_risk_raw else None
+        if isinstance(max_port_exp_raw, Exception):
+            logger.warning(f"Failed to fetch max_portfolio_exposure_pct for {symbol}: {type(max_port_exp_raw).__name__}: {max_port_exp_raw}", extra={"event": "config_fetch_failed", "symbol": symbol, "config_key": "max_portfolio_exposure_pct", "error_type": type(max_port_exp_raw).__name__})
+            max_port_exp = None
+        else:
+            max_port_exp = float(max_port_exp_raw) if max_port_exp_raw else None
 
-        min_stop_atr_mult = float(min_stop_atr_mult_raw) if not isinstance(min_stop_atr_mult_raw, Exception) and min_stop_atr_mult_raw else 1.0
-        min_hold_time_mult = float(min_hold_time_mult_raw) if not isinstance(min_hold_time_mult_raw, Exception) and min_hold_time_mult_raw else 1.0
-        global_min_rr = float(global_min_rr_raw) if not isinstance(global_min_rr_raw, Exception) and global_min_rr_raw else None
+        if isinstance(max_port_risk_raw, Exception):
+            logger.warning(f"Failed to fetch max_portfolio_stop_risk_pct for {symbol}: {type(max_port_risk_raw).__name__}: {max_port_risk_raw}", extra={"event": "config_fetch_failed", "symbol": symbol, "config_key": "max_portfolio_stop_risk_pct", "error_type": type(max_port_risk_raw).__name__})
+            max_port_risk = None
+        else:
+            max_port_risk = float(max_port_risk_raw) if max_port_risk_raw else None
+
+        if isinstance(min_stop_atr_mult_raw, Exception):
+            logger.warning(f"Failed to fetch min_stop_loss_atr_mult for {symbol}: {type(min_stop_atr_mult_raw).__name__}: {min_stop_atr_mult_raw}", extra={"event": "config_fetch_failed", "symbol": symbol, "config_key": "min_stop_loss_atr_mult", "error_type": type(min_stop_atr_mult_raw).__name__})
+            min_stop_atr_mult = 1.0
+        else:
+            min_stop_atr_mult = float(min_stop_atr_mult_raw) if min_stop_atr_mult_raw else 1.0
+
+        if isinstance(min_hold_time_mult_raw, Exception):
+            logger.warning(f"Failed to fetch min_max_hold_time_mult for {symbol}: {type(min_hold_time_mult_raw).__name__}: {min_hold_time_mult_raw}", extra={"event": "config_fetch_failed", "symbol": symbol, "config_key": "min_max_hold_time_mult", "error_type": type(min_hold_time_mult_raw).__name__})
+            min_hold_time_mult = 1.0
+        else:
+            min_hold_time_mult = float(min_hold_time_mult_raw) if min_hold_time_mult_raw else 1.0
+
+        if isinstance(global_min_rr_raw, Exception):
+            logger.warning(f"Failed to fetch min_risk_reward_ratio for {symbol}: {type(global_min_rr_raw).__name__}: {global_min_rr_raw}", extra={"event": "config_fetch_failed", "symbol": symbol, "config_key": "min_risk_reward_ratio", "error_type": type(global_min_rr_raw).__name__})
+            global_min_rr = None
+        else:
+            global_min_rr = float(global_min_rr_raw) if global_min_rr_raw else None
 
         if isinstance(analyst_ratings, Exception):
+            logger.warning(f"Failed to fetch analyst ratings for {symbol}: {type(analyst_ratings).__name__}: {analyst_ratings}", extra={"event": "analyst_ratings_fetch_failed", "symbol": symbol, "error_type": type(analyst_ratings).__name__})
             analyst_ratings = None
 
         if isinstance(insider_transactions, Exception):
+            logger.warning(f"Failed to fetch insider transactions for {symbol}: {type(insider_transactions).__name__}: {insider_transactions}", extra={"event": "insider_transactions_fetch_failed", "symbol": symbol, "error_type": type(insider_transactions).__name__})
             insider_transactions = None
 
         if isinstance(options_summary, Exception):
+            logger.warning(f"Failed to fetch options summary for {symbol}: {type(options_summary).__name__}: {options_summary}", extra={"event": "options_summary_fetch_failed", "symbol": symbol, "error_type": type(options_summary).__name__})
             options_summary = None
 
         # Sentiment trend
@@ -1177,9 +1211,9 @@ class SignalProcessor:
             "historical_backtest_results": historical_backtest_results,
             "dividend_yield": dividend_yield,
             "next_ex_dividend": next_ex_dividend,
-            "analyst_ratings": analyst_ratings if not isinstance(analyst_ratings, Exception) else None,
-            "insider_transactions": insider_transactions if not isinstance(insider_transactions, Exception) else None,
-            "options_summary": options_summary if not isinstance(options_summary, Exception) else None,
+            "analyst_ratings": analyst_ratings,
+            "insider_transactions": insider_transactions,
+            "options_summary": options_summary,
         }
 
     async def build_analysis_prompt_and_snapshot(
