@@ -137,6 +137,18 @@ class SignalProcessor:
         return await asyncio.to_thread(get_yahoo_options_summary, symbol)
 
     @staticmethod
+    def _get_eval_interval(timeframe: str) -> int:
+        """Return the evaluation interval for a given timeframe."""
+        tf = timeframe.upper()
+        if tf == "1H": return settings.EVAL_INTERVAL_1H
+        if tf == "1D": return settings.EVAL_INTERVAL_1D
+        if tf == "1W": return settings.EVAL_INTERVAL_1W
+        if tf == "1M": return settings.EVAL_INTERVAL_1M
+        if tf == "3M": return settings.EVAL_INTERVAL_3M
+        if tf in ("6M", "1Y", "3Y", "5Y"): return settings.EVAL_INTERVAL_6M_1Y
+        return settings.EVAL_INTERVAL_DEFAULT
+
+    @staticmethod
     def _parse_analysis_response(response: str) -> Optional[Dict[str, Any]]:
         """Parse the Step 1a analysis LLM response into a dict.
 
@@ -418,7 +430,7 @@ class SignalProcessor:
         if await self.should_skip_llm_eval(
             symbol=symbol, current_price=ctx["current_price"], atr=ctx["atr"], rsi=ctx["rsi"],
             macd_hist=ctx["macd_hist"], atr_percentile=ctx.get("atr_percentile"), market_regime=ctx["market_regime"],
-            sentiment_trend_val=ctx.get("sentiment_trend_val"), timeframe_seconds=timeframe_to_seconds(ctx.get("assigned_tf", "1d")),
+            sentiment_trend_val=ctx.get("sentiment_trend_val"), timeframe=ctx.get("assigned_tf", "1d"),
             has_position=has_position, is_critical=is_critical,
         ):
             logger.info(f"Skipping LLM for {symbol}: market unchanged, no strong signals.", extra={"event": "skip_llm_unchanged", "symbol": symbol})
@@ -1654,7 +1666,7 @@ class SignalProcessor:
         atr_percentile: Optional[float],
         market_regime: str,
         sentiment_trend_val: Optional[float],
-        timeframe_seconds: float,
+        timeframe: str,
         has_position: bool,
         is_critical: bool,
     ) -> bool:
@@ -1694,16 +1706,17 @@ class SignalProcessor:
 
         # Always call if enough time has passed (3× the effective interval)
         # For medium/long-term, be more patient before forcing an evaluation
-        effective_interval = timeframe_seconds * settings.STRATEGY_INTERVAL_MULTIPLIER
+        effective_interval = self._get_eval_interval(timeframe)
+        tf_seconds = timeframe_to_seconds(timeframe)
         # Cap the safety net at a value proportional to the timeframe,
         # but never greater than the configured MAX_SKIP_INTERVAL_SECONDS.
         # This prevents excessively long skip durations for long timeframes
         # (e.g., 5Y candles should not skip evaluation for 5 years).
         # For very long timeframes (>= 1 year), evaluating every 7 days is too frequent,
         # so we use a larger cap (90 days) to avoid wasting LLM tokens.
-        if timeframe_seconds >= 31_536_000:  # >= 1 year
+        if tf_seconds >= 31_536_000:  # >= 1 year
             max_skip = min(90 * 24 * 3600, effective_interval)
-        elif timeframe_seconds >= 2_592_000:  # >= 1 month
+        elif tf_seconds >= 2_592_000:  # >= 1 month
             max_skip = min(30 * 24 * 3600, effective_interval)
         else:
             max_skip = min(settings.MAX_SKIP_INTERVAL_SECONDS, effective_interval)

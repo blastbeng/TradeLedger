@@ -328,7 +328,7 @@ class SymbolReevaluator:
 
         # If no symbols were selected, shorten the re‑evaluation interval to retry sooner.
         if not self.shared_state.current_symbols:
-            engine._symbol_reevaluation_interval = max(engine._symbol_reevaluation_interval, settings.MIN_SYMBOL_REEVALUATION_INTERVAL)
+            engine._symbol_reevaluation_interval = min(engine._symbol_reevaluation_interval, settings.MIN_SYMBOL_REEVALUATION_INTERVAL)
             logger.info(f"No symbols selected – next re‑evaluation in {engine._symbol_reevaluation_interval}s")
         # else: keep the current interval (may have been set by LLM via
         # stock_revaluation_interval_seconds, or the default SYMBOL_REEVALUATION_INTERVAL)
