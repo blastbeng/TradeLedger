@@ -1697,7 +1697,8 @@ class SignalProcessor:
 
         # If the timeframe has changed, the old snapshot is stale and
         # cannot be compared against the new timeframe's indicators.
-        if snapshot.get("timeframe_seconds") != timeframe_seconds:
+        tf_seconds = timeframe_to_seconds(timeframe)
+        if snapshot.get("timeframe_seconds") != tf_seconds:
             return False
 
         now = time.time()
@@ -1707,7 +1708,6 @@ class SignalProcessor:
         # Always call if enough time has passed (3× the effective interval)
         # For medium/long-term, be more patient before forcing an evaluation
         effective_interval = self._get_eval_interval(timeframe)
-        tf_seconds = timeframe_to_seconds(timeframe)
         # Cap the safety net at a value proportional to the timeframe,
         # but never greater than the configured MAX_SKIP_INTERVAL_SECONDS.
         # This prevents excessively long skip durations for long timeframes
