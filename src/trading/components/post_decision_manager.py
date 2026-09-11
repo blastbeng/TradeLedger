@@ -758,7 +758,12 @@ class PostDecisionManager:
         """
         action = (data.signal.action or "").upper()
 
-        # Accepted exception: risk-manager circuit-breaker exits.
+        # Accepted exception: risk-reducing forced exits during circuit-breaker
+        # / risk events (hard max loss, max unrealized loss, news sentiment exit,
+        # max position age, native SL/TP fill timeout, SL/TP max reviews, and
+        # position_manager force_close). All such SELL sites must explicitly tag
+        # origin="risk_manager" — the exemption surface must exactly match this
+        # documented exception; untagged SELLs are gated as usual.
         if action == "SELL" and getattr(data.signal, "origin", None) == "risk_manager":
             return None
 

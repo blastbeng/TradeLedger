@@ -737,7 +737,7 @@ class RiskManager:
                         await self.event_bus.publish(
                             "execute_signal",
                             symbol,
-                            Signal(action="SELL", confidence=1.0, reasoning="Hard maximum loss threshold exceeded (BTP duration fallback)"),
+                            self._circuit_breaker_sell_signal("Hard maximum loss threshold exceeded (BTP duration fallback)"),
                             exit_reason="hard_max_loss"
                         )
                         return True
@@ -770,7 +770,7 @@ class RiskManager:
             await self.event_bus.publish(
                 "execute_signal",
                 symbol,
-                Signal(action="SELL", confidence=1.0, reasoning="Hard maximum loss threshold exceeded"),
+                self._circuit_breaker_sell_signal("Hard maximum loss threshold exceeded"),
                 exit_reason="hard_max_loss"
             )
             return True
@@ -808,7 +808,7 @@ class RiskManager:
                 await self.event_bus.publish(
                     "execute_signal",
                     symbol,
-                    Signal(action="SELL", confidence=1.0, reasoning="Max unrealized loss"),
+                    self._circuit_breaker_sell_signal("Max unrealized loss"),
                     exit_reason="max_unrealized_loss"
                 )
                 return True
@@ -874,7 +874,7 @@ class RiskManager:
                         await self.event_bus.publish(
                             "execute_signal",
                             symbol,
-                            Signal(action="SELL", confidence=1.0, reasoning="News sentiment exit"),
+                            self._circuit_breaker_sell_signal("News sentiment exit"),
                             exit_reason="news_sentiment_exit"
                         )
                         return True
@@ -1489,7 +1489,7 @@ class RiskManager:
             await self.event_bus.publish(
                 "execute_signal",
                 symbol,
-                Signal(action="SELL", confidence=1.0, reasoning="Maximum position age safeguard"),
+                self._circuit_breaker_sell_signal("Maximum position age safeguard"),
                 exit_reason="max_position_age"
             )
             return True
@@ -1745,7 +1745,7 @@ class RiskManager:
                 await self.event_bus.publish(
                     "execute_signal",
                     symbol,
-                    Signal(action="SELL", confidence=1.0, reasoning="Stop-loss native fill timeout"),
+                    self._circuit_breaker_sell_signal("Stop-loss native fill timeout"),
                     exit_reason="stop_loss"
                 )
         return True
@@ -1900,7 +1900,7 @@ class RiskManager:
                 await self.event_bus.publish(
                     "execute_signal",
                     symbol,
-                    Signal(action="SELL", confidence=1.0, reasoning="Take-profit triggered (risk check)"),
+                    self._circuit_breaker_sell_signal("Take-profit triggered (risk check)"),
                     exit_reason="take_profit"
                 )
         return True
@@ -1977,7 +1977,7 @@ class RiskManager:
             await self.event_bus.publish(
                 "execute_signal",
                 symbol,
-                Signal(action="SELL", confidence=1.0, reasoning="Stop-loss (max reviews)"),
+                self._circuit_breaker_sell_signal("Stop-loss (max reviews)"),
                 exit_reason="stop_loss_max_reviews"
             )
         else:
@@ -2075,7 +2075,7 @@ class RiskManager:
             await self.event_bus.publish(
                 "execute_signal",
                 symbol,
-                Signal(action="SELL", confidence=1.0, reasoning="Take-profit (max reviews)"),
+                self._circuit_breaker_sell_signal("Take-profit (max reviews)"),
                 exit_reason="take_profit_max_reviews"
             )
             return True

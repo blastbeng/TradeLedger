@@ -1381,6 +1381,9 @@ class PositionManager:
                             }
                         )
                     signal = Signal(action="SELL", confidence=1.0, reasoning="Missing LLM risk parameters after re-evaluation attempts")
+                    # Risk-reducing forced exit: tag with the provenance gate's
+                    # accepted risk_manager exemption marker.
+                    signal.origin = "risk_manager"
                     await self.event_bus.publish("execute_signal", symbol, signal, exit_reason="force_close")
                 else:
                     logger.info(
