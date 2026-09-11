@@ -16,6 +16,7 @@ from src.database import insert_trade
 from src.strategies.base import Signal
 from src.utils.btp_policy import BTPPolicy
 from src.trading.components.order_executor_base import OrderExecutorBase
+from src.utils.pause_utils import is_locally_paused, get_local_pause_reason
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,13 @@ class BuyExecutor(OrderExecutorBase):
         paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
         if paused:
             logger.info(f"Ignoring BUY {symbol}: trading is paused (safety check).")
+            return
+        # Fail-closed: block new BUYs while the local (Redis-down) pause is active.
+        if is_locally_paused():
+            logger.warning(
+                f"Ignoring BUY {symbol}: local fail-safe pause active "
+                f"(reason={get_local_pause_reason()})."
+            )
             return
         # Hard cap on total open positions
         if symbol not in self.shared_state.positions and len(self.shared_state.positions) >= settings.MAX_OPEN_POSITIONS:

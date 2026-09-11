@@ -99,6 +99,20 @@ class RiskManager:
         # --- Portfolio-level drawdown circuit breaker ---
         await self._check_portfolio_drawdown_circuit_breaker()
 
+        # Fail-closed: while Redis is unavailable the drawdown circuit breaker
+        # cannot read/update pause state, so new BUYs must be blocked locally
+        # until connectivity is restored (risk-reducing SELLs stay allowed).
+        if not is_redis_available():
+            from src.utils.pause_utils import set_local_pause
+            if set_local_pause("redis_unavailable"):
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        "🛑 Redis unavailable: portfolio drawdown circuit breaker state is unknown. "
+                        "New BUY decisions blocked (fail-closed) until Redis is restored.",
+                        summary={"action": "PAUSE", "reason": "Redis unavailable (fail-closed drawdown breaker)"}
+                    )
+            return
+
         # --- Portfolio-level loss cooldown ---
         await self._check_portfolio_loss_cooldown()
 
@@ -233,7 +247,23 @@ class RiskManager:
                         summary={"action": "RESUME", "reason": "Portfolio drawdown recovered"}
                     )
         except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError, ConnectionError, TimeoutError, OSError) as e:
-            logger.error(f"Failed to compute portfolio drawdown for circuit breaker: {type(e).__name__}: {e}")
+            # Fail-closed: if the breaker cannot evaluate (e.g. Redis/DB errors
+            # while reading pause state or peak equity), we cannot prove the
+            # portfolio is safe, so block new BUYs locally until connectivity
+            # is restored. Risk-reducing SELLs remain unaffected.
+            from src.utils.pause_utils import set_local_pause
+            if set_local_pause("drawdown_breaker_error"):
+                logger.critical(
+                    "Portfolio drawdown circuit breaker failed closed (%s: %s): "
+                    "pausing new BUY decisions locally.",
+                    type(e).__name__, e,
+                )
+                if engine.notifier:
+                    await engine.notifier.send_notification(
+                        f"🛑 Portfolio drawdown circuit breaker failed to evaluate ({type(e).__name__}). "
+                        "New BUY decisions blocked (fail-closed) until Redis is restored.",
+                        summary={"action": "PAUSE", "reason": "Drawdown breaker failed closed"}
+                    )
 
     async def _check_portfolio_loss_cooldown(self) -> None:
         """Check for consecutive losses and trigger a portfolio-level cooldown."""
