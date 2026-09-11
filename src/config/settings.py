@@ -834,8 +834,11 @@ class Settings(BaseSettings):
     LLM_ACTUATOR_PROVIDER: str = ""
 
     # Enable automatic fallback to the other LLM provider if the primary fails.
-    # Default: True to ensure the bot remains operational if the primary LLM provider fails.
-    LLM_FALLBACK_ENABLED: bool = True
+    # Default: False — policy requires that ALL trading decisions come from the
+    # configured primary (LLM-reviewed) models; if the primary fails, trading
+    # must STOP instead of silently routing decisions to fallback models.
+    # A missing/typo'd LLM_FALLBACK_ENABLED in .env must never re-enable fallback.
+    LLM_FALLBACK_ENABLED: bool = False
     # Prompt caching for DeepSeek (and other providers that support it)
     LLM_PROMPT_CACHING_ENABLED: bool = True
     # Snapshot-hash semantic decision cache for Step-2 LLM reviews: when the
@@ -1659,6 +1662,28 @@ class Settings(BaseSettings):
         elif self.LLM_PROVIDER == "g4f":
             # g4f dynamically manages models, so no specific model or API key validation is needed here.
             pass
+
+        # Enforce the no-fallback trading invariant: if fallback is disabled,
+        # no fallback provider/model may be configured, otherwise a stale or
+        # partially-migrated .env could silently route decisions to unreviewed
+        # secondary models. Fail hard at startup instead.
+        if not self.LLM_FALLBACK_ENABLED:
+            fallback_providers = {
+                "AOL_LLM_PROVIDER": self.AOL_LLM_PROVIDER,
+                "LLM_FALLBACK_PROVIDER": self.LLM_FALLBACK_PROVIDER,
+                "LLM_MIND_FALLBACK_PROVIDER": self.LLM_MIND_FALLBACK_PROVIDER,
+                "LLM_ACTUATOR_FALLBACK_PROVIDER": self.LLM_ACTUATOR_FALLBACK_PROVIDER,
+                "LLM_WEAK_FALLBACK_PROVIDER": self.LLM_WEAK_FALLBACK_PROVIDER,
+                "LLM_SENTIMENT_FALLBACK_PROVIDER": self.LLM_SENTIMENT_FALLBACK_PROVIDER,
+            }
+            configured = [k for k, v in fallback_providers.items() if v]
+            if configured:
+                raise ValueError(
+                    "LLM_FALLBACK_ENABLED is False but fallback providers are still "
+                    f"configured: {configured}. Trading policy requires ALL decisions "
+                    "to be made by the primary LLM models; clear the fallback provider "
+                    "settings or set LLM_FALLBACK_ENABLED=True explicitly."
+                )
 
     def reload(self):
         """Reload settings from .env file and environment variables.
