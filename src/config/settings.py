@@ -1118,6 +1118,14 @@ class Settings(BaseSettings):
     # LLM timeout (seconds) for HTTP requests
     LLM_TIMEOUT: float = 300.0
 
+    # LLM egress proxy (llmtrim): when set, ALL LLM provider HTTP calls are routed
+    # through this MITM proxy (bot -> llmtrim -> upstream LLM host) so llmtrim can
+    # compress request payloads and cut token usage. LLM_PROXY_CA_BUNDLE is the
+    # proxy's Root CA (required for HTTPS interception, e.g. ollama.com).
+    # Leave empty to disable. Non-LLM traffic (market data, etc.) is unaffected.
+    LLM_PROXY_URL: Optional[str] = None
+    LLM_PROXY_CA_BUNDLE: Optional[str] = None
+
     @field_validator("LLM_TIMEOUT")
     @classmethod
     def validate_llm_timeout(cls, v: float) -> float:

@@ -36,6 +36,11 @@ services:
       - PGID=1000
       - TZ=Europe/Rome
       - HOME=/app/data
+      # Route all LLM traffic through the local llmtrim MITM proxy (compresses
+      # LLM payloads to cut token usage). Topology: bot -> llmtrim -> ollama.com
+      # The proxy only intercepts LLM API hosts; all other traffic is unaffected.
+      - LLM_PROXY_URL=http://192.168.1.13:43117
+      - LLM_PROXY_CA_BUNDLE=/app/data/llmtrim-ca.pem
     user: "${PUID:-1000}:${PGID:-1000}"
     depends_on:
       postgres:

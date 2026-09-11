@@ -35,7 +35,16 @@ def _execute_llm_request(
                 pool=5.0,
             )
             def _do_request():
-                with httpx.Client(timeout=httpx_timeout) as client:
+                # Route LLM traffic through the llmtrim MITM proxy when configured
+                # (bot -> llmtrim -> upstream LLM host) so llmtrim compresses the
+                # request payloads. TLS uses llmtrim's Root CA for intercepted hosts.
+                client_kwargs = {
+                    "timeout": httpx_timeout,
+                    "proxy": settings.LLM_PROXY_URL or None,
+                }
+                if settings.LLM_PROXY_CA_BUNDLE and (settings.LLM_PROXY_URL or None):
+                    client_kwargs["verify"] = settings.LLM_PROXY_CA_BUNDLE
+                with httpx.Client(**client_kwargs) as client:
                     response = client.post(url, json=payload, headers=headers)
                     response.raise_for_status()
                     return response.json()
@@ -409,7 +418,15 @@ def check_llm_health() -> dict:
                 url = f"{base_url.rstrip('/')}/models"
 
             def _do_health_check():
-                with httpx.Client(timeout=10.0) as client:
+                # Health checks probe the same LLM endpoints, so they go through
+                # the llmtrim proxy too when configured (keeps status consistent).
+                client_kwargs = {
+                    "timeout": 10.0,
+                    "proxy": settings.LLM_PROXY_URL or None,
+                }
+                if settings.LLM_PROXY_CA_BUNDLE and settings.LLM_PROXY_URL:
+                    client_kwargs["verify"] = settings.LLM_PROXY_CA_BUNDLE
+                with httpx.Client(**client_kwargs) as client:
                     response = client.get(url, headers=headers)
                     response.raise_for_status()
 

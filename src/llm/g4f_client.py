@@ -167,8 +167,9 @@ class G4FProvider(LLMProvider):
         if settings.G4F_API_KEY:
             client_kwargs["api_key"] = settings.G4F_API_KEY
 
-        # Pass a random proxy if enabled and available
-        proxy = _get_proxies()
+        # Route through the llmtrim MITM proxy when configured (all LLM calls);
+        # falls back to the generic proxy pool otherwise.
+        proxy = settings.LLM_PROXY_URL or _get_proxies()
         if proxy:
             client_kwargs["proxies"] = proxy
 
