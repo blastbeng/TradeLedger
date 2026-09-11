@@ -18,6 +18,7 @@ from src.exchanges.yahoo_finance import get_yahoo_quote, get_yahoo_fundamentals,
 from src.indicators import compute_all_indicators, compute_ema, compute_vwap, compute_pivot_points
 from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import build_analysis_prompt, compact_prompt, build_backtest_variants_prompt, build_system_prompt, get_cached_news_summary, StrategyPromptData, BacktestPromptData
+from src.llm.system_prompt import get_past_mistakes_block
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
 from src.strategies.validator import validate_signal
@@ -477,7 +478,10 @@ class SignalProcessor:
 
         analysis_result, llm_provider, llm_model, _should_return, is_fallback_1a = await self.llm_step_manager.run_step1a_llm_call(
             symbol=symbol, display_symbol=display_symbol, analysis_prompt=ctx["analysis_prompt"],
+            # Past-mistakes volatile block appended to the analysis prompt tail
+            # (not the system prompt) so the static prefix stays prompt-cacheable.
             system_prompt=compact_prompt(build_system_prompt()), market_hash=ctx["market_hash"],
+            past_mistakes_block=get_past_mistakes_block(),
             strategy_model_type=strategy_model_type, effective_temp=effective_temp,
             current_price=ctx["current_price"], rsi=ctx["rsi"], macd_hist=ctx["macd_hist"],
             is_critical=is_critical, critical_reason=critical_reason,

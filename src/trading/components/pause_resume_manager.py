@@ -7,6 +7,7 @@ import time
 from src.config.settings import settings
 from src.llm.cache import get_cached_llm_response, compute_market_hash
 from src.llm.prompts import compact_prompt, build_system_prompt
+from src.llm.system_prompt import get_past_mistakes_block
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +198,8 @@ class PauseResumeManager:
                         market_hash=compute_market_hash({"pause_resume_prompt": prompt}),
                         messages=[
                             {"role": "system", "content": compact_prompt(build_system_prompt())},
-                            {"role": "user", "content": compact_prompt(prompt)},
+                            # volatile past-mistakes block at user tail (prompt caching)
+                            {"role": "user", "content": compact_prompt(prompt) + get_past_mistakes_block()},
                         ],
                         request_type="pause_resume_decision",
                         reasoning_effort=reasoning_effort,

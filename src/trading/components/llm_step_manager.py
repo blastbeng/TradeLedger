@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Tuple
 from src.config.settings import settings
 from src.llm.cache import get_cached_llm_response, compute_market_hash, record_llm_circuit_breaker_failure
 from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, BacktestPromptData, build_analysis_messages
+from src.llm.system_prompt import get_past_mistakes_block
 from src.llm.backtest_prompts import build_backtest_variants_messages
 from src.strategies.base import Signal
 from src.strategies.llm_parser import create_strategy_from_llm, LLMStrategy
@@ -63,8 +64,13 @@ class LLMStepManager:
         critical_reason: Optional[str],
         tf_seconds: int,
         reasoning_effort: str = "low",
+        past_mistakes_block: str = "",
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str], bool, bool]:
         """Run the Step 1a LLM call and handle timeouts/retries.
+
+        past_mistakes_block: volatile Redis-derived content appended at the END
+        of the user message (never the system prompt) so the static prompt
+        prefix remains provider-cacheable.
 
         Returns (analysis_result, llm_provider, llm_model, should_return, is_fallback).
         If should_return is True, the caller should return immediately.
@@ -86,7 +92,7 @@ class LLMStepManager:
                     symbol=symbol,
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": compact_prompt(analysis_prompt)},
+                        {"role": "user", "content": compact_prompt(analysis_prompt) + past_mistakes_block},
                     ],
                     request_type="trading_decision_step1a",
                     reasoning_effort=reasoning_effort,
@@ -117,7 +123,7 @@ class LLMStepManager:
                         market_hash=market_hash,
                         messages=[
                             {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": compact_prompt(correction_prompt)},
+                            {"role": "user", "content": compact_prompt(correction_prompt) + past_mistakes_block},
                         ],
                         request_type="trading_decision_step1a_retry",
                     ),
@@ -362,7 +368,7 @@ class LLMStepManager:
                         market_hash=variants_market_hash,
                         messages=[
                             {"role": "system", "content": compact_prompt(build_system_prompt())},
-                            {"role": "user", "content": compact_prompt(correction_prompt)},
+                            {"role": "user", "content": compact_prompt(correction_prompt) + get_past_mistakes_block()},
                         ],
                         request_type="trading_decision_step1b_retry",
                     ),

@@ -234,7 +234,26 @@ def build_final_decision_prompt(
         )
     all_backtests_text = "\n".join(backtest_sections)
 
+    # PROMPT PREFIX STABILITY: static decision rules/instructions FIRST, then
+    # volatile per-symbol data (symbol, prices, backtest results). The output
+    # format spec and decision rules are identical across calls, so the cached
+    # prefix covers them; volatile market data comes last and never breaks the
+    # cache. Trading semantics are identical — same rules, same JSON schema,
+    # same information, only ordering changed.
     prompt = f"""**Step 2: Final Trading Decision**
+
+Compare variants. Choose best-performing or combine insights. BUY if the strategy shows positive expectancy (profit factor > 1.0), reasonable win rate (>40%), or significantly reduces drawdown vs buy-and-hold. Even if the strategy underperforms buy-and-hold in total return, a BUY is warranted if it offers better risk-adjusted returns (lower drawdown, higher Sharpe). Only HOLD if all variants are consistently losing money.
+
+**Note:** If a variant has very few trades (<5), treat its results as unreliable — do not reject BUY solely because of low sample size.
+
+Return JSON:
+- action: BUY|SELL|HOLD
+- confidence: float 0-1
+- reasoning: str max 50 chars. Use abbreviations/symbols only (e.g., "RSI<30+MACD↑|1Y↑"). NO full sentences.
+- strategy: {{type, parameters{{stop_loss_pct,take_profit_pct,position_size_fraction,confidence_sizing_weight,trailing_stop,max_hold_time_seconds,cooldown_after_loss_seconds,backtest_entry_config(REQUIRED for BUY)}}}}
+- entry_condition: object (REQUIRED for BUY)
+- limit_price: float? (optional)
+- time_in_force: "day"|"gtc"? (optional)
 
 Symbol: {symbol}
 Current price: {_cp_str}
@@ -249,10 +268,8 @@ Base currency: {base_currency}
 **Local Python Backtest Results ({len(backtest_results)} variant(s) tested):**
 {all_backtests_text}
 
-Compare variants. Choose best-performing or combine insights. BUY if the strategy shows positive expectancy (profit factor > 1.0), reasonable win rate (>40%), or significantly reduces drawdown vs buy-and-hold. Even if the strategy underperforms buy-and-hold in total return, a BUY is warranted if it offers better risk-adjusted returns (lower drawdown, higher Sharpe). Only HOLD if all variants are consistently losing money.
+Backtests on {preliminary_decision.get('timeframe', 'assigned')} timeframe, varying periods.
 """
-    prompt += f"\nBacktests on {preliminary_decision.get('timeframe', 'assigned')} timeframe, varying periods.\n"
-    prompt += "\n**Note:** If a variant has very few trades (<5), treat its results as unreliable — do not reject BUY solely because of low sample size.\n"
     if total_variants_proposed is not None and total_variants_proposed > len(backtest_results):
         prompt += f"\nProposed {total_variants_proposed} variants, only {len(backtest_results)} tested (max {settings.MAX_BACKTEST_VARIANTS}).\n"
     if historical_backtest_results:
@@ -267,16 +284,6 @@ Compare variants. Choose best-performing or combine insights. BUY if the strateg
                 f"max_dd={stats.get('max_drawdown_pct', 0)*100:.2f}%\n"
             )
         prompt += "Consider these historical results when making your final decision.\n"
-    prompt += (
-        "Return JSON:\n"
-        "- action: BUY|SELL|HOLD\n"
-        "- confidence: float 0-1\n"
-        "- reasoning: str max 50 chars. Use abbreviations/symbols only (e.g., \"RSI<30+MACD↑|1Y↑\"). NO full sentences.\n"
-        "- strategy: {type, parameters{stop_loss_pct,take_profit_pct,position_size_fraction,confidence_sizing_weight,trailing_stop,max_hold_time_seconds,cooldown_after_loss_seconds,backtest_entry_config(REQUIRED for BUY)}}\n"
-        "- entry_condition: object (REQUIRED for BUY)\n"
-        "- limit_price: float? (optional)\n"
-        "- time_in_force: \"day\"|\"gtc\"? (optional)\n"
-    )
     if trading_paused:
         prompt += (
             "\n**Trading is currently PAUSED.** You can still output BUY, SELL, or HOLD actions. "
@@ -288,12 +295,18 @@ Compare variants. Choose best-performing or combine insights. BUY if the strateg
 
 
 def build_backtest_variants_messages(data: BacktestPromptData) -> List[Dict[str, str]]:
-    """Build a list of messages (system + user) for prompt caching."""
-    from src.llm.system_prompt import build_system_prompt
+    """Build a list of messages (system + user) for prompt caching.
+
+    Prompt-caching note: the system prompt is fully static (no Redis-derived
+    content) and the user prompt is static-first / volatile-last, so provider
+    prompt caching can hit the stable prefix across calls.
+    """
+    from src.llm.system_prompt import build_system_prompt, get_past_mistakes_block
     from src.llm.prompt_utils import compact_prompt
+    user_content = compact_prompt(build_backtest_variants_prompt(data)) + get_past_mistakes_block()
     return [
         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="trading"))},
-        {"role": "user", "content": compact_prompt(build_backtest_variants_prompt(data))},
+        {"role": "user", "content": user_content},
     ]
 
 
@@ -307,19 +320,26 @@ def build_final_decision_messages(
     total_variants_proposed: Optional[int] = None,
     historical_backtest_results: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, str]]:
-    """Build a list of messages (system + user) for prompt caching."""
-    from src.llm.system_prompt import build_system_prompt
+    """Build a list of messages (system + user) for prompt caching.
+
+    Prompt-caching note: the system prompt is fully static (no Redis-derived
+    content) and the user prompt is static-first (decision rules + JSON schema)
+    with volatile data (symbol, price, backtest results) last, so provider
+    prompt caching can hit the stable prefix across calls.
+    """
+    from src.llm.system_prompt import build_system_prompt, get_past_mistakes_block
     from src.llm.prompt_utils import compact_prompt
+    user_content = compact_prompt(build_final_decision_prompt(
+        symbol=symbol,
+        ticker=ticker,
+        preliminary_decision=preliminary_decision,
+        backtest_results=backtest_results,
+        base_currency=base_currency,
+        trading_paused=trading_paused,
+        total_variants_proposed=total_variants_proposed,
+        historical_backtest_results=historical_backtest_results,
+    )) + get_past_mistakes_block()
     return [
         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="trading"))},
-        {"role": "user", "content": compact_prompt(build_final_decision_prompt(
-            symbol=symbol,
-            ticker=ticker,
-            preliminary_decision=preliminary_decision,
-            backtest_results=backtest_results,
-            base_currency=base_currency,
-            trading_paused=trading_paused,
-            total_variants_proposed=total_variants_proposed,
-            historical_backtest_results=historical_backtest_results,
-        ))},
+        {"role": "user", "content": user_content},
     ]

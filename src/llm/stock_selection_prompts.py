@@ -676,8 +676,13 @@ def build_stock_selection_messages(
     market_limits: Dict[str, Dict[str, Any]],
     **kwargs
 ) -> List[Dict[str, str]]:
-    """Build a list of messages (system + user) for prompt caching."""
-    from src.llm.system_prompt import build_system_prompt
+    """Build a list of messages (system + user) for prompt caching.
+
+    Prompt-caching note: system prompt is static; the volatile past-mistakes
+    block (previously appended to the system prompt) now goes at the END of
+    the user message so the stable prefix stays cacheable.
+    """
+    from src.llm.system_prompt import build_system_prompt, get_past_mistakes_block
     from src.llm.prompt_utils import compact_prompt
     return [
         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="stock_selection"))},
@@ -691,7 +696,7 @@ def build_stock_selection_messages(
             per_symbol_budget=per_symbol_budget,
             market_limits=market_limits,
             **kwargs
-        ))},
+        )) + get_past_mistakes_block()},
     ]
 
 
@@ -704,8 +709,12 @@ def build_final_selection_messages(
     per_symbol_budget: float,
     **kwargs
 ) -> List[Dict[str, str]]:
-    """Build a list of messages (system + user) for prompt caching."""
-    from src.llm.system_prompt import build_system_prompt
+    """Build a list of messages (system + user) for prompt caching.
+
+    Prompt-caching note: system prompt is static; the volatile past-mistakes
+    block goes at the END of the user message (see build_stock_selection_messages).
+    """
+    from src.llm.system_prompt import build_system_prompt, get_past_mistakes_block
     from src.llm.prompt_utils import compact_prompt
     return [
         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="stock_selection"))},
@@ -717,5 +726,5 @@ def build_final_selection_messages(
             base_balance=base_balance,
             per_symbol_budget=per_symbol_budget,
             **kwargs
-        ))},
+        )) + get_past_mistakes_block()},
     ]

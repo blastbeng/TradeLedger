@@ -19,7 +19,7 @@ from src.llm.prompt_utils import (
     _to_toon,
 )
 logger = logging.getLogger(__name__)
-from src.llm.system_prompt import build_system_prompt, SYSTEM_PROMPT_TEMPLATE
+from src.llm.system_prompt import build_system_prompt, get_past_mistakes_block, SYSTEM_PROMPT_TEMPLATE
 from src.llm.backtest_prompts import BacktestPromptData, build_backtest_variants_prompt, build_final_decision_prompt
 
 @dataclass
@@ -841,18 +841,28 @@ def build_analysis_prompt(data: StrategyPromptData) -> str:
 
 
 def build_strategy_messages(data: StrategyPromptData) -> List[Dict[str, str]]:
-    """Build a list of messages (system + user) for prompt caching."""
+    """Build a list of messages (system + user) for prompt caching.
+
+    Prompt-caching note: the system prompt is fully static (no Redis-derived
+    content); the volatile past-mistakes block is appended at the END of the
+    user message so the stable prefix stays cacheable across calls.
+    """
     return [
         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="trading"))},
-        {"role": "user", "content": compact_prompt(build_strategy_prompt(data))},
+        {"role": "user", "content": compact_prompt(build_strategy_prompt(data)) + get_past_mistakes_block()},
     ]
 
 
 def build_analysis_messages(data: StrategyPromptData) -> List[Dict[str, str]]:
-    """Build a list of messages (system + user) for prompt caching."""
+    """Build a list of messages (system + user) for prompt caching.
+
+    Prompt-caching note: same static-first scheme as build_strategy_messages —
+    static analysis instructions precede volatile market data, and the volatile
+    past-mistakes block is appended at the END of the user message.
+    """
     return [
         {"role": "system", "content": compact_prompt(build_system_prompt(task_type="trading"))},
-        {"role": "user", "content": compact_prompt(build_analysis_prompt(data))},
+        {"role": "user", "content": compact_prompt(build_analysis_prompt(data)) + get_past_mistakes_block()},
     ]
 
 

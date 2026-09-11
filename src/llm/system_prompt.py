@@ -140,14 +140,31 @@ def build_system_prompt(task_type: str = "trading") -> str:
     else:  # trading
         role_instruction = "Your current task is to make a trading decision (BUY, SELL, or HOLD) for a specific asset.\n\n"
 
-    # Append LLM mistake analysis if available
+    # NOTE: the "Past Mistakes Analysis" block (Redis key llm:wrong_decision_analysis)
+    # was previously appended here to the system prompt. Because that content changes
+    # between calls, it invalidated the entire cached system-message prefix on every
+    # provider prompt-cache lookup. It is now fetched separately via
+    # get_past_mistakes_block() and appended to the END of the user message
+    # (volatile tail), keeping the system prompt fully static for prompt caching.
+    return role_instruction + prompt
+
+
+def get_past_mistakes_block() -> str:
+    """Return the volatile LLM past-mistakes analysis block, or '' if unavailable.
+
+    MUST be appended at the END of the user message (never the system prompt)
+    so the static prompt prefix remains cacheable.
+    """
     try:
         redis_client = get_redis_client()
         mistake_analysis = redis_client.get("llm:wrong_decision_analysis")
         if mistake_analysis:
             analysis_str = mistake_analysis.decode() if isinstance(mistake_analysis, bytes) else mistake_analysis
-            prompt += f"\n\n## Past Mistakes Analysis\nLearn from these recent incorrect decisions and avoid repeating the same patterns:\n{analysis_str}"
+            return (
+                "\n\n## Past Mistakes Analysis\n"
+                "Learn from these recent incorrect decisions and avoid repeating the same patterns:\n"
+                f"{analysis_str}"
+            )
     except Exception:
         pass
-
-    return role_instruction + prompt
+    return ""
