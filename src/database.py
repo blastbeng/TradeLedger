@@ -1470,6 +1470,26 @@ def cleanup_old_news(retention_seconds: int):
         conn.close()
 
 
+@retry_on_db_lock()
+def cleanup_old_market_data(retention_days: int):
+    """Delete OHLCV candles older than the configured retention window.
+
+    market_data had no retention cleanup: rows accumulated indefinitely even though
+    every code path (downloads, backtests, prompts) already respects
+    settings.OHLCV_RETENTION_DAYS. Run periodically from the market data loop.
+    """
+    conn = get_connection()
+    try:
+        cutoff_ms = int(time.time() * 1000) - retention_days * 24 * 60 * 60 * 1000
+        sql = _adapt_sql("DELETE FROM market_data WHERE timestamp < %s")
+        deleted = conn.execute(sql, (cutoff_ms,)).rowcount
+        conn.commit()
+        if deleted:
+            logger.info(f"Cleaned up {deleted} market_data candles older than {retention_days} days.")
+    finally:
+        conn.close()
+
+
 def _update_latest_close_price(conn, full_symbol: str):
     """Compute and upsert the latest close price for a single symbol into the latest_close_prices table."""
     base_symbol = full_symbol.split('/')[0] if '/' in full_symbol else full_symbol
