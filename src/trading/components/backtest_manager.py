@@ -108,7 +108,7 @@ def _get_backtest_candles_cached(symbol: str, tf: str, since_ms: int) -> List[Li
 from src.database import get_ohlcv, get_recent_backtest_result, save_backtest_result, get_backtest_results_for_symbol
 from src.exchanges.fees import calculate_transaction_costs
 from src.indicators import compute_atr_series, compute_adx_series, compute_rsi_series, compute_macd_series
-from src.llm.cache import get_cached_llm_response, get_cached_llm_response_async, is_llm_circuit_breaker_active
+from src.llm.cache import get_cached_llm_response, get_cached_llm_response_async, is_llm_circuit_breaker_active, record_llm_circuit_breaker_failure
 from src.llm.backtest_prompts import build_final_decision_messages
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary, BacktestConfig
 from src.strategies.base import Signal
@@ -725,19 +725,27 @@ class BacktestManager:
 
         # Call LLM for Step 2
         try:
-            step2_result = await asyncio.wait_for(
-                get_cached_llm_response_async(
-                    "", "", 60,
-                    model_type=strategy_model_type,
-                    temperature=effective_temp,
-                    symbol=symbol,
-                    market_hash=market_hash,
-                    messages=step2_messages,
-                    request_type="trading_decision_step2",
-                    reasoning_effort=reasoning_effort,
-                ),
-                timeout=settings.LLM_TIMEOUT
-            )
+            try:
+                step2_result = await asyncio.wait_for(
+                    get_cached_llm_response_async(
+                        "", "", 60,
+                        model_type=strategy_model_type,
+                        temperature=effective_temp,
+                        symbol=symbol,
+                        market_hash=market_hash,
+                        messages=step2_messages,
+                        request_type="trading_decision_step2",
+                        reasoning_effort=reasoning_effort,
+                    ),
+                    timeout=settings.LLM_TIMEOUT
+                )
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                # Outer wait_for timeout: the inner call was cancelled before it
+                # could record its own failure — account for it in the circuit breaker.
+                record_llm_circuit_breaker_failure()
+                raise
             step2_response = step2_result["response"]
             llm_provider = step2_result["provider"]
             llm_model = step2_result["model"]
@@ -1171,6 +1179,16 @@ class BacktestManager:
             step2_response = step2_result["response"]
         except asyncio.CancelledError:
             raise
+        except asyncio.TimeoutError:
+            # Outer wait_for timeout: the inner call was cancelled before it could
+            # record its own failure — account for it in the circuit breaker.
+            record_llm_circuit_breaker_failure()
+            return None, "LLM Step 2 call timed out (outer wait_for)", None, {
+                "step1_response": data.get("step1b_response"),
+                "error": "LLM Step 2 call timed out (outer wait_for)",
+                "action": "HOLD" if preliminary_signal.action == "BUY" else preliminary_signal.action,
+                "backtest_summary": combined_bt_summary,
+            }
         except (ConnectionError, TimeoutError, OSError) as e:
             return None, f"LLM Step 2 network/IO error: {e}", None, {
                 "step1_response": data.get("step1b_response"),

@@ -524,7 +524,19 @@ def get_model_failure_stats() -> List[Dict[str, Any]]:
     return list(stats.values())
 
 
-# Circuit breaker threshold is read from settings dynamically (see is_llm_circuit_breaker_active)
+def record_llm_circuit_breaker_failure():
+    """Increment the consecutive LLM failure counter (circuit breaker accounting).
+
+    Used both when all providers fail internally and by callers whose outer
+    asyncio.wait_for timeout cancels the LLM call before it can record its own
+    failure — so external timeouts are not silently undercounted.
+    """
+    try:
+        redis_client = get_redis_client()
+        redis_client.incr("llm:consecutive_failures")
+        redis_client.expire("llm:consecutive_failures", 3600)
+    except Exception:
+        pass
 
 
 async def is_llm_circuit_breaker_active(check_primary_model: bool = False) -> bool:
@@ -1421,11 +1433,7 @@ def get_cached_llm_response(
                 is_fallback = True
             else:
                 # All LLM providers failed — increment consecutive failure counter
-                try:
-                    redis_client.incr("llm:consecutive_failures")
-                    redis_client.expire("llm:consecutive_failures", 3600)
-                except Exception:
-                    pass
+                record_llm_circuit_breaker_failure()
                 logger.exception(f"All LLM providers failed for model_type={model_type}: {fallback_e}")
                 raise fallback_e
     if response_text is None:
