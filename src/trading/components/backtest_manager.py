@@ -109,6 +109,7 @@ from src.database import get_ohlcv, get_recent_backtest_result, save_backtest_re
 from src.exchanges.fees import calculate_transaction_costs
 from src.indicators import compute_atr_series, compute_adx_series, compute_rsi_series, compute_macd_series
 from src.llm.cache import get_cached_llm_response, get_cached_llm_response_async, is_llm_circuit_breaker_active, record_llm_circuit_breaker_failure
+from src.trading.components.market_data_manager import is_llm_active_now
 from src.llm.backtest_prompts import build_final_decision_messages
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary, BacktestConfig
 from src.strategies.base import Signal
@@ -1013,6 +1014,15 @@ class BacktestManager:
         llm_model = None
         backtest_results = []
 
+        # --- Fail-closed market gate (user preference): NO LLM calls at all ---
+        # when the market is closed. Skip backtests + Step 2 entirely; return the
+        # preliminary signal unreviewed (PostDecisionManager forces unreviewed
+        # BUY/SELL to HOLD via the provenance gate).
+        if not await is_llm_active_now(engine.event_bus):
+            logger.info(f"Step 2 for {symbol} skipped: market is closed (no LLM calls allowed).")
+            preliminary_signal.step2_reviewed = False
+            return preliminary_signal, "Backtest skipped: market closed", llm_provider, llm_model, is_fallback
+
         if preliminary_signal.action in ("BUY", "HOLD"):
             variants_to_test = self._prepare_backtest_variants(
                 symbol=symbol,
@@ -1034,6 +1044,10 @@ class BacktestManager:
                 base_balance=base_balance,
                 is_btp=is_btp,
             )
+
+        # --- LLM circuit breaker: skip calls if too many consecutive failures ---
+        if await is_llm_circuit_breaker_active():
+            logger.error(f"LLM circuit breaker ACTIVE for {symbol} during Step 2 — using preliminary decision. Check LLM connectivity.")
 
             # Log results after all variants complete
             for i, r in enumerate(backtest_results):
@@ -1122,6 +1136,11 @@ class BacktestManager:
         model_type = data.get("model_type", "mind")
         temperature = data.get("temperature", 0.2)
         reasoning_effort = data.get("reasoning_effort", "low")
+
+        # --- Fail-closed market gate (user preference): no LLM calls when closed.
+        if not await is_llm_active_now(engine.event_bus):
+            logger.info(f"Simulation Step 2 for {symbol} skipped: market is closed.")
+            return None, "Market is closed: LLM calls disabled", None, None
 
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
         if await is_llm_circuit_breaker_active():

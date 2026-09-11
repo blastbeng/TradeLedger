@@ -16,6 +16,15 @@ from src.database import save_llm_metrics, add_model_to_blacklist, get_active_bl
 
 logger = logging.getLogger(__name__)
 
+
+class MarketClosedError(RuntimeError):
+    """Raised when an LLM call is attempted while the market is closed.
+
+    Hard fail-closed gate: callers must treat this as 'no LLM available'
+    and degrade to non-LLM behaviour (HOLD / skip), never retry.
+    """
+    pass
+
 # Shared thread pool for chunk summarization to avoid creating/destroying
 # a pool on every split/merge operation.
 _split_merge_executor = concurrent.futures.ThreadPoolExecutor(
@@ -1325,6 +1334,38 @@ def get_cached_llm_response(
     """
     redis_client = get_redis_client()
 
+    # --- Fail-closed market gate (user preference) ---
+    # When the market is closed (outside pre-market/open), NO LLM calls at all:
+    # serve from cache only, otherwise raise a MarketClosedError.
+    # force_primary_model bypasses ONLY the fallback-model downgrade, never
+    # this gate — even user-forced re-evaluation must not call the LLM when
+    # the market is closed.
+    if not is_market_session_active():
+        # Serve from cache only when the market is closed. Build candidate cache
+        # keys over the configured providers so responses cached during market
+        # hours still hit; otherwise raise MarketClosedError (no provider call).
+        gate_temp = _get_effective_temperature(model_type, temperature)
+        candidates = []
+        for p in ("openai", "ollama", "g4f"):
+            try:
+                _, _models, _, _ = _get_primary_provider_config(model_type) if p == "openai" else (p, [], None, None)
+            except Exception:
+                _models = []
+            if _models:
+                candidates.append(_build_cache_key(messages, system_prompt, model_type, p, _models[0], gate_temp, market_hash, prompt))
+        candidates.append(_build_cache_key(messages, system_prompt, model_type, "gate", "market_closed", gate_temp, market_hash, prompt))
+        for k in candidates:
+            try:
+                cached_gate = _get_cached_response(redis_client, k, model_type, None, None, request_type)
+            except Exception:
+                cached_gate = None
+            if cached_gate:
+                logger.debug("Market closed: serving cached LLM response (no provider call). model_type=%s", model_type)
+                return cached_gate
+        raise MarketClosedError(
+            f"Market is closed: LLM calls are disabled (model_type={model_type}, request_type={request_type or 'n/a'})."
+        )
+
     if ttl is None:
         if model_type == "mind":
             ttl = settings.LLM_MIND_CACHE_TTL
@@ -1635,25 +1676,41 @@ def _is_italian_holiday(dt: datetime) -> bool:
 
     return False
 
-def _should_use_primary_model() -> bool:
+def is_market_session_active() -> bool:
+    """Return True ONLY when the market is in pre-market or open phase.
+
+    Used as the fail-closed gate for ALL LLM calls: when False, no LLM
+    requests may be issued at all (no primary, no fallback, no retries).
+    Fail-closed: returns False when the market phase cannot be determined.
+    Result is cached for 30 seconds to avoid repeated calendar lookups.
+    """
+    return _should_use_primary_model(allow_open_positions_bypass=False)
+
+
+def _should_use_primary_model(allow_open_positions_bypass: bool = False) -> bool:
     """Check if primary models should be used based on market status.
 
     Returns True if market is open or in pre-market session (within 60 mins of open).
     Returns False if market is closed (use fallback models only to save tokens).
     Result is cached for 30 seconds to avoid repeated calendar lookups.
-    If there are open positions, always returns True to ensure capable risk management.
+
+    NOTE (user preference): open positions do NOT bypass this gate. LLM calls
+    must not run outside pre-market/open hours even for "risk management".
+    Set allow_open_positions_bypass=True only if a future code path needs the
+    legacy behaviour — the default is now fail-closed for every caller.
     """
     global _primary_model_cache, _primary_model_cache_ts, _primary_model_cache_settings
     now = time.time()
 
-    # If there are open positions, always use the primary model for risk management,
-    # even if the market is closed.
-    try:
-        redis_client = get_redis_client()
-        if redis_client.exists("trading:has_open_positions"):
-            return True
-    except Exception:
-        pass
+    # Legacy carve-out: only honored when explicitly requested.
+    # Default paths (all LLM calls) never take it: closed market = no LLM calls.
+    if allow_open_positions_bypass:
+        try:
+            redis_client = get_redis_client()
+            if redis_client.exists("trading:has_open_positions"):
+                return True
+        except Exception:
+            pass
 
     current_settings = (
         settings.MARKET_TIMEZONE,
@@ -1696,8 +1753,12 @@ def _should_use_primary_model() -> bool:
                 result = True  # Pre-market
             else:
                 result = False  # Market is closed
-    except Exception:
-        result = True  # Default to primary if we can't determine market status
+    except Exception as e:
+        logger.warning(
+            f"_should_use_primary_model: could not determine market status "
+            f"({type(e).__name__}: {e}); failing CLOSED (no LLM calls)."
+        )
+        result = False  # Fail-closed: never issue LLM calls when status is unknown
 
     _primary_model_cache = result
     _primary_model_cache_ts = now

@@ -237,6 +237,13 @@ async def _batch_analyze_sentiments(articles: List[Dict[str, Any]]) -> None:
                         sorted_batch[j]["sentiment"] = {"label": label, "compound": round(compound, 4)}
                     continue
         except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
+            if "Market is closed" in str(e):
+                # Fail-closed market gate: no LLM calls at all when closed —
+                # degrade to neutral sentiment, no retry.
+                logger.debug("Sentiment batch skipped: market is closed.")
+                for item in sorted_batch:
+                    item["sentiment"] = {"label": "neutral", "compound": 0.0}
+                continue
             # One lightweight retry for empty-response failures (gpt-oss occasionally
             # returns empty content on large batches): a retried call is cheaper than
             # silently degrading all 15 articles to neutral. Cache-miss calls only.

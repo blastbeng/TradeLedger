@@ -149,6 +149,11 @@ class LLMStepManager:
                 record_llm_circuit_breaker_failure()
             # Fall through to fallback HOLD below
         except (ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
+            if "Market is closed" in str(e):
+                # Fail-closed market gate (MarketClosedError): no retry, no circuit
+                # breaker penalty — the market being closed is not an LLM failure.
+                logger.info(f"LLM Step 1a for {symbol} skipped: market is closed.")
+                return None, None, None, False, False
             logger.error(f"LLM Step 1a parse/logic error for {symbol}: {type(e).__name__}: {e}")
             # Do not force retry or increment failures for parse errors, as the model is reachable.
             # Fall through to fallback HOLD below
@@ -368,7 +373,11 @@ class LLMStepManager:
                 llm_model = response2["model"]
                 is_fallback = response2.get("is_fallback", False)
             except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError, asyncio.TimeoutError) as e2:
-                logger.warning(f"LLM Step 1b response still invalid after first retry for {symbol}: {type(e2).__name__}: {e2}. Retrying with simpler prompt.")
+                if "Market is closed" in str(e2):
+                    # Fail-closed market gate: market closed is not an LLM failure.
+                    logger.info(f"LLM Step 1b retry for {symbol} skipped: market is closed.")
+                else:
+                    logger.warning(f"LLM Step 1b response still invalid after first retry for {symbol}: {type(e2).__name__}: {e2}. Retrying with simpler prompt.")
                 simpler_prompt = (
                     "Your previous responses were not valid JSON. "
                     "Output ONLY a valid JSON object with the following minimal structure: "
@@ -395,7 +404,12 @@ class LLMStepManager:
                     llm_model = response3["model"]
                     is_fallback = response3.get("is_fallback", False)
                 except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError, asyncio.TimeoutError) as e3:
-                    logger.error(f"LLM Step 1b response still invalid after simpler retry for {symbol}: {type(e3).__name__}: {e3}")
+                    if "Market is closed" in str(e3):
+                        # Fail-closed market gate: do not manufacture a fallback
+                        # HOLD via another LLM attempt — the market gate blocks it.
+                        logger.info(f"LLM Step 1b simpler retry for {symbol} skipped: market is closed.")
+                    else:
+                        logger.error(f"LLM Step 1b response still invalid after simpler retry for {symbol}: {type(e3).__name__}: {e3}")
                     preliminary_strategy = LLMStrategy(self._create_fallback_hold_signal(
                         symbol, "Failed to parse LLM Step 1b response after simpler retry", strategy_model_type
                     ))
