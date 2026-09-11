@@ -1375,7 +1375,7 @@ class SignalProcessor:
                 if engine.notifier:
                     try:
                         await engine.notifier.send_notification(
-                            f"⏳ Max symbol tenure reached for {display_symbol} "
+                            f"⏳ Max symbol tenure reached for {symbol} "
                             f"({max_tenure_hours:.1f}h) – requesting LLM re-evaluation.",
                             summary={
                                 "symbol": symbol,
