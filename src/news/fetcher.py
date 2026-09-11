@@ -187,7 +187,8 @@ async def _batch_analyze_sentiments(articles: List[Dict[str, Any]]) -> None:
     if not articles_to_analyze:
         return
     
-    batch_size = 15
+    batch_size = 8  # smaller batches: fewer empty-response failures per call and
+    # cheaper per-call retry cost (a failed batch degrades 8 articles, not 15)
     for i in range(0, len(articles_to_analyze), batch_size):
         batch = articles_to_analyze[i:i + batch_size]
         # Sort the batch by a unique identifier to ensure deterministic order for caching
