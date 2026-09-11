@@ -486,9 +486,24 @@ def get_model_failure_stats() -> List[Dict[str, Any]]:
     """Get current failure counts and blacklist levels from Redis."""
     redis_client = get_redis_client()
     stats = {}
+
+    def _scan_keys(pattern: str) -> List[str]:
+        """SCAN-based key listing: avoids O(N) redis.keys() blocking scans."""
+        out: List[str] = []
+        cursor = 0
+        try:
+            while True:
+                cursor, keys = redis_client.scan(cursor=cursor, match=pattern, count=100)
+                out.extend(keys)
+                if cursor == 0:
+                    break
+        except Exception as e:
+            logger.warning(f"SCAN failed for pattern {pattern}: {e}")
+        return out
+
     try:
         # Get all fail count keys
-        fail_keys = redis_client.keys("llm:fail_count:*")
+        fail_keys = _scan_keys("llm:fail_count:*")
         for key in fail_keys:
             if isinstance(key, bytes):
                 key = key.decode('utf-8')
@@ -497,7 +512,7 @@ def get_model_failure_stats() -> List[Dict[str, Any]]:
             stats[model] = {"model": model, "fail_count": count, "blacklist_level": 0, "blacklisted": False, "ttl_remaining": 0}
         
         # Get all blacklist level keys
-        level_keys = redis_client.keys("llm:blacklist_level:*")
+        level_keys = _scan_keys("llm:blacklist_level:*")
         for key in level_keys:
             if isinstance(key, bytes):
                 key = key.decode('utf-8')
@@ -507,7 +522,7 @@ def get_model_failure_stats() -> List[Dict[str, Any]]:
             stats[model]["blacklist_level"] = int(redis_client.get(key) or 1)
         
         # Get all active blacklist keys
-        blacklist_keys = redis_client.keys("llm:blacklist:*")
+        blacklist_keys = _scan_keys("llm:blacklist:*")
         for key in blacklist_keys:
             if isinstance(key, bytes):
                 key = key.decode('utf-8')
