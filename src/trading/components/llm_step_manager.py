@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, Optional, Tuple
 
 from src.config.settings import settings
-from src.llm.cache import get_cached_llm_response, compute_market_hash
+from src.llm.cache import get_cached_llm_response, compute_market_hash, record_llm_circuit_breaker_failure
 from src.llm.prompts import compact_prompt, build_system_prompt, build_backtest_variants_prompt, BacktestPromptData, build_analysis_messages
 from src.llm.backtest_prompts import build_backtest_variants_messages
 from src.strategies.base import Signal
@@ -142,7 +142,11 @@ class LLMStepManager:
             logger.error(f"LLM Step 1a network error for {symbol}: {type(e).__name__}: {e}")
             async with self.shared_state._eval_state_lock:
                 self.shared_state._force_eval[symbol] = True  # Force retry on next cycle
-            # Per-model blacklisting in cache.py handles failures
+            # Account for the failure in the circuit breaker ONLY on an outer
+            # wait_for timeout: the inner call is cancelled before cache.py can
+            # record it. Other network errors were already recorded in cache.py.
+            if isinstance(e, asyncio.TimeoutError):
+                record_llm_circuit_breaker_failure()
             # Fall through to fallback HOLD below
         except (ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
             logger.error(f"LLM Step 1a parse/logic error for {symbol}: {type(e).__name__}: {e}")
@@ -318,6 +322,12 @@ class LLMStepManager:
             logger.info(f"LLM Step 1b (variants) completed for {symbol} (provider={llm_provider}, model={llm_model})")
         except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError, asyncio.TimeoutError) as e:
             logger.error(f"LLM Step 1b failed for {symbol}: {type(e).__name__}: {e}. Using Step 1a analysis as fallback.")
+            # On an outer wait_for timeout the inner call is cancelled before
+            # cache.py can record the failure — count it here so Step 1b
+            # timeouts also feed the LLM circuit breaker. Other network errors
+            # were already recorded in cache.py.
+            if isinstance(e, asyncio.TimeoutError):
+                record_llm_circuit_breaker_failure()
             step1b_response = json.dumps({
                 "action": analysis_result.get("action", "HOLD"),
                 "confidence": analysis_result.get("confidence", 0.0),
