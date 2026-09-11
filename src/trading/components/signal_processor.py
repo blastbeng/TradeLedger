@@ -1706,7 +1706,7 @@ class SignalProcessor:
 
         now = time.time()
         last_time = snapshot.get("timestamp", 0)
-        last_price = snapshot.get("price", 0)
+        last_price = snapshot.get("price")  # may be None if quote was missing
 
         # Always call if enough time has passed (3× the effective interval)
         # For medium/long-term, be more patient before forcing an evaluation
@@ -1733,7 +1733,9 @@ class SignalProcessor:
         skip_macd = cfg["skip_macd"]
 
         # Price change since last evaluation
-        if last_price > 0:
+        # Guard against None last_price (no snapshot yet): skip the price-change
+        # heuristic instead of crashing the whole symbol evaluation.
+        if last_price is not None and last_price > 0:
             price_change_pct = abs(current_price - last_price) / last_price
             # If price moved less than skip_price_mult × ATR (in %), it's boring
             atr_pct = (atr / current_price) if (atr and atr > 0) else 0.005
