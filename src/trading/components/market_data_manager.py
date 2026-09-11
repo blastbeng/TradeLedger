@@ -146,27 +146,29 @@ class MarketDataManager:
 
             # --- Fallback when the calendar has no data for the requested range ---
             if schedule.empty:
-                # Simple weekday + hardcoded hours check
-                if today.weekday() < 5 and market_open_today <= now_rome < market_close_today:
+                # Weekday + hardcoded hours check, excluding known Italian holidays
+                # (fail-closed: a holiday must NOT count as a trading day)
+                from src.llm.cache import _is_italian_holiday
+                today_is_trading_day = today.weekday() < 5 and not _is_italian_holiday(now_rome)
+                if today_is_trading_day and market_open_today <= now_rome < market_close_today:
                     is_open = True
                 else:
                     is_open = False
 
                 if is_open:
-                    # Next open is tomorrow (or next weekday) at 09:00
+                    # Next open is tomorrow (or next trading weekday, skipping holidays)
                     next_open = market_open_today + timedelta(days=1)
-                    while next_open.weekday() >= 5:
-                        next_open += timedelta(days=1)
                 else:
-                    if now_rome < market_open_today and today.weekday() < 5:
+                    if today_is_trading_day and now_rome < market_open_today:
                         next_open = market_open_today
                     else:
                         next_open = market_open_today + timedelta(days=1)
-                        while next_open.weekday() >= 5:
-                            next_open += timedelta(days=1)
+                while next_open.weekday() >= 5 or _is_italian_holiday(next_open):
+                    next_open += timedelta(days=1)
 
                 clock = ClockInfo(is_open=is_open, timestamp=now_rome, next_open=next_open,
                                   phase=_compute_phase(is_open, next_open))
+                logger.warning("Market clock: empty XMIL schedule; using weekday+holiday fallback")
                 self._clock_cache = clock
                 self._clock_cache_time = now
                 return clock
@@ -221,17 +223,22 @@ class MarketDataManager:
                                                          second=0, microsecond=0)
                 else:
                     # No trading days in schedule – fallback to next weekday 09:00
+                    from src.llm.cache import _is_italian_holiday
                     next_open = market_open_today + timedelta(days=1)
-                    while next_open.weekday() >= 5:
+                    while next_open.weekday() >= 5 or _is_italian_holiday(next_open):
                         next_open += timedelta(days=1)
 
         except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
             logger.error(f"Failed to get market clock from pandas_market_calendars: {type(e).__name__}: {e}")
-            # Fallback: simple weekday + time check, assume no holidays
-            if today.weekday() < 5 and market_open_today <= now_rome < market_close_today:
+            # Fallback: weekday + time check, excluding known Italian holidays
+            from src.llm.cache import _is_italian_holiday
+            today_is_trading_day = today.weekday() < 5 and not _is_italian_holiday(now_rome)
+            if today_is_trading_day and market_open_today <= now_rome < market_close_today:
                 is_open = True
             next_open = market_open_today + timedelta(days=1)
-            while next_open.weekday() >= 5:
+            if today_is_trading_day and now_rome < market_open_today:
+                next_open = market_open_today
+            while next_open.weekday() >= 5 or _is_italian_holiday(next_open):
                 next_open += timedelta(days=1)
 
         if next_open is None:
