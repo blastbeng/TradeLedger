@@ -230,3 +230,4 @@ redis/data/*
 chroma/data
 chroma/data/*
 chroma/chromadb
+.venv/

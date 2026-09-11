@@ -503,6 +503,20 @@ class BacktestManager:
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
         if await is_llm_circuit_breaker_active():
             logger.error(f"LLM circuit breaker ACTIVE for {symbol} during Step 2 — using preliminary decision. Check LLM connectivity.")
+            if preliminary_signal.action == "BUY":
+                # The bot must rely on LLM decisions: promoting an unreviewed
+                # preliminary BUY to a final decision without Step-2 validation
+                # is unsafe. Fail safe to HOLD instead.
+                logger.error(f"Downgrading preliminary BUY for {symbol} to HOLD (LLM circuit breaker active, Step-2 review unavailable).")
+                hold_signal = Signal(
+                    action="HOLD",
+                    confidence=preliminary_signal.confidence,
+                    reasoning="LLM circuit breaker active: Step-2 backtest review unavailable. Preliminary BUY not executed.",
+                )
+                hold_signal.model_type = preliminary_signal.model_type
+                hold_signal.llm_provider = llm_provider or preliminary_signal.llm_provider or "fallback"
+                hold_signal.llm_model = llm_model or preliminary_signal.llm_model or "circuit_breaker_hold"
+                return hold_signal, llm_provider, llm_model, True
             return preliminary_signal, llm_provider, llm_model, is_fallback
 
         if not backtest_results:
@@ -705,7 +719,21 @@ class BacktestManager:
         except Exception as e:
             logger.error(f"LLM Step 2 call failed for {symbol}: {type(e).__name__}: {e}. Using preliminary decision.")
             await self.engine._record_unexpected_exception("run_step2_llm_call", e)
-            signal = preliminary_signal
+            if preliminary_signal.action == "BUY":
+                # The bot must rely on LLM decisions: an unreviewed preliminary
+                # BUY without Step-2 validation is unsafe. Fail safe to HOLD.
+                logger.error(f"Downgrading preliminary BUY for {symbol} to HOLD (Step-2 LLM call failed, backtest review unavailable).")
+                hold_signal = Signal(
+                    action="HOLD",
+                    confidence=preliminary_signal.confidence,
+                    reasoning="Step-2 LLM review failed. Preliminary BUY not executed.",
+                )
+                hold_signal.model_type = preliminary_signal.model_type
+                hold_signal.llm_provider = llm_provider or preliminary_signal.llm_provider or "fallback"
+                hold_signal.llm_model = llm_model or preliminary_signal.llm_model or "step2_failure_hold"
+                signal = hold_signal
+            else:
+                signal = preliminary_signal
             signal.backtest_summary = combined_bt_summary
             # Preserve provider/model from Step 1b as fallback
             if llm_provider is None:
