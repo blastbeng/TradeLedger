@@ -228,7 +228,10 @@ class MarketDataManager:
                     while next_open.weekday() >= 5 or _is_italian_holiday(next_open):
                         next_open += timedelta(days=1)
 
-        except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+        except Exception as e:
+            # Fail-closed: ANY calendar failure (including unexpected library
+            # exceptions such as mcal NoDataError) must degrade to the
+            # weekday+holiday fallback, never propagate and break the gate.
             logger.error(f"Failed to get market clock from pandas_market_calendars: {type(e).__name__}: {e}")
             # Fallback: weekday + time check, excluding known Italian holidays
             from src.llm.cache import _is_italian_holiday
