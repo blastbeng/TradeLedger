@@ -3026,6 +3026,51 @@ def get_pending_dividends_for_symbol(symbol: str) -> List[Dict[str, Any]]:
         conn.close()
 
 
+def get_pending_dividends_for_symbols(symbols: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """Retrieve non-reinvested dividends for multiple symbols in one query.
+
+    Args:
+        symbols: List of full pair symbols (e.g., 'ISP.ML/EUR').
+
+    Returns a dict mapping the FULL input symbol (e.g., 'ISP.ML/EUR') to its
+    list of pending-dividend rows (dicts with id, symbol, ex_date, amount).
+    Symbols with no pending dividends are absent from the result.
+    """
+    if not symbols:
+        return {}
+
+    # Dividends are stored under the base symbol (e.g. 'ISP.ML'); keep a
+    # base -> [full symbols] map so rows can be keyed back by full symbol.
+    base_to_full: Dict[str, List[str]] = {}
+    for s in symbols:
+        base = s.split("/")[0] if "/" in s else s
+        base_to_full.setdefault(base, []).append(s)
+    bases = list(base_to_full.keys())
+
+    conn = get_connection()
+    try:
+        if _backend == "postgresql":
+            sql = _adapt_sql(
+                "SELECT id, symbol, ex_date, amount FROM dividends WHERE symbol = ANY(%s) AND reinvested = 0"
+            )
+            rows = conn.execute(sql, (bases,)).fetchall()
+        else:
+            placeholders = ",".join(["?" for _ in bases])
+            sql = _adapt_sql(
+                f"SELECT id, symbol, ex_date, amount FROM dividends WHERE symbol IN ({placeholders}) AND reinvested = 0"
+            )
+            rows = conn.execute(sql, bases).fetchall()
+
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            row_base = row["symbol"]
+            for full in base_to_full.get(row_base, []):
+                result.setdefault(full, []).append(dict(row))
+        return result
+    finally:
+        conn.close()
+
+
 @retry_on_db_lock()
 def mark_dividend_reinvested(dividend_id: int):
     """Mark a dividend as reinvested."""

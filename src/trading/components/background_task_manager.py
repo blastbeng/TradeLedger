@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, Optional, Tuple, List
 
 from src.config.settings import settings
-from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news, get_latest_ohlcv_timestamps_batch, cleanup_old_position_pnl, cleanup_old_backtest_results, cleanup_old_market_data, insert_dividend, cleanup_old_dividends, get_pending_dividends_for_symbol, mark_dividend_reinvested, get_pending_llm_decisions, update_llm_decision_outcome, get_llm_decision_quality_metrics, cleanup_old_llm_decisions
+from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news, get_latest_ohlcv_timestamps_batch, cleanup_old_position_pnl, cleanup_old_backtest_results, cleanup_old_market_data, insert_dividend, cleanup_old_dividends, get_pending_dividends_for_symbol, get_pending_dividends_for_symbols, mark_dividend_reinvested, get_pending_llm_decisions, update_llm_decision_outcome, get_llm_decision_quality_metrics, cleanup_old_llm_decisions
 from src.strategies.base import Signal
 from src.exchanges.market_data import get_quotes_cached
 from src.exchanges.yahoo_finance import get_yahoo_dividends
@@ -926,21 +926,32 @@ class BackgroundTaskManager:
                     # Check if there are pending dividends for non-BTP positions;
                     # if so, use a shorter sleep so they are processed shortly after market opens.
                     has_pending_dividends = False
-                    for symbol, pos in list(self.engine.shared_state.positions.items()):
-                        if is_btp_isin(symbol.split("/")[0]):
-                            continue
-                        pending = await asyncio.to_thread(get_pending_dividends_for_symbol, symbol)
-                        if pending:
-                            has_pending_dividends = True
-                            break
+                    non_btp_symbols = [
+                        symbol
+                        for symbol, pos in list(self.engine.shared_state.positions.items())
+                        if not is_btp_isin(symbol.split("/")[0])
+                    ]
+                    if non_btp_symbols:
+                        pending_map = await asyncio.to_thread(get_pending_dividends_for_symbols, non_btp_symbols)
+                        has_pending_dividends = bool(pending_map)
                     if has_pending_dividends:
                         sleep_duration = 300
                 else:
+                    # Single batched query for all non-BTP position symbols
+                    # (fixes the N+1 query pattern).
+                    non_btp_symbols = [
+                        symbol
+                        for symbol, pos in list(self.engine.shared_state.positions.items())
+                        if not is_btp_isin(symbol.split("/")[0])
+                    ]
+                    pending_map: Dict[str, List[Dict[str, Any]]] = {}
+                    if non_btp_symbols:
+                        pending_map = await asyncio.to_thread(get_pending_dividends_for_symbols, non_btp_symbols)
                     for symbol, pos in list(self.engine.shared_state.positions.items()):
                         if is_btp_isin(symbol.split("/")[0]):
                             continue  # BTPs use coupons, not dividends
 
-                        pending_divs = await asyncio.to_thread(get_pending_dividends_for_symbol, symbol)
+                        pending_divs = pending_map.get(symbol) or []
                         if not pending_divs:
                             continue
 

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from src.config.settings import settings
-from src.database import insert_position_pnl_snapshot, get_indicators, get_latest_ohlcv_timestamp, get_ohlcv, get_peak_total_equity, save_peak_total_equity, save_trading_state
+from src.database import insert_position_pnl_snapshot, get_indicators, get_latest_ohlcv_timestamp, get_ohlcv, get_ohlcv_batch, get_peak_total_equity, save_peak_total_equity, save_trading_state
 from src.strategies.base import Signal
 from src.utils.btp_policy import BTPPolicy
 from src.utils.redis_client import is_redis_available
@@ -2161,14 +2161,28 @@ class RiskManager:
         # once per symbol (N+1 network call in the hot risk path).
         pos_tickers = await asyncio.to_thread(self.engine._market_data_manager._get_all_position_tickers_sync)
 
+        # Hoisted out of the loop: single batched OHLCV fetch for all symbols
+        # (fixes the N+1 query pattern). get_ohlcv_batch returns raw candle
+        # lists [ts, o, h, l, c, v] (close at index 4), so adapt extraction.
+        var_symbols = list(positions.keys())
+        batched_candles: Dict[str, List[List]] = {}
+        if var_symbols:
+            try:
+                batch_result = await asyncio.to_thread(get_ohlcv_batch, var_symbols, ["1d"], 30)
+                batched_candles = {
+                    sym: tf_map.get("1d", []) for sym, tf_map in batch_result.items()
+                }
+            except Exception as e:
+                logger.warning(f"Batched OHLCV fetch for VaR failed ({type(e).__name__}: {e}); no VaR data.")
+
         for symbol, pos in positions.items():
             try:
-                # Fetch last 30 days of daily candles
-                candles = await asyncio.to_thread(get_ohlcv, symbol, "1d", limit=30)
+                # Last 30 days of daily candles from the batched fetch
+                candles = batched_candles.get(symbol, [])
                 if not candles or len(candles) < 2:
                     continue
 
-                closes = [c["close"] for c in candles]
+                closes = [row[4] for row in candles]
                 returns = pd.Series(closes).pct_change().dropna().values
 
                 # Get current position value (uses the pre-fetched tickers snapshot)
