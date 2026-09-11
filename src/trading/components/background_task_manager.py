@@ -1447,7 +1447,11 @@ class BackgroundTaskManager:
             return
         while self.engine._running:
             try:
-                for queued in list(self.engine.shared_state.queued_orders):
+                # Snapshot under the lock: queued_orders may be mutated
+                # concurrently (execute_signal cancel path, fill cleanup).
+                async with self.engine.shared_state._queued_orders_lock:
+                    queued_snapshot = list(self.engine.shared_state.queued_orders)
+                for queued in queued_snapshot:
                     await self.engine.event_bus.request("process_single_queued_order", queued)
             except asyncio.CancelledError:
                 raise

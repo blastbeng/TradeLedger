@@ -2157,6 +2157,10 @@ class RiskManager:
         weights = []
         total_value = 0.0
 
+        # Hoisted out of the loop: fetch all position tickers once instead of
+        # once per symbol (N+1 network call in the hot risk path).
+        pos_tickers = await asyncio.to_thread(self.engine._market_data_manager._get_all_position_tickers_sync)
+
         for symbol, pos in positions.items():
             try:
                 # Fetch last 30 days of daily candles
@@ -2167,8 +2171,7 @@ class RiskManager:
                 closes = [c["close"] for c in candles]
                 returns = pd.Series(closes).pct_change().dropna().values
 
-                # Get current position value
-                pos_tickers = await asyncio.to_thread(self.engine._market_data_manager._get_all_position_tickers_sync)
+                # Get current position value (uses the pre-fetched tickers snapshot)
                 t = pos_tickers.get(symbol)
                 current_price = t['last'] if t and t.get('last') else pos.get('price', 0.0)
                 pos_value = pos.get('amount', 0.0) * current_price

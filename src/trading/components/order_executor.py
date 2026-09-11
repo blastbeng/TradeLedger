@@ -117,10 +117,14 @@ class OrderExecutor(OrderExecutorBase):
                     await asyncio.to_thread(engine.trader.cancel_order, order_id)
                 except (RuntimeError, ValueError, ConnectionError, KeyError, TypeError, AttributeError) as e:
                     logger.warning(f"Failed to cancel queued order {order_id} for {symbol}: {type(e).__name__}: {e}")
-                # Refund remaining reserved capital for buy orders
+                # Refund remaining reserved capital for buy orders.
+                # The order was already removed from the queue under the lock above;
+                # tag it as settled so a concurrent fill/timeout path cannot refund again.
                 if q['side'] == 'buy':
-                    async with self.shared_state._cycle_spent_lock:
-                        self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - q.get('amount', 0.0))
+                    if not q.get('_settled', False):
+                        q['_settled'] = True
+                        async with self.shared_state._cycle_spent_lock:
+                            self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - q.get('amount', 0.0))
 
         if signal.action == "SELL":
             async with self.shared_state._positions_lock:
@@ -250,6 +254,18 @@ class OrderExecutor(OrderExecutorBase):
     ) -> None:
         """Process a new fill (partial or final) for a queued order."""
         engine = self.engine
+        # --- Re-verify the queued order is still tracked (B3 race): a
+        # concurrent cancel/timeout path (e.g. execute_signal risk SELL) may
+        # have removed it from queued_orders while we were polling status. ---
+        async with self.shared_state._queued_orders_lock:
+            still_queued = any(q is queued or q.get('order_id') == queued.get('order_id')
+                               for q in self.shared_state.queued_orders)
+            if not still_queued:
+                logger.info(
+                    f"Skipping fill for order {queued.get('order_id')} ({queued['symbol']}): "
+                    "no longer queued (concurrently cancelled/removed)."
+                )
+                return
         delta_qty = filled_qty - queued.get('filled_qty', 0.0)
         if delta_qty <= 0:
             return
@@ -418,11 +434,20 @@ class OrderExecutor(OrderExecutorBase):
         if status == 'filled':
             logger.info(f"Queued limit order {order_id} for {queued['symbol']} completely filled.")
             # Safety: refund any remaining amount for buy orders (handles rounding edge cases
-            # where filled_cost doesn't exactly equal original_amount due to slippage/fees)
+            # where filled_cost doesn't exactly equal original_amount due to slippage/fees).
+            # Idempotent: check/set the _settled flag under the queued-orders lock so a
+            # concurrent timeout/cancel path cannot also refund the same reservation.
             if queued['side'] == 'buy' and queued.get('amount', 0) > 0:
-                async with self.shared_state._cycle_spent_lock:
-                    self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued['amount'])
-                logger.debug(f"Refunded remaining {queued['amount']:.2f} to _cycle_spent for filled buy order {order_id}")
+                async with self.shared_state._queued_orders_lock:
+                    already_settled = queued.get('_settled', False)
+                    if not already_settled:
+                        queued['_settled'] = True
+                if not already_settled:
+                    async with self.shared_state._cycle_spent_lock:
+                        self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued['amount'])
+                    logger.debug(f"Refunded remaining {queued['amount']:.2f} to _cycle_spent for filled buy order {order_id}")
+                else:
+                    logger.debug(f"Skipping duplicate refund for already-settled buy order {order_id}")
             async with self.shared_state._queued_orders_lock:
                 if queued in self.shared_state.queued_orders:
                     self.shared_state.queued_orders.remove(queued)
@@ -436,8 +461,10 @@ class OrderExecutor(OrderExecutorBase):
         engine = self.engine
         open_orders = await asyncio.to_thread(engine.trader.get_open_orders)
         now = time.time()
-        # Build a set of order IDs that are currently queued (waiting for fill)
-        queued_ids = {q.get('order_id') for q in self.shared_state.queued_orders if q.get('order_id')}
+        # Build a set of order IDs that are currently queued (waiting for fill).
+        # Snapshot under the lock: queued_orders may be mutated concurrently.
+        async with self.shared_state._queued_orders_lock:
+            queued_ids = {q.get('order_id') for q in self.shared_state.queued_orders if q.get('order_id')}
         for order in open_orders:
             order_id = order.get('id')
             if order_id in queued_ids:
@@ -487,10 +514,17 @@ class OrderExecutor(OrderExecutorBase):
         except (RuntimeError, ValueError, ConnectionError, KeyError, TypeError, AttributeError) as e:
             logger.error(f"Failed to cancel timed-out order {order_id}: {type(e).__name__}: {e}")
 
-        # Refund remaining reserved capital for buy orders
+        # Refund remaining reserved capital for buy orders (idempotent via _settled flag)
         if queued['side'] == 'buy':
-            async with self.shared_state._cycle_spent_lock:
-                self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
+            async with self.shared_state._queued_orders_lock:
+                already_settled = queued.get('_settled', False)
+                if not already_settled:
+                    queued['_settled'] = True
+            if not already_settled:
+                async with self.shared_state._cycle_spent_lock:
+                    self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
+            else:
+                logger.debug(f"Skipping duplicate timeout refund for already-settled buy order {order_id}")
         else:
             async with self.shared_state._positions_lock:
                 pos = self.shared_state.positions.get(queued["symbol"])
@@ -522,10 +556,15 @@ class OrderExecutor(OrderExecutorBase):
         engine = self.engine
         order_id = queued.get('order_id')
         logger.warning(f"Order {order_id} not found for {queued['symbol']}, removing from queue.")
-        # Refund remaining reserved capital for buy orders
+        # Refund remaining reserved capital for buy orders (idempotent via _settled flag)
         if queued['side'] == 'buy':
-            async with self.shared_state._cycle_spent_lock:
-                self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
+            async with self.shared_state._queued_orders_lock:
+                already_settled = queued.get('_settled', False)
+                if not already_settled:
+                    queued['_settled'] = True
+            if not already_settled:
+                async with self.shared_state._cycle_spent_lock:
+                    self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
         else:
             async with self.shared_state._positions_lock:
                 pos = self.shared_state.positions.get(queued["symbol"])
@@ -547,10 +586,15 @@ class OrderExecutor(OrderExecutorBase):
         logger.warning(
             f"Queued order {order_id} for {queued['symbol']} ended as {status}, removing."
         )
-        # Refund remaining reserved capital for buy orders
+        # Refund remaining reserved capital for buy orders (idempotent via _settled flag)
         if queued['side'] == 'buy':
-            async with self.shared_state._cycle_spent_lock:
-                self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
+            async with self.shared_state._queued_orders_lock:
+                already_settled = queued.get('_settled', False)
+                if not already_settled:
+                    queued['_settled'] = True
+            if not already_settled:
+                async with self.shared_state._cycle_spent_lock:
+                    self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - queued.get('amount', 0.0))
         else:
             async with self.shared_state._positions_lock:
                 pos = self.shared_state.positions.get(queued["symbol"])
