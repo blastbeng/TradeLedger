@@ -5,12 +5,13 @@ Extracted from TradingEngine to reduce class size and improve maintainability.
 """
 import asyncio
 import concurrent.futures
+import threading
 import atexit
 import hashlib
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from src.config.settings import settings
 
@@ -20,6 +21,34 @@ _backtest_executor = concurrent.futures.ThreadPoolExecutor(
     max_workers=10, thread_name_prefix="backtest"
 )
 atexit.register(lambda: _backtest_executor.shutdown(wait=False))
+
+# Per-evaluation candle cache: backtest variants for the same symbol+tf repeatedly fetch
+# the same DB candle range; cache keyed by (symbol, tf, since_ms) avoids 3-5x duplicate fetches.
+_bt_candles_cache: Dict[Tuple[str, str, int], List[List]] = {}
+_bt_candles_cache_lock = threading.Lock()
+
+
+def _get_backtest_candles_cached(symbol: str, tf: str, since_ms: int) -> List[List]:
+    """Fetch backtest candles from DB with a small process-wide cache.
+
+    Variants in one evaluation share (symbol, tf, since_ms), so only the first
+    variant pays the DB cost. Cache is bounded and pruned when it exceeds 64 entries.
+    """
+    key = (symbol, tf, since_ms)
+    with _bt_candles_cache_lock:
+        cached = _bt_candles_cache.get(key)
+    if cached is not None:
+        return cached
+    # No practical cap: since_ms bounds the range; SQL LIMIT guards runaway rows.
+    rows = get_ohlcv(symbol, tf, since_ms=since_ms, limit=2147483647)
+    candles = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in rows]
+    with _bt_candles_cache_lock:
+        if len(_bt_candles_cache) >= 64:
+            # Drop oldest entries (dict preserves insertion order)
+            for k in list(_bt_candles_cache.keys())[: len(_bt_candles_cache) - 32]:
+                _bt_candles_cache.pop(k, None)
+        _bt_candles_cache[key] = candles
+    return candles
 from src.database import get_ohlcv, get_recent_backtest_result, save_backtest_result, get_backtest_results_for_symbol
 from src.exchanges.fees import calculate_transaction_costs
 from src.indicators import compute_atr_series, compute_adx_series, compute_rsi_series, compute_macd_series
@@ -176,11 +205,10 @@ class BacktestManager:
         if bt_period_days is not None:
             bt_period_days = max(30, min(int(bt_period_days), settings.OHLCV_RETENTION_DAYS))
             bt_since_ms = int(time.time() * 1000) - bt_period_days * 24 * 60 * 60 * 1000
-            bt_limit = int((bt_period_days * 86400) / tf_secs) + 100
             loop = asyncio.get_running_loop()
             bt_db_candles = await loop.run_in_executor(
                 _backtest_executor,
-                lambda: get_ohlcv(symbol, assigned_tf, since_ms=bt_since_ms, limit=bt_limit)
+                lambda: _get_backtest_candles_cached(symbol, assigned_tf, bt_since_ms)
             )
             if bt_db_candles:
                 bt_candles = [

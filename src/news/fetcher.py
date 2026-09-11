@@ -209,7 +209,9 @@ async def _batch_analyze_sentiments(articles: List[Dict[str, Any]]) -> None:
         )
         prompt = "Analyze the sentiment of these texts:\n\n"
         for idx, text in enumerate(texts):
-            prompt += f"{idx + 1}. {text[:500]}\n"
+            # Cap each text to 200 chars: titles + opening summary are enough for
+            # sentiment classification and cut input tokens roughly in half.
+            prompt += f"{idx + 1}. {text[:200]}\n"
         
         try:
             llm_result = await get_cached_llm_response_async(
@@ -234,6 +236,33 @@ async def _batch_analyze_sentiments(articles: List[Dict[str, Any]]) -> None:
                         sorted_batch[j]["sentiment"] = {"label": label, "compound": round(compound, 4)}
                     continue
         except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
+            # One lightweight retry for empty-response failures (gpt-oss occasionally
+            # returns empty content on large batches): a retried call is cheaper than
+            # silently degrading all 15 articles to neutral. Cache-miss calls only.
+            try:
+                llm_result = await get_cached_llm_response_async(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    ttl=86400,
+                    model_type="sentiment",
+                    request_type="sentiment_analysis_batch_retry",
+                    market_hash=batch_hash + "-r2"
+                )
+                response_text = llm_result.get("response", "")
+                json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+                if json_match:
+                    data = json.loads(json_match.group(0))
+                    if isinstance(data, list) and len(data) == len(sorted_batch):
+                        for j, item in enumerate(data):
+                            label = str(item.get("label", "neutral")).lower()
+                            compound = float(item.get("compound", 0.0))
+                            if label not in ("positive", "negative", "neutral"):
+                                label = "neutral"
+                            compound = max(-1.0, min(1.0, compound))
+                            sorted_batch[j]["sentiment"] = {"label": label, "compound": round(compound, 4)}
+                        continue
+            except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError, RuntimeError) as e2:
+                logger.warning(f"Batch LLM sentiment analysis retry also failed: {type(e2).__name__}: {e2}")
             logger.warning(f"Batch LLM sentiment analysis failed: {type(e).__name__}: {e}")
         
         # Fallback to neutral if batch failed or response was malformed

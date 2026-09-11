@@ -882,7 +882,10 @@ class SignalProcessor:
             try:
                 since_ms = int(time.time() * 1000) - settings.OHLCV_RETENTION_DAYS * 24 * 60 * 60 * 1000
                 tf_seconds = engine._timeframe_to_seconds(assigned_tf)
-                hist_limit = int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds) + 100
+                # Cap to the prompt limit: prompts truncate historical_ohlcv to the last
+                # 1000 candles anyway (src/llm/prompts.py), so fetching the full retention
+                # (up to ~4548 candles on 1h) wastes DB/memory/bandwidth per evaluation.
+                hist_limit = min(int((settings.OHLCV_RETENTION_DAYS * 86400) / tf_seconds) + 100, 1100)
                 db_candles = await asyncio.to_thread(get_ohlcv, symbol, assigned_tf, since_ms=since_ms, limit=hist_limit)
                 if db_candles:
                     ohlcv_data[assigned_tf] = [[c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in db_candles]
