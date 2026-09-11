@@ -336,11 +336,14 @@ class ReevalLLMRunner:
         reasoning_effort: str = "low",
         model_type: str = "actuator",
     ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-        """Run the final selection LLM call with retries and fallback merge.
+        """Run the final selection LLM call with retries.
 
         Returns (response, llm_provider, llm_model).
-        If all retries fail and chunk_results exist, merges all chunk
-        selections as a fallback.
+        On total failure, returns (None, None, None) — the caller falls back to
+        previously tracked symbols or the composite-score fallback rather than
+        an unconsolidated merge of per-chunk selections (which never saw the
+        full shortlist or the global symbol budget and is therefore not a
+        reviewed portfolio composition).
         """
         engine = self.engine
 
@@ -441,27 +444,11 @@ class ReevalLLMRunner:
                     else:
                         logger.error(f"Final selection LLM failed after all retries: {type(e).__name__}: {e}")
 
-            # Fallback: merge all chunk selections if final call failed
-            if response is None and chunk_results:
-                logger.warning("Final selection LLM call failed. Merging all chunk selections as fallback.")
-                merged_stocks = []
-                for chunk in chunk_results:
-                    for stock in chunk.get("stocks", []):
-                        if isinstance(stock, dict) and "symbol" in stock:
-                            merged_stocks.append(stock)
-                seen = set()
-                deduped = []
-                for s in merged_stocks:
-                    if s["symbol"] not in seen:
-                        seen.add(s["symbol"])
-                        deduped.append(s)
-                response = json.dumps({
-                    "stocks": deduped[:engine.effective_max_symbols],
-                    "max_stocks": min(len(deduped), engine.effective_max_symbols),
-                    "reasoning": "Fallback: merged all chunk selections (final LLM call failed)",
-                })
-                llm_provider = "fallback"
-                llm_model = "merged_chunks"
+            # If the final consolidated call failed, do NOT promote unconsolidated
+            # per-chunk merges: each chunk selected candidates without seeing the
+            # full shortlist or the global symbol budget, so a raw merge is not a
+            # reviewed portfolio composition. Leave response as None so the
+            # caller proceeds to the tracked/composite fallback paths instead.
 
         return response, llm_provider, llm_model
 
