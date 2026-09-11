@@ -10,7 +10,7 @@ import uuid
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Response, APIRouter, Body
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from src.config.settings import settings
 # Ready for next request
 from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
@@ -285,6 +285,12 @@ async def health():
         "llm_actuator": llm_health.get("actuator", {}),
         "llm_weak": llm_health.get("weak", {}),
     }
+
+# Unauthenticated health endpoint for the Docker healthcheck (curl /health).
+# The authenticated variant lives at /api/v1/health for the dashboard.
+@http_router.get("/health", include_in_schema=False)
+async def _health_redirect():
+    return PlainTextResponse("ok" if _engine is not None else "starting", status_code=200 if _engine is not None else 503)
 
 @http_router.get("/status")
 async def status():
