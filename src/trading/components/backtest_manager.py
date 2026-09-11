@@ -211,10 +211,15 @@ class BacktestManager:
                 lambda: _get_backtest_candles_cached(symbol, assigned_tf, bt_since_ms)
             )
             if bt_db_candles:
-                bt_candles = [
-                    [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
-                    for c in bt_db_candles
-                ]
+                first = bt_db_candles[0]
+                if isinstance(first, dict):
+                    bt_candles = [
+                        [c["timestamp"], c["open"], c["high"], c["low"], c["close"], c["volume"]]
+                        for c in bt_db_candles
+                    ]
+                else:
+                    # Cache already returns [ts, o, h, l, c, v] lists
+                    bt_candles = bt_db_candles
             else:
                 bt_candles = historical_ohlcv or raw_candles
         else:
