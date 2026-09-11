@@ -14,6 +14,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from src.config.settings import settings
+from src.strategies.base import Signal
 
 # Dedicated thread pool for backtesting to prevent CPU-intensive tasks
 # from exhausting the default asyncio executor.
@@ -21,6 +22,61 @@ _backtest_executor = concurrent.futures.ThreadPoolExecutor(
     max_workers=10, thread_name_prefix="backtest"
 )
 atexit.register(lambda: _backtest_executor.shutdown(wait=False))
+
+
+def _decision_cache_snapshot(
+    *,
+    symbol: str,
+    assigned_tf: str,
+    ticker: Dict[str, Any],
+    preliminary_signal: Signal,
+    backtest_results: List[Dict[str, Any]],
+    combined_bt_summary: str,
+    trading_paused: bool,
+    shared_state: Any,
+    base_currency: str,
+    strategy_model_type: str,
+    effective_temp: float,
+) -> Dict[str, Any]:
+    """Build the deterministic snapshot dict hashed for the decision cache.
+
+    Must cover every input to the Step-2 prompt: symbol, ticker snapshot,
+    preliminary decision, backtest results, position state, pause state, and
+    the model settings that shape the review.
+    """
+    pos = shared_state.positions.get(symbol) if shared_state else None
+    return {
+        "snapshot_type": "step2_decision_v1",
+        "symbol": symbol,
+        "assigned_tf": assigned_tf,
+        "ticker": ticker,
+        "preliminary_decision": {
+            "action": preliminary_signal.action,
+            "confidence": preliminary_signal.confidence,
+            "reasoning": preliminary_signal.reasoning,
+            "strategy_params": preliminary_signal.strategy_params,
+            "timeframe": assigned_tf,
+        },
+        "backtest_results": backtest_results,
+        "backtest_summary": combined_bt_summary,
+        "trading_paused": trading_paused,
+        "base_currency": base_currency,
+        "model_type": strategy_model_type,
+        "temperature": effective_temp,
+        "position": (
+            {
+                "amount": pos.get("amount"),
+                "price": pos.get("price"),
+                "cost_basis": pos.get("cost_basis"),
+                "net_base": pos.get("net_base"),
+                "stop_loss": pos.get("stop_loss"),
+                "take_profit": pos.get("take_profit"),
+                "entry_time": pos.get("entry_time"),
+            }
+            if pos
+            else None
+        ),
+    }
 
 # Per-evaluation candle cache: backtest variants for the same symbol+tf repeatedly fetch
 # the same DB candle range; cache keyed by (symbol, tf, since_ms) avoids 3-5x duplicate fetches.
@@ -56,6 +112,13 @@ from src.llm.cache import get_cached_llm_response, get_cached_llm_response_async
 from src.llm.backtest_prompts import build_final_decision_messages
 from src.strategies.backtester import backtest_strategy, format_backtest_summary, walk_forward_backtest, format_walk_forward_summary, BacktestConfig
 from src.strategies.base import Signal
+from src.trading.components.decision_cache import (
+    build_decision_snapshot_hash,
+    cached_decision_to_signal,
+    get_cached_decision,
+    invalidate_decision_cache,
+    store_cached_decision,
+)
 from src.strategies.llm_parser import create_strategy_from_llm
 from src.trading.engine_utils import timeframe_to_seconds
 
@@ -532,6 +595,61 @@ class BacktestManager:
         Returns (final_signal, llm_provider, llm_model, is_fallback).
         """
         engine = self.engine
+        _snapshot_hash: Optional[str] = None
+
+        # --- Change-detection gate: snapshot-hash decision cache (token saving) ---
+        # If the exact Step-2 prompt payload inputs are unchanged since the last
+        # LLM-reviewed decision for this symbol, reuse the cached decision.
+        # The cached decision was originally reviewed by the LLM (stored only on
+        # genuine Step-2 success paths), so the provenance gate still passes.
+        # Redis errors never break the decision path: on any failure we simply
+        # proceed with the normal LLM call.
+        if settings.LLM_DECISION_CACHE_ENABLED:
+            try:
+                _snapshot = _decision_cache_snapshot(
+                    symbol=symbol,
+                    assigned_tf=assigned_tf,
+                    ticker=ticker,
+                    preliminary_signal=preliminary_signal,
+                    backtest_results=backtest_results,
+                    combined_bt_summary=combined_bt_summary,
+                    trading_paused=trading_paused,
+                    shared_state=self.shared_state,
+                    base_currency=engine.base_currency,
+                    strategy_model_type=strategy_model_type,
+                    effective_temp=effective_temp,
+                )
+                _snapshot_hash = build_decision_snapshot_hash(_snapshot)
+                _cache_entry = get_cached_decision(engine.redis, symbol)
+                if _cache_entry and _cache_entry.get("snapshot_hash") == _snapshot_hash:
+                    cached_signal = cached_decision_to_signal(_cache_entry)
+                    if cached_signal is not None:
+                        if cached_signal.action == "BUY":
+                            # Carry over execution-critical fields from Step 1
+                            # (mirrors the live path) so a cached BUY stays executable.
+                            for _attr in (
+                                "entry_condition", "order_type", "limit_price", "stop_price",
+                                "stop_loss_order_type", "stop_loss_stop_price", "stop_loss_limit_price",
+                                "stop_loss_trail_offset", "take_profit_order_type", "take_profit_limit_price",
+                                "trail_offset",
+                            ):
+                                if getattr(cached_signal, _attr, None) is None and getattr(preliminary_signal, _attr, None) is not None:
+                                    setattr(cached_signal, _attr, getattr(preliminary_signal, _attr))
+                            if not cached_signal.strategy_params:
+                                cached_signal.strategy_params = preliminary_signal.strategy_params
+                        logger.info(
+                            f"Decision cache HIT for {symbol}: inputs unchanged since last Step-2 review; reusing cached LLM decision (action={cached_signal.action}).",
+                            extra={"event": "decision_cache_hit", "symbol": symbol, "snapshot_hash": _snapshot_hash},
+                        )
+                        return cached_signal, _cache_entry.get("llm_provider") or llm_provider, _cache_entry.get("llm_model") or llm_model, is_fallback
+                    logger.warning(f"Decision cache entry for {symbol} could not be rebuilt; falling back to live LLM call.")
+                elif _cache_entry:
+                    logger.debug(f"Decision cache MISS for {symbol}: inputs changed.", extra={"event": "decision_cache_miss", "symbol": symbol})
+            except Exception as cache_e:  # never fail the decision path on cache logic
+                logger.warning(
+                    f"Decision cache check failed for {symbol}: {type(cache_e).__name__}: {cache_e}; proceeding with live LLM call.",
+                    extra={"event": "decision_cache_check_error", "symbol": symbol, "error_type": type(cache_e).__name__},
+                )
 
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
         if await is_llm_circuit_breaker_active():
@@ -715,6 +833,22 @@ class BacktestManager:
                 signal.backtest_summary = combined_bt_summary
                 # Genuine Step-2 success: this signal has been reviewed by the LLM.
                 signal.step2_reviewed = True
+                # Store the reviewed decision for the snapshot-hash cache.
+                if settings.LLM_DECISION_CACHE_ENABLED and _snapshot_hash is not None:
+                    try:
+                        store_cached_decision(
+                            engine.redis,
+                            symbol,
+                            _snapshot_hash,
+                            signal,
+                            llm_provider,
+                            llm_model,
+                        )
+                    except Exception as store_e:  # never fail the decision path on cache write
+                        logger.warning(
+                            f"Decision cache store failed for {symbol}: {type(store_e).__name__}: {store_e}",
+                            extra={"event": "decision_cache_store_error", "symbol": symbol, "error_type": type(store_e).__name__},
+                        )
             else:
                 # Step-2 responded but was unparseable after all retries — NOT reviewed.
                 signal = preliminary_signal

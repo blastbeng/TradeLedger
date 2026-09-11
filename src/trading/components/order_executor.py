@@ -19,6 +19,9 @@ from src.trading.components.order_executor_base import OrderExecutorBase
 logger = logging.getLogger(__name__)
 
 
+from src.trading.components.decision_cache import invalidate_decision_cache
+
+
 class OrderExecutor(OrderExecutorBase):
     """Handles order execution and fill processing for the TradingEngine."""
 
@@ -48,6 +51,15 @@ class OrderExecutor(OrderExecutorBase):
     ):
         """Execute a BUY or SELL signal."""
         engine = self.engine
+        # --- Decision cache invalidation: any executed BUY/SELL changes the
+        # position state, so the cached Step-2 decision for this symbol is no
+        # longer valid. Best-effort; Redis errors are ignored. ---
+        try:
+            invalidate_decision_cache(engine.redis, symbol)
+            logger.debug(f"Decision cache invalidated for {symbol} (order execution).", extra={"event": "decision_cache_invalidated", "symbol": symbol})
+        except Exception as inv_e:
+            logger.warning(f"Decision cache invalidation error for {symbol}: {type(inv_e).__name__}: {inv_e}")
+        # --- Format symbol for notifications ---
         # --- Format symbol for notifications ---
         stock_name = await engine._market_data_manager.get_stock_name(symbol)
         tf = timeframe or (self.shared_state.positions.get(symbol, {}).get("timeframe") if symbol in self.shared_state.positions else None)

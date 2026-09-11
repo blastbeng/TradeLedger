@@ -63,6 +63,11 @@ class Signal:
     # origin marks non-LLM signal sources, e.g. "risk_manager" for circuit-breaker
     # exits that are exempt from the LLM-provenance gate (risk-reducing by design).
     origin: Optional[str] = None
+    # decision_source marks where the final reviewed decision came from:
+    # "live" for a fresh Step-2 LLM call, "cache" for a reused cached LLM
+    # decision (inputs unchanged since the previous review). Purely for
+    # observability; does not affect the provenance gate.
+    decision_source: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Signal":

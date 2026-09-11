@@ -14,6 +14,7 @@ from src.database import insert_trade
 from src.strategies.base import Signal
 from src.trading.engine_utils import format_symbol_display
 from src.trading.components.order_executor_base import OrderExecutorBase
+from src.trading.components.decision_cache import invalidate_decision_cache
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,14 @@ class SellExecutor(OrderExecutorBase):
         prorated_cost_basis: float, cost_basis: float, net_base: float,
         cleanup_callback=None
     ) -> bool:
+        """Update or remove position after a sell. Returns True if position was removed."""
+        # Invalidate the Step-2 decision cache: a filled SELL changes the position
+        # state for this symbol. Best-effort (Redis errors ignored).
+        try:
+            invalidate_decision_cache(self.engine.redis, symbol)
+            logger.debug(f"Decision cache invalidated for {symbol} (SELL execution).", extra={"event": "decision_cache_invalidated", "symbol": symbol})
+        except Exception as inv_e:
+            logger.warning(f"Decision cache invalidation error for {symbol} (SELL): {type(inv_e).__name__}: {inv_e}")
         """Update or remove position after a sell. Returns True if position was removed."""
         # Invalidate BuyExecutor portfolio cache since a position has been updated or removed
         if self._order_executor._buy_executor:

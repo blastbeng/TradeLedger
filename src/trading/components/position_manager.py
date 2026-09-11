@@ -943,6 +943,11 @@ class PositionManager:
         await self.event_bus.publish("cancel_exit_orders", symbol)
         async with self.shared_state._positions_lock:
             self.shared_state.positions.pop(symbol, None)
+        # Invalidate the Step-2 decision cache (position closed).
+        try:
+            invalidate_decision_cache(engine.redis, symbol)
+        except Exception as inv_e:
+            logger.warning(f"Decision cache invalidation error for {symbol} (BTP close): {type(inv_e).__name__}: {inv_e}")
 
         par_value = BTPPolicy.PAR_VALUE
         

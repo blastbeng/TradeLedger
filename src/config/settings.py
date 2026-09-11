@@ -838,6 +838,12 @@ class Settings(BaseSettings):
     LLM_FALLBACK_ENABLED: bool = True
     # Prompt caching for DeepSeek (and other providers that support it)
     LLM_PROMPT_CACHING_ENABLED: bool = True
+    # Snapshot-hash semantic decision cache for Step-2 LLM reviews: when the
+    # prompt payload inputs are unchanged since the last decision for a symbol,
+    # the prior LLM-reviewed decision is reused (token saving). Only stored on
+    # genuine Step-2 success paths; invalidated on position changes.
+    LLM_DECISION_CACHE_ENABLED: bool = True
+    LLM_DECISION_CACHE_TTL_SECONDS: int = 21600  # 6 hours
     LLM_PROMPT_CACHING_PROVIDERS: Annotated[list[str], NoDecode] = ["deepseek", "ollama", "openai"]
     # Providers that support the cache_control field (e.g., DeepSeek).
     # Only these providers will receive the cache_control header.

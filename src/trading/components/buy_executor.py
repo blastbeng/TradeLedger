@@ -16,6 +16,7 @@ from src.database import insert_trade
 from src.strategies.base import Signal
 from src.utils.btp_policy import BTPPolicy
 from src.trading.components.order_executor_base import OrderExecutorBase
+from src.trading.components.decision_cache import invalidate_decision_cache
 from src.utils.pause_utils import is_locally_paused, get_local_pause_reason
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,13 @@ class BuyExecutor(OrderExecutorBase):
     ) -> None:
         """Execute a BUY signal."""
         engine = self.engine
+        # Invalidate the Step-2 decision cache: a filled BUY changes the position
+        # state for this symbol. Best-effort (Redis errors ignored).
+        try:
+            invalidate_decision_cache(engine.redis, symbol)
+            logger.debug(f"Decision cache invalidated for {symbol} (BUY execution).", extra={"event": "decision_cache_invalidated", "symbol": symbol})
+        except Exception as inv_e:
+            logger.warning(f"Decision cache invalidation error for {symbol} (BUY): {type(inv_e).__name__}: {inv_e}")
         parts = symbol.split("/")
         if len(parts) != 2:
             logger.error(f"Invalid symbol format: {symbol}")
