@@ -34,19 +34,18 @@ class EventBus:
                 logger.error(f"Event handler error for '{event_name}': {type(e).__name__}: {e}", exc_info=True)
 
     async def request(self, event_name: str, *args, **kwargs):
-        """Send a command/query via the event bus and return the result of the first subscriber."""
+        """Send a command/query via the event bus and return the result of the first subscriber.
+
+        Unlike publish(), request() is a command/query: a handler failure must be
+        raised to the caller instead of being silently converted to a None result,
+        which callers could mistake for a legitimate empty response.
+        """
         if event_name not in self._subscribers or not self._subscribers[event_name]:
             return None
         callback = self._subscribers[event_name][0]
-        try:
-            if asyncio.iscoroutinefunction(callback):
-                return await callback(*args, **kwargs)
-            return callback(*args, **kwargs)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.exception(f"Event handler error for '{event_name}': {type(e).__name__}: {e}")
-            return None
+        if asyncio.iscoroutinefunction(callback):
+            return await callback(*args, **kwargs)
+        return callback(*args, **kwargs)
 
     def log_subscription_summary(self) -> None:
         """Log a complete registry of all event subscriptions.
