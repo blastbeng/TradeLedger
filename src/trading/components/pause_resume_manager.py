@@ -223,31 +223,24 @@ class PauseResumeManager:
                         _min_pause = int(raw)
                 except (ValueError, TypeError, ConnectionError, TimeoutError, OSError):
                     pass
+                # Fail-closed: never force-resume on LLM failures. Trading stays paused.
                 if engine.notifier:
                     await engine.notifier.send_notification(
                         f"⚠️ Could not reach LLM to decide pause/resume (failure #{current_fails}). "
-                        f"Auto‑resume will be attempted after {_min_pause}s if LLM stays silent.",
+                        f"Trading remains paused (fail-closed) until the LLM is reachable again.",
                         summary={"action": "INFO", "reason": "LLM pause-resume call failed"}
                     )
-                # If we failed 3 times in a row, force‑resume (optional but safe)
                 if current_fails >= 3:
-                    # Double-check source before force-resuming
-                    fail_source = await asyncio.to_thread(engine.redis.get, "trading:pause_source")
-                    if fail_source and (fail_source.decode() if isinstance(fail_source, bytes) else fail_source) != "llm":
-                        logger.warning("Force-resume on LLM failure skipped: pause source is not LLM.")
-                        return
-                    from src.utils.pause_utils import clear_trading_pause_keys
-                    await asyncio.to_thread(clear_trading_pause_keys, engine.redis)
-                    await asyncio.to_thread(engine.redis.delete, fail_key)
-                    # --- Also reset keep counter and set force‑resume risk multiplier ---
-                    await asyncio.to_thread(engine.redis.delete, keep_key)
-                    await engine._set_global_risk_multiplier(force_resume_mult)
-                    engine._reeval_trigger.set()
+                    logger.error(
+                        "LLM pause-decision unavailable, remaining paused (fail-closed): "
+                        f"{current_fails} consecutive LLM call failures. Trading stays paused."
+                    )
                     if engine.notifier:
                         await engine.notifier.send_notification(
-                            "▶️ Trading auto‑resumed because LLM could not be reached for pause decision. "
-                            f"Global risk multiplier set to {force_resume_mult}.",
-                            summary={"action": "RESUME", "reason": "LLM pause-resume failures exceeded limit"}
+                            "⛔ LLM pause-decision unavailable, remaining paused (fail-closed). "
+                            f"{current_fails} consecutive LLM call failures; trading stays paused "
+                            "until the LLM is reachable again.",
+                            summary={"action": "PAUSE", "reason": "LLM pause-decision unavailable, remaining paused (fail-closed)"}
                         )
                 return
 
