@@ -1,10 +1,14 @@
 from dataclasses import dataclass, field, fields
 from typing import Dict, Any, Optional, List
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class Signal:
-    action: str  # "BUY", "SELL", "HOLD"
+    action: str  # "BUY", "SELL", "HOLD" (invalid/missing defaults to "HOLD")
     confidence: float = 0.0
     reasoning: str = ""
     price: Optional[float] = None
@@ -65,8 +69,21 @@ class Signal:
         """Reconstruct a Signal from a dictionary, ignoring unknown keys."""
         valid_keys = {f.name for f in fields(cls)}
         filtered = {k: v for k, v in data.items() if k in valid_keys}
+        # Fail-safe: missing or invalid action must NOT default to an executable
+        # decision. Default to "HOLD" per the project's LLM fail-safe invariant.
+        action = data.get("action")
+        if action is None:
+            filtered["action"] = "HOLD"
+        else:
+            action = str(action).upper()
+            if action not in ("BUY", "SELL", "HOLD"):
+                logger.warning(
+                    "Signal.from_dict: invalid action %r; defaulting to HOLD", action
+                )
+                action = "HOLD"
+            filtered["action"] = action
         # Ensure required fields have fallbacks
-        filtered.setdefault("action", "BUY")
+        filtered.setdefault("confidence", 0.0)
         filtered.setdefault("confidence", 0.0)
         filtered.setdefault("reasoning", "")
         return cls(**filtered)
