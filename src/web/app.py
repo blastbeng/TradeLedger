@@ -200,6 +200,12 @@ app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
 async def root():
     return FileResponse("src/web/static/index.html")
 
+# Unauthenticated health endpoint for the Docker healthcheck (curl /health).
+# Registered directly on the app so it cannot be shadowed by the authed /api/v1 router.
+@app.get("/health", include_in_schema=False)
+async def docker_health():
+    return PlainTextResponse("ok" if _engine is not None else "starting", status_code=200 if _engine is not None else 503)
+
 @app.get("/sw.js")
 async def service_worker():
     return FileResponse("src/web/static/sw.js", media_type="application/javascript")
@@ -285,12 +291,6 @@ async def health():
         "llm_actuator": llm_health.get("actuator", {}),
         "llm_weak": llm_health.get("weak", {}),
     }
-
-# Unauthenticated health endpoint for the Docker healthcheck (curl /health).
-# The authenticated variant lives at /api/v1/health for the dashboard.
-@http_router.get("/health", include_in_schema=False)
-async def _health_redirect():
-    return PlainTextResponse("ok" if _engine is not None else "starting", status_code=200 if _engine is not None else 503)
 
 @http_router.get("/status")
 async def status():
