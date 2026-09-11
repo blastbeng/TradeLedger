@@ -367,12 +367,14 @@ def _is_relevant(symbol: str, title: str, summary: str, name: Optional[str] = No
 # Public API
 # ---------------------------------------------------------------------------
 
-async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List[Dict[str, str]]:
+async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None, skip_sentiment: bool = False) -> List[Dict[str, str]]:
     """
     Fetch news articles for a trading symbol from all enabled sources.
     Returns a list of dicts with keys:
         title, source, url, published_at, summary
     Results are cached in Redis for NEWS_CACHE_TTL_SECONDS.
+    When ``skip_sentiment`` is True, LLM sentiment analysis is bypassed
+    (articles without sentiment default to neutral).
     """
     if not settings.NEWS_ENABLED:
         return []
@@ -491,7 +493,12 @@ async def fetch_news_for_symbol(symbol: str, name: Optional[str] = None) -> List
     unique = unique[:settings.NEWS_MAX_ARTICLES_PER_SYMBOL]
 
     # Batch sentiment analysis to reduce LLM calls
-    await _batch_analyze_sentiments(unique)
+    if skip_sentiment:
+        for a in unique:
+            if "sentiment" not in a:
+                a["sentiment"] = {"label": "neutral", "compound": 0.0}
+    else:
+        await _batch_analyze_sentiments(unique)
 
     # Cache
     try:

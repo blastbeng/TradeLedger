@@ -422,9 +422,9 @@ class TradingEngine:
         return await self._market_data_manager._fetch_vix()
 
 
-    async def _fetch_and_store_news_for_symbol(self, symbol: str):
+    async def _fetch_and_store_news_for_symbol(self, symbol: str, skip_sentiment: bool = False):
         """Fetch news for a single symbol and store it in the database."""
-        return await self._market_data_manager._fetch_and_store_news_for_symbol(symbol)
+        return await self._market_data_manager._fetch_and_store_news_for_symbol(symbol, skip_sentiment=skip_sentiment)
 
     async def _risk_management_loop(self):
         await self._background_task_manager._risk_management_loop()

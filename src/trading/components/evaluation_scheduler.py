@@ -4,6 +4,7 @@ import logging
 from typing import Dict, List
 
 from src.config.settings import settings
+from src.trading.components.market_data_manager import is_llm_active_now
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,15 @@ class EvaluationScheduler:
     async def get_symbols_to_process(self, now: float) -> List[Dict[str, str]]:
         """Determine which symbols need evaluation this cycle based on market conditions and intervals."""
         engine = self.engine
+
+        # Hard gate: no LLM decision calls while the market is closed (fail-closed
+        # on missing clock). Forced symbols may still flow.
+        if not await is_llm_active_now(engine.event_bus):
+            if engine._force_reeval or engine._reeval_pending_force:
+                logger.info("Market closed; allowing forced symbol evaluation.")
+            else:
+                logger.debug("Market closed; skipping symbol evaluation this cycle.")
+                return []
 
         # Compute active period status once per loop iteration
         clock = await engine._market_data_manager.get_clock()

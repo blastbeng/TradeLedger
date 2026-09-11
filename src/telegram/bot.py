@@ -429,7 +429,21 @@ class TelegramBot:
             msg += "  No balances\n"
 
         # Trading paused status
-        status_text = "⏸️ Paused" if paused else "▶️ Active"
+        market_closed = False
+        if not paused:
+            try:
+                clock = await asyncio.wait_for(self.engine._market_data_manager.get_clock(), timeout=10.0)
+                phase = getattr(clock, "phase", None) if clock else None
+                market_closed = clock is None or phase == "closed"
+            except (asyncio.TimeoutError, ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Market clock fetch failed for status: {type(e).__name__}: {e}")
+                market_closed = True  # fail-closed
+        if paused:
+            status_text = "⏸️ Paused"
+        elif market_closed:
+            status_text = "⛔ Inactive (market closed)"
+        else:
+            status_text = "▶️ Active"
         msg += f"\n<b>⚙️ Trading:</b> {status_text}\n"
 
         if paused:

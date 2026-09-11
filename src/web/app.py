@@ -299,6 +299,9 @@ async def status():
     paused_raw = await asyncio.to_thread(redis.get, "trading:paused")
     paused = paused_raw == "1"
     market_open = await engine._is_market_open()
+    clock = await engine._market_data_manager.get_clock()
+    market_phase = getattr(clock, "phase", None) if clock else None
+    status = "ACTIVE" if market_open else "INACTIVE"
 
     current_symbols = []
     base_symbols = [entry["symbol"].split("/")[0] for entry in engine.current_symbols]
@@ -381,6 +384,8 @@ async def status():
         "base_currency": engine.base_currency,
         "paused": paused,
         "market_open": market_open,
+        "market_phase": market_phase,
+        "status": status,
         "queued_orders": queued_orders_payload,
         "redis_available": is_redis_available(),
     }
@@ -928,6 +933,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     payload = _ws_payload_cache
                 else:
                     market_open = await engine._is_market_open()
+                    clock = await engine._market_data_manager.get_clock()
+                    market_phase = getattr(clock, "phase", None) if clock else None
+                    status = "ACTIVE" if market_open else "INACTIVE"
                     # Build current_symbols with display (parallelized to avoid blocking)
                     async def _build_symbol_entry(entry):
                         entry_copy = dict(entry)
@@ -1050,6 +1058,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         "pause_info": pause_info,
                         "queued_orders": queued_orders_payload,
                         "market_open": market_open,
+                        "market_phase": market_phase,
+                        "status": status,
                         "redis_available": is_redis_available(),
                         "discovered_symbols": discovered_symbols_payload,
                     }

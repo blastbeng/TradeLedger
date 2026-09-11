@@ -32,6 +32,39 @@ class ClockInfo:
     is_open: bool
     timestamp: datetime
     next_open: datetime
+    # Optional market phase: "pre_market", "open" or "closed" (None = unknown)
+    phase: Optional[str] = None
+
+
+def _compute_phase(is_open: bool, next_open: datetime) -> str:
+    """Derive the market phase from open state and next opening time.
+
+    Pre-market = the 60 minutes before the next session open; everything
+    that is not open and not pre-market is closed (weekends/holidays included).
+    """
+    if is_open:
+        return "open"
+    try:
+        now_rome = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.MARKET_TIMEZONE))
+        minutes_to_open = (next_open - now_rome).total_seconds() / 60
+        if 0 < minutes_to_open <= 60:
+            return "pre_market"
+    except (ValueError, TypeError, OSError):
+        pass
+    return "closed"
+
+
+async def is_llm_active_now(event_bus) -> bool:
+    """Return True when LLM decision calls are allowed (market pre-market or open).
+
+    Fail-closed: returns False when the clock is unavailable or the phase is unknown.
+    """
+    try:
+        clock = await event_bus.request("get_clock")
+    except Exception as e:
+        logger.warning(f"is_llm_active_now: clock fetch failed: {type(e).__name__}: {e}")
+        return False
+    return bool(clock) and getattr(clock, "phase", None) in ("pre_market", "open")
 
 
 @dataclass
@@ -132,7 +165,8 @@ class MarketDataManager:
                         while next_open.weekday() >= 5:
                             next_open += timedelta(days=1)
 
-                clock = ClockInfo(is_open=is_open, timestamp=now_rome, next_open=next_open)
+                clock = ClockInfo(is_open=is_open, timestamp=now_rome, next_open=next_open,
+                                  phase=_compute_phase(is_open, next_open))
                 self._clock_cache = clock
                 self._clock_cache_time = now
                 return clock
@@ -203,7 +237,8 @@ class MarketDataManager:
         if next_open is None:
             next_open = now_rome + timedelta(days=1)
 
-        clock = ClockInfo(is_open=is_open, timestamp=now_rome, next_open=next_open)
+        clock = ClockInfo(is_open=is_open, timestamp=now_rome, next_open=next_open,
+                          phase=_compute_phase(is_open, next_open))
         self._clock_cache = clock
         self._clock_cache_time = now
         return clock
@@ -530,10 +565,15 @@ class MarketDataManager:
             logger.warning(f"Failed to fetch sentiment for {base}: {type(e).__name__}: {e}")
             return None
 
-    async def _fetch_and_store_news_for_symbol(self, symbol: str):
-        """Fetch news for a single symbol and store it in the database."""
+    async def _fetch_and_store_news_for_symbol(self, symbol: str, skip_sentiment: bool = False):
+        """Fetch news for a single symbol and store it in the database.
+
+        ``skip_sentiment`` bypasses the LLM sentiment analysis inside
+        fetch_news_for_symbol (used when the market is closed).
+        """
         if not settings.NEWS_ENABLED:
             return
+
 
         base_symbol = symbol.split("/")[0] if "/" in symbol else symbol
 
@@ -551,7 +591,7 @@ class MarketDataManager:
             from src.news.fetcher import fetch_news_for_symbol
             stock_name = await self.engine.event_bus.request("get_stock_name", symbol)
             loop = asyncio.get_running_loop()
-            articles = await fetch_news_for_symbol(symbol, stock_name)
+            articles = await fetch_news_for_symbol(symbol, stock_name, skip_sentiment=skip_sentiment)
             if articles:
                 await loop.run_in_executor(self.engine._db_executor, store_news_articles, base_symbol, articles)
             else:

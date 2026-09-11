@@ -14,6 +14,7 @@ from src.utils.symbol_utils import is_btp_isin
 from src.utils.health_metrics import health_metrics
 from src.utils.redis_client import is_redis_available, check_redis_connection
 from src.trading.engine_utils import timeframe_to_seconds, timeframe_to_ms, get_effective_refresh_interval
+from src.trading.components.market_data_manager import is_llm_active_now
 
 try:
     from src.news.fetcher import fetch_news_for_symbol, discover_trending_stocks, discover_tickers_from_news
@@ -81,17 +82,12 @@ class BackgroundTaskManager:
                         minutes_to_open = (market_open_dt - now_rome).total_seconds() / 60
                         if 0 < minutes_to_open <= 60:
                             is_premarket = True
+            # Hard gate: re-evaluation (and its LLM calls) only run in pre-market/open hours.
+            # Forced reevals short-circuit above; user-triggered reevals unaffected.
             is_forced = self.engine._force_reeval or self.engine._reeval_pending_force
 
-            # Allow re-evaluation when market is closed if there are open positions
-            # (for risk management) or if no symbols are tracked (initial population).
-            # This does NOT force the re-evaluation — the normal cooldown still applies.
-            allow_closed_market = bool(
-                self.engine.shared_state.positions or not self.engine.shared_state.current_symbols
-            )
-
             # Disable automatic re-evaluation when market is closed (outside pre-market)
-            if not is_open and not is_premarket and not is_forced and not allow_closed_market:
+            if not is_forced and not await is_llm_active_now(self.engine.event_bus):
                 logger.info("Market is closed; skipping automatic symbol re-evaluation.")
                 await asyncio.sleep(300)  # Wait 5 minutes before checking again
                 continue
@@ -519,10 +515,17 @@ class BackgroundTaskManager:
             try:
                 symbols = [entry["symbol"] for entry in self.engine.shared_state.current_symbols]
                 if symbols:
+                    if not await is_llm_active_now(self.engine.event_bus):
+                        # Market closed: skip LLM sentiment analysis on cache misses;
+                        # news download is not gated here but symbols are refreshed later.
+                        logger.info("Market is closed; skipping fast news refresh (no LLM sentiment calls).")
+                        await self.engine._interruptible_sleep(settings.NEWS_FAST_UPDATE_INTERVAL_MINUTES * 60)
+                        continue
                     logger.info(f"Fast news refresh for {len(symbols)} current symbols")
                     async def _fetch_news_with_limit(sym):
+                        closed = not await is_llm_active_now(self.engine.event_bus)
                         async with self.engine._news_semaphore:
-                            await self.engine._fetch_and_store_news_for_symbol(sym)
+                            await self.engine._fetch_and_store_news_for_symbol(sym, skip_sentiment=closed)
                     await asyncio.gather(
                         *[_fetch_news_with_limit(sym) for sym in symbols]
                     )
@@ -559,21 +562,27 @@ class BackgroundTaskManager:
                 # Slow refresh: all available pairs EXCEPT the stocks already handled by the fast loop
                 current_symbols = {entry["symbol"] for entry in self.engine.shared_state.current_symbols}
                 symbols_to_refresh = set()
-                try:
-                    plain_assets = await self.engine.event_bus.request("get_tradable_assets")
-                    available_pairs = [f"{sym}/{self.engine.base_currency}" for sym in plain_assets]
-                    # Fetch tickers for a subset to determine top volume symbols
-                    # (limit to 200 to avoid excessive API calls)
-                    sample_for_vol = available_pairs[:200]
-                    plain_sample = [s.split("/")[0] for s in sample_for_vol]
-                    raw_quotes = await self.engine.event_bus.request("get_quotes_batched", plain_sample, timeout_per_chunk=45.0)
-                    tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_for_vol}
-                    def _vol(sym):
-                        t = tickers.get(sym, {})
-                        return t.get('quoteVolume', 0) or 0
-                    symbols_to_refresh = set(sample_for_vol) - current_symbols
-                except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
-                    logger.warning(f"Could not get available pairs for news refresh: {e}")
+                if not await is_llm_active_now(self.engine.event_bus):
+                    # Market closed: skip fetch+LLM sentiment analysis on cache misses;
+                    # cleanup below still runs.
+                    logger.info("Market is closed; skipping news cache refresh (no LLM sentiment calls).")
+                    symbols_to_refresh = set()
+                else:
+                    try:
+                        plain_assets = await self.engine.event_bus.request("get_tradable_assets")
+                        available_pairs = [f"{sym}/{self.engine.base_currency}" for sym in plain_assets]
+                        # Fetch tickers for a subset to determine top volume symbols
+                        # (limit to 200 to avoid excessive API calls)
+                        sample_for_vol = available_pairs[:200]
+                        plain_sample = [s.split("/")[0] for s in sample_for_vol]
+                        raw_quotes = await self.engine.event_bus.request("get_quotes_batched", plain_sample, timeout_per_chunk=45.0)
+                        tickers = {pair: raw_quotes.get(pair.split("/")[0], {}) for pair in sample_for_vol}
+                        def _vol(sym):
+                            t = tickers.get(sym, {})
+                            return t.get('quoteVolume', 0) or 0
+                        symbols_to_refresh = set(sample_for_vol) - current_symbols
+                    except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
+                        logger.warning(f"Could not get available pairs for news refresh: {e}")
 
                 for sym in symbols_to_refresh:
                     try:
@@ -781,8 +790,9 @@ class BackgroundTaskManager:
                 # Download concurrently, respecting rate limits via _news_semaphore
                 async def _download_news_for_symbol(pair: str):
                     try:
+                        closed = not await is_llm_active_now(self.engine.event_bus)
                         async with self.engine._news_semaphore:
-                            await self.engine._fetch_and_store_news_for_symbol(pair)
+                            await self.engine._fetch_and_store_news_for_symbol(pair, skip_sentiment=closed)
                     except (ValueError, TypeError, KeyError, ConnectionError, TimeoutError, OSError) as e:
                         logger.warning(f"Full news download failed for {pair}: {e}")
 

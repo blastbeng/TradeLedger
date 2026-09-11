@@ -24,6 +24,7 @@ def client():
         # Mock the engine
         mock_engine = MagicMock()
         mock_engine._is_market_open = AsyncMock(return_value=True)
+        mock_engine._market_data_manager.get_clock = AsyncMock(return_value=None)
         mock_engine.current_symbols = []
         mock_engine.positions = {}
         mock_engine.queued_orders = []

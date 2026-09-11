@@ -1034,6 +1034,11 @@
                     statusStr += ` | 🕒 ${pauseInfo.market_time_str}`;
                 }
                 tradingText.textContent = statusStr;
+            } else if (data.status === 'INACTIVE') {
+                tradingDot.className = 'status-dot';
+                tradingDot.style.background = '#8b949e';
+                tradingDot.style.boxShadow = '0 0 8px #8b949e';
+                tradingText.textContent = 'Trading: Inactive';
             } else {
                 tradingDot.className = 'status-dot';
                 tradingDot.style.background = '#3fb950';

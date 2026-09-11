@@ -340,10 +340,17 @@ class EngineOrchestrator:
             try:
                 from src.database import get_recent_wrong_decisions
                 from src.llm.cache import get_cached_llm_response
-                
+                from src.trading.components.market_data_manager import is_llm_active_now
+
                 wrong_decisions = await asyncio.to_thread(get_recent_wrong_decisions, 20)
                 if not wrong_decisions:
                     await asyncio.sleep(21600)  # 6 hours
+                    continue
+
+                # Skip the LLM analysis call while the market is closed
+                if not await is_llm_active_now(engine.event_bus):
+                    logger.info("Market is closed; skipping wrong-decisions LLM analysis.")
+                    await asyncio.sleep(600)  # retry in 10 minutes
                     continue
                 
                 # Format the decisions into a compact string
