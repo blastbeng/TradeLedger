@@ -3,13 +3,15 @@ services:
   postgres:
     image: postgres:18-alpine
     container_name: trade-ledger-postgres
-    restart: no
+    restart: unless-stopped
+    # Port published only on the LAN interface (bot connects via 192.168.1.13:5432),
+    # not on all interfaces / not internet-exposed.
     ports:
-      - "5432:5432"
+      - "192.168.1.13:5432:5432"
     environment:
       POSTGRES_DB: ${DB_NAME:-trade_ledger}
       POSTGRES_USER: ${DB_USER:-trade_ledger}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
       TZ: Europe/Rome
       PUID: 1000
       PGID: 1000
@@ -26,7 +28,7 @@ services:
     container_name: trade-ledger
     image: "blastbeng/trade-ledger:1.0.0"
     pull_policy: build
-    restart: no
+    restart: unless-stopped
     ports:
       - "8083:8083"
     env_file:
