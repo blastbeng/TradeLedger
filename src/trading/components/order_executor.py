@@ -266,11 +266,24 @@ class OrderExecutor(OrderExecutorBase):
                     "no longer queued (concurrently cancelled/removed)."
                 )
                 return
-        delta_qty = filled_qty - queued.get('filled_qty', 0.0)
-        if delta_qty <= 0:
-            return
+            # --- B3: compute delta and mutate tracking fields INSIDE the lock so
+            # a concurrent cancel/timeout path (which removes the order under the
+            # same lock) cannot interleave and produce double refunds or drift. ---
+            delta_qty = filled_qty - queued.get('filled_qty', 0.0)
+            if delta_qty <= 0:
+                return
+            delta_cost = delta_qty * filled_avg_price
+            queued['filled_qty'] = filled_qty
+            queued['filled_cost'] = queued.get('filled_cost', 0.0) + delta_cost
+            if queued['side'] == 'buy':
+                # Update remaining quote amount
+                original_amount = queued.get('original_amount', queued['amount'])
+                queued['amount'] = original_amount - queued['filled_cost']
+            else:
+                # Update remaining base amount
+                original_amount = queued.get('original_amount', queued['amount'])
+                queued['amount'] = original_amount - filled_qty
 
-        delta_cost = delta_qty * filled_avg_price
         from src.exchanges.fees import calculate_transaction_costs
         _quote_ccy = queued['symbol'].split("/")[1] if "/" in queued['symbol'] else engine.base_currency
         _fee_costs = calculate_transaction_costs(
@@ -287,19 +300,9 @@ class OrderExecutor(OrderExecutorBase):
             'status': 'closed',
             'timestamp': int(time.time() * 1000),
         }
-        # Update tracking fields
-        queued['filled_qty'] = filled_qty
-        queued['filled_cost'] = queued.get('filled_cost', 0.0) + delta_cost
-
         if queued['side'] == 'buy':
-            # Update remaining quote amount
-            original_amount = queued.get('original_amount', queued['amount'])
-            queued['amount'] = original_amount - queued['filled_cost']
             await self.handle_queued_buy_fill(trade_dict, queued)
         else:
-            # Update remaining base amount
-            original_amount = queued.get('original_amount', queued['amount'])
-            queued['amount'] = original_amount - filled_qty
             await self.event_bus.request("handle_queued_sell_fill", trade_dict, queued, partial=True)
 
         # --- OCO handling for exit orders ---
