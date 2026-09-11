@@ -475,7 +475,9 @@ class OrderExecutor(OrderExecutorBase):
             # where filled_cost doesn't exactly equal original_amount due to slippage/fees).
             # Idempotent: check/set the _settled flag under the queued-orders lock so a
             # concurrent timeout/cancel path cannot also refund the same reservation.
-            if queued['side'] == 'buy' and queued.get('amount', 0) > 0:
+            # Unconditional refund: filled_cost can exceed original_amount (slippage/fees),
+            # leaving amount == 0.0 or negative — the reservation must still be released.
+            if queued['side'] == 'buy' and not queued.get('_settled', False):
                 async with self.shared_state._queued_orders_lock:
                     already_settled = queued.get('_settled', False)
                     if not already_settled:
