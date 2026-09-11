@@ -132,9 +132,9 @@ class ReevalLLMRunner:
                             articles = batch_news.get(sym, [])
                             if articles:
                                 # Cap per-symbol news to 3 articles: news is a secondary
-                        # selection signal (full depth is re-fetched at evaluation time).
-                        # 3 x ~60 chars each keeps the chunk prompt lean.
-                        formatted = _format_news_for_prompt(articles[:3], max_articles=3)
+                                # selection signal (full depth is re-fetched at evaluation time).
+                                # 3 x ~60 chars each keeps the chunk prompt lean.
+                                formatted = _format_news_for_prompt(articles[:3], max_articles=3)
                                 news_lines.append(f"**{sym}**\n{formatted}")
                         if news_lines:
                             raw_news = "Recent news for candidate stocks:\n\n" + "\n\n".join(news_lines)

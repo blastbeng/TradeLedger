@@ -222,11 +222,14 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
                 prompt += f"  {sym}: {symbol_trend_scores[sym]:.2f}\n"
         prompt += "High trend quality (>0.7) = strong, clean trend suitable for momentum/breakout strategies. Low score (<0.3) = choppy or ranging, better for mean reversion or avoid.\n"
     if ohlcv_summary:
+        # Skip short-term timeframes in the selection summary: 1d/1h are only
+        # for short-term confirmation, not symbol selection — saves ~2k tokens.
+        selection_tfs = {"5Y", "3Y", "1Y", "6M", "3M", "1w"}
         filtered_ohlcv_summary = {}
         for sym, tfs in ohlcv_summary.items():
             valid_tfs = {}
             for tf, data in tfs.items():
-                if data:
+                if data and tf in selection_tfs:
                     rounded_data = dict(data)
                     if 'high' in rounded_data and isinstance(rounded_data['high'], (int, float)):
                         rounded_data['high'] = round(rounded_data['high'], 2)
@@ -264,16 +267,19 @@ Example: {{"stocks":[{{"symbol":"ENI.MI/EUR","timeframe":"1Y","sector":"Energy",
         for sym_a, row in correlation_matrix.items():
             if sym_a not in candidate_set:
                 continue
-            trimmed[sym_a] = {sym_b: round(v, 2) for sym_b, v in row.items() if sym_b in candidate_set}
+            trimmed[sym_a] = {sym_b: round(v, 1) for sym_b, v in row.items() if sym_b in candidate_set and abs(v) >= 0.3}
         if trimmed:
             prompt += (
-                "\nPairwise correlation matrix (Pearson correlation of daily returns, range -1 to +1):\n"
+                "\nPairwise correlation matrix (Pearson correlation of daily returns, range -1 to +1; only |corr| >= 0.3 shown):\n"
                 f"{_to_toon(trimmed)}\n"
             )
     if symbol_indicators:
         prompt += "\nTechnical indicators for candidate assets (stocks, ETFs, BTPs):\n"
-        # Only include key long-term timeframes to keep prompt size manageable
-        key_timeframes = {"5Y", "3Y", "1Y", "6M", "3M", "1M", "1w"}
+        # Only include key long-term timeframes to keep prompt size manageable.
+        # 3 timeframes suffice for selection-level analysis (per-tf detail is
+        # re-fetched at full depth for symbols chosen for evaluation); this cuts
+        # ~5-6k tokens per chunk with low decision-quality risk.
+        key_timeframes = {"5Y", "1Y", "3M"}
         for sym, tf_indicators in symbol_indicators.items():
             lines = [f"{sym}:"]
             for tf, ind in tf_indicators.items():
