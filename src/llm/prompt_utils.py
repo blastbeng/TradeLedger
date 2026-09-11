@@ -100,12 +100,12 @@ def _format_trade_pattern_analysis(analysis: Optional[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _format_news_for_prompt(articles: list) -> str:
+def _format_news_for_prompt(articles: list, max_articles: int = 5) -> str:
     """Format a list of news articles into a compact string for the LLM prompt."""
     if not articles:
         return "No recent news available."
     lines = []
-    for i, art in enumerate(articles, 1):
+    for i, art in enumerate(articles[:max_articles], 1):
         sentiment = art.get("sentiment", {})
         label = sentiment.get("label", "unknown")
         compound = sentiment.get("compound", 0.0)
