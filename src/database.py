@@ -2609,6 +2609,27 @@ def save_llm_metrics(metrics: dict):
 
 
 @retry_on_db_lock()
+def cleanup_old_llm_metrics(retention_days: int = 90):
+    """Delete LLM call metric rows older than retention_days.
+
+    llm_metrics grows by one row per LLM call (plus cache hits) and the
+    dashboard aggregates scan it repeatedly; without retention it grows
+    unboundedly and slows down get_llm_metrics_summary over time.
+    """
+    conn = get_connection()
+    try:
+        cutoff = time.time() - retention_days * 24 * 60 * 60
+        sql = _adapt_sql("DELETE FROM llm_metrics WHERE timestamp < %s")
+        deleted = conn.execute(sql, (cutoff,)).rowcount
+        conn.commit()
+        if deleted:
+            logger.info(f"Cleaned up {deleted} old LLM metric rows (older than {retention_days} days)")
+        return deleted
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
 def reset_llm_metrics():
     """Delete all rows from the llm_metrics table."""
     conn = get_connection()

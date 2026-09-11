@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, Optional, Tuple, List
 
 from src.config.settings import settings
-from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news, get_latest_ohlcv_timestamps_batch, cleanup_old_position_pnl, cleanup_old_backtest_results, cleanup_old_market_data, insert_dividend, cleanup_old_dividends, get_pending_dividends_for_symbol, get_pending_dividends_for_symbols, mark_dividend_reinvested, get_pending_llm_decisions, update_llm_decision_outcome, get_llm_decision_quality_metrics, cleanup_old_llm_decisions
+from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news, get_latest_ohlcv_timestamps_batch, cleanup_old_position_pnl, cleanup_old_backtest_results, cleanup_old_market_data, insert_dividend, cleanup_old_dividends, get_pending_dividends_for_symbol, get_pending_dividends_for_symbols, mark_dividend_reinvested, get_pending_llm_decisions, update_llm_decision_outcome, get_llm_decision_quality_metrics, cleanup_old_llm_decisions, cleanup_old_llm_metrics
 from src.strategies.base import Signal
 from src.exchanges.market_data import get_quotes_cached
 from src.exchanges.yahoo_finance import get_yahoo_dividends
@@ -742,6 +742,7 @@ class BackgroundTaskManager:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(self.engine._db_executor, cleanup_old_position_pnl, 90)
                 await loop.run_in_executor(self.engine._db_executor, cleanup_old_backtest_results, 90)
+                await loop.run_in_executor(self.engine._db_executor, cleanup_old_llm_metrics, 90)
                 logger.info("Full asset OHLCV download cycle complete.")
             except asyncio.CancelledError:
                 raise
