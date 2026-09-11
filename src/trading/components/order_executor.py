@@ -150,9 +150,14 @@ class OrderExecutor(OrderExecutorBase):
                 # Refund remaining reserved capital for buy orders.
                 # The order was already removed from the queue under the lock above;
                 # tag it as settled so a concurrent fill/timeout path cannot refund again.
+                # Check-and-set _settled under the queued-orders lock (not outside it)
+                # so a concurrent fill/timeout refund cannot interleave (TOCTOU fix).
                 if q['side'] == 'buy':
-                    if not q.get('_settled', False):
-                        q['_settled'] = True
+                    async with self.shared_state._queued_orders_lock:
+                        already_settled = q.get('_settled', False)
+                        if not already_settled:
+                            q['_settled'] = True
+                    if not already_settled:
                         async with self.shared_state._cycle_spent_lock:
                             self.shared_state._cycle_spent = max(0.0, self.shared_state._cycle_spent - q.get('amount', 0.0))
 
