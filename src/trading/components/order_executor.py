@@ -15,6 +15,7 @@ from src.strategies.base import Signal
 from src.utils.symbol_utils import is_btp_isin
 from src.trading.engine_utils import format_symbol_display, timeframe_to_seconds
 from src.trading.components.order_executor_base import OrderExecutorBase
+from src.utils.pause_utils import is_locally_paused, get_local_pause_reason
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +71,39 @@ class OrderExecutor(OrderExecutorBase):
             logger.info(f"Notify mode: skipping order execution for {signal.action} {symbol}.")
             return
 
+        # --- Fail-closed: block automated BUYs while the local (Redis-down) pause is active.
+        # Manual overrides are always allowed; risk-reducing SELLs proceed only if market is open.
+        is_manual_override = exit_reason is not None and exit_reason.startswith("manual")
+        if is_locally_paused() and not is_manual_override:
+            if signal.action == "SELL":
+                is_market_open = await engine._is_market_open()
+                if is_market_open:
+                    logger.info(f"Local fail-safe pause active: allowing automated SELL for risk management {symbol}.")
+                    # Fall through to execute the SELL order
+                else:
+                    logger.warning(f"Local fail-safe pause active (reason={get_local_pause_reason()}): skipping automated SELL {symbol} (market closed).")
+                    return
+            else:
+                logger.warning(f"Local fail-safe pause active (reason={get_local_pause_reason()}): skipping automated {signal.action} {symbol}.")
+                return
+
         # --- Paper mode + Paused: do not execute automated BUY orders, only send notifications ---
         # Manual overrides (exit_reason starts with "manual") are still allowed.
         # Automated SELL orders are allowed if the market is open (to manage open positions).
-        paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
+        # Fail-safe: if Redis is unavailable, treat pause state as unknown-paused
+        # (skip automated BUYs, still allow risk-reducing SELLs and manual overrides).
+        try:
+            paused = await asyncio.to_thread(engine.redis.get, "trading:paused")
+        except (ConnectionError, TimeoutError, OSError) as redis_e:
+            logger.warning(f"Redis unavailable reading trading:paused for {symbol}: {type(redis_e).__name__}: {redis_e}. Treating as paused (fail-safe).")
+            paused = True
+        except Exception as redis_e:
+            logger.warning(f"Error reading trading:paused for {symbol}: {type(redis_e).__name__}: {redis_e}. Treating as paused (fail-safe).")
+            paused = True
+        if paused is True and signal.action != "SELL" and not (exit_reason and exit_reason.startswith("manual")):
+            # Fail-closed: pause state could not be verified, skip automated BUYs.
+            logger.warning(f"Skipping automated BUY {symbol}: trading:paused could not be verified (Redis unavailable).")
+            return
         if settings.TRADING_MODE == "paper" and paused and not (exit_reason and exit_reason.startswith("manual")):
             is_market_open = await engine._is_market_open()
             if signal.action == "SELL" and is_market_open:
