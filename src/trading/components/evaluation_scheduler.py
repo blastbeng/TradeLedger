@@ -19,10 +19,12 @@ class EvaluationScheduler:
         engine = self.engine
 
         # Hard gate: no LLM decision calls while the market is closed (fail-closed
-        # on missing clock). Forced symbols may still flow.
+        # on missing clock). Only genuinely forced symbols may still flow.
+        market_closed_forced = False
         if not await is_llm_active_now(engine.event_bus):
             if engine._force_reeval or engine._reeval_pending_force:
-                logger.info("Market closed; allowing forced symbol evaluation.")
+                market_closed_forced = True
+                logger.info("Market closed; allowing forced symbol evaluation (restricted to forced symbols).")
             else:
                 logger.debug("Market closed; skipping symbol evaluation this cycle.")
                 return []
@@ -121,5 +123,27 @@ class EvaluationScheduler:
                 last_eval = engine.shared_state._last_strategy_eval.get(symbol, 0)
             if now - last_eval >= interval:
                 symbols_to_process.append(symbol_entry)
+
+        # Market closed: restrict to genuinely forced symbols only. Prefer the
+        # per-symbol forced-eval markers; if none exist, fall back to currently
+        # held positions (the only symbols that legitimately need LLM evaluation
+        # while the market is closed, e.g. after a user-forced re-evaluation).
+        if market_closed_forced:
+            async with engine.shared_state._eval_state_lock:
+                forced_symbols = {
+                    sym for sym, flag in engine.shared_state._force_eval.items() if flag
+                }
+            if forced_symbols:
+                filtered = [e for e in symbols_to_process if e["symbol"] in forced_symbols]
+            else:
+                held = set(engine.shared_state.positions.keys())
+                filtered = [e for e in symbols_to_process if e["symbol"] in held]
+            skipped = len(symbols_to_process) - len(filtered)
+            if skipped:
+                logger.info(
+                    "Market closed; restricted symbol evaluation to forced/held symbols "
+                    f"({len(filtered)} allowed, {skipped} skipped)."
+                )
+            symbols_to_process = filtered
 
         return symbols_to_process
