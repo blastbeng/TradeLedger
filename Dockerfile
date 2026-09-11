@@ -26,6 +26,7 @@ RUN git clone https://github.com/TA-Lib/ta-lib.git /tmp/ta-lib \
 COPY requirements.txt requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
 
+COPY pytest.ini ./
 COPY src/ ./src/
 
 # Run tests to ensure code integrity before starting the bot
