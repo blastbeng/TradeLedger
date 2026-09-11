@@ -1118,6 +1118,14 @@ class BacktestManager:
         # --- LLM circuit breaker: skip calls if too many consecutive failures ---
         if await is_llm_circuit_breaker_active():
             logger.error(f"LLM circuit breaker ACTIVE for {symbol} during simulation Step 2 — using preliminary decision. Check LLM connectivity.")
+            if preliminary_signal.action == "BUY":
+                logger.error(f"Downgrading preliminary BUY for {symbol} to HOLD (simulation circuit breaker, Step-2 review unavailable).")
+                hold_signal = Signal(
+                    action="HOLD",
+                    confidence=preliminary_signal.confidence,
+                    reasoning="LLM circuit breaker active: Step-2 simulation review unavailable. Preliminary BUY not executed.",
+                )
+                return None, "LLM circuit breaker active", hold_signal, None
             return None, "LLM circuit breaker active", preliminary_signal, None
 
         total_variants_proposed = len(preliminary_signal.backtest_variants) if preliminary_signal.backtest_variants else 1
@@ -1167,14 +1175,14 @@ class BacktestManager:
             return None, f"LLM Step 2 network/IO error: {e}", None, {
                 "step1_response": data.get("step1b_response"),
                 "error": f"LLM Step 2 network/IO error: {e}",
-                "action": preliminary_signal.action,
+                "action": "HOLD" if preliminary_signal.action == "BUY" else preliminary_signal.action,
                 "backtest_summary": combined_bt_summary,
             }
         except Exception as e:
             return None, f"LLM Step 2 call failed: {e}", None, {
                 "step1_response": data.get("step1b_response"),
                 "error": f"LLM Step 2 call failed: {e}",
-                "action": preliminary_signal.action,
+                "action": "HOLD" if preliminary_signal.action == "BUY" else preliminary_signal.action,
                 "backtest_summary": combined_bt_summary,
             }
 
@@ -1213,7 +1221,7 @@ class BacktestManager:
                     "step1_response": data.get("step1b_response"),
                     "step2_response": step2_response,
                     "error": f"Failed to parse LLM Step 2 response after retry: {e2}",
-                    "action": preliminary_signal.action,
+                    "action": "HOLD" if preliminary_signal.action == "BUY" else preliminary_signal.action,
                     "backtest_summary": combined_bt_summary,
                 }
 
