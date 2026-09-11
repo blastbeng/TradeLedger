@@ -1360,12 +1360,32 @@ class SignalProcessor:
         if max_tenure_hours is not None and max_tenure_hours > 0 and 'entry_time' in symbol_entry:
             tenure_seconds = max_tenure_hours * 3600
             if time.time() - symbol_entry['entry_time'] > tenure_seconds:
-                logger.info(f"Max symbol tenure reached for {symbol} ({max_tenure_hours:.1f}h), forcing sell", extra={"event": "max_tenure_reached", "symbol": symbol, "max_tenure_hours": max_tenure_hours})
-                from src.strategies.base import Signal
-                signal = Signal(action="SELL", confidence=1.0, reasoning="Max symbol tenure reached")
-                await self.event_bus.publish("execute_signal", symbol, signal, exit_reason="max_tenure")
+                # LLM-provenance invariant: a max-tenure SELL must NOT be built
+                # and executed in code without LLM review. Instead, keep the
+                # feature but make it trigger an LLM re-evaluation; the LLM
+                # (via the provenance gate) decides whether to actually SELL.
+                # If the LLM cannot be reached, nothing is executed (fail-safe).
+                logger.info(
+                    f"Max symbol tenure reached for {symbol} ({max_tenure_hours:.1f}h), "
+                    f"requesting LLM re-evaluation (sell/hold decision requires LLM review)",
+                    extra={"event": "max_tenure_reached", "symbol": symbol, "max_tenure_hours": max_tenure_hours},
+                )
                 async with self.shared_state._eval_state_lock:
-                    self.shared_state._force_eval.pop(symbol, None)
+                    self.shared_state._force_eval[symbol] = True
+                if engine.notifier:
+                    try:
+                        await engine.notifier.send_notification(
+                            f"⏳ Max symbol tenure reached for {display_symbol} "
+                            f"({max_tenure_hours:.1f}h) – requesting LLM re-evaluation.",
+                            summary={
+                                "symbol": symbol,
+                                "action": "HOLD",
+                                "reason": "Max symbol tenure reached – pending LLM re-evaluation",
+                                "max_tenure_hours": max_tenure_hours,
+                            },
+                        )
+                    except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError):
+                        pass
                 return None
 
         # --- Cooldown after a losing trade (LLM-defined) ---

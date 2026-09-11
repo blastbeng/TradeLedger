@@ -13,6 +13,7 @@ from src.llm.prompts import get_cached_news_summary
 from src.strategies.base import Signal
 from src.strategies.validator import validate_signal
 from src.trading.engine_utils import format_symbol_display
+from src.utils.health_metrics import health_metrics
 
 if TYPE_CHECKING:
     from src.trading.components.signal_processor import DecisionContext
@@ -731,12 +732,132 @@ class PostDecisionManager:
 
         return False
 
+    # ------------------------------------------------------------------
+    # --- Centralized LLM-provenance gate ---
+    # ------------------------------------------------------------------
+    # Invariant: every trading decision (BUY/SELL) must be made or reviewed
+    # by an LLM. Signals without real LLM provenance are forced to HOLD.
+    # Known accepted exception: risk-manager circuit-breaker SELLs, which are
+    # risk-reducing by design and explicitly tagged with signal.origin ==
+    # "risk_manager" at their creation site in RiskManager.
+    _PROVENANCE_INVALID_PROVIDERS = (None, "", "fallback")
+    _PROVENANCE_INVALID_MODELS = (None, "", "default_hold")
+
+    @classmethod
+    def check_llm_provenance(cls, data: "DecisionContext") -> Optional[str]:
+        """Check LLM provenance of a decision. Returns None if OK, else the violation reason.
+
+        Rules:
+        - BUY/SELL require a real llm_provider/llm_model and step2_reviewed=True.
+          Fallback/provider-less signals are violations (no fallback models by design).
+        - HOLD signals are non-executing and tolerated as-is, but the gate must
+          not be fooled by mislabeled provenance: fallback HOLDs pass through
+          unchanged (never promoted).
+        - Signals explicitly tagged origin="risk_manager" (circuit-breaker
+          partial-TP / dust-sweep exits) are exempt.
+        """
+        action = (data.signal.action or "").upper()
+
+        # Accepted exception: risk-manager circuit-breaker exits.
+        if action == "SELL" and getattr(data.signal, "origin", None) == "risk_manager":
+            return None
+
+        # HOLD is non-executing: pass through without promotion.
+        if action != "BUY" and action != "SELL":
+            return None
+
+        provider = (data.llm_provider or getattr(data.signal, "llm_provider", None) or "")
+        model = (data.llm_model or getattr(data.signal, "llm_model", None) or "")
+        if provider in cls._PROVENANCE_INVALID_PROVIDERS:
+            return f"missing/invalid llm_provider ('{provider or None}')"
+        if model in cls._PROVENANCE_INVALID_MODELS:
+            return f"missing/invalid llm_model ('{model or None}')"
+        if not getattr(data.signal, "step2_reviewed", False):
+            return "signal not reviewed by Step-2 LLM (step2_reviewed is not set)"
+        return None
+
+    async def _enforce_llm_provenance(
+        self,
+        data: DecisionContext,
+        violation: str,
+    ) -> None:
+        """On provenance failure: force the signal to HOLD, log, record metric, and alert."""
+        engine = self.engine
+        logger.error(
+            f"LLM provenance violation for {data.symbol}: {violation}. "
+            f"Forcing {data.signal.action} to HOLD (no LLM, no trade).",
+            extra={
+                "event": "llm_provenance_violation",
+                "symbol": data.symbol,
+                "action": data.signal.action,
+                "violation": violation,
+                "llm_provider": data.llm_provider,
+                "llm_model": data.llm_model,
+                "origin": getattr(data.signal, "origin", None),
+            },
+        )
+        # Metric: increment in Redis (pattern of engine._record_unexpected_exception)
+        # and in the in-process health metrics registry.
+        try:
+            count = await asyncio.to_thread(engine.redis.incr, "metrics:llm_provenance_violation")
+            await asyncio.to_thread(engine.redis.expire, "metrics:llm_provenance_violation", 86400)
+            logger.info(
+                f"LLM provenance violation metric incremented (count={count}) for {data.symbol}",
+                extra={"event": "llm_provenance_violation_metric", "symbol": data.symbol, "count": count},
+            )
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError):
+            pass
+        try:
+            health_metrics.record_llm_call("provenance_gate", False)
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError):
+            pass
+
+        # Force the signal to HOLD, preserving symbol context.
+        forced_reason = f"LLM provenance gate: {violation}. Trading requires LLM review."
+        forced = Signal(
+            action="HOLD",
+            confidence=0.0,
+            reasoning=forced_reason,
+        )
+        forced.model_type = getattr(data.signal, "model_type", None)
+        forced.llm_provider = data.llm_provider or "fallback"
+        forced.llm_model = data.llm_model or "provenance_gate_hold"
+        data.signal = forced
+
+        if engine.notifier:
+            try:
+                await engine.notifier.send_notification(
+                    f"🛑 LLM provenance violation for {data.display_symbol}: "
+                    f"{data.signal.action if data.signal.action != 'HOLD' else 'non-LLM signal'} blocked → HOLD. "
+                    f"({violation})",
+                    summary={
+                        "symbol": data.symbol,
+                        "action": "ERROR",
+                        "reason": f"LLM provenance violation: {violation}",
+                        "llm_provider": data.llm_provider,
+                        "llm_model": data.llm_model,
+                    },
+                    disable_notification=False,
+                )
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Failed to send LLM provenance alert for {data.symbol}: {type(e).__name__}: {e}")
+
     async def process_post_llm_decision(
         self,
         data: DecisionContext,
     ) -> None:
         """Validate the LLM signal, log/notify, and execute if all checks pass."""
         engine = self.engine
+
+        # --- Centralized LLM-provenance gate: every BUY/SELL must carry real
+        # --- LLM provenance and Step-2 review (or be a risk-manager exit). ---
+        provenance_violation = self.check_llm_provenance(data)
+        if provenance_violation is not None:
+            await self._enforce_llm_provenance(data, provenance_violation)
+            # The signal has been forced to HOLD. Return without validation or
+            # execution — the provenance-forced HOLD must never be re-promoted
+            # to a BUY/SELL by downstream flag handling (e.g. max-hold force-sell).
+            return
 
         # Ensure llm_provider and llm_model are never None for notifications/signals
         llm_provider = data.llm_provider or "fallback"

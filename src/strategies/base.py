@@ -52,6 +52,13 @@ class Signal:
     take_profit_limit_price: Optional[float] = None
     backtest_period_days: Optional[int] = None  # LLM-specified backtest lookback period in days
     backtest_variants: Optional[List[Dict[str, Any]]] = None  # LLM-provided array of backtest variant param sets
+    # --- LLM provenance tracking (centralized provenance gate) ---
+    # step2_reviewed is set to True ONLY on genuine Step-2 LLM success paths in
+    # BacktestManager.run_step2_llm_call. Never set on fallback/downgrade paths.
+    step2_reviewed: Optional[bool] = None
+    # origin marks non-LLM signal sources, e.g. "risk_manager" for circuit-breaker
+    # exits that are exempt from the LLM-provenance gate (risk-reducing by design).
+    origin: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Signal":

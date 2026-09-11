@@ -542,6 +542,19 @@ class RiskManager:
         """
         return await is_llm_circuit_breaker_active(check_primary_model=False)
 
+    @staticmethod
+    def _circuit_breaker_sell_signal(reasoning: str) -> Signal:
+        """Build a circuit-breaker SELL signal explicitly tagged as originating
+        from the risk manager.
+
+        The `origin="risk_manager"` tag is the LLM-provenance gate's exemption
+        marker: these risk-reducing exits are allowed to execute without LLM
+        review when the LLM circuit breaker is active (accepted exception).
+        """
+        signal = Signal(action="SELL", confidence=1.0, reasoning=reasoning)
+        signal.origin = "risk_manager"
+        return signal
+
     async def read_review_limits(self) -> Dict[str, int]:
         """Read LLM-decided review limits from Redis, falling back to settings defaults."""
         engine = self.engine
@@ -1354,7 +1367,7 @@ class RiskManager:
                     await self.event_bus.publish(
                         "execute_signal",
                         symbol,
-                        Signal(action="SELL", confidence=1.0, reasoning="Max hold expired (circuit breaker active)"),
+                        self._circuit_breaker_sell_signal("Max hold expired (circuit breaker active)"),
                         exit_reason="max_hold_circuit_breaker"
                     )
                     return True
@@ -1899,7 +1912,7 @@ class RiskManager:
             await self.event_bus.publish(
                 "execute_signal",
                 symbol,
-                Signal(action="SELL", confidence=1.0, reasoning="Stop-loss (circuit breaker active)"),
+                self._circuit_breaker_sell_signal("Stop-loss (circuit breaker active)"),
                 exit_reason="stop_loss_circuit_breaker"
             )
             return
@@ -2006,7 +2019,7 @@ class RiskManager:
             await self.event_bus.publish(
                 "execute_signal",
                 symbol,
-                Signal(action="SELL", confidence=1.0, reasoning="Take-profit (circuit breaker active)"),
+                self._circuit_breaker_sell_signal("Take-profit (circuit breaker active)"),
                 exit_reason="take_profit_circuit_breaker"
             )
             return True

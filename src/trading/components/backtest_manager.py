@@ -550,6 +550,8 @@ class BacktestManager:
                 hold_signal.llm_provider = llm_provider or preliminary_signal.llm_provider or "fallback"
                 hold_signal.llm_model = llm_model or preliminary_signal.llm_model or "circuit_breaker_hold"
                 return hold_signal, llm_provider, llm_model, True
+            # Not reviewed by Step-2 — no provenance tag (gate will block SELLs).
+            preliminary_signal.step2_reviewed = False
             return preliminary_signal, llm_provider, llm_model, is_fallback
 
         if not backtest_results:
@@ -568,6 +570,8 @@ class BacktestManager:
                 hold_signal.llm_provider = llm_provider or preliminary_signal.llm_provider or "fallback"
                 hold_signal.llm_model = llm_model or preliminary_signal.llm_model or "step2_skipped_hold"
                 return hold_signal, llm_provider, llm_model, True
+            # Not reviewed by Step-2 — no provenance tag (gate will block SELLs).
+            preliminary_signal.step2_reviewed = False
             return preliminary_signal, llm_provider, llm_model, is_fallback
 
         # Build Step 2 prompt with ALL backtest results
@@ -709,9 +713,13 @@ class BacktestManager:
                 signal.llm_provider = llm_provider
                 signal.llm_model = llm_model
                 signal.backtest_summary = combined_bt_summary
+                # Genuine Step-2 success: this signal has been reviewed by the LLM.
+                signal.step2_reviewed = True
             else:
+                # Step-2 responded but was unparseable after all retries — NOT reviewed.
                 signal = preliminary_signal
                 signal.backtest_summary = combined_bt_summary
+                signal.step2_reviewed = False
             # Carry over execution-critical fields from Step 1 if not provided in Step 2
             if signal.action == "BUY":
                 # Execution parameters
@@ -800,6 +808,8 @@ class BacktestManager:
                 llm_provider = preliminary_signal.llm_provider
             if llm_model is None:
                 llm_model = preliminary_signal.llm_model
+            # Failure path: signal was NOT reviewed by Step-2 (no provenance tag).
+            signal.step2_reviewed = False
         except Exception as e:
             logger.error(f"LLM Step 2 call failed for {symbol}: {type(e).__name__}: {e}. Using preliminary decision.")
             await self.engine._record_unexpected_exception("run_step2_llm_call", e)
@@ -824,6 +834,8 @@ class BacktestManager:
                 llm_provider = preliminary_signal.llm_provider
             if llm_model is None:
                 llm_model = preliminary_signal.llm_model
+            # Failure path: signal was NOT reviewed by Step-2 (no provenance tag).
+            signal.step2_reviewed = False
 
         return signal, llm_provider, llm_model, is_fallback
 
@@ -919,8 +931,27 @@ class BacktestManager:
                 reasoning_effort=reasoning_effort,
             )
         else:
-            # For SELL or HOLD, no backtest needed, use preliminary decision
-            signal = preliminary_signal
+            # For SELL, no backtests are needed, but the preliminary SELL must
+            # still be reviewed by the Step-2 LLM (LLM-provenance gate:
+            # unreviewed SELLs are forced to HOLD by PostDecisionManager).
+            combined_bt_summary = "Backtest skipped: SELL review"
+            signal, llm_provider, llm_model, is_fallback = await self.run_step2_llm_call(
+                symbol=symbol,
+                assigned_tf=assigned_tf,
+                preliminary_signal=preliminary_signal,
+                backtest_results=backtest_results,
+                combined_bt_summary=combined_bt_summary,
+                ticker=ticker,
+                trading_paused=trading_paused,
+                strategy_model_type=strategy_model_type,
+                effective_temp=effective_temp,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+                market_hash=market_hash,
+                is_critical=is_critical,
+                is_fallback=is_fallback,
+                reasoning_effort=reasoning_effort,
+            )
 
         # Store raw backtest stats dict on the signal for notification compaction
         if backtest_results and backtest_results[0].get("stats"):
