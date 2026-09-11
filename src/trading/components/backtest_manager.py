@@ -521,6 +521,20 @@ class BacktestManager:
 
         if not backtest_results:
             logger.info(f"Insufficient data for any backtest for {symbol}. Using preliminary decision.")
+            if preliminary_signal.action == "BUY":
+                # The bot must rely on LLM decisions: promoting an unreviewed
+                # preliminary BUY to a final decision without Step-2 validation
+                # is unsafe. Fail safe to HOLD instead.
+                logger.error(f"Downgrading preliminary BUY for {symbol} to HOLD (Step-2 skipped: no backtest data, review unavailable).")
+                hold_signal = Signal(
+                    action="HOLD",
+                    confidence=preliminary_signal.confidence,
+                    reasoning="Step-2 backtest review unavailable (no backtest data). Preliminary BUY not executed.",
+                )
+                hold_signal.model_type = preliminary_signal.model_type
+                hold_signal.llm_provider = llm_provider or preliminary_signal.llm_provider or "fallback"
+                hold_signal.llm_model = llm_model or preliminary_signal.llm_model or "step2_skipped_hold"
+                return hold_signal, llm_provider, llm_model, True
             return preliminary_signal, llm_provider, llm_model, is_fallback
 
         # Build Step 2 prompt with ALL backtest results
@@ -637,8 +651,22 @@ class BacktestManager:
                         llm_provider = simpler_result["provider"]
                         llm_model = simpler_result["model"]
                         is_fallback = simpler_result.get("is_fallback", False)
-                    except Exception:
-                        logger.error(f"Step 2 JSON parse simpler retry failed for {symbol}. Using preliminary decision.")
+                    except Exception as parse_e:
+                        logger.error(f"Step 2 JSON parse simpler retry failed for {symbol}: {type(parse_e).__name__}: {parse_e}")
+                        await self.engine._record_unexpected_exception("run_step2_llm_call_parse_retry", parse_e)
+                        if preliminary_signal.action == "BUY":
+                            # The bot must rely on LLM decisions: an unreviewed preliminary
+                            # BUY without a parsed Step-2 validation is unsafe. Fail safe to HOLD.
+                            logger.error(f"Downgrading preliminary BUY for {symbol} to HOLD (Step-2 response unparseable).")
+                            hold_signal = Signal(
+                                action="HOLD",
+                                confidence=preliminary_signal.confidence,
+                                reasoning="Step-2 LLM response unparseable. Preliminary BUY not executed.",
+                            )
+                            hold_signal.model_type = preliminary_signal.model_type
+                            hold_signal.llm_provider = llm_provider or preliminary_signal.llm_provider or "fallback"
+                            hold_signal.llm_model = llm_model or preliminary_signal.llm_model or "step2_unparseable_hold"
+                            return hold_signal, llm_provider, llm_model, True
                         final_strategy = None
 
             if final_strategy is not None:
@@ -716,6 +744,29 @@ class BacktestManager:
             raise
         except (ConnectionError, TimeoutError, OSError) as e:
             logger.warning(f"LLM Step 2 network/IO error for {symbol}: {type(e).__name__}: {e}")
+            if preliminary_signal.action == "BUY":
+                # The bot must rely on LLM decisions: an unreviewed preliminary
+                # BUY without Step-2 validation is unsafe. Fail safe to HOLD.
+                # Note: asyncio.wait_for timeouts surface as TimeoutError, so this
+                # branch covers the common LLM-timeout case as well.
+                logger.error(f"Downgrading preliminary BUY for {symbol} to HOLD (Step-2 LLM call failed, backtest review unavailable).")
+                hold_signal = Signal(
+                    action="HOLD",
+                    confidence=preliminary_signal.confidence,
+                    reasoning="Step-2 LLM review failed. Preliminary BUY not executed.",
+                )
+                hold_signal.model_type = preliminary_signal.model_type
+                hold_signal.llm_provider = llm_provider or preliminary_signal.llm_provider or "fallback"
+                hold_signal.llm_model = llm_model or preliminary_signal.llm_model or "step2_failure_hold"
+                signal = hold_signal
+            else:
+                signal = preliminary_signal
+            signal.backtest_summary = combined_bt_summary
+            # Preserve provider/model from Step 1b as fallback
+            if llm_provider is None:
+                llm_provider = preliminary_signal.llm_provider
+            if llm_model is None:
+                llm_model = preliminary_signal.llm_model
         except Exception as e:
             logger.error(f"LLM Step 2 call failed for {symbol}: {type(e).__name__}: {e}. Using preliminary decision.")
             await self.engine._record_unexpected_exception("run_step2_llm_call", e)
