@@ -115,8 +115,18 @@ class BuyExecutor(OrderExecutorBase):
         quote_balance = balance.get(quote, 0.0)
         position_fraction = params["position_size_fraction"]
 
-        # Desired amount based on fraction of total available quote balance
-        desired_amount = quote_balance * position_fraction
+        # Dividend reinvestment: the LLM already reviewed a fixed trade value
+        # (the dividend amount), so use it directly instead of a fraction of
+        # the free balance. Still subject to all downstream risk caps.
+        reinvest_value = params.get("reinvestment_trade_value")
+        if isinstance(reinvest_value, (int, float)) and reinvest_value > 0:
+            desired_amount = float(reinvest_value)
+            logger.info(
+                f"Reinvestment BUY {symbol}: using fixed dividend amount {desired_amount:.2f} {quote}."
+            )
+        else:
+            # Desired amount based on fraction of total available quote balance
+            desired_amount = quote_balance * position_fraction
 
         # Apply confidence-based position sizing (LLM-decided weight)
         confidence_sizing_weight = params.get("confidence_sizing_weight", 0.0)
@@ -1011,6 +1021,22 @@ class BuyExecutor(OrderExecutorBase):
         order["buy_reasoning"] = (signal.reasoning or "")[:200]
         if hasattr(signal, 'backtest_summary') and signal.backtest_summary:
             order["backtest_summary"] = signal.backtest_summary
+
+        # Dividend reinvestment: the BUY was reviewed and filled — mark the
+        # source dividend as reinvested so it is not re-submitted next cycle.
+        reinvest_div_id = (signal.strategy_params or {}).get("reinvest_dividend_id")
+        if reinvest_div_id is not None:
+            try:
+                from src.database import mark_dividend_reinvested
+                await asyncio.to_thread(mark_dividend_reinvested, reinvest_div_id)
+                logger.info(
+                    f"Marked dividend {reinvest_div_id} as reinvested after LLM-reviewed BUY fill for {symbol}."
+                )
+            except (RuntimeError, ValueError, ConnectionError, TimeoutError, OSError, KeyError, TypeError) as e:
+                logger.warning(
+                    f"Failed to mark dividend {reinvest_div_id} as reinvested: {type(e).__name__}: {e}"
+                )
+
         self.shared_state.append_trade(order, settings.MAX_TRADES_IN_MEMORY)
         self.shared_state._balance_cache = None  # force refresh on next fetch
         await asyncio.to_thread(insert_trade, order)

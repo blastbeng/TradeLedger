@@ -3,10 +3,11 @@ import json
 import logging
 import random
 import time
-from typing import Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List
 
 from src.config.settings import settings
 from src.database import get_latest_close_prices, store_news_articles, cleanup_old_news, get_latest_ohlcv_timestamps_batch, cleanup_old_position_pnl, cleanup_old_backtest_results, cleanup_old_market_data, insert_dividend, cleanup_old_dividends, get_pending_dividends_for_symbol, mark_dividend_reinvested, get_pending_llm_decisions, update_llm_decision_outcome, get_llm_decision_quality_metrics, cleanup_old_llm_decisions
+from src.strategies.base import Signal
 from src.exchanges.market_data import get_quotes_cached
 from src.exchanges.yahoo_finance import get_yahoo_dividends
 from src.utils.symbol_utils import is_btp_isin
@@ -955,43 +956,20 @@ class BackgroundTaskManager:
                             div_per_share = div["amount"]
                             current_shares = pos.get("amount", 0.0)
                             total_div_value = div_per_share * current_shares
-                            
+
                             if total_div_value <= 0:
                                 # Mark as reinvested to skip it in the future if we no longer hold shares
                                 await asyncio.to_thread(mark_dividend_reinvested, div["id"])
                                 continue
 
-                            # Execute buy order for the reinvested amount (amount is in quote currency)
-                            order = await asyncio.to_thread(
-                                self.engine.trader.create_market_buy_order, symbol, total_div_value
-                            )
-
-                            if order.get("status") == "filled":
-                                filled_qty = order["amount"]
-                                filled_price = order["price"]
-                                
-                                # Update position
-                                async with self.engine.shared_state._positions_lock:
-                                    if symbol in self.engine.shared_state.positions:
-                                        pos = self.engine.shared_state.positions[symbol]
-                                        old_amount = pos.get("amount", 0.0)
-                                        old_cost = pos.get("cost_basis", 0.0)
-                                        new_amount = old_amount + filled_qty
-                                        new_cost = old_cost + (filled_qty * filled_price)
-                                        pos["amount"] = new_amount
-                                        pos["cost_basis"] = new_cost
-                                        self.engine.shared_state._state_dirty = True
-
-                                # Mark dividend as reinvested
-                                await asyncio.to_thread(mark_dividend_reinvested, div["id"])
-
-                                if self.engine.notifier:
-                                    await self.engine.notifier.send_notification(
-                                        f"💰 Dividend Reinvested: {total_div_value:.2f} {self.engine.base_currency} for {symbol} "
-                                        f"bought {filled_qty:.6f} shares @ {filled_price:.2f}",
-                                        summary={"action": "DIVIDEND_REINVEST", "symbol": symbol, "amount": total_div_value}
-                                    )
-                                logger.info(f"Reinvested dividend of {total_div_value:.2f} for {symbol}: bought {filled_qty:.6f} shares @ {filled_price:.2f}")
+                            # Route the reinvestment through the standard LLM-reviewed
+                            # decision path (Step-2 review + provenance gate + pause
+                            # check + position limits + trade bookkeeping + exit orders).
+                            submitted = await self._submit_reinvestment_buy(symbol, pos, div, total_div_value)
+                            if not submitted:
+                                # Skip this dividend this cycle; it stays pending and will
+                                # be retried after the next successful LLM review.
+                                continue
 
                 await self.engine._state_persistence.save_state()
             except asyncio.CancelledError:
@@ -1003,6 +981,205 @@ class BackgroundTaskManager:
                 await self.engine._record_unexpected_exception("reinvest_dividends_loop", e)
 
             await self.engine._interruptible_sleep(sleep_duration)  # check every hour (or 5min if pending dividends)
+
+    async def _submit_reinvestment_buy(
+        self,
+        symbol: str,
+        pos: Dict[str, Any],
+        div: Dict[str, Any],
+        total_div_value: float,
+    ) -> bool:
+        """Submit a dividend-reinvestment BUY through the standard LLM-reviewed pipeline.
+
+        The preliminary BUY signal is reviewed by the Step-2 LLM
+        (BacktestManager.run_step2_llm_call) and then goes through the
+        PostDecisionManager provenance gate, pause check, position limits,
+        trade bookkeeping, and exit-order placement — the same invariant as
+        every other BUY. Unreviewed/rejected BUYs never execute: the dividend
+        stays pending and is retried on a later cycle.
+
+        Returns True if the signal was submitted for review and executed
+        (or queued) successfully; False if it must be skipped this cycle.
+        """
+        engine = self.engine
+        base = symbol.split("/")[0]
+
+        # --- Race guard (B1): never resurrect a closed position ---
+        # Re-check under the positions lock; if the position was closed by a
+        # concurrent SELL (or is currently being sold), skip this cycle.
+        async with engine.shared_state._positions_lock:
+            live_pos = engine.shared_state.positions.get(symbol)
+            if live_pos is None or live_pos.get("_selling"):
+                logger.info(
+                    f"Skipping dividend reinvestment for {symbol}: position closed or being sold concurrently."
+                )
+                return False
+
+        # --- Build a preliminary BUY signal for the reinvestment amount ---
+        signal = await self._make_reinvest_dividend_buy(symbol, pos, div, total_div_value)
+
+        assigned_tf = pos.get("timeframe") or settings.OHLCV_TIMEFRAMES[0]
+
+        try:
+            # Step-2 LLM review (all failure paths inside fail safe BUY→HOLD).
+            reviewed_signal, llm_provider, llm_model, _is_fallback = await engine._backtest_manager.run_step2_llm_call(
+                symbol=symbol,
+                assigned_tf=assigned_tf,
+                preliminary_signal=signal,
+                backtest_results=[],
+                combined_bt_summary="Dividend reinvestment review (no separate backtest variants)",
+                ticker={"last": None},
+                trading_paused=bool(await asyncio.to_thread(engine.redis.get, "trading:paused")),
+                strategy_model_type="mind",
+                effective_temp=0.2,
+                llm_provider=None,
+                llm_model=None,
+                is_fallback=False,
+                reasoning_effort="low",
+            )
+
+            if reviewed_signal is None or reviewed_signal.action != "BUY":
+                logger.info(
+                    f"Skipping dividend reinvestment for {symbol}: Step-2 LLM review did not confirm BUY "
+                    f"(action={getattr(reviewed_signal, 'action', None)}). Dividend stays pending.",
+                    extra={"event": "reinvest_llm_rejected", "symbol": symbol, "dividend_id": div["id"]},
+                )
+                return False
+            if not getattr(reviewed_signal, "step2_reviewed", False):
+                # Fail-safe: never promote an unreviewed BUY.
+                logger.error(
+                    f"Skipping dividend reinvestment for {symbol}: Step-2 review unavailable "
+                    f"(step2_reviewed not set). Dividend stays pending.",
+                    extra={"event": "reinvest_unreviewed_skip", "symbol": symbol, "dividend_id": div["id"]},
+                )
+                return False
+
+            # Route through the standard post-decision path (provenance gate,
+            # pause check, position limits, trade bookkeeping, exit orders).
+            await engine.event_bus.request(
+                "process_post_llm_decision",
+                self._make_reinvest_decision_context(symbol, assigned_tf, reviewed_signal, llm_provider, llm_model),
+            )
+
+            # The buy executor is responsible for marking the dividend as
+            # reinvested after a confirmed fill. If the post-decision path
+            # skipped/deferred the order, the dividend stays pending and is
+            # retried next cycle — never promoted without execution.
+            return True
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(
+                f"Dividend reinvestment review for {symbol} network/IO error: {type(e).__name__}: {e}. Dividend stays pending."
+            )
+            return False
+        except (ValueError, TypeError, KeyError, AttributeError, RuntimeError, json.JSONDecodeError) as e:
+            logger.error(
+                f"Dividend reinvestment review for {symbol} data/logic error: {type(e).__name__}: {e}. Dividend stays pending.",
+                exc_info=True,
+            )
+            await engine._record_unexpected_exception("reinvest_dividends_review", e)
+            return False
+
+    async def _make_reinvest_dividend_buy(self, symbol: str, pos: Dict[str, Any], div: Dict[str, Any], total_div_value: float) -> Signal:
+        """Build a preliminary BUY Signal for a dividend reinvestment (kept for tests)."""
+        engine = self.engine
+        signal = Signal(
+            action="BUY",
+            confidence=0.5,
+            reasoning=f"Dividend reinvestment: invest {total_div_value:.2f} {engine.base_currency} of received dividends into {symbol}.",
+        )
+        signal.strategy_params = {
+            "position_size_fraction": 0.01,
+            "trailing_stop": False,
+            "max_hold_time_seconds": 30 * 86400,
+            "reinvestment_trade_value": total_div_value,
+            "reinvest_dividend_id": div["id"],
+            "reinvest_div_symbol": symbol,
+        }
+        signal.strategy_type = "dividend_reinvestment"
+        signal.llm_provider = "pending_step2"
+        signal.llm_model = "pending_step2"
+        return signal
+
+    async def _make_reinvest_decision_context(self, symbol: str, assigned_tf: str, signal: Signal, llm_provider: str, llm_model: str):
+        """Build a DecisionContext for the reinvestment BUY so it flows through the standard path."""
+        from src.trading.components.signal_processor import DecisionContext
+
+        engine = self.engine
+        display_symbol = symbol
+        try:
+            stock_name = await engine._market_data_manager.get_stock_name(symbol)
+            from src.trading.engine_utils import format_symbol_display
+            display_symbol = format_symbol_display(symbol, stock_name, assigned_tf)
+        except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, KeyError, AttributeError):
+            pass
+
+        ticker = {"last": None}
+        balance = await engine._get_cached_balance()
+        base_balance = 0.0
+        if isinstance(balance, dict):
+            base_balance = float(balance.get(engine.base_currency, 0.0) or 0.0)
+        price = None
+        try:
+            quotes = await asyncio.to_thread(get_quotes_cached, [symbol.split("/")[0]])
+            price = quotes.get(symbol.split("/")[0], {}).get("last")
+            ticker = {"last": price}
+        except (ConnectionError, TimeoutError, OSError, ValueError, TypeError, KeyError, AttributeError):
+            pass
+
+        paused_raw = await asyncio.to_thread(engine.redis.get, "trading:paused")
+        trading_paused = bool(paused_raw)
+
+        return DecisionContext(
+            symbol=symbol,
+            display_symbol=display_symbol,
+            stock_name=display_symbol,
+            assigned_tf=assigned_tf,
+            tf_seconds=timeframe_to_seconds(assigned_tf),
+            ticker=ticker,
+            signal=signal,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            trading_paused=trading_paused,
+            base_balance=base_balance,
+            current_price=price or 0.0,
+            atr=None,
+            rsi=None,
+            macd=None,
+            macd_signal=None,
+            macd_hist=None,
+            bb_upper=None,
+            bb_middle=None,
+            bb_lower=None,
+            ema_9=None,
+            ema_21=None,
+            stochastic_k=None,
+            stochastic_d=None,
+            adx=None,
+            plus_di=None,
+            minus_di=None,
+            obv=None,
+            mfi=None,
+            cci=None,
+            williams_r=None,
+            ichimoku=None,
+            donchian_channels=None,
+            parabolic_sar=None,
+            keltner_channels=None,
+            aggregate_sentiment=None,
+            market_regime="neutral",
+            min_stop_atr_mult=1.0,
+            min_hold_time_mult=1.0,
+            global_min_rr=None,
+            max_hold_expired=False,
+            stop_loss_triggered=False,
+            take_profit_triggered=False,
+            partial_tp_triggered=False,
+            dust_sweep_triggered=False,
+            strategy_model_type="mind",
+            is_fallback=False,
+        )
 
     async def _evaluate_llm_decisions_loop(self):
         """Periodically evaluate past LLM decisions against actual market outcomes."""
