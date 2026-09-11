@@ -932,12 +932,12 @@
                 const winRate = (p.win_rate ?? 0) * 100;
                 profitDiv.innerHTML = `
                     💱 Base Currency: ${cur}<br><br>
-                    💵 Initial Balance:  ${p.initial_balance?.toFixed(6)}<br>
-                    🏦 Current Balance:  ${p.current_balance?.toFixed(6)}<br>
-                    📊 Open Positions:   ${p.open_value?.toFixed(6)}<br>
-                    💼 Total Wallet:     ${totalWallet.toFixed(6)}<br>
-                    🧾 Fees Paid:        ${p.total_fees?.toFixed(6)}<br>
-                    📈 Total P&L: <span class="${p.total_pnl >= 0 ? 'green' : 'red'}">${pnlSign}${p.total_pnl?.toFixed(6)}  (${pnlPctSign}${p.pnl_percent?.toFixed(2)}%)</span><br>
+                    💵 Initial Balance:  ${p.initial_balance?.toFixed(2)}<br>
+                    🏦 Current Balance:  ${p.current_balance?.toFixed(2)}<br>
+                    📊 Open Positions:   ${p.open_value?.toFixed(2)}<br>
+                    💼 Total Wallet:     ${totalWallet.toFixed(2)}<br>
+                    🧾 Fees Paid:        ${p.total_fees?.toFixed(2)}<br>
+                    📈 Total P&L: <span class="${p.total_pnl >= 0 ? 'green' : 'red'}">${pnlSign}${p.total_pnl?.toFixed(2)}  (${pnlPctSign}${p.pnl_percent?.toFixed(2)}%)</span><br>
                     <br>
                     🏆 Wins: ${wins}  💔 Losses: ${losses}<br>
                     📊 Win Rate: ${winRate.toFixed(1)}%
@@ -1867,9 +1867,21 @@
         let blacklistSort = { key: 'expires_at', dir: 'asc', type: 'date' };
 
         startRefreshTimer();
-        refreshData();  // immediate first load
-        fetchLLMMetrics(); // initial LLM metrics load
-        fetchLLMDecisionQuality(); // initial LLM decision quality load
+        // Initial data loads: defer to after a successful authenticated refresh so that
+        // pre-login API calls don't spam 401s and leave panels in a broken state.
+        (async () => {
+            try {
+                await refreshData();
+                fetchLLMMetrics();
+                fetchLLMDecisionQuality();
+                loadDiscoveredSymbols();
+            } catch (e) {
+                // Fallback to the original eager behavior if refreshData throws
+                fetchLLMMetrics();
+                fetchLLMDecisionQuality();
+                loadDiscoveredSymbols();
+            }
+        })();
 
         document.getElementById('update-interval').addEventListener('change', (e) => {
             updateIntervalMs = parseInt(e.target.value, 10);
@@ -2300,13 +2312,46 @@
             }, 3000);
         }
 
+        // Robust fetch wrapper: surfaces 401 as login overlay, validates shapes,
+        // and renders an inline error in the given panel id instead of failing silently.
+        async function apiFetch(url, { expect = null, panelId = null } = {}) {
+            let resp;
+            try {
+                resp = await fetch(url);
+            } catch (e) {
+                if (panelId) renderPanelError(panelId, 'Network error');
+                throw e;
+            }
+            if (resp.status === 401) {
+                showLoginOverlay();
+                if (panelId) renderPanelError(panelId, 'Not logged in');
+                throw new Error('unauthenticated');
+            }
+            if (!resp.ok) {
+                if (panelId) renderPanelError(panelId, `HTTP ${resp.status}`);
+                throw new Error(`${url}: HTTP ${resp.status}`);
+            }
+            const data = await resp.json();
+            if (expect === 'array' && !Array.isArray(data)) {
+                if (panelId) renderPanelError(panelId, 'Unexpected data format');
+                throw new Error(`${url}: expected array`);
+            }
+            return data;
+        }
+
+        function renderPanelError(panelId, msg) {
+            const el = document.getElementById(panelId);
+            if (el && !el.dataset.hasData) {
+                el.innerHTML = `<span style="color: var(--red);">⚠ Failed to load (${msg}) — will retry.</span>`;
+            }
+        }
+
         connect();
 
         // Prefetch discovered symbols for manual trade autocomplete
         async function loadDiscoveredSymbols() {
             try {
-                const resp = await fetch('/api/v1/discovered-symbols');
-                const symbols = await resp.json();
+                const symbols = await apiFetch('/api/v1/discovered-symbols', { expect: 'array' });
                 const datalist = document.getElementById('discovered-symbols-list');
                 if (datalist) {
                     datalist.innerHTML = '';
@@ -2329,8 +2374,7 @@
 
         async function fetchDiscoveredSymbolsForISIN() {
             try {
-                const resp = await fetch('/api/v1/discovered-symbols');
-                isinTableData = await resp.json();
+                isinTableData = await apiFetch('/api/v1/discovered-symbols', { expect: 'array' });
                 renderISINTable();
             } catch (e) {
                 console.error('Failed to fetch discovered symbols for ISIN', e);
@@ -2550,11 +2594,11 @@
 
         // --- LLM Metrics ---
         async function fetchLLMDecisionQuality() {
+            const panelId = 'llm-decision-quality';
             try {
-                const resp = await fetch(`/api/v1/llm-decision-quality?period_days=7&model_filter=${llmDecisionQualityFilter}`);
-                if (!resp.ok) throw new Error('Failed to fetch LLM decision quality');
-                const data = await resp.json();
-                const div = document.getElementById('llm-decision-quality');
+                const data = await apiFetch(`/api/v1/llm-decision-quality?period_days=7&model_filter=${llmDecisionQualityFilter}`, { panelId });
+                const div = document.getElementById(panelId);
+                div.dataset.hasData = '1';
                 if (data.total_evaluated === 0) {
                     div.innerHTML = 'No evaluated decisions yet.';
                     return;
@@ -2680,13 +2724,13 @@
         });
 
         async function fetchLLMMetrics() {
+            const panelId = 'llm-metrics-summary';
             try {
-                const resp = await fetch(`/api/v1/llm-metrics?model_filter=${llmModelFilter}`);
-                if (!resp.ok) throw new Error('Failed to fetch LLM metrics');
-                const data = await resp.json();
+                const data = await apiFetch(`/api/v1/llm-metrics?model_filter=${llmModelFilter}`, { panelId });
 
                 // Summary
-                const summaryDiv = document.getElementById('llm-metrics-summary');
+                const summaryDiv = document.getElementById(panelId);
+                summaryDiv.dataset.hasData = '1';
                 summaryDiv.innerHTML = `
                     <strong>Total Calls:</strong> ${data.total_calls} &nbsp;|&nbsp;
                     <strong>Total Tokens:</strong> ${data.total_tokens.toLocaleString()} (Prompt: ${data.total_prompt_tokens.toLocaleString()}, Completion: ${data.total_completion_tokens.toLocaleString()}) &nbsp;|&nbsp;
