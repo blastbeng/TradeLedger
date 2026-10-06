@@ -1179,7 +1179,7 @@ This is where the engine's behaviour actually lives. Grouped by responsibility
     count, volatility percentile, RSI/MACD/Bollinger state and portfolio risk,
     mapping to mind / actuator / weak tier with dynamic threshold adjustment,
     effective temperature and reasoning effort.
-  - `decision_cache.py` (143) — deterministic snapshot hash over the exact Step-2
+  - `decision_cache.py` (144) — deterministic snapshot hash over the exact Step-2
     prompt inputs; store/get/invalidate; only genuine Step-2 successes are stored.
   - `post_decision_manager.py` (976) — the last gate before execution:
     **`check_llm_provenance`** (BUY/SELL require a real provider+model **and**
