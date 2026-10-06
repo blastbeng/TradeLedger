@@ -78,9 +78,12 @@ at paper simulation + notification; connecting real money is out of scope for no
    request type) into `llm_metrics`; every decision is stored with outcome tracking in
    `llm_decision_quality`; failures feed an automatic model blacklist; logs stream to the
    dashboard via Redis; the dashboard shows LLM metrics charts, decision quality, model
-   failures & blacklist state, and raw logs. A self-analysis loop ("analyze wrong
-   decisions") periodically asks the LLM to critique its own losing patterns and feeds the
-   result back into future prompts (the "Past Mistakes Analysis" block).
+   failures & blacklist state, and raw logs. Decision-cache hits — which skip the LLM
+   call entirely and so leave no `llm_metrics` row — are metered separately into
+   `decision_cache_metrics` (§5.1) with estimated prompt tokens saved. A self-analysis
+   loop ("analyze wrong decisions") periodically asks the LLM to critique its own
+   losing patterns and feeds the result back into future prompts (the "Past Mistakes
+   Analysis" block).
 
 6. **A one-person, self-hosted product.** Single Docker Compose stack (bot + PostgreSQL +
    external Redis), a PWA dashboard installable on a phone, a Telegram bot as the
@@ -278,7 +281,7 @@ The data layer is a deliberate two-tier design: **SQL is the durable truth**
 everything that is cheap to lose and must be fast). Redis may vanish and the bot
 keeps running in degraded no-cache mode; SQL may not.
 
-### 5.1 SQL persistence — `src/database.py` (~3 500 lines)
+### 5.1 SQL persistence — `src/database.py` (~3 600 lines)
 
 One module owns all SQL in the system. It supports **two interchangeable backends**
 chosen by `DATABASE_BACKEND`:
@@ -328,6 +331,7 @@ applied together and rolled back together, so an installation is never half-migr
 | `backtest_results` | backtest variants keyed by (symbol, timeframe, params_hash) with stats JSON and LLM-readable summary |
 | `llm_metrics` | one row per LLM call: provider, model, model_type, prompt/completion/total tokens, cache hit, latency, error, request type, fallback flag |
 | `llm_decision_quality` | outcome tracking: decision → later outcome price → profitable flag → feeds the self-analysis loop |
+| `decision_cache_metrics` | one row per decision-cache outcome: hit (the Step-2 LLM call was skipped) or miss (cold / changed / rebuild-failed), with estimated prompt tokens saved on hits |
 | `dividends` | ex-dates and amounts per symbol, with reinvestment marking |
 | `portfolio_equity` | peak total equity — the reference for the drawdown circuit breaker |
 | `llm_model_blacklist` | persistent model blacklist with reason and expiry |
@@ -344,8 +348,8 @@ yield computation, and the decision-quality lifecycle (`insert_llm_decision` →
 `update_llm_decision_outcome` → `get_llm_decision_quality_metrics`). BTP yield-to-
 maturity is computed in SQL-adjacent Python (`compute_btp_ytm`). Operational hygiene
 is a first-class part of the API: a `cleanup_old_*` family (news, market data, PnL
-snapshots, backtests, LLM metrics, dividends, decisions) bounds every append-only
-table, `reset_paper_trading_data` / `reset_llm_metrics` / `reset_llm_decision_quality`
+snapshots, backtests, LLM metrics, dividends, decisions, decision-cache metrics)
+bounds every append-only table, `reset_paper_trading_data` / `reset_llm_metrics` / `reset_llm_decision_quality`
 / `clear_all_blacklisted_models` give each dashboard "reset" action a scoped SQL
 counterpart (paper reset can even keep trade history), and `get_pool_stats` exposes
 the PostgreSQL pool to the health endpoint.
@@ -1142,7 +1146,7 @@ This is where the engine's behaviour actually lives. Grouped by responsibility
     **wrong-decisions self-analysis loop** (every 6 h, weak model, market-open
     only, last 20 wrong decisions → `llm:wrong_decision_analysis`, which is fed
     back into the system prompt).
-  - `background_task_manager.py` (1 504) — the bodies of those periodic loops:
+  - `background_task_manager.py` (1 505) — the bodies of those periodic loops:
     data refresh, indicator computation, news fetch, risk checks, dividend
     reinvestment buys, LLM decision-outcome evaluation, Redis health checks.
   - `evaluation_scheduler.py` (134) — decides *when* each symbol is evaluated, and
@@ -1166,7 +1170,7 @@ This is where the engine's behaviour actually lives. Grouped by responsibility
     (also the surface behind the dashboard's "simulate" endpoints).
   - `llm_step_manager.py` (428) — Step 1a analysis with retry/correction and the
     explicit `_create_fallback_hold_signal` (`llm_provider="fallback"`), plus Step 1b.
-  - `backtest_manager.py` (1 311) — prepares the LLM-proposed variants, runs them
+  - `backtest_manager.py` (1 347) — prepares the LLM-proposed variants, runs them
     in parallel under the backtest semaphore, then makes the **Step-2 final
     review** call to the strong model. This is the only place `step2_reviewed`
     is set to `True` (line-verified); every failure path explicitly sets it
@@ -1179,8 +1183,11 @@ This is where the engine's behaviour actually lives. Grouped by responsibility
     count, volatility percentile, RSI/MACD/Bollinger state and portfolio risk,
     mapping to mind / actuator / weak tier with dynamic threshold adjustment,
     effective temperature and reasoning effort.
-  - `decision_cache.py` (144) — deterministic snapshot hash over the exact Step-2
-    prompt inputs; store/get/invalidate; only genuine Step-2 successes are stored.
+  - `decision_cache.py` (196) — deterministic snapshot hash over the exact Step-2
+    prompt inputs; store/get/invalidate; only genuine Step-2 successes are stored;
+    every outcome is metered into `decision_cache_metrics` (§5.1) with estimated
+    prompt tokens saved on hits — a cache hit writes no `llm_metrics` row, so this
+    table is the only place the cache's savings are visible.
   - `post_decision_manager.py` (976) — the last gate before execution:
     **`check_llm_provenance`** (BUY/SELL require a real provider+model **and**
     `step2_reviewed=True`; only `origin="risk_manager"` sells are exempt;
@@ -1333,7 +1340,9 @@ global provider and, for `g4f`, to the live `_get_g4f_models` list),
 become `null` for JSON compliance), `/ticker/{symbol}` and `/tickers?symbols=…`
 (both degrade to `null` fields rather than 500 when quotes fail), `/llm-metrics`,
 `/llm-metrics/timeseries` (hour/day/week/month or explicit date range, model filter),
-`/llm-decision-quality`.
+`/llm-decision-quality`, `/decision-cache` (hit rate and estimated token savings of
+the snapshot-hash decision cache — a cache hit skips the Step-2 call and so writes
+no `llm_metrics` row; these counters are the only place its savings are visible).
 
 **Write endpoints** (all CSRF-guarded; anything that would block is handed to a
 background task, so an HTTP request never waits on the engine):
@@ -1731,7 +1740,7 @@ Patterns repeated across every module — the project's house style:
 
 ## 11. Testing & Quality Gates
 
-The project carries a **~3 400-line pytest suite — 28 test files, 263 test functions** —
+The project carries a **~3 600-line pytest suite — 28 test files, 276 test functions** —
 whose shape mirrors its values: the safety spine (fail-closed paths, the provenance gate)
 gets dedicated test files, while pure domain math (fees, YTM, candle hygiene, cache-key
 normalization) gets exhaustive edge-case treatment. The suite is not an afterthought —
@@ -1800,11 +1809,13 @@ normalization) gets exhaustive edge-case treatment. The suite is not an aftertho
 
 **Family 4 — LLM infrastructure.**
 
-- `test_decision_cache.py` (13 tests) — snapshot-hash determinism and sensitivity;
+- `test_decision_cache.py` (26 tests) — snapshot-hash determinism and sensitivity;
   store/get/invalidate of cached decisions; **provenance preserved through the cache**;
   Redis errors never propagate; cache hit skips the LLM call, miss calls it, disabled
-  cache calls it, Redis-unavailable still reaches the LLM; and the execute-signal hook
-  invalidates the cache.
+  cache calls it, Redis-unavailable still reaches the LLM; the execute-signal hook
+  invalidates the cache; and the metric instrumentation: every outcome (hit with saved
+  tokens, cold/changed/rebuild-failed misses) is recorded, a failed metric write never
+  breaks the decision path, and the SQL record/summary/cleanup helpers are covered.
 - `test_cache.py` — token estimation; `compute_market_hash` ignores volatile fields;
   text normalization for cache keys (float rounding, scientific notation, integers,
   empty input); **fee fingerprint consistency** (a fee change must change the key).
