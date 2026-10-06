@@ -116,8 +116,10 @@ from src.strategies.base import Signal
 from src.trading.components.decision_cache import (
     build_decision_snapshot_hash,
     cached_decision_to_signal,
+    estimate_snapshot_tokens,
     get_cached_decision,
     invalidate_decision_cache,
+    record_cache_event,
     store_cached_decision,
 )
 from src.strategies.llm_parser import create_strategy_from_llm
@@ -642,10 +644,43 @@ class BacktestManager:
                             f"Decision cache HIT for {symbol}: inputs unchanged since last Step-2 review; reusing cached LLM decision (action={cached_signal.action}).",
                             extra={"event": "decision_cache_hit", "symbol": symbol, "snapshot_hash": _snapshot_hash},
                         )
+                        # A hit reuses the cached decision — record it with the estimated
+                        # tokens the Step-2 call would have spent.
+                        await record_cache_event(
+                            symbol=symbol,
+                            outcome="hit",
+                            reason="unchanged",
+                            action=cached_signal.action,
+                            model_type=strategy_model_type,
+                            est_saved_tokens=_cache_entry.get("est_prompt_tokens") or 0,
+                        )
                         return cached_signal, _cache_entry.get("llm_provider") or llm_provider, _cache_entry.get("llm_model") or llm_model, is_fallback
                     logger.warning(f"Decision cache entry for {symbol} could not be rebuilt; falling back to live LLM call.")
+                    await record_cache_event(
+                        symbol=symbol,
+                        outcome="miss",
+                        reason="rebuild_failed",
+                        model_type=strategy_model_type,
+                    )
                 elif _cache_entry:
                     logger.debug(f"Decision cache MISS for {symbol}: inputs changed.", extra={"event": "decision_cache_miss", "symbol": symbol})
+                    await record_cache_event(
+                        symbol=symbol,
+                        outcome="miss",
+                        reason="changed",
+                        model_type=strategy_model_type,
+                    )
+                else:
+                    logger.debug(
+                        f"Decision cache MISS for {symbol}: no cached decision yet.",
+                        extra={"event": "decision_cache_miss", "symbol": symbol, "reason": "cold"},
+                    )
+                    await record_cache_event(
+                        symbol=symbol,
+                        outcome="miss",
+                        reason="cold",
+                        model_type=strategy_model_type,
+                    )
             except Exception as cache_e:  # never fail the decision path on cache logic
                 logger.warning(
                     f"Decision cache check failed for {symbol}: {type(cache_e).__name__}: {cache_e}; proceeding with live LLM call.",
@@ -852,6 +887,7 @@ class BacktestManager:
                             signal,
                             llm_provider,
                             llm_model,
+                            est_prompt_tokens=estimate_snapshot_tokens(_snapshot),
                         )
                     except Exception as store_e:  # never fail the decision path on cache write
                         logger.warning(

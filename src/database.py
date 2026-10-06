@@ -575,6 +575,22 @@ def _get_init_statements() -> List[str]:
         # LLM metrics: dashboard aggregates filter by timestamp and group by model_type
         "CREATE INDEX IF NOT EXISTS idx_llm_metrics_timestamp ON llm_metrics(timestamp DESC)",
         "CREATE INDEX IF NOT EXISTS idx_llm_metrics_request_type_ts ON llm_metrics(request_type, timestamp DESC)",
+        # Decision cache: track snapshot-hash hit/miss events so the flagship
+        # token-saving feature has a measurable hit rate and saved-token total.
+        f"""
+        CREATE TABLE IF NOT EXISTS decision_cache_metrics (
+            id {pk_type},
+            timestamp {float_type} NOT NULL,
+            symbol TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            reason TEXT,
+            action TEXT,
+            model_type TEXT,
+            est_saved_tokens INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_decision_cache_metrics_ts ON decision_cache_metrics(timestamp DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_decision_cache_metrics_outcome ON decision_cache_metrics(outcome, timestamp DESC)",
         # News: composite for (symbol, fetched_at) range scans used by sentiment aggregation
         "CREATE INDEX IF NOT EXISTS idx_news_symbol_fetched_at ON news_articles(symbol, fetched_at DESC)",
         f"""
@@ -2624,6 +2640,151 @@ def cleanup_old_llm_metrics(retention_days: int = 90):
         conn.commit()
         if deleted:
             logger.info(f"Cleaned up {deleted} old LLM metric rows (older than {retention_days} days)")
+        return deleted
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def record_decision_cache_event(
+    symbol: str,
+    outcome: str,
+    reason: Optional[str] = None,
+    action: Optional[str] = None,
+    model_type: Optional[str] = None,
+    est_saved_tokens: float = 0.0,
+) -> None:
+    """Insert a decision-cache hit/miss metric row.
+
+    The `outcome` column records whether a snapshot-hash cache hit or miss was
+    used; the `reason` column classifies the miss (unchanged | changed |
+    cold | rebuild_failed) so a hit-rate dashboard can explain misses.
+
+    Raises on failure: the caller in ``decision_cache.record_cache_event``
+    swallows every exception so the trading decision path is never affected.
+    """
+    conn = get_connection()
+    try:
+        sql = _adapt_sql(
+            """
+            INSERT INTO decision_cache_metrics (
+                timestamp, symbol, outcome, reason, action, model_type, est_saved_tokens
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
+        )
+        conn.execute(sql, (
+            time.time(),
+            symbol,
+            outcome,
+            reason,
+            action,
+            model_type,
+            est_saved_tokens,
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_decision_cache_summary(period_days: int = 7) -> dict:
+    """Return decision-cache hit/miss aggregates for the dashboard.
+
+    Tracks the flagship token-saving feature: the snapshot-hash cache skips
+    a Step-2 LLM call when inputs are unchanged. The summary reports the
+    number of hits and misses, the hit rate, and the total estimated saved
+    tokens so the cache's value is visible at a glance.
+    """
+    conn = get_connection()
+    try:
+        where_clause = " WHERE timestamp > %s"
+        cutoff = time.time() - period_days * 24 * 60 * 60
+
+        total_calls = conn.execute(
+            f"SELECT COUNT(*) as total, "
+            f"COALESCE(SUM(CASE WHEN outcome = 'hit' THEN 1 ELSE 0 END),0) as hits, "
+            f"COALESCE(SUM(CASE WHEN outcome = 'miss' THEN 1 ELSE 0 END),0) as misses, "
+            f"COALESCE(SUM(est_saved_tokens),0) as total_saved_tokens, "
+            f"AVG(est_saved_tokens) as avg_saved_tokens "
+            f"FROM decision_cache_metrics{where_clause}",
+            (cutoff,),
+        ).fetchone()
+
+        total = total_calls["total"] if total_calls else 0
+        hits = total_calls["hits"] if total_calls else 0
+        misses = total_calls["misses"] if total_calls else 0
+        total_saved_tokens = total_calls["total_saved_tokens"] if total_calls else 0
+        avg_saved_tokens = total_calls["avg_saved_tokens"] if total_calls else 0
+        hit_rate = (hits / total * 100) if total > 0 else 0.0
+
+        # Per-outcome breakdown
+        per_outcome_rows = conn.execute(
+            "SELECT outcome, COUNT(*) as calls, "
+            "COALESCE(SUM(est_saved_tokens),0) as total_saved_tokens, "
+            "AVG(est_saved_tokens) as avg_saved_tokens "
+            f"FROM decision_cache_metrics{where_clause} "
+            f"GROUP BY outcome ORDER BY outcome",
+            (cutoff,),
+        ).fetchall()
+
+        per_outcome = []
+        for r in per_outcome_rows:
+            per_outcome.append({
+                "outcome": r["outcome"],
+                "calls": r["calls"],
+                "total_saved_tokens": r["total_saved_tokens"],
+                "avg_saved_tokens": round(r["avg_saved_tokens"], 2) if r["avg_saved_tokens"] else 0,
+            })
+
+        # Recent events (last 20)
+        recent_rows = conn.execute(
+            "SELECT timestamp, symbol, outcome, reason, action, model_type, est_saved_tokens "
+            f"FROM decision_cache_metrics{where_clause} "
+            f"ORDER BY timestamp DESC LIMIT 20",
+            (cutoff,),
+        ).fetchall()
+
+        recent = []
+        for r in recent_rows:
+            recent.append({
+                "timestamp": r["timestamp"],
+                "symbol": r["symbol"],
+                "outcome": r["outcome"],
+                "reason": r["reason"],
+                "action": r["action"],
+                "model_type": r["model_type"],
+                "est_saved_tokens": r["est_saved_tokens"],
+            })
+
+        return {
+            "total": total,
+            "hits": hits,
+            "misses": misses,
+            "hit_rate": round(hit_rate, 2),
+            "total_saved_tokens": round(total_saved_tokens, 2),
+            "avg_saved_tokens": round(avg_saved_tokens, 2) if avg_saved_tokens else 0,
+            "per_outcome": per_outcome,
+            "recent": recent,
+        }
+    finally:
+        conn.close()
+
+
+@retry_on_db_lock()
+def cleanup_old_decision_cache_metrics(retention_days: int = 90) -> int:
+    """Delete decision-cache metric rows older than retention_days.
+
+    decision_cache_metrics grows by one row per evaluation cycle per symbol
+    (a hit and a miss) and the dashboard aggregates scan it repeatedly;
+    without retention it grows unboundedly and slows down get_decision_cache_summary.
+    """
+    conn = get_connection()
+    try:
+        cutoff = time.time() - retention_days * 24 * 60 * 60
+        sql = _adapt_sql("DELETE FROM decision_cache_metrics WHERE timestamp < %s")
+        deleted = conn.execute(sql, (cutoff,)).rowcount
+        conn.commit()
+        if deleted:
+            logger.info(f"Cleaned up {deleted} old decision cache metric rows (older than {retention_days} days)")
         return deleted
     finally:
         conn.close()

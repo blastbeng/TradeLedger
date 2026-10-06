@@ -16,7 +16,7 @@ from src.config.settings import settings
 from src.utils.redis_client import get_redis_client, check_redis_connection, is_redis_available
 from src.llm.prompts import get_cached_news_summary
 from src.exchanges.market_data import get_quotes, get_multi_timeframe_bars
-from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics, get_all_blacklisted_models, update_manual_isin, clear_all_blacklisted_models, reset_llm_decision_quality, get_isin_map_from_db
+from src.database import get_all_discovered_symbols, get_signals, get_llm_metrics_summary, get_llm_metrics_timeseries, reset_llm_metrics, get_news_for_symbol, get_llm_decision_quality_metrics, get_all_blacklisted_models, update_manual_isin, clear_all_blacklisted_models, reset_llm_decision_quality, get_isin_map_from_db, get_decision_cache_summary
 from src.llm.cache import get_model_failure_stats
 from src.utils.symbol_utils import is_btp_isin
 from src.trading.engine_utils import format_symbol_display
@@ -867,6 +867,18 @@ async def llm_decision_quality(period_days: int = 7, model_filter: str = "all"):
     """Return LLM decision quality metrics for the dashboard."""
     try:
         return await run_in_threadpool(get_llm_decision_quality_metrics, period_days, model_filter)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@http_router.get("/decision-cache")
+async def decision_cache_metrics(period_days: int = 7):
+    """Return snapshot-hash decision-cache hit/miss metrics for the dashboard.
+
+    A cache hit skips a Step-2 LLM call, so it writes no llm_metrics row;
+    these counters are the only place the cache's savings are visible.
+    """
+    try:
+        return await run_in_threadpool(get_decision_cache_summary, period_days)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
